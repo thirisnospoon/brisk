@@ -702,6 +702,7 @@ dependencies = [
  "brisk-syntax",
  "brisk-terminal",
  "brisk-text",
+ "embed-resource",
  "futures",
  "gpui",
  "serde_json",

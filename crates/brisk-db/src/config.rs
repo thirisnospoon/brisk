@@ -13,8 +13,18 @@ struct File {
     data_sources: Vec<DataSource>,
 }
 
-/// Per-user config dir: `%APPDATA%\Brisk`, `~/.config/brisk`, `~/Library/Application Support/Brisk`.
+/// Config dir of a portable install: `<exe dir>/data` when a file named `portable` sits next to the executable.
+pub fn portable_dir() -> Option<PathBuf> {
+    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    dir.join("portable").is_file().then(|| dir.join("data"))
+}
+
+/// Per-user config dir: the portable `data` folder if present, else `%APPDATA%\Brisk`, `~/.config/brisk`,
+/// `~/Library/Application Support/Brisk`.
 pub fn config_dir() -> PathBuf {
+    if let Some(p) = portable_dir() {
+        return p;
+    }
     #[cfg(windows)]
     {
         if let Some(a) = std::env::var_os("APPDATA") {

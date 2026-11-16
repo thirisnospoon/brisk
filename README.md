@@ -11,6 +11,16 @@ cargo run --release -p brisk-app -- examples/demo_project
 
 Готовый бинарник после сборки: `target/release/brisk.exe <папка проекта>`.
 
+### Портабельная сборка (Windows)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package-portable.ps1   # -NoBuild — упаковать уже собранный exe
+```
+
+Получается `dist\Brisk-<версия>-windows-x64.zip` (~5.6 МБ): `brisk.exe`, `README.md` и файл-метка `portable`. Распаковать куда угодно (флешка, папка без прав администратора) и запускать `brisk.exe`; установка не нужна. Пока рядом с exe лежит `portable`, настройки, консоли БД и сохранённые пароли хранятся в папке `data` рядом с exe, а не в `%APPDATA%\Brisk`. Пароли зашифрованы DPAPI под пользователя Windows, поэтому на другом компьютере их придётся ввести заново.
+
+Иконка (`assets/brisk.ico`, рисуется скриптом `assets/make_icon.py`, нужен Pillow) встраивается в exe при сборке через `crates/brisk-app/brisk.rc`. Там же сведения о версии. GPUI берёт её как иконку окна и панели задач.
+
 ## Что уже работает (этап 1, каркас)
 
 - Окно в стиле New UI: тулбар (проект, git-ветка из `.git/HEAD`, run-конфигурация), левая полоса tool windows, строка состояния (Ln:Col, LF/CRLF, язык, интерпретатор).
@@ -59,7 +69,7 @@ cargo run --release -p brisk-app -- examples/demo_project
   - PostgreSQL, MySQL / MariaDB, SQLite — нативные драйверы на Rust/C, без JDBC и JVM;
   - **Data Source** (Alt+Insert — новый, Shift+Enter или Ctrl+Alt+Shift+S — свойства): Name, Driver, Host, Port, User, Password, Database, SSL mode (disable / prefer / require), Save password Forever / Never, Test Connection (Alt+T); URL вида `postgresql://user:pass@host:5432/db?sslmode=require` или `jdbc:…`, вставленный в Host, заполняет форму;
   - источники хранятся в `.brisk/dataSources.json` проекта, без паролей; при первом открытии импортируются из PyCharm `.idea/dataSources.xml`;
-  - пароли — в `%APPDATA%\Brisk\credentials.json`, зашифрованы DPAPI под текущего пользователя (на Linux/macOS — файл с правами 0600);
+  - пароли — в `%APPDATA%\Brisk\credentials.json` (в портабельной сборке — `data\credentials.json` рядом с exe), зашифрованы DPAPI под текущего пользователя (на Linux/macOS — файл с правами 0600);
   - дерево: источник → схемы → таблицы и представления → колонки с типами, PK и NOT NULL; подключение при раскрытии; Ctrl+F5 — обновить, Ctrl+F2 — отключиться, Delete дважды — удалить источник;
   - **консоль** (Ctrl+Shift+F10): SQL-файл с подсветкой; Ctrl+Enter выполняет выделение или выражение под кареткой; результат в окне **Services** (Alt+8): таблица, `<null>`, «N rows retrieved … in X ms»; ошибки сервера с кодом; Ctrl+F2 или ■ отменяет запрос; после DDL дерево обновляется само;
   - **Edit Data** (F4 или двойной клик по таблице): данные таблицы во вкладке; стрелки, PgUp/PgDn, Home/End по ячейкам, Ctrl+C копирует значение, Ctrl+F5 перечитывает;
