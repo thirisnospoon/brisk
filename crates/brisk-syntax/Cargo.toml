@@ -1,0 +1,10 @@
+[package]
+name = "brisk-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tree-sitter.workspace = true
+tree-sitter-python.workspace = true
+streaming-iterator.workspace = true

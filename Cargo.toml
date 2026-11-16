@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/brisk-keymap",
+    "crates/brisk-text",
+    "crates/brisk-project",
+    "crates/brisk-syntax",
+    "crates/brisk-terminal",
+    "crates/brisk-git",
+    "crates/brisk-search",
+    "crates/brisk-db",
+    "crates/brisk-run",
+    "crates/brisk-lint",
+    "crates/brisk-lsp",
+    "crates/brisk-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+brisk-keymap = { path = "crates/brisk-keymap" }
+brisk-text = { path = "crates/brisk-text" }
+brisk-project = { path = "crates/brisk-project" }
+brisk-syntax = { path = "crates/brisk-syntax" }
+brisk-terminal = { path = "crates/brisk-terminal" }
+brisk-git = { path = "crates/brisk-git" }
+brisk-search = { path = "crates/brisk-search" }
+brisk-db = { path = "crates/brisk-db" }
+brisk-run = { path = "crates/brisk-run" }
+brisk-lint = { path = "crates/brisk-lint" }
+brisk-lsp = { path = "crates/brisk-lsp" }
+
+ropey = "1.6"
+ignore = "0.4"
+nucleo-matcher = "0.3"
+tree-sitter = "0.25"
+tree-sitter-python = "0.25"
+streaming-iterator = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev.package."*"]
+opt-level = 2

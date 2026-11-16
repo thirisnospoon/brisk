@@ -1,0 +1,10 @@
+[package]
+name = "brisk-search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+regex = "1"
+memchr = "2"
+globset = "0.4"

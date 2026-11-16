@@ -1,0 +1,16 @@
+{
+  "dataSources": [
+    {
+      "id": "demo-shop-sqlite",
+      "name": "shop.db",
+      "driver": "sqlite",
+      "host": "localhost",
+      "port": 0,
+      "user": "",
+      "database": "",
+      "file": "data/shop.db",
+      "ssl": "prefer",
+      "save_password": true
+    }
+  ]
+}
