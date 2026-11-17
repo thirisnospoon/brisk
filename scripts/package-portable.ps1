@@ -19,6 +19,9 @@ New-Item -ItemType Directory -Force $dir | Out-Null
 
 Copy-Item 'target\release\brisk.exe' $dir
 Copy-Item 'README.md' $dir
+# The debugger: debugpy next to brisk.exe (lib\debugpy), used when the project's Python has none.
+& (Join-Path $PSScriptRoot 'fetch-debugpy.ps1')
+Copy-Item -Recurse (Join-Path $root 'vendor\debugpy-lib') (Join-Path $dir 'lib')
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 [IO.File]::WriteAllText((Join-Path $dir 'portable'),
     "This file switches Brisk to portable mode: settings, database consoles and saved passwords`r`n" +

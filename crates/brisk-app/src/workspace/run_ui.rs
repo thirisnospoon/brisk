@@ -89,7 +89,7 @@ impl Workspace {
         }
     }
 
-    fn save_runs(&mut self) {
+    pub(super) fn save_runs(&mut self) {
         if let Err(e) = brisk_run::save(&self.root, &self.runs.file) {
             self.status = format!("Cannot save {}: {e}", brisk_run::CONFIG_FILE);
         }
@@ -156,7 +156,7 @@ impl Workspace {
     /// What Ctrl+Shift+F10 runs, like PyCharm's context configuration: the file selected in
     /// the Project view when it has focus (a folder runs pytest in it), else the active
     /// editor. Test files run with pytest, narrowed to the test or class at the caret.
-    fn context_config(&self, window: &Window, cx: &mut gpui::App) -> Option<RunConfig> {
+    pub(super) fn context_config(&self, window: &Window, cx: &mut gpui::App) -> Option<RunConfig> {
         let is_py = |p: &Path| p.extension().is_some_and(|e| e == "py" || e == "pyw");
         let for_path = |p: &Path, scope: &[String]| {
             if brisk_run::is_test_file(p) {

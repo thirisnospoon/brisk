@@ -244,7 +244,7 @@ impl Workspace {
         if q.is_empty() {
             return self.structure.clone();
         }
-        if matches!(self.popup.as_ref().map(|p| p.kind), Some(PopupKind::Bookmarks | PopupKind::LocalHistory)) {
+        if matches!(self.popup.as_ref().map(|p| p.kind), Some(PopupKind::Bookmarks | PopupKind::LocalHistory | PopupKind::Breakpoints)) {
             let ql = q.to_lowercase();
             return self.structure.iter().filter(|i| i.label.to_lowercase().contains(&ql) || i.detail.to_lowercase().contains(&ql)).cloned().collect();
         }

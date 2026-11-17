@@ -1,0 +1,1214 @@
+//! Debugging with debugpy, as in PyCharm: Shift+F9 / Ctrl+Shift+F9 start, breakpoints
+//! (Ctrl+F8 or a click on the line numbers; right click for a condition), F8 / F7 / Shift+F8
+//! step, F9 resume, Alt+F9 run to cursor, Ctrl+F2 stop, Alt+F8 evaluate. The Debug window
+//! shows frames, variables (expandable) and the console with an evaluate line.
+
+use super::{BottomTool, PopupItem, PopupKind, Target, Workspace};
+use crate::editor::breakpoints::Breakpoint;
+use crate::editor::Editor;
+use crate::theme::{Theme, MONO_FONT};
+use brisk_dap::{Client, Event, Frame, Launch, SourceBreakpoint, Variable};
+use brisk_keymap::Action;
+use brisk_run::{RunConfig, RunKind};
+use futures::StreamExt;
+use gpui::prelude::*;
+use gpui::{div, px, Context, Entity, FocusHandle, ScrollHandle, Task, Window};
+use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredBp {
+    pub path: PathBuf,
+    pub line: usize,
+    pub condition: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DebugTab {
+    Debugger,
+    Console,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum State {
+    Starting,
+    Running,
+    Paused(i64),
+    Ended,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Line {
+    Out,
+    Err,
+    Info,
+    Input,
+    Result,
+}
+
+pub struct Session {
+    client: Arc<Client>,
+    pub name: String,
+    pub state: State,
+    _events: Task<()>,
+    /// Run to Cursor: a breakpoint that is not the user's.
+    temp: Option<(PathBuf, usize)>,
+    pub exit_code: Option<i64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct VarRow {
+    pub depth: usize,
+    pub var: Variable,
+    pub expanded: bool,
+}
+
+pub struct Debug {
+    pub session: Option<Session>,
+    /// Breakpoints of files that are not open.
+    pub stored: Vec<StoredBp>,
+    pub console: Vec<(String, Line)>,
+    pub input: String,
+    history: Vec<String>,
+    history_pos: usize,
+    pub frames: Vec<Frame>,
+    pub frame: usize,
+    pub vars: Vec<VarRow>,
+    pub tab: DebugTab,
+    pub focus: FocusHandle,
+    console_scroll: ScrollHandle,
+    /// Lines with exec marks, to clear them.
+    marked: Vec<PathBuf>,
+}
+
+impl Debug {
+    pub fn new(root: &Path, cx: &mut gpui::App) -> Self {
+        Self {
+            session: None,
+            stored: load(root),
+            console: Vec::new(),
+            input: String::new(),
+            history: Vec::new(),
+            history_pos: 0,
+            frames: Vec::new(),
+            frame: 0,
+            vars: Vec::new(),
+            tab: DebugTab::Debugger,
+            focus: cx.focus_handle(),
+            console_scroll: ScrollHandle::new(),
+            marked: Vec::new(),
+        }
+    }
+
+    pub fn state(&self) -> Option<State> {
+        self.session.as_ref().map(|s| s.state)
+    }
+
+    pub fn paused_thread(&self) -> Option<i64> {
+        match self.state() {
+            Some(State::Paused(t)) => Some(t),
+            _ => None,
+        }
+    }
+
+    fn print(&mut self, text: &str, kind: Line) {
+        // Output arrives in chunks: continue the last line until a newline.
+        let mut parts = text.split('\n').peekable();
+        if let Some(first) = parts.next() {
+            match self.console.last_mut() {
+                Some((last, k)) if *k == kind && !last.ends_with('\n') && matches!(kind, Line::Out | Line::Err) => last.push_str(first),
+                _ => self.console.push((first.to_string(), kind)),
+            }
+        }
+        for p in parts {
+            if let Some((last, _)) = self.console.last_mut() {
+                last.push('\n');
+            }
+            self.console.push((p.to_string(), kind));
+        }
+        if self.console.last().is_some_and(|(l, _)| l.is_empty()) {
+            self.console.pop();
+            if let Some((last, _)) = self.console.last_mut() {
+                if !last.ends_with('\n') {
+                    last.push('\n');
+                }
+            }
+        }
+        if self.console.len() > 5000 {
+            self.console.drain(..1000);
+        }
+        self.console_scroll.scroll_to_bottom();
+    }
+
+    fn info(&mut self, text: impl Into<String>) {
+        let mut t: String = text.into();
+        t.push('\n');
+        self.console.push((t, Line::Info));
+        self.console_scroll.scroll_to_bottom();
+    }
+}
+
+fn store_path() -> PathBuf {
+    brisk_db::config_dir().join("breakpoints.json")
+}
+
+fn load(root: &Path) -> Vec<StoredBp> {
+    let Ok(s) = std::fs::read_to_string(store_path()) else { return Vec::new() };
+    let Ok(v) = serde_json::from_str::<Value>(&s) else { return Vec::new() };
+    let Some(list) = v.get(root.to_string_lossy().to_lowercase()).and_then(Value::as_array) else { return Vec::new() };
+    list.iter()
+        .filter_map(|b| {
+            Some(StoredBp {
+                path: root.join(b.get("path")?.as_str()?),
+                line: b.get("line")?.as_u64()? as usize,
+                condition: b.get("condition").and_then(Value::as_str).map(str::to_string),
+            })
+        })
+        .collect()
+}
+
+/// `python [opts] (-m module | script) args` → what debugpy launches.
+fn launch_for(cmd: &brisk_run::Command) -> Launch {
+    let mut l = Launch { python: cmd.program.clone(), cwd: cmd.cwd.clone(), just_my_code: true, ..Default::default() };
+    let mut it = cmd.args.iter();
+    while let Some(a) = it.next() {
+        if a == "-m" {
+            l.module = true;
+            l.target = it.next().cloned().unwrap_or_default();
+            break;
+        } else if a == "-X" || a == "-W" {
+            // Options with a value.
+            l.python_args.push(a.clone());
+            l.python_args.extend(it.next().cloned());
+        } else if a.starts_with('-') {
+            l.python_args.push(a.clone());
+        } else {
+            l.target = a.clone();
+            break;
+        }
+    }
+    l.args = it.cloned().collect();
+    let mut env: Vec<(String, String)> = cmd.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    env.sort();
+    l.env = env;
+    l
+}
+
+impl Workspace {
+    // --- Breakpoints ------------------------------------------------------------------
+
+    /// All breakpoints by file (open editors first-hand, the rest stored).
+    pub(super) fn all_breakpoints(&self, cx: &gpui::App) -> Vec<(PathBuf, Vec<(usize, Breakpoint)>)> {
+        let mut out: Vec<(PathBuf, Vec<(usize, Breakpoint)>)> = Vec::new();
+        let mut open = Vec::new();
+        for e in self.editors() {
+            let e = e.read(cx);
+            let Some(p) = e.path.clone() else { continue };
+            open.push(p.clone());
+            let list = e.breakpoint_list();
+            if !list.is_empty() {
+                out.push((p, list));
+            }
+        }
+        for b in &self.debug.stored {
+            if open.contains(&b.path) {
+                continue;
+            }
+            let bp = (b.line, Breakpoint { condition: b.condition.clone(), verified: None });
+            match out.iter_mut().find(|(p, _)| *p == b.path) {
+                Some((_, v)) => v.push(bp),
+                None => out.push((b.path.clone(), vec![bp])),
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    pub(super) fn persist_breakpoints(&self, cx: &gpui::App) {
+        let path = store_path();
+        let mut all: serde_json::Map<String, Value> =
+            std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default();
+        let mut list = Vec::new();
+        for (p, bps) in self.all_breakpoints(cx) {
+            let rel = p.strip_prefix(&self.root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+            for (line, b) in bps {
+                list.push(json!({"path": rel, "line": line, "condition": b.condition}));
+            }
+        }
+        let key = self.root.to_string_lossy().to_lowercase();
+        if list.is_empty() {
+            all.remove(&key);
+        } else {
+            all.insert(key, Value::Array(list));
+        }
+        if let Some(d) = path.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        if let Ok(s) = serde_json::to_string_pretty(&Value::Object(all)) {
+            let _ = std::fs::write(path, s);
+        }
+    }
+
+    /// A file was opened: its stored breakpoints move into the editor.
+    pub(super) fn adopt_breakpoints(&mut self, ed: &Entity<Editor>, cx: &mut Context<Self>) {
+        let Some(p) = ed.read(cx).path.clone() else { return };
+        let mine: Vec<(usize, Breakpoint)> =
+            self.debug.stored.iter().filter(|b| b.path == p).map(|b| (b.line, Breakpoint { condition: b.condition.clone(), verified: None })).collect();
+        if mine.is_empty() {
+            return;
+        }
+        self.debug.stored.retain(|b| b.path != p);
+        ed.update(cx, |e, cx| {
+            e.set_breakpoints(&mine);
+            cx.notify();
+        });
+    }
+
+    /// An editor closes: keep its breakpoints.
+    pub(super) fn stash_breakpoints(&mut self, ed: &Entity<Editor>, cx: &mut Context<Self>) {
+        let Some(p) = ed.read(cx).path.clone() else { return };
+        let list = ed.read(cx).breakpoint_list();
+        self.debug.stored.retain(|b| b.path != p);
+        self.debug.stored.extend(list.into_iter().map(|(line, b)| StoredBp { path: p.clone(), line, condition: b.condition }));
+    }
+
+    /// A breakpoint changed in an editor: save, and tell a running debugger.
+    pub(super) fn breakpoints_changed(&mut self, ed: Entity<Editor>, cx: &mut Context<Self>) {
+        self.persist_breakpoints(cx);
+        if let Some(p) = ed.read(cx).path.clone() {
+            self.send_breakpoints(&p, cx);
+        }
+    }
+
+    fn source_breakpoints(&self, path: &Path, cx: &gpui::App) -> Vec<SourceBreakpoint> {
+        let mut v: Vec<SourceBreakpoint> = self
+            .all_breakpoints(cx)
+            .into_iter()
+            .filter(|(p, _)| p == path)
+            .flat_map(|(_, l)| l.into_iter().map(|(line, b)| SourceBreakpoint { line, condition: b.condition }))
+            .collect();
+        if let Some((p, l)) = self.debug.session.as_ref().and_then(|s| s.temp.clone()) {
+            if p == path && !v.iter().any(|b| b.line == l) {
+                v.push(SourceBreakpoint { line: l, condition: None });
+            }
+        }
+        v
+    }
+
+    /// setBreakpoints for one file; the reply marks verified breakpoints in its editor.
+    fn send_breakpoints(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let Some(s) = self.debug.session.as_ref().filter(|s| s.state != State::Ended) else { return };
+        let bps = self.source_breakpoints(path, cx);
+        let rx = s.client.request("setBreakpoints", brisk_dap::set_breakpoints_args(path, &bps));
+        let path = path.to_path_buf();
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(v)) = rx.await else { return };
+            let verified = brisk_dap::parse_breakpoints(&v);
+            let _ = this.update(cx, |this, cx| {
+                // Replies list the temporary breakpoint last; editors only know the user's.
+                if let Some(ed) = this.editors().find(|e| e.read(cx).path.as_ref() == Some(&path)).cloned() {
+                    ed.update(cx, |e, cx| {
+                        e.set_breakpoints_verified(&verified);
+                        cx.notify();
+                    });
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Ctrl+F8 at the caret.
+    fn toggle_breakpoint_here(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ed) = self.focused_editor(window, cx).or_else(|| self.active_editor().cloned()) else { return };
+        if !ed.read(cx).can_debug() {
+            self.status = "Breakpoints are for Python files".into();
+            return;
+        }
+        let line = ed.read(cx).caret_line_col().0;
+        ed.update(cx, |e, cx| e.toggle_breakpoint(line, cx));
+    }
+
+    /// Right click on a breakpoint / Edit Breakpoint: the condition popup.
+    pub(super) fn edit_breakpoint(&mut self, ed: Entity<Editor>, line: usize, cx: &mut Context<Self>) {
+        let cond = ed.read(cx).breakpoint_list().into_iter().find(|(l, _)| *l == line).and_then(|(_, b)| b.condition).unwrap_or_default();
+        self.debug_edit = Some((ed, line));
+        self.open_popup(PopupKind::BreakpointCondition);
+        if let Some(p) = self.popup.as_mut() {
+            p.query = cond;
+        }
+        self.refresh_popup();
+        cx.notify();
+    }
+
+    pub(super) fn condition_items(&self, q: &str) -> Vec<PopupItem> {
+        let q = q.trim();
+        let mut v = vec![PopupItem {
+            label: if q.is_empty() { "Stop always (no condition)".into() } else { format!("Stop when: {q}") },
+            detail: String::new(),
+            hint: "Enter".into(),
+            target: Target::BpCondition(q.to_string()),
+        }];
+        v.push(PopupItem { label: "Remove breakpoint".into(), detail: String::new(), hint: String::new(), target: Target::BpRemove });
+        v
+    }
+
+    pub(super) fn pick_condition(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((ed, line)) = self.debug_edit.take() else { return };
+        match target {
+            Target::BpCondition(c) => ed.update(cx, |e, cx| e.set_breakpoint_condition(line, Some(c), cx)),
+            Target::BpRemove => {
+                if ed.read(cx).breakpoint_list().iter().any(|(l, _)| *l == line) {
+                    ed.update(cx, |e, cx| e.toggle_breakpoint(line, cx));
+                }
+            }
+            _ => {}
+        }
+        self.focus_editor(window, cx);
+    }
+
+    /// Ctrl+Shift+F8: all breakpoints; Enter goes there.
+    pub(super) fn breakpoint_items(&self, q: &str, cx: &gpui::App) -> Vec<PopupItem> {
+        let ql = q.trim().to_lowercase();
+        let mut v = Vec::new();
+        for (p, bps) in self.all_breakpoints(cx) {
+            let rel = p.strip_prefix(&self.root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+            for (line, b) in bps {
+                let label = format!("{rel}:{}", line + 1);
+                let detail = b.condition.clone().map(|c| format!("if {c}")).unwrap_or_default();
+                if ql.is_empty() || label.to_lowercase().contains(&ql) || detail.to_lowercase().contains(&ql) {
+                    v.push(PopupItem { label, detail, hint: String::new(), target: Target::Bookmark(p.clone(), line) });
+                }
+            }
+        }
+        v
+    }
+
+    // --- Session ----------------------------------------------------------------------
+
+    pub(super) fn debug_action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        use Action as A;
+        match action {
+            A::ToggleBreakpoint => self.toggle_breakpoint_here(window, cx),
+            A::ViewBreakpoints => {
+                self.structure = self.breakpoint_items("", cx);
+                self.open_popup(PopupKind::Breakpoints);
+            }
+            A::Debug => {
+                self.reload_runs();
+                let cfg = self.runs.file.selected_config().cloned().or_else(|| self.context_config(window, cx));
+                match cfg {
+                    Some(cfg) => self.start_debug(cfg, window, cx),
+                    None => self.status = "Nothing to debug: open a Python file or select a configuration".into(),
+                }
+            }
+            A::DebugContext => {
+                let Some(ctx) = self.context_config(window, cx) else {
+                    self.status = "Debug: open a Python file first".into();
+                    return true;
+                };
+                self.reload_runs();
+                let name = self.runs.file.use_for_file(ctx);
+                self.save_runs();
+                if let Some(cfg) = self.runs.file.get(&name).cloned() {
+                    self.start_debug(cfg, window, cx);
+                }
+            }
+            A::Resume | A::StepOver | A::StepInto | A::StepOut | A::RunToCursor => {
+                let Some(thread) = self.debug.paused_thread() else {
+                    self.status = "The debugger is not paused".into();
+                    return true;
+                };
+                let command = match action {
+                    A::StepOver => "next",
+                    A::StepInto => "stepIn",
+                    A::StepOut => "stepOut",
+                    _ => "continue",
+                };
+                if action == A::RunToCursor {
+                    let Some(ed) = self.active_editor().cloned() else { return true };
+                    let (path, line) = (ed.read(cx).path.clone(), ed.read(cx).caret_line_col().0);
+                    let Some(path) = path else { return true };
+                    if let Some(s) = self.debug.session.as_mut() {
+                        s.temp = Some((path.clone(), line));
+                    }
+                    self.send_breakpoints(&path, cx);
+                }
+                self.debug_request(command, json!({"threadId": thread}));
+                self.set_running(cx);
+            }
+            A::Stop if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) => self.stop_debug(cx),
+            A::EvaluateExpression => {
+                if self.debug.paused_thread().is_none() {
+                    self.status = "Evaluate: the debugger is not paused".into();
+                    return true;
+                }
+                // The selection or the word at the caret goes into the console's input.
+                if let Some(ed) = self.active_editor() {
+                    let e = ed.read(cx);
+                    let sel = e.buffer.selected_text();
+                    let t = if sel.trim().is_empty() {
+                        let r = e.buffer.word_range_at(e.buffer.primary().head);
+                        e.buffer.slice(r)
+                    } else {
+                        sel
+                    };
+                    self.debug.input = t.trim().to_string();
+                }
+                self.debug.tab = DebugTab::Console;
+                self.bottom = Some(BottomTool::Debug);
+                window.focus(&self.debug.focus.clone());
+            }
+            _ => return false,
+        }
+        cx.notify();
+        true
+    }
+
+    fn debug_request(&self, command: &str, args: Value) {
+        if let Some(s) = &self.debug.session {
+            let _ = s.client.request(command, args);
+        }
+    }
+
+    fn set_running(&mut self, cx: &mut Context<Self>) {
+        if let Some(s) = self.debug.session.as_mut() {
+            if s.state != State::Ended {
+                s.state = State::Running;
+            }
+        }
+        self.debug.frames.clear();
+        self.debug.vars.clear();
+        self.clear_exec_marks(cx);
+    }
+
+    fn clear_exec_marks(&mut self, cx: &mut Context<Self>) {
+        let marked = std::mem::take(&mut self.debug.marked);
+        for e in self.editors().cloned().collect::<Vec<_>>() {
+            if e.read(cx).path.as_ref().is_some_and(|p| marked.contains(p)) || e.read(cx).exec_line.is_some() {
+                e.update(cx, |e, cx| {
+                    e.exec_line = None;
+                    cx.notify();
+                });
+            }
+        }
+    }
+
+    fn start_debug(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_all(cx);
+        if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) {
+            self.stop_debug(cx);
+        }
+        let python = match &cfg.interpreter {
+            Some(p) => Some(brisk_run::resolve(&self.root, p)),
+            None => self.runs.interpreter(&self.root).map(|i| i.path),
+        };
+        let Some(python) = python else {
+            self.show_toast("No Python interpreter configured: create a .venv or install Python".into(), true, cx);
+            return;
+        };
+        let mut cmd = brisk_run::build(&self.root, &cfg, &python);
+        if cfg.kind == RunKind::Pytest {
+            // No live test tree while debugging: plain pytest output in the console.
+            cmd.args.retain(|a| a != "-p");
+        }
+        let launch = launch_for(&cmd);
+        let name = cfg.name.clone();
+        self.debug.console.clear();
+        self.debug.frames.clear();
+        self.debug.vars.clear();
+        self.debug.tab = DebugTab::Console;
+        self.debug.info(cmd.display());
+        self.bottom = Some(BottomTool::Debug);
+        self.status = format!("Debugging '{name}'");
+        let root = self.root.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let adapter = cx.background_executor().spawn(async move { brisk_dap::adapter_command(&python) }).await;
+            let started = adapter.and_then(|a| Client::start(&a.program, &a.args, &root, &[]).map_err(|e| format!("cannot start debugpy: {e}")));
+            let _ = this.update_in(cx, |this, window, cx| match started {
+                Err(e) => {
+                    this.debug.info(e.clone());
+                    this.show_toast(e, true, cx);
+                }
+                Ok((client, events)) => this.attach_session(client, events, name, launch, window, cx),
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn attach_session(&mut self, client: Arc<Client>, mut events: futures::channel::mpsc::UnboundedReceiver<Event>, name: String, launch: Launch, window: &mut Window, cx: &mut Context<Self>) {
+        let task = cx.spawn_in(window, async move |this, cx| {
+            while let Some(ev) = events.next().await {
+                if this.update_in(cx, |this, window, cx| this.debug_event(ev, window, cx)).is_err() {
+                    break;
+                }
+            }
+        });
+        self.debug.session = Some(Session { client: client.clone(), name, state: State::Starting, _events: task, temp: None, exit_code: None });
+        cx.spawn(async move |this, cx| {
+            let init = client.request("initialize", brisk_dap::initialize_args()).await;
+            let err = match init {
+                Ok(Ok(_)) => None,
+                Ok(Err(e)) => Some(e),
+                Err(_) => Some("no reply".to_string()),
+            };
+            if let Some(e) = err {
+                let _ = this.update(cx, |this, cx| {
+                    this.debug.info(format!("debugpy did not start: {e}"));
+                    cx.notify();
+                });
+                return;
+            }
+            let res = client.request("launch", brisk_dap::launch_args(&launch)).await;
+            if let Ok(Err(e)) = res {
+                let _ = this.update(cx, |this, cx| {
+                    this.debug.info(format!("Cannot launch: {e}"));
+                    this.end_session(cx);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn stop_debug(&mut self, cx: &mut Context<Self>) {
+        if let Some(s) = &self.debug.session {
+            let rx = s.client.request("disconnect", json!({"terminateDebuggee": true}));
+            let client = s.client.clone();
+            cx.spawn(async move |_, cx| {
+                let _ = futures::future::select(rx, cx.background_executor().timer(std::time::Duration::from_secs(2))).await;
+                client.kill();
+            })
+            .detach();
+        }
+        self.debug.info("Stopped");
+        self.end_session(cx);
+    }
+
+    fn end_session(&mut self, cx: &mut Context<Self>) {
+        if let Some(s) = self.debug.session.as_mut() {
+            s.state = State::Ended;
+        }
+        self.debug.frames.clear();
+        self.debug.vars.clear();
+        self.clear_exec_marks(cx);
+        for e in self.editors().cloned().collect::<Vec<_>>() {
+            e.update(cx, |e, cx| {
+                e.clear_breakpoints_verified();
+                cx.notify();
+            });
+        }
+    }
+
+    fn debug_event(&mut self, ev: Event, window: &mut Window, cx: &mut Context<Self>) {
+        let Event::Dap { event, body } = ev else {
+            if self.debug.state().is_some_and(|s| s != State::Ended) {
+                let code = self.debug.session.as_ref().and_then(|s| s.exit_code);
+                self.debug.info(match code {
+                    Some(c) => format!("Process finished with exit code {c}"),
+                    None => "Debugger disconnected".into(),
+                });
+                self.end_session(cx);
+            }
+            cx.notify();
+            return;
+        };
+        match event.as_str() {
+            "initialized" => {
+                for (p, _) in self.all_breakpoints(cx) {
+                    self.send_breakpoints(&p, cx);
+                }
+                self.debug_request("setExceptionBreakpoints", json!({"filters": ["uncaught"]}));
+                self.debug_request("configurationDone", json!({}));
+                if let Some(s) = self.debug.session.as_mut() {
+                    s.state = State::Running;
+                }
+            }
+            "output" => {
+                let cat = body.get("category").and_then(Value::as_str).unwrap_or("console");
+                let text = body.get("output").and_then(Value::as_str).unwrap_or("");
+                match cat {
+                    "stdout" => self.debug.print(text, Line::Out),
+                    "stderr" => self.debug.print(text, Line::Err),
+                    "telemetry" | "important" => {}
+                    _ => self.debug.print(text, Line::Info),
+                }
+            }
+            "stopped" => {
+                let thread = body.get("threadId").and_then(Value::as_i64).unwrap_or(1);
+                if let Some(s) = self.debug.session.as_mut() {
+                    s.state = State::Paused(thread);
+                    // Run to Cursor reached (or another breakpoint): the temporary one goes.
+                    if let Some((p, _)) = s.temp.take() {
+                        self.send_breakpoints(&p, cx);
+                    }
+                }
+                if body.get("reason").and_then(Value::as_str) == Some("exception") {
+                    let d = body.get("description").or_else(|| body.get("text")).and_then(Value::as_str).unwrap_or("exception");
+                    self.debug.info(format!("Stopped on an exception: {d}"));
+                }
+                self.debug.tab = DebugTab::Debugger;
+                self.bottom = Some(BottomTool::Debug);
+                self.load_frames(thread, window, cx);
+            }
+            "continued" => self.set_running(cx),
+            "exited" => {
+                if let Some(s) = self.debug.session.as_mut() {
+                    s.exit_code = body.get("exitCode").and_then(Value::as_i64);
+                }
+            }
+            "terminated" => {
+                let code = self.debug.session.as_ref().and_then(|s| s.exit_code);
+                if self.debug.state() != Some(State::Ended) {
+                    self.debug.info(match code {
+                        Some(c) => format!("\nProcess finished with exit code {c}"),
+                        None => "\nProcess finished".into(),
+                    });
+                }
+                self.end_session(cx);
+                self.debug_request("disconnect", json!({}));
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+
+    fn load_frames(&mut self, thread: i64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(s) = &self.debug.session else { return };
+        let rx = s.client.request("stackTrace", json!({"threadId": thread, "startFrame": 0, "levels": 100}));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(v)) = rx.await else { return };
+            let frames = brisk_dap::parse_frames(&v);
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.debug.frames = frames;
+                this.select_frame(0, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Show a frame: its line in the editor, its variables.
+    pub(super) fn select_frame(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(f) = self.debug.frames.get(i).cloned() else { return };
+        self.debug.frame = i;
+        self.clear_exec_marks(cx);
+        if let Some(p) = f.path.clone().filter(|p| p.is_file()) {
+            let focus_back = self.debug.focus.is_focused(window);
+            self.open_file(&p, window, cx);
+            if let Some(ed) = self.active_editor().cloned() {
+                ed.update(cx, |e, cx| {
+                    e.exec_line = Some(f.line);
+                    e.go_to_line(f.line, cx);
+                });
+            }
+            self.debug.marked.push(p);
+            if focus_back {
+                window.focus(&self.debug.focus.clone());
+            }
+        }
+        self.debug.vars.clear();
+        let Some(s) = &self.debug.session else { return };
+        let rx = s.client.request("scopes", json!({"frameId": f.id}));
+        let client = s.client.clone();
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(v)) = rx.await else { return };
+            let scopes = brisk_dap::parse_scopes(&v);
+            // The first scope (locals) opens right away, like PyCharm's flat list.
+            let first = match scopes.first() {
+                Some(s) => client.request("variables", json!({"variablesReference": s.reference})).await.ok().and_then(Result::ok).map(|v| brisk_dap::parse_variables(&v)),
+                None => None,
+            };
+            let _ = this.update(cx, |this, cx| {
+                let mut rows = Vec::new();
+                for (k, s) in scopes.into_iter().enumerate() {
+                    let open = k == 0 && first.is_some();
+                    rows.push(VarRow { depth: 0, var: s, expanded: open });
+                    if open {
+                        rows.extend(first.clone().unwrap_or_default().into_iter().map(|v| VarRow { depth: 1, var: v, expanded: false }));
+                    }
+                }
+                this.debug.vars = rows;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Expand or collapse a variable row.
+    pub(super) fn toggle_var(&mut self, i: usize, cx: &mut Context<Self>) {
+        let Some(row) = self.debug.vars.get(i).cloned() else { return };
+        if row.var.reference <= 0 {
+            return;
+        }
+        if row.expanded {
+            let end = (i + 1..self.debug.vars.len()).find(|&j| self.debug.vars[j].depth <= row.depth).unwrap_or(self.debug.vars.len());
+            self.debug.vars.drain(i + 1..end);
+            self.debug.vars[i].expanded = false;
+            cx.notify();
+            return;
+        }
+        let Some(s) = &self.debug.session else { return };
+        let rx = s.client.request("variables", json!({"variablesReference": row.var.reference}));
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(v)) = rx.await else { return };
+            let kids = brisk_dap::parse_variables(&v);
+            let _ = this.update(cx, |this, cx| {
+                if this.debug.vars.get(i).map(|r| r.var.reference) != Some(row.var.reference) {
+                    return;
+                }
+                this.debug.vars[i].expanded = true;
+                let at = i + 1;
+                for (k, v) in kids.into_iter().enumerate() {
+                    this.debug.vars.insert(at + k, VarRow { depth: row.depth + 1, var: v, expanded: false });
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Enter in the console's input line: evaluate in the selected frame.
+    fn evaluate_input(&mut self, cx: &mut Context<Self>) {
+        let expr = std::mem::take(&mut self.debug.input);
+        if expr.trim().is_empty() {
+            return;
+        }
+        self.debug.history.retain(|h| *h != expr);
+        self.debug.history.push(expr.clone());
+        self.debug.history_pos = self.debug.history.len();
+        self.debug.print(&format!(">>> {expr}\n"), Line::Input);
+        let frame = self.debug.frames.get(self.debug.frame).map(|f| f.id);
+        let Some(s) = self.debug.session.as_ref().filter(|s| s.state != State::Ended) else {
+            self.debug.info("The debugger is not running");
+            return;
+        };
+        let mut args = json!({"expression": expr, "context": "repl"});
+        if let Some(f) = frame {
+            args["frameId"] = json!(f);
+        }
+        let rx = s.client.request("evaluate", args);
+        cx.spawn(async move |this, cx| {
+            let res = rx.await;
+            let _ = this.update(cx, |this, cx| {
+                match res {
+                    Ok(Ok(v)) => {
+                        let (r, _) = brisk_dap::parse_evaluate(&v);
+                        if !r.is_empty() {
+                            this.debug.print(&format!("{r}\n"), Line::Result);
+                        }
+                    }
+                    Ok(Err(e)) => this.debug.print(&format!("{e}\n"), Line::Err),
+                    Err(_) => {}
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Keys while the Debug window has focus: the console's input line.
+    pub(super) fn debug_key(&mut self, e: &gpui::KeyDownEvent, window: &Window, cx: &mut Context<Self>) -> bool {
+        if !self.debug.focus.is_focused(window) || self.debug.tab != DebugTab::Console {
+            return false;
+        }
+        let k = &e.keystroke;
+        if k.modifiers.control || k.modifiers.alt || k.modifiers.platform {
+            return false;
+        }
+        match k.key.as_str() {
+            "enter" => self.evaluate_input(cx),
+            "backspace" => {
+                self.debug.input.pop();
+            }
+            "escape" => self.debug.input.clear(),
+            "up" => {
+                if self.debug.history_pos > 0 {
+                    self.debug.history_pos -= 1;
+                    self.debug.input = self.debug.history[self.debug.history_pos].clone();
+                }
+            }
+            "down" => {
+                if self.debug.history_pos + 1 < self.debug.history.len() {
+                    self.debug.history_pos += 1;
+                    self.debug.input = self.debug.history[self.debug.history_pos].clone();
+                } else {
+                    self.debug.history_pos = self.debug.history.len();
+                    self.debug.input.clear();
+                }
+            }
+            _ => match k.key_char.as_deref() {
+                Some(t) if !t.chars().any(char::is_control) => self.debug.input.push_str(t),
+                _ => return false,
+            },
+        }
+        cx.notify();
+        true
+    }
+
+    // --- Debug window -------------------------------------------------------------------
+
+    pub(super) fn render_debug(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let d = &self.debug;
+        let state = d.state();
+        let paused = matches!(state, Some(State::Paused(_)));
+        let live = matches!(state, Some(State::Starting | State::Running | State::Paused(_)));
+        let title = match (&d.session, state) {
+            (Some(s), Some(State::Paused(_))) => {
+                let at = d.frames.get(d.frame).map(|f| format!(" at {}:{}", f.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), f.line + 1)).unwrap_or_default();
+                format!("{} — paused{at}", s.name)
+            }
+            (Some(s), Some(State::Running)) => format!("{} — running", s.name),
+            (Some(s), Some(State::Starting)) => format!("{} — starting debugpy…", s.name),
+            (Some(s), _) => format!("{} — finished", s.name),
+            (None, _) => "No debug session. Shift+F9 debugs the selected configuration, Ctrl+Shift+F9 the current file.".into(),
+        };
+        let tool = |id: &'static str, glyph: &'static str, tip: &'static str, on: bool, color: gpui::Hsla, action: Action, cx: &mut Context<Self>| {
+            div()
+                .id(id)
+                .w(px(26.))
+                .h(px(24.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(5.))
+                .text_color(if on { color } else { Theme::text_dim() })
+                .when(on, |x| x.cursor_pointer().hover(|s| s.bg(Theme::hover_row())))
+                .child(glyph)
+                .tooltip(move |_, cx| cx.new(|_| super::Tip(tip.into())).into())
+                .on_click(cx.listener(move |this, _, w, cx| {
+                    if on {
+                        this.dispatch(action, w, cx);
+                    }
+                }))
+        };
+        let green: gpui::Hsla = gpui::rgb(0x5fb865).into();
+        let toolbar = div()
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .px(px(6.))
+            .h(px(30.))
+            .border_b_1()
+            .border_color(Theme::divider())
+            .child(tool("dbg-resume", "▶", "Resume Program  F9", paused, green, Action::Resume, cx))
+            .child(tool("dbg-stop", "■", "Stop  Ctrl+F2", live, Theme::error(), Action::Stop, cx))
+            .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(Theme::divider()))
+            .child(tool("dbg-over", "↷", "Step Over  F8", paused, Theme::accent(), Action::StepOver, cx))
+            .child(tool("dbg-into", "↓", "Step Into  F7", paused, Theme::accent(), Action::StepInto, cx))
+            .child(tool("dbg-out", "↑", "Step Out  Shift+F8", paused, Theme::accent(), Action::StepOut, cx))
+            .child(tool("dbg-cursor", "⇥", "Run to Cursor  Alt+F9", paused, Theme::accent(), Action::RunToCursor, cx))
+            .child(tool("dbg-eval", "=", "Evaluate Expression  Alt+F8", paused, Theme::accent(), Action::EvaluateExpression, cx))
+            .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(Theme::divider()))
+            .child(tool("dbg-bps", "●", "View Breakpoints  Ctrl+Shift+F8", true, Theme::breakpoint(), Action::ViewBreakpoints, cx))
+            .child(div().pl(px(10.)).text_size(px(12.)).text_color(Theme::text_muted()).child(title));
+        let tab = |id: &'static str, label: &'static str, t: DebugTab, cur: DebugTab, cx: &mut Context<Self>| {
+            div()
+                .id(id)
+                .px(px(10.))
+                .h(px(26.))
+                .flex()
+                .items_center()
+                .cursor_pointer()
+                .text_color(if t == cur { Theme::text() } else { Theme::text_muted() })
+                .when(t == cur, |x| x.border_b_2().border_color(Theme::accent()))
+                .child(label)
+                .on_click(cx.listener(move |this, _, w, cx| {
+                    this.debug.tab = t;
+                    w.focus(&this.debug.focus.clone());
+                    cx.notify();
+                }))
+        };
+        let tabs = div().flex().px(px(6.)).child(tab("dbg-tab-dbg", "Debugger", DebugTab::Debugger, d.tab, cx)).child(tab("dbg-tab-con", "Console", DebugTab::Console, d.tab, cx));
+        let body: gpui::AnyElement = match d.tab {
+            DebugTab::Debugger => self.render_debugger_tab(cx),
+            DebugTab::Console => self.render_console_tab(window, cx),
+        };
+        div()
+            .id("debug-window")
+            .track_focus(&self.debug.focus)
+            .size_full()
+            .flex()
+            .flex_col()
+            .text_size(px(13.))
+            .child(toolbar)
+            .child(tabs)
+            .child(div().flex_1().min_h_0().border_t_1().border_color(Theme::divider()).child(body))
+            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, w, cx| {
+                w.focus(&this.debug.focus.clone());
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+
+    fn render_debugger_tab(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let d = &self.debug;
+        let frames = div()
+            .id("dbg-frames")
+            .w(px(300.))
+            .h_full()
+            .flex_shrink_0()
+            .overflow_y_scroll()
+            .border_r_1()
+            .border_color(Theme::divider())
+            .when(d.frames.is_empty(), |x| x.child(div().p(px(8.)).text_color(Theme::text_dim()).child(if d.paused_thread().is_some() { "Loading…" } else { "Frames appear when the program is paused" })))
+            .children(d.frames.iter().enumerate().map(|(i, f)| {
+                let file = f.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let mine = f.path.as_ref().is_some_and(|p| p.starts_with(&self.root));
+                div()
+                    .id(("dbg-frame", i))
+                    .h(px(22.))
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .cursor_pointer()
+                    .when(i == d.frame, |x| x.bg(Theme::selection_row()))
+                    .when(i != d.frame, |x| x.hover(|s| s.bg(Theme::hover_row())))
+                    .text_color(if mine { Theme::text() } else { Theme::text_muted() })
+                    .child(f.name.clone())
+                    .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(format!("{file}:{}", f.line + 1)))
+                    .on_click(cx.listener(move |this, _, w, cx| {
+                        this.select_frame(i, w, cx);
+                        cx.notify();
+                    }))
+            }));
+        let vars = div()
+            .id("dbg-vars")
+            .flex_1()
+            .h_full()
+            .overflow_y_scroll()
+            .font_family(MONO_FONT)
+            .text_size(px(12.5))
+            .children(d.vars.iter().enumerate().map(|(i, r)| {
+                let arrow = if r.var.reference > 0 { if r.expanded { "▾" } else { "▸" } } else { " " };
+                let scope = r.depth == 0;
+                div()
+                    .id(("dbg-var", i))
+                    .h(px(21.))
+                    .pl(px(8. + 16. * r.depth as f32))
+                    .pr(px(8.))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .when(r.var.reference > 0, |x| x.cursor_pointer())
+                    .hover(|s| s.bg(Theme::hover_row()))
+                    .child(div().w(px(12.)).text_color(Theme::text_dim()).child(arrow))
+                    .child(div().text_color(if scope { Theme::text_muted() } else { Theme::syntax(brisk_syntax::Highlight::Property) }).child(r.var.name.clone()))
+                    .when(!scope, |x| {
+                        x.child(div().text_color(Theme::text_dim()).child("="))
+                            .when(!r.var.type_name.is_empty(), |x| x.child(div().text_color(Theme::text_dim()).child(format!("{{{}}}", r.var.type_name))))
+                            .child(div().text_color(Theme::text()).child(r.var.value.chars().take(300).collect::<String>()))
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_var(i, cx)))
+            }));
+        div().size_full().flex().child(frames).child(vars).into_any_element()
+    }
+
+    fn render_console_tab(&mut self, window: &Window, _cx: &mut Context<Self>) -> gpui::AnyElement {
+        let d = &self.debug;
+        let focused = d.focus.is_focused(window);
+        let can_eval = d.paused_thread().is_some();
+        let lines = div()
+            .id("dbg-console")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&d.console_scroll)
+            .px(px(8.))
+            .py(px(4.))
+            .font_family(MONO_FONT)
+            .text_size(px(12.5))
+            .children(d.console.iter().map(|(t, k)| {
+                let color = match k {
+                    Line::Out => Theme::text(),
+                    Line::Err => Theme::error(),
+                    Line::Info => Theme::text_muted(),
+                    Line::Input => Theme::accent(),
+                    Line::Result => Theme::syntax(brisk_syntax::Highlight::String),
+                };
+                div().text_color(color).whitespace_nowrap().child(t.trim_end_matches('\n').to_string())
+            }));
+        let input = div()
+            .h(px(26.))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .border_t_1()
+            .border_color(Theme::divider())
+            .font_family(MONO_FONT)
+            .text_size(px(12.5))
+            .child(div().text_color(Theme::accent()).child(">>>"))
+            .child(if d.input.is_empty() && !focused {
+                div().text_color(Theme::text_dim()).child(if can_eval { "Evaluate an expression in the selected frame (Alt+F8)" } else { "Expressions can be evaluated while the program is paused" }).into_any_element()
+            } else {
+                div().flex().items_center().child(d.input.clone()).when(focused, |x| x.child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret()))).into_any_element()
+            });
+        div().size_full().flex().flex_col().child(lines).child(input).into_any_element()
+    }
+
+    // --- Smoke --------------------------------------------------------------------------
+
+    /// BRISK_SMOKE_DEBUG=<file.py>: breakpoint, debug, frames, variables, evaluate, steps,
+    /// run to cursor, conditional breakpoint, finish.
+    pub(super) fn debug_smoke(&mut self, file: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_file(&file, window, cx);
+        let Some(ed) = self.active_editor().cloned() else { return };
+        let line_of = |needle: &str, cx: &mut Context<Self>| ed.read(cx).buffer.text().lines().position(|l| l.contains(needle)).unwrap_or(0);
+        let bp_line = line_of("total = add(", cx);
+        ed.update(cx, |e, cx| {
+            e.set_breakpoints(&[]);
+            e.go_to_line(bp_line, cx);
+        });
+        self.dispatch(Action::ToggleBreakpoint, window, cx);
+        eprintln!("smoke-debug: ctrl-f8 on line {} -> {:?}", bp_line + 1, ed.read(cx).breakpoint_list().iter().map(|(l, _)| l + 1).collect::<Vec<_>>());
+        let ret_line = line_of("return a + b", cx);
+        let loop_line = line_of("acc +=", cx);
+        let print_line = line_of("print(\"total\"", cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let bg = cx.background_executor().clone();
+            let wait = |ms| bg.timer(std::time::Duration::from_millis(ms));
+            let state = |this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindowContext| this.update(cx, |t, _| t.debug.state()).ok().flatten();
+            // Wait until paused / ended.
+            macro_rules! until {
+                ($pred:expr) => {{
+                    let mut ok = false;
+                    for _ in 0..300 {
+                        wait(100).await;
+                        let s = state(&this, cx);
+                        if $pred(s) {
+                            ok = true;
+                            break;
+                        }
+                    }
+                    ok
+                }};
+            }
+            let paused = |s: Option<State>| matches!(s, Some(State::Paused(_)));
+            // Interpreters are discovered in the background at start.
+            for _ in 0..100 {
+                if this.update(cx, |t, _| t.runs.all.is_some()).unwrap_or(true) {
+                    break;
+                }
+                wait(100).await;
+            }
+            let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::DebugContext, w, cx));
+            let ok = until!(paused);
+            wait(400).await;
+            let _ = this.update_in(cx, |t, _, cx| {
+                let f: Vec<String> = t.debug.frames.iter().map(|f| format!("{}:{}", f.name, f.line + 1)).collect();
+                let v: Vec<String> = t.debug.vars.iter().map(|r| format!("{}{}={}", "  ".repeat(r.depth), r.var.name, r.var.value)).collect();
+                let exec = t.active_editor().and_then(|e| e.read(cx).exec_line).map(|l| l + 1);
+                eprintln!("smoke-debug: paused={ok} frames={f:?} exec_line={exec:?}");
+                eprintln!("smoke-debug: variables {v:?}");
+            });
+            if std::env::var_os("BRISK_SMOKE_DEBUG_HOLD").is_some() {
+                // Screenshots: stay paused at the first breakpoint.
+                let _ = this.update_in(cx, |t, _, cx| {
+                    if let Some(i) = t.debug.vars.iter().position(|r| r.var.name == "items") {
+                        t.toggle_var(i, cx);
+                    }
+                });
+                return;
+            }
+            // Expand a list variable.
+            let _ = this.update_in(cx, |t, _, cx| {
+                if let Some(i) = t.debug.vars.iter().position(|r| r.var.name == "items") {
+                    t.toggle_var(i, cx);
+                }
+            });
+            wait(600).await;
+            let _ = this.update_in(cx, |t, _, _| {
+                let v: Vec<String> = t.debug.vars.iter().filter(|r| r.depth >= 2).map(|r| format!("{}={}", r.var.name, r.var.value)).collect();
+                eprintln!("smoke-debug: expanded items -> {v:?}");
+            });
+            // Evaluate in the console.
+            let _ = this.update_in(cx, |t, w, cx| {
+                t.dispatch(Action::EvaluateExpression, w, cx);
+                t.debug.input = "sum(items) * 10".into();
+                t.evaluate_input(cx);
+            });
+            wait(800).await;
+            let _ = this.update_in(cx, |t, _, _| {
+                let tail: Vec<String> = t.debug.console.iter().rev().take(2).map(|(l, _)| l.trim_end().to_string()).collect();
+                eprintln!("smoke-debug: evaluate -> {tail:?}");
+            });
+            // F7 into add(), Shift+F8 out, F8 over.
+            let mut seen = Vec::new();
+            for a in [Action::StepInto, Action::StepOut, Action::StepOver] {
+                let _ = this.update_in(cx, |t, w, cx| t.dispatch(a, w, cx));
+                until!(paused);
+                wait(500).await;
+                if let Ok(s) = this.update(cx, |t, _| t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1))) {
+                    seen.push(s.unwrap_or_default());
+                }
+            }
+            eprintln!("smoke-debug: f7, shift-f8, f8 -> {seen:?} (return line {})", ret_line + 1);
+            // Conditional breakpoint inside the loop, then F9.
+            let _ = this.update_in(cx, |t, _, cx| {
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.set_breakpoint_condition(loop_line, Some("i == 3".into()), cx));
+                }
+            });
+            wait(300).await;
+            let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::Resume, w, cx));
+            until!(paused);
+            wait(500).await;
+            let _ = this.update_in(cx, |t, _, cx| {
+                let i = t.debug.vars.iter().find(|r| r.var.name == "i").map(|r| r.var.value.clone());
+                let at = t.debug.frames.first().map(|f| f.line + 1);
+                let marks: Vec<(usize, Option<String>, Option<bool>)> =
+                    t.active_editor().map(|e| e.read(cx).breakpoint_list().into_iter().map(|(l, b)| (l + 1, b.condition, b.verified)).collect()).unwrap_or_default();
+                eprintln!("smoke-debug: conditional bp -> line {at:?} i={i:?} breakpoints {marks:?}");
+            });
+            // Run to cursor at the print line (the loop breakpoint removed first).
+            let _ = this.update_in(cx, |t, w, cx| {
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| {
+                        e.toggle_breakpoint(loop_line, cx);
+                        e.go_to_line(print_line, cx);
+                    });
+                }
+                t.dispatch(Action::RunToCursor, w, cx);
+            });
+            until!(paused);
+            wait(500).await;
+            let _ = this.update_in(cx, |t, _, _| eprintln!("smoke-debug: run to cursor -> {:?}", t.debug.frames.first().map(|f| f.line + 1)));
+            let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::Resume, w, cx));
+            let ended = until!(|s: Option<State>| s == Some(State::Ended));
+            wait(300).await;
+            let _ = this.update_in(cx, |t, _, cx| {
+                let out: Vec<String> = t.debug.console.iter().filter(|(_, k)| matches!(k, Line::Out | Line::Info)).map(|(l, _)| l.trim_end().to_string()).collect();
+                let exec = t.active_editor().and_then(|e| e.read(cx).exec_line);
+                eprintln!("smoke-debug: finished={ended} exec_line={exec:?} console tail {:?}", out.iter().rev().take(3).collect::<Vec<_>>());
+                eprintln!("smoke-debug: stored -> {}", std::fs::read_to_string(store_path()).map(|s| s.contains("dbg_main.py")).unwrap_or(false));
+                eprintln!("smoke-debug: done");
+                cx.quit();
+            });
+        })
+        .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn launch_from_command() {
+        let cmd = brisk_run::Command { program: "py".into(), args: vec!["-X".into(), "utf8".into(), "-m".into(), "pkg.main".into(), "--n".into(), "3".into()], cwd: "c".into(), env: HashMap::new() };
+        let l = launch_for(&cmd);
+        // "-X utf8": the value of an option is not the target.
+        assert!(l.module);
+        assert_eq!(l.target, "pkg.main");
+        assert_eq!(l.args, vec!["--n", "3"]);
+        let cmd = brisk_run::Command { program: "py".into(), args: vec!["C:/p/a.py".into(), "x".into()], cwd: "c".into(), env: HashMap::new() };
+        let l = launch_for(&cmd);
+        assert!(!l.module);
+        assert_eq!((l.target.as_str(), l.args.clone()), ("C:/p/a.py", vec!["x".to_string()]));
+    }
+}

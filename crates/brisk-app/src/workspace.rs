@@ -3,6 +3,7 @@
 
 mod bookmarks_ui;
 mod db_ui;
+mod debug_ui;
 mod disk_ui;
 mod edit2_smoke;
 mod edit_smoke;
@@ -71,7 +72,7 @@ impl BottomTool {
         match self {
             BottomTool::Terminal => "",
             BottomTool::Run => "Nothing is running. Run a file with Ctrl+Shift+F10, the selected configuration with Shift+F10.",
-            BottomTool::Debug => "Stage 2: debugpy.",
+            BottomTool::Debug => "Shift+F9 debugs the selected configuration, Ctrl+Shift+F9 the current file.",
             BottomTool::Problems => "Stage 2: ruff + ty diagnostics.",
             BottomTool::Git => "",
             BottomTool::Services => "Stage 5: Docker and databases.",
@@ -115,6 +116,10 @@ enum PopupKind {
     PasteHistory,
     /// Show Local History.
     LocalHistory,
+    /// A breakpoint's condition.
+    BreakpointCondition,
+    /// View Breakpoints.
+    Breakpoints,
 }
 
 #[derive(Clone)]
@@ -189,6 +194,9 @@ enum Target {
     Clip(usize),
     /// A Local History revision: file and time (ms).
     History(PathBuf, u64),
+    /// Set the edited breakpoint's condition (empty: none).
+    BpCondition(String),
+    BpRemove,
 }
 
 #[derive(Clone)]
@@ -233,6 +241,9 @@ pub struct Workspace {
     toast_gen: u64,
     find: find_ui::Find,
     db: db_ui::Db,
+    debug: debug_ui::Debug,
+    /// The breakpoint whose condition the popup edits.
+    debug_edit: Option<(Entity<Editor>, usize)>,
     settings_dialog: Option<settings_ui::SettingsDialog>,
     recent: Vec<PathBuf>,
     /// Bookmarks of files that are not open.
@@ -299,6 +310,10 @@ impl Workspace {
                 cx.notify();
             });
         }
+        if let Some(f) = std::env::var_os("BRISK_SMOKE_DEBUG") {
+            let f = PathBuf::from(f);
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.debug_smoke(f, window, cx));
+        }
         if std::env::var_os("BRISK_SMOKE_SETTINGS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.settings_smoke(window, cx));
         }
@@ -360,6 +375,7 @@ impl Workspace {
 
         window.focus(&tree_focus);
         let saved_bookmarks = bookmarks_ui::load(&root);
+        let debug = debug_ui::Debug::new(&root, cx);
         cx.defer_in(window, |this: &mut Self, window, cx| this.start_disk_poll(window, cx));
         // Closing the window saves everything first (PyCharm never asks).
         let me = cx.entity().downgrade();
@@ -429,6 +445,8 @@ impl Workspace {
             toast_gen: 0,
             find: find_ui::Find::new(),
             db,
+            debug,
+            debug_edit: None,
             recent: Vec::new(),
             bookmarks: saved_bookmarks,
             structure: Vec::new(),
@@ -542,6 +560,7 @@ impl Workspace {
             self.load_vcs_base(ed.clone(), cx);
             self.watch_editor(&ed, window, cx);
             self.adopt_bookmarks(&ed, cx);
+            self.adopt_breakpoints(&ed, cx);
             self.add_tab(Tab::Editor(ed));
         }
         if let Some(e) = self.active_editor() {
@@ -582,6 +601,7 @@ impl Workspace {
             }
             let e = e.clone();
             self.stash_bookmarks(&e, cx);
+            self.stash_breakpoints(&e, cx);
         }
         self.tabs.remove(i);
         if self.tabs.is_empty() && self.split.is_some() {
@@ -744,6 +764,10 @@ impl Workspace {
         }
         if self.popup.is_some() {
             self.popup_key(e, window, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if self.popup.is_none() && self.debug_key(e, window, cx) {
             cx.stop_propagation();
             return;
         }
@@ -938,6 +962,9 @@ impl Workspace {
                 }
                 self.status = "Cancelling the running statement…".into();
             }
+            A::Stop if self.debug.session.as_ref().is_some_and(|s| s.state != debug_ui::State::Ended) => {
+                self.debug_action(action, window, cx);
+            }
             A::Stop => self.run_action(action, window, cx),
             A::Copy if self.focused_grid(window, cx).is_some() => {
                 if let Some(g) = self.focused_grid(window, cx) {
@@ -947,6 +974,9 @@ impl Workspace {
             A::ToggleFindWindow => self.toggle_find_window(window, cx),
             A::PasteFromHistory if self.focused_editor(window, cx).is_some() => self.open_popup(PopupKind::PasteHistory),
             A::ShowLocalHistory => self.show_local_history(cx),
+            A::ToggleBreakpoint | A::ViewBreakpoints | A::Debug | A::DebugContext | A::Resume | A::StepOver | A::StepInto | A::StepOut | A::RunToCursor | A::EvaluateExpression => {
+                self.debug_action(action, window, cx);
+            }
             A::ToggleBookmark | A::ToggleBookmarkWithMnemonic | A::ShowBookmarks | A::FileStructurePopup => {
                 self.bookmark_action(action, window, cx);
             }
@@ -1197,6 +1227,8 @@ impl Workspace {
             PopupKind::FileStructure | PopupKind::Bookmarks | PopupKind::LocalHistory => self.structure_items(&q),
             PopupKind::BookmarkMnemonic => self.mnemonic_items(&q),
             PopupKind::PasteHistory => clip_items(&q),
+            PopupKind::BreakpointCondition => self.condition_items(&q),
+            PopupKind::Breakpoints => self.structure_items(&q),
             PopupKind::SearchEverywhere(SeTab::Actions) | PopupKind::FindAction => self.action_items(&q, 50),
             PopupKind::RecentFiles => {
                 let ql = q.to_lowercase();
@@ -1280,6 +1312,7 @@ impl Workspace {
                     Some(Target::Bookmark(path, line)) => self.open_symbol(path, line, 0, window, cx),
                     Some(Target::Mnemonic(c)) => self.pick_mnemonic(c, window, cx),
                     Some(Target::History(path, at)) => self.history_diff(path, at, window, cx),
+                    Some(t @ (Target::BpCondition(_) | Target::BpRemove)) => self.pick_condition(t, window, cx),
                     Some(Target::Clip(i)) => {
                         self.focus_editor(window, cx);
                         if let (Some(t), Some(ed)) = (crate::editor::clipboard_history().get(i).cloned(), self.active_editor().cloned()) {
@@ -1744,6 +1777,8 @@ impl Workspace {
             PopupKind::BookmarkMnemonic => ("Add Bookmark with Mnemonic", "Type a digit or letter, then Enter"),
             PopupKind::PasteHistory => ("Paste from History", "Type to filter"),
             PopupKind::LocalHistory => ("Local History", "Enter: show diff · Ctrl+Enter: revert"),
+            PopupKind::BreakpointCondition => ("Breakpoint Condition", "Python expression, e.g. i == 3"),
+            PopupKind::Breakpoints => ("Breakpoints", "Type to filter"),
             PopupKind::FileName | PopupKind::FileDelete => match &self.file_op {
                 Some(op) => (op.title(), op.placeholder()),
                 None => ("", ""),
@@ -1879,6 +1914,7 @@ impl Workspace {
                                         Target::Bookmark(..) | Target::Mnemonic(_) => ("▮", Theme::bookmark()),
                                         Target::Clip(_) => ("¶", Theme::text_muted()),
                                         Target::History(..) => ("◷", Theme::text_muted()),
+                                        Target::BpCondition(_) | Target::BpRemove => ("●", Theme::breakpoint()),
                                     };
                                     div()
                                         .id(("item", i))
@@ -1968,6 +2004,7 @@ impl Render for Workspace {
         let bottom_h = match self.bottom {
             Some(BottomTool::Git) => 320.,
             Some(BottomTool::Services) => 280.,
+            Some(BottomTool::Debug) => 300.,
             _ => 240.,
         };
         let right = self.db.open.then(|| self.render_database(cx));
@@ -1977,6 +2014,7 @@ impl Render for Workspace {
             (BottomTool::Git, _) => self.render_git_log(cx),
             (BottomTool::Find, _) => self.render_find_window(cx),
             (BottomTool::Problems, _) => self.render_problems(cx),
+            (BottomTool::Debug, _) => self.render_debug(window, cx),
             (BottomTool::Services, _) => self.render_services(cx),
             _ => Self::render_placeholder(b.title(), b.stage()),
         });

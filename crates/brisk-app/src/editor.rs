@@ -16,6 +16,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 mod bookmarks;
+pub mod breakpoints;
 mod select;
 pub use select::{clipboard_history, remember_clip};
 mod disk;
@@ -104,6 +105,9 @@ pub struct Editor {
     folds: fold::Folds,
     /// F11 / Ctrl+F11 bookmarks.
     bookmarks: bookmarks::Bookmarks,
+    breakpoints: breakpoints::Breakpoints,
+    /// The debugger is paused on this line (its top frame, or the frame picked in Debug).
+    pub exec_line: Option<usize>,
     sel_stack: select::SelStack,
     /// Ctrl+wheel distance not yet turned into a font size step.
     zoom_acc: f32,
@@ -140,6 +144,10 @@ pub enum EditorEvent {
     CtrlClick(usize),
     /// Right click at this window position: show the context menu.
     ContextMenu(Point<Pixels>),
+    /// A breakpoint was added, removed or changed.
+    BreakpointsChanged,
+    /// Right click on the breakpoint of this line: edit its condition.
+    EditBreakpoint(usize),
 }
 
 impl gpui::EventEmitter<EditorEvent> for Editor {}
@@ -244,6 +252,8 @@ impl Editor {
             is_field: false,
             folds: Default::default(),
             bookmarks: Default::default(),
+            breakpoints: Default::default(),
+            exec_line: None,
             sel_stack: Default::default(),
             zoom_acc: 0.0,
             editorconfig,
@@ -296,6 +306,8 @@ impl Editor {
             is_field: false,
             folds: Default::default(),
             bookmarks: Default::default(),
+            breakpoints: Default::default(),
+            exec_line: None,
             sel_stack: Default::default(),
             zoom_acc: 0.0,
             editorconfig: Default::default(),
@@ -853,6 +865,9 @@ impl Editor {
             cx.notify();
             return;
         }
+        if e.button == MouseButton::Left && self.breakpoint_click(e.position, cx) {
+            return;
+        }
         let Some(pos) = self.pos_for_point(e.position) else { return };
         if e.modifiers.control && !e.modifiers.alt && !e.modifiers.shift && e.click_count == 1 {
             cx.emit(EditorEvent::CtrlClick(pos));
@@ -936,6 +951,11 @@ impl Editor {
     fn on_right_down(&mut self, e: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus);
         self.close_insight();
+        if let Some(line) = self.breakpoint_at_point(e.position) {
+            cx.emit(EditorEvent::EditBreakpoint(line));
+            cx.notify();
+            return;
+        }
         if let Some(pos) = self.pos_for_point(e.position) {
             let inside = self.buffer.selections.iter().any(|s| !s.is_empty() && s.range().contains(&pos));
             if !inside {
@@ -1223,6 +1243,8 @@ struct Prepaint {
     placeholder: ShapedLine,
     /// Bookmarks on screen: (row index, mnemonic shaped).
     bookmark_marks: Vec<(usize, Option<ShapedLine>)>,
+    /// Breakpoints on screen: (row index, has a condition, verified by the debugger).
+    breakpoint_marks: Vec<(usize, bool, Option<bool>)>,
     gutter_w: Pixels,
     char_w: Pixels,
     marks: marks::CaretMarks,
@@ -1379,7 +1401,15 @@ impl Element for EditorElement {
                 }
             }
         }
-        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, gutter_w, char_w, marks }
+        let mut breakpoint_marks = Vec::new();
+        if ed.show_gutter {
+            for (line, bp) in ed.breakpoint_list() {
+                if let Ok(i) = rows.binary_search(&line) {
+                    breakpoint_marks.push((i, bp.condition.is_some(), bp.verified));
+                }
+            }
+        }
+        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, gutter_w, char_w, marks }
     }
 
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), pp: &mut Prepaint, window: &mut Window, cx: &mut App) {
@@ -1392,6 +1422,7 @@ impl Element for EditorElement {
         let lh = px(line_height());
         let text_left = bounds.left() + pp.gutter_w + px(8.);
         let text_x = text_left - px(ed.scroll_x);
+        let exec_line = ed.exec_line;
         let y_of = |l: usize| bounds.top() + px(ed.row_of(l) as f32 * line_height() - ed.scroll_y);
         let rows = &pp.rows;
         let first = rows.first().copied().unwrap_or(0);
@@ -1418,6 +1449,10 @@ impl Element for EditorElement {
                     under.push(fill(Bounds::new(point(bounds.left(), y_of(l)), size(bounds.size.width, lh)), Theme::current_line()));
                 }
             }
+        }
+        // The debugger's execution point.
+        if let Some(l) = ed.exec_line.filter(|l| idx_of(*l).is_some()) {
+            under.push(fill(Bounds::new(point(bounds.left(), y_of(l)), size(bounds.size.width, lh)), Theme::exec_line()));
         }
         // Indent guides: one at each enclosing indentation level (columns 0, 4, 8, ...).
         let unit = b.indent_unit.chars().count().max(1);
@@ -1607,6 +1642,29 @@ impl Element for EditorElement {
             for (n, y) in pp.numbers.iter().zip(&line_ys) {
                 let x = bounds.left() + pp.gutter_w - px(30.) - n.width;
                 let _ = n.paint(point(x, *y), lh, window, cx);
+            }
+            for &(i, conditional, verified) in &pp.breakpoint_marks {
+                // A red circle over the line number (hollow when the debugger cannot stop there).
+                let y = line_ys[i];
+                let d = (lh - px(6.)).min(px(13.));
+                let x = bounds.left() + pp.gutter_w - px(30.) - d - px(1.);
+                let circle = Bounds::new(point(x, y + (lh - d) / 2.), size(d, d));
+                if verified == Some(false) {
+                    window.paint_quad(gpui::outline(circle, Theme::breakpoint(), gpui::BorderStyle::Solid).corner_radii(d / 2.));
+                } else {
+                    window.paint_quad(fill(circle, Theme::breakpoint()).corner_radii(d / 2.));
+                }
+                if conditional {
+                    let q = Bounds::new(point(x + d * 0.3, y + (lh - d) / 2. + d * 0.3), size(d * 0.4, d * 0.4));
+                    window.paint_quad(fill(q, Theme::editor_bg()).corner_radii(d * 0.2));
+                }
+            }
+            if let Some(i) = exec_line.and_then(|l| idx_of(l)) {
+                // ▶ arrow at the bookmark slot.
+                let y = line_ys[i];
+                let x = bounds.left() + px(5.);
+                let h = lh - px(8.);
+                window.paint_quad(fill(Bounds::new(point(x, y + px(4.)), size(px(9.), h)), Theme::accent()).corner_radii(px(2.)));
             }
             for (i, m) in &pp.bookmark_marks {
                 let y = line_ys[*i];

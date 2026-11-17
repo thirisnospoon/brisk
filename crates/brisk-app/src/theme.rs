@@ -69,6 +69,10 @@ impl Theme {
     /// Bookmark marks in the gutter.
     pub fn bookmark() -> Hsla { pick(0x5f8dd3, 0x3574f0) }
     pub fn error() -> Hsla { pick(0xe55765, 0xd5301f) }
+    /// Breakpoint circles in the gutter.
+    pub fn breakpoint() -> Hsla { pick(0xdb5c5c, 0xe55765) }
+    /// The line where the debugger is paused.
+    pub fn exec_line() -> Hsla { pick(0x2d4670, 0xc7dbff) }
     /// Lane colors in the Git log graph.
     pub fn graph_lane(i: usize) -> Hsla {
         const C: [u32; 8] = [0x6c9be8, 0x5fb865, 0xe0a85a, 0xc77dbb, 0x2aacb8, 0xe55765, 0xb3ae60, 0x9876aa];

@@ -691,6 +691,7 @@ dependencies = [
 name = "brisk-app"
 version = "0.1.0"
 dependencies = [
+ "brisk-dap",
  "brisk-db",
  "brisk-git",
  "brisk-keymap",
@@ -705,6 +706,14 @@ dependencies = [
  "embed-resource",
  "futures",
  "gpui",
+ "serde_json",
+]
+
+[[package]]
+name = "brisk-dap"
+version = "0.1.0"
+dependencies = [
+ "futures",
  "serde_json",
 ]
 

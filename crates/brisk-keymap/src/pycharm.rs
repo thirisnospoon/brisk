@@ -4,7 +4,6 @@ use crate::{Action as A, Keymap};
 
 const ED: Option<&str> = Some("Editor");
 const PV: Option<&str> = Some("ProjectView");
-const DBG: Option<&str> = Some("Debugger");
 
 pub fn pycharm_keymap() -> Keymap {
     let mut k = Keymap::default();
@@ -164,7 +163,7 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("f7", A::StepInto, None);
     k.bind("shift-f8", A::StepOut, None);
     k.bind("f9", A::Resume, None);
-    k.bind("alt-f9", A::RunToCursor, DBG);
+    k.bind("alt-f9", A::RunToCursor, None);
     k.bind("alt-f8", A::EvaluateExpression, None);
 
     // --- Git ----------------------------------------------------------------

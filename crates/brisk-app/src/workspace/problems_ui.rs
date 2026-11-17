@@ -107,6 +107,8 @@ impl Workspace {
                 cx.notify();
             }
             EditorEvent::ContextMenu(at) => this.open_editor_menu(ed.clone(), *at, cx),
+            EditorEvent::BreakpointsChanged => this.breakpoints_changed(ed.clone(), cx),
+            EditorEvent::EditBreakpoint(line) => this.edit_breakpoint(ed.clone(), *line, cx),
             ev => this.lsp_editor_event(ed.clone(), ev, window, cx),
         })
         .detach();
