@@ -161,8 +161,11 @@ impl Editor {
     pub fn open(path: &Path, cx: &mut Context<Self>) -> Self {
         let (text, encoding, err) = disk::load(path);
         let mut buffer = Buffer::new(&text);
-        let lang = Lang::from_path(path);
-        if lang.is_none() {
+        // Very large files: plain text (a full reparse per keystroke would lag).
+        let lang = Lang::from_path(path).filter(|_| text.len() <= 3 * 1024 * 1024);
+        if let Some(l) = lang {
+            buffer.line_comment = l.line_comment().map(Into::into);
+        } else {
             // Line comment prefix for common non-Python files.
             buffer.line_comment = match path.extension().and_then(|e| e.to_str()) {
                 Some("js" | "ts" | "tsx" | "jsx" | "rs" | "go" | "java" | "c" | "cpp" | "h" | "css" | "scss") => Some("//".into()),
@@ -487,7 +490,7 @@ impl Editor {
 
     pub fn language_name(&self) -> &'static str {
         match self.syntax.as_ref().map(|s| s.lang()) {
-            Some(Lang::Python) => "Python",
+            Some(l) => l.name(),
             None => match self.path.as_ref().and_then(|p| p.extension()).and_then(|e| e.to_str()) {
                 Some("md") => "Markdown",
                 Some("toml") => "TOML",
