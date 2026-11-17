@@ -16,6 +16,8 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 mod bookmarks;
+mod select;
+pub use select::{clipboard_history, remember_clip};
 mod disk;
 mod find;
 mod fold;
@@ -100,6 +102,7 @@ pub struct Editor {
     folds: fold::Folds,
     /// F11 / Ctrl+F11 bookmarks.
     bookmarks: bookmarks::Bookmarks,
+    sel_stack: select::SelStack,
     /// The mouse is over the gutter: show the fold markers.
     gutter_hover: bool,
     /// The file's encoding (kept on save).
@@ -226,6 +229,7 @@ impl Editor {
             is_field: false,
             folds: Default::default(),
             bookmarks: Default::default(),
+            sel_stack: Default::default(),
             gutter_hover: false,
             encoding,
             encoding_note: None,
@@ -275,6 +279,7 @@ impl Editor {
             is_field: false,
             folds: Default::default(),
             bookmarks: Default::default(),
+            sel_stack: Default::default(),
             gutter_hover: false,
             encoding: Default::default(),
             encoding_note: None,
@@ -737,6 +742,7 @@ impl Editor {
                 } else {
                     b.selected_text()
                 };
+                remember_clip(&text);
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
                 if action == A::Cut {
                     if whole_line {
@@ -749,6 +755,7 @@ impl Editor {
             A::Paste => {
                 if let Some(t) = cx.read_from_clipboard().and_then(|c| c.text()) {
                     let t = t.replace("\r\n", "\n");
+                    remember_clip(&t);
                     let line_paste = t.ends_with('\n') && t.matches('\n').count() == 1 && b.selections.iter().all(|s| s.is_empty());
                     if line_paste {
                         // Whole-line paste goes above the current line, like PyCharm.
@@ -761,15 +768,11 @@ impl Editor {
                 }
             }
             A::ExtendSelection => {
-                let p = b.primary();
-                let r = if p.is_empty() { b.word_range_at(p.head) } else {
-                    let (l1, _) = b.pos_to_line_col(p.range().start);
-                    let (l2, _) = b.pos_to_line_col(p.range().end);
-                    if p.range() != (b.line_start(l1)..b.line_end(l2)) { b.line_start(l1)..b.line_end(l2) } else { 0..b.len_chars() }
-                };
-                b.selections = vec![Selection { anchor: r.start, head: r.end, goal_col: None }];
+                self.extend_selection();
+                keep_scroll = true;
             }
-            A::ShrinkSelection => b.collapse_selections(),
+            A::ShrinkSelection => self.shrink_selection(),
+            A::CloneCaretAbove | A::CloneCaretBelow => self.clone_caret(action == A::CloneCaretAbove),
             _ => return false,
         }
         match action {

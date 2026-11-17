@@ -182,6 +182,54 @@ impl Workspace {
         let back = self.active_editor().map(|e| e.update(cx, |e, _| e.bookmark_lines()));
         eprintln!("smoke-edit2: reopened -> {back:?}, saved file has project: {}", std::fs::read_to_string(brisk_db::config_dir().join("bookmarks.json")).map(|s| s.contains("stage2.py")).unwrap_or(false));
 
+        // --- Extend / Shrink Selection, Clone Caret, Paste from History ---
+        if let Some(ed) = self.active_editor().cloned() {
+            ed.update(cx, |e, _| e.buffer.set_caret(e.buffer.line_col_to_pos(19, 15), false));
+            let mut grown = Vec::new();
+            for _ in 0..5 {
+                self.dispatch(Action::ExtendSelection, window, cx);
+                grown.push(ed.read(cx).buffer.selected_text());
+            }
+            eprintln!("smoke-edit2: ctrl-w x5 -> {grown:?}");
+            let mut shrunk = Vec::new();
+            for _ in 0..2 {
+                self.dispatch(Action::ShrinkSelection, window, cx);
+                shrunk.push(ed.read(cx).buffer.selected_text());
+            }
+            eprintln!("smoke-edit2: ctrl-shift-w x2 -> {shrunk:?}");
+
+            ed.update(cx, |e, _| e.buffer.set_caret(e.buffer.line_col_to_pos(12, 8), false));
+            let mods = |control: bool| gpui::ModifiersChangedEvent { modifiers: gpui::Modifiers { control, ..Default::default() }, ..Default::default() };
+            self.on_modifiers(&mods(true), window, cx);
+            self.on_modifiers(&mods(false), window, cx);
+            self.on_modifiers(&mods(true), window, cx);
+            self.smoke_press("ctrl-up ctrl-up", window, cx);
+            self.on_modifiers(&mods(false), window, cx);
+            eprintln!("smoke-edit2: ctrl, ctrl+up x2 -> {:?}", ed.read(cx).carets_for_smoke());
+            self.on_modifiers(&mods(true), window, cx);
+            self.smoke_press("ctrl-up", window, cx);
+            self.on_modifiers(&mods(false), window, cx);
+            eprintln!("smoke-edit2: single ctrl+up (no clone) -> carets {}", ed.read(cx).carets_for_smoke().len());
+            self.dispatch(Action::CloneCaretBelow, window, cx);
+            eprintln!("smoke-edit2: clone caret below -> {:?}", ed.read(cx).carets_for_smoke());
+
+            for (l, a, b) in [(18usize, 4usize, 8usize), (5, 8, 16)] {
+                ed.update(cx, |e, _| {
+                    e.buffer.set_caret(e.buffer.line_col_to_pos(l, a), false);
+                    e.buffer.set_caret(e.buffer.line_col_to_pos(l, b), true);
+                });
+                self.dispatch(Action::Copy, window, cx);
+            }
+            ed.update(cx, |e, _| e.buffer.set_caret(e.buffer.line_start(20.min(e.buffer.len_lines() - 1)), false));
+            self.dispatch(Action::PasteFromHistory, window, cx);
+            eprintln!("smoke-edit2: paste from history -> {}", self.smoke_popup());
+            self.smoke_press("down enter", window, cx);
+            let last = ed.read(cx).buffer.text();
+            eprintln!("smoke-edit2: picked the 2nd entry -> file ends with {:?}", &last[last.len().saturating_sub(12)..]);
+            self.dispatch(Action::Undo, window, cx);
+            eprintln!("smoke-edit2: undo -> back to source: {}", ed.read(cx).buffer.text() == SRC);
+        }
+
         // --- Tabs and split ---
         let third = self.root.join("third.py");
         let _ = std::fs::write(&third, "x = 3

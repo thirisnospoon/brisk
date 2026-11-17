@@ -373,6 +373,19 @@ impl SyntaxTree {
         None
     }
 
+    /// Extend Selection: the smallest node that strictly contains `bytes` (byte range).
+    pub fn enclosing_range(&self, bytes: Range<usize>) -> Option<Range<usize>> {
+        let tree = self.tree.as_ref()?;
+        let mut node = tree.root_node().descendant_for_byte_range(bytes.start, bytes.end)?;
+        loop {
+            let r = node.byte_range();
+            if r.start <= bytes.start && bytes.end <= r.end && r != bytes {
+                return Some(r);
+            }
+            node = node.parent()?;
+        }
+    }
+
     /// The identifier token covering `byte` (for highlighting its other occurrences).
     pub fn identifier_at(&self, byte: usize) -> Option<Range<usize>> {
         let tree = self.tree.as_ref()?;
@@ -597,6 +610,24 @@ foo(1);", "'a'", Highlight::String),
         let a = src.find('a').unwrap();
         assert_eq!(s.identifier_at(a), Some(a..a + 1));
         assert_eq!(s.identifier_at(src.find('"').unwrap() + 1), None);
+    }
+
+    #[test]
+    fn extend_selection_ranges() {
+        let src = "x = f(a + b, 2)
+";
+        let mut s = SyntaxTree::new(Lang::Python);
+        s.parse(src);
+        let a = src.find('a').unwrap();
+        let mut r = a..a + 1;
+        let mut seen = Vec::new();
+        while let Some(n) = s.enclosing_range(r.clone()) {
+            seen.push(src[n.clone()].to_string());
+            r = n;
+        }
+        assert_eq!(seen[0], "a + b");
+        assert!(seen.contains(&"(a + b, 2)".to_string()), "{seen:?}");
+        assert!(seen.contains(&"f(a + b, 2)".to_string()), "{seen:?}");
     }
 
     #[test]

@@ -109,6 +109,8 @@ enum PopupKind {
     Bookmarks,
     /// Ctrl+F11: pick a digit or letter.
     BookmarkMnemonic,
+    /// Ctrl+Shift+V.
+    PasteHistory,
 }
 
 #[derive(Clone)]
@@ -179,6 +181,8 @@ enum Target {
     Bookmark(PathBuf, usize),
     /// Ctrl+F11: set a bookmark with this mnemonic.
     Mnemonic(char),
+    /// Paste from History: entry index.
+    Clip(usize),
 }
 
 #[derive(Clone)]
@@ -243,6 +247,11 @@ pub struct Workspace {
     focus: FocusHandle,
     tree_focus: FocusHandle,
     shift_alone: bool,
+    /// Double Ctrl ("Ctrl, Ctrl+Up"): when Ctrl was last tapped alone, whether it is held now
+    /// alone, and whether this hold is the second tap (arrows clone the caret).
+    ctrl_tap: Option<Instant>,
+    ctrl_alone: bool,
+    ctrl_clone: bool,
     status: String,
     started: Instant,
 }
@@ -413,6 +422,9 @@ impl Workspace {
             focus,
             tree_focus,
             shift_alone: false,
+            ctrl_tap: None,
+            ctrl_alone: false,
+            ctrl_clone: false,
             status: "Indexing…".into(),
             started: Instant::now(),
         }
@@ -672,6 +684,19 @@ impl Workspace {
 
     fn on_key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.shift_alone = false;
+        self.ctrl_alone = false;
+        self.ctrl_tap = None;
+        if self.ctrl_clone && self.popup.is_none() && matches!(e.keystroke.key.as_str(), "up" | "down") {
+            let m = e.keystroke.modifiers;
+            if m.control && !m.shift && !m.alt && !m.platform {
+                if let Some(ed) = self.focused_editor(window, cx) {
+                    let a = if e.keystroke.key == "up" { Action::CloneCaretAbove } else { Action::CloneCaretBelow };
+                    ed.update(cx, |ed, cx| ed.perform(a, window, cx));
+                    cx.stop_propagation();
+                    return;
+                }
+            }
+        }
         if self.menu.is_some() {
             if !e.keystroke.modifiers.modified() || e.keystroke.key == "escape" {
                 self.menu_key(e, window, cx);
@@ -805,6 +830,7 @@ impl Workspace {
 
     fn on_modifiers(&mut self, e: &ModifiersChangedEvent, window: &mut Window, cx: &mut Context<Self>) {
         let m = e.modifiers;
+        self.track_ctrl(m);
         let only_shift = m.shift && !m.control && !m.alt && !m.platform;
         if only_shift {
             self.shift_alone = true;
@@ -892,6 +918,7 @@ impl Workspace {
                 }
             }
             A::ToggleFindWindow => self.toggle_find_window(window, cx),
+            A::PasteFromHistory if self.focused_editor(window, cx).is_some() => self.open_popup(PopupKind::PasteHistory),
             A::ToggleBookmark | A::ToggleBookmarkWithMnemonic | A::ShowBookmarks | A::FileStructurePopup => {
                 self.bookmark_action(action, window, cx);
             }
@@ -1138,6 +1165,7 @@ impl Workspace {
             PopupKind::FileName | PopupKind::FileDelete => self.file_op_items(&q),
             PopupKind::FileStructure | PopupKind::Bookmarks => self.structure_items(&q),
             PopupKind::BookmarkMnemonic => self.mnemonic_items(&q),
+            PopupKind::PasteHistory => clip_items(&q),
             PopupKind::SearchEverywhere(SeTab::Actions) | PopupKind::FindAction => self.action_items(&q, 50),
             PopupKind::RecentFiles => {
                 let ql = q.to_lowercase();
@@ -1214,6 +1242,12 @@ impl Workspace {
                     Some(Target::FileDo(t)) => self.run_file_op(t, window, cx),
                     Some(Target::Bookmark(path, line)) => self.open_symbol(path, line, 0, window, cx),
                     Some(Target::Mnemonic(c)) => self.pick_mnemonic(c, window, cx),
+                    Some(Target::Clip(i)) => {
+                        self.focus_editor(window, cx);
+                        if let (Some(t), Some(ed)) = (crate::editor::clipboard_history().get(i).cloned(), self.active_editor().cloned()) {
+                            ed.update(cx, |e, cx| e.paste_text(&t, cx));
+                        }
+                    }
                     None => self.focus_editor(window, cx),
                 }
             }
@@ -1669,6 +1703,7 @@ impl Workspace {
             PopupKind::FileStructure => ("File Structure", "Type to filter"),
             PopupKind::Bookmarks => ("Bookmarks", "Type to filter"),
             PopupKind::BookmarkMnemonic => ("Add Bookmark with Mnemonic", "Type a digit or letter, then Enter"),
+            PopupKind::PasteHistory => ("Paste from History", "Type to filter"),
             PopupKind::FileName | PopupKind::FileDelete => match &self.file_op {
                 Some(op) => (op.title(), op.placeholder()),
                 None => ("", ""),
@@ -1802,6 +1837,7 @@ impl Workspace {
                                         Target::Symbol(..) => ("ƒ", gpui::rgb(0xb07fd5).into()),
                                         Target::FileDo(_) => ("✓", Theme::file_added()),
                                         Target::Bookmark(..) | Target::Mnemonic(_) => ("▮", Theme::bookmark()),
+                                        Target::Clip(_) => ("¶", Theme::text_muted()),
                                     };
                                     div()
                                         .id(("item", i))
@@ -1950,4 +1986,48 @@ impl Render for Workspace {
             .children(self.render_ds_dialog(cx))
             .children(self.render_menu(viewport, cx))
     }
+}
+
+impl Workspace {
+    /// "Ctrl, Ctrl+Up/Down": the second Ctrl press within 400 ms of a lone Ctrl tap,
+    /// held, turns Up/Down into Clone Caret.
+    fn track_ctrl(&mut self, m: gpui::Modifiers) {
+        let only_ctrl = m.control && !m.shift && !m.alt && !m.platform;
+        if only_ctrl {
+            if !self.ctrl_alone {
+                self.ctrl_clone = self.ctrl_tap.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(400));
+                self.ctrl_alone = true;
+            }
+        } else if !m.modified() && self.ctrl_alone {
+            // Released without another key: a tap (unless it was the clone hold).
+            self.ctrl_tap = (!self.ctrl_clone).then(Instant::now);
+            self.ctrl_alone = false;
+            self.ctrl_clone = false;
+        } else {
+            self.ctrl_alone = false;
+            self.ctrl_tap = None;
+            if !m.control {
+                self.ctrl_clone = false;
+            }
+        }
+    }
+}
+
+fn clip_items(q: &str) -> Vec<PopupItem> {
+    let ql = q.trim().to_lowercase();
+    crate::editor::clipboard_history()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, t)| ql.is_empty() || t.to_lowercase().contains(&ql))
+        .map(|(i, t)| {
+            let first = t.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+            let n = t.trim_end_matches('\n').lines().count();
+            PopupItem {
+                label: first.chars().take(90).collect(),
+                detail: if n > 1 { format!("{n} lines") } else { String::new() },
+                hint: String::new(),
+                target: Target::Clip(i),
+            }
+        })
+        .collect()
 }
