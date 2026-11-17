@@ -2,6 +2,7 @@
 //! All shortcuts go through brisk-keymap's PyCharm keymap.
 
 mod db_ui;
+mod disk_ui;
 mod edit_smoke;
 mod files_ui;
 mod find_ui;
@@ -210,6 +211,8 @@ pub struct Workspace {
     find: find_ui::Find,
     db: db_ui::Db,
     recent: Vec<PathBuf>,
+    /// Expanded folders' modification times (the disk poll).
+    dir_stamps: disk_ui::DirStamps,
     left: Option<LeftTool>,
     bottom: Option<BottomTool>,
     popup: Option<Popup>,
@@ -244,6 +247,9 @@ impl Workspace {
         if let Some(f) = std::env::var_os("BRISK_SMOKE_EDIT") {
             let f = PathBuf::from(f);
             cx.defer_in(window, move |this: &mut Self, window, cx| this.edit_smoke(f, window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_DISK").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.disk_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_UI").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.ui_smoke(window, cx));
@@ -299,6 +305,13 @@ impl Workspace {
         cx.defer_in(window, |this: &mut Self, _, cx| this.refresh_git(cx));
 
         window.focus(&tree_focus);
+        cx.defer_in(window, |this: &mut Self, window, cx| this.start_disk_poll(window, cx));
+        // Closing the window saves everything first (PyCharm never asks).
+        let me = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |_, cx| {
+            let _ = me.update(cx, |this, cx| this.save_all(cx));
+            true
+        });
         if std::env::var_os("BRISK_OPEN_TERMINAL").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.toggle_terminal(window, cx));
         }
@@ -362,6 +375,7 @@ impl Workspace {
             find: find_ui::Find::new(),
             db,
             recent: Vec::new(),
+            dir_stamps: Default::default(),
             left: Some(LeftTool::Project),
             bottom: None,
             popup: None,
@@ -408,13 +422,26 @@ impl Workspace {
 
     fn save_all(&mut self, cx: &mut Context<Self>) {
         let mut saved = 0;
+        let mut problem = None;
         let eds: Vec<_> = self.editors().cloned().collect();
         for t in eds {
-            t.update(cx, |e, _| match e.save() {
-                Ok(true) => saved += 1,
-                Ok(false) => {}
-                Err(err) => eprintln!("save failed: {err}"),
+            t.update(cx, |e, cx| {
+                match e.save() {
+                    Ok(true) => saved += 1,
+                    Ok(false) => {}
+                    Err(err) => problem = Some(format!("Cannot save {}: {err}", e.title())),
+                }
+                if let Some(n) = e.encoding_note.take() {
+                    problem = Some(format!("{}: {n}", e.title()));
+                }
+                if e.disk_conflict.is_some() {
+                    cx.notify();
+                }
             });
+        }
+        if let Some(p) = problem {
+            self.status = p.clone();
+            self.show_toast(p, true, cx);
         }
         if saved > 0 {
             self.symbols.stale = true;
@@ -470,7 +497,19 @@ impl Workspace {
             return;
         }
         if let Tab::Editor(e) = &self.tabs[i] {
-            let _ = e.update(cx, |e, _| e.save());
+            let saved = e.update(cx, |e, _| e.save());
+            let ed = e.read(cx);
+            if ed.buffer.is_dirty() && ed.read_error.is_none() && ed.path.is_some() {
+                // Not written (conflict with the disk, or an error): closing would lose the edits.
+                let msg = match saved {
+                    Err(err) => format!("Cannot save {}: {err}", ed.title()),
+                    Ok(_) => format!("{} changed on disk: choose Reload or Keep Mine first", ed.title()),
+                };
+                self.active = Some(i);
+                self.show_toast(msg, true, cx);
+                cx.notify();
+                return;
+            }
             if let Some(p) = e.read(cx).path.clone() {
                 self.ty_close(&p);
             }
@@ -1414,16 +1453,17 @@ impl Workspace {
             .border_color(Theme::divider())
             .children(self.tabs.iter().enumerate().map(|(i, t)| {
                 let active = self.active == Some(i);
-                let (title, icon, color, name_color) = match t {
+                let (title, icon, color, name_color, dirty) = match t {
                     Tab::Editor(e) => {
                         let ed = e.read(cx);
                         let title = ed.title();
                         let (icon, color) = file_icon(&title, false);
                         let vcs = ed.path.as_deref().and_then(|p| self.file_status(p)).map(git_ui::status_color);
-                        (title, icon, color, vcs)
+                        let vcs = if ed.disk_conflict.is_some() { Some(gpui::rgb(0xe0b84a).into()) } else { vcs };
+                        (title, icon, color, vcs, ed.buffer.is_dirty())
                     }
-                    Tab::Diff(d) => (d.read(cx).title.clone(), "⇆", Theme::file_modified(), None),
-                    Tab::Grid(g) => (g.read(cx).title.clone(), "▦", gpui::rgb(0x6c9be8).into(), None),
+                    Tab::Diff(d) => (d.read(cx).title.clone(), "⇆", Theme::file_modified(), None, false),
+                    Tab::Grid(g) => (g.read(cx).title.clone(), "▦", gpui::rgb(0x6c9be8).into(), None, false),
                 };
                 let name_color = name_color.unwrap_or(if active { Theme::text() } else { Theme::text_muted() });
                 div()
@@ -1447,6 +1487,7 @@ impl Workspace {
                     .on_mouse_down(MouseButton::Middle, cx.listener(move |this, _, window, cx| this.close_tab(i, window, cx)))
                     .child(div().text_color(color).child(icon))
                     .child(div().text_color(name_color).child(title))
+                    .when(dirty, |d| d.child(div().text_color(Theme::text_muted()).child("•")))
                     .child(
                         div().id(("tab-close", i)).text_color(Theme::text_dim()).hover(|s| s.text_color(Theme::text())).child("×")
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -1484,6 +1525,7 @@ impl Workspace {
     }
 
     fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let enc = self.active_editor().map(|e| e.read(cx).encoding_label()).unwrap_or_default();
         let (pos, eol, lang, crumbs) = match self.active_editor() {
             Some(e) => {
                 let e = e.read(cx);
@@ -1519,7 +1561,7 @@ impl Workspace {
             .when(!pos.is_empty(), |d| {
                 d.child(item(pos))
                     .child(item(eol.into()))
-                    .child(item("UTF-8".into()))
+                    .child(item(enc))
                     .child(item("4 spaces".into()))
                     .child(item(lang.into()))
             })

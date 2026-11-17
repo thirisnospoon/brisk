@@ -15,9 +15,11 @@ use gpui::prelude::*;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+mod disk;
 mod find;
 mod lsp;
 mod scroll;
+pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
 
 pub const LINE_HEIGHT: f32 = 20.0;
@@ -83,6 +85,14 @@ pub struct Editor {
     last_replace: String,
     /// A one-line input (search fields): no find bar of its own, Enter is handled by the owner.
     pub is_field: bool,
+    /// The file's encoding (kept on save).
+    encoding: brisk_text::encoding::TextEncoding,
+    /// A save had to switch the encoding to UTF-8 (shown once in the status bar).
+    pub encoding_note: Option<String>,
+    /// Modification time and size when last read or written.
+    disk_stamp: disk::Stamp,
+    /// The file changed or vanished under unsaved edits: a banner asks what to do.
+    pub disk_conflict: Option<Conflict>,
 }
 
 /// Events for the workspace.
@@ -149,13 +159,7 @@ fn byte_to_char(s: &str, byte: usize) -> usize {
 
 impl Editor {
     pub fn open(path: &Path, cx: &mut Context<Self>) -> Self {
-        let (text, err) = match std::fs::read(path) {
-            Ok(bytes) => match String::from_utf8(bytes) {
-                Ok(t) => (t, None),
-                Err(e) => (String::from_utf8_lossy(e.as_bytes()).into_owned(), Some("Not valid UTF-8; shown lossily, read-only".to_string())),
-            },
-            Err(e) => (String::new(), Some(e.to_string())),
-        };
+        let (text, encoding, err) = disk::load(path);
         let mut buffer = Buffer::new(&text);
         let lang = Lang::from_path(path);
         if lang.is_none() {
@@ -200,6 +204,10 @@ impl Editor {
             last_find: find::FindOpts::default(),
             last_replace: String::new(),
             is_field: false,
+            encoding,
+            encoding_note: None,
+            disk_stamp: disk::stamp(path),
+            disk_conflict: None,
         };
         ed.reparse();
         ed
@@ -242,6 +250,10 @@ impl Editor {
             last_find: find::FindOpts::default(),
             last_replace: String::new(),
             is_field: false,
+            encoding: Default::default(),
+            encoding_note: None,
+            disk_stamp: None,
+            disk_conflict: None,
         }
     }
 
@@ -268,23 +280,6 @@ impl Editor {
         }
         let text = self.text().to_string();
         self.vcs_changes = brisk_git::line_changes(&base, &text);
-    }
-
-    /// Pick up changes made outside the editor (git checkout, rollback, the terminal).
-    /// Unsaved edits always win. The reload is undoable, as in PyCharm.
-    pub fn reload_from_disk(&mut self) -> bool {
-        let Some(p) = &self.path else { return false };
-        if self.buffer.is_dirty() || self.read_error.is_some() {
-            return false;
-        }
-        let Ok(disk) = std::fs::read_to_string(p) else { return false };
-        let disk = disk.replace("\r\n", "\n");
-        if disk == self.buffer.text() {
-            return false;
-        }
-        self.buffer.set_text(&disk);
-        self.buffer.mark_saved();
-        true
     }
 
     pub fn text_string(&self) -> String {
@@ -321,19 +316,6 @@ impl Editor {
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "untitled".into())
-    }
-
-    /// Write to disk if modified. PyCharm autosaves on focus loss and tab switch.
-    pub fn save(&mut self) -> std::io::Result<bool> {
-        if !self.buffer.is_dirty() || self.read_error.is_some() {
-            return Ok(false);
-        }
-        if let Some(p) = &self.path {
-            std::fs::write(p, self.buffer.text_for_save())?;
-            self.buffer.mark_saved();
-            return Ok(true);
-        }
-        Ok(false)
     }
 
     fn text(&mut self) -> &str {
@@ -969,6 +951,7 @@ impl Focusable for Editor {
 impl Render for Editor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let bar = self.render_find_bar(cx);
+        let banner = self.render_disk_banner(cx);
         let text_area = gpui::div()
             .id("editor-text")
             .flex_1()
@@ -999,6 +982,7 @@ impl Render for Editor {
                     cx.notify();
                 }
             }))
+            .children(banner)
             .children(bar)
             .child(text_area)
     }

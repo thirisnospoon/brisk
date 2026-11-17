@@ -2,6 +2,8 @@
 //!
 //! Positions are **char indices** into the rope. The UI converts to (line, column) for display.
 
+pub mod encoding;
+
 use ropey::Rope;
 use std::ops::Range;
 use std::time::{Duration, Instant};

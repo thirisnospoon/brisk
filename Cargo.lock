@@ -798,6 +798,7 @@ dependencies = [
 name = "brisk-text"
 version = "0.1.0"
 dependencies = [
+ "encoding_rs",
  "ropey",
 ]
 
