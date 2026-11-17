@@ -107,10 +107,6 @@ impl Editor {
         self.folds.hidden = merged;
     }
 
-    pub fn is_line_hidden(&self, line: usize) -> bool {
-        self.folds.hidden.iter().any(|&(a, z)| a <= line && line <= z)
-    }
-
     /// The display row of a buffer line (a hidden line maps to the row after its header).
     pub fn row_of(&self, line: usize) -> usize {
         let mut hidden = 0;

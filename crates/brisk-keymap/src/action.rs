@@ -171,6 +171,16 @@ actions! {
     CloseTab => "Close Tab", "File";
     NextTab => "Select Next Tab", "File";
     PreviousTab => "Select Previous Tab", "File";
+    CloseOtherTabs => "Close Other Tabs", "File";
+    CloseAllTabs => "Close All Tabs", "File";
+    CloseTabsToRight => "Close Tabs to the Right", "File";
+    CloseTabsToLeft => "Close Tabs to the Left", "File";
+    ReopenClosedTab => "Reopen Closed Tab", "File";
+    SplitVertically => "Split Right", "Window";
+    SplitHorizontally => "Split Down", "Window";
+    Unsplit => "Unsplit", "Window";
+    MoveToOppositeGroup => "Move to Opposite Group", "Window";
+    NextSplitter => "Go to Next Splitter", "Window";
     Settings => "Settings", "File";
     ProjectStructure => "Project Structure", "File";
     ReloadFromDisk => "Reload All from Disk", "File";

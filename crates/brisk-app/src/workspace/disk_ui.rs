@@ -3,7 +3,7 @@
 //! expanded Project view folders pick up added and removed files. Polling, about every 1.5 s:
 //! one metadata call per open file and per expanded folder.
 
-use super::{Tab, Workspace};
+use super::Workspace;
 use crate::editor::DiskCheck;
 use gpui::{Context, Window};
 use std::collections::HashMap;
@@ -36,8 +36,8 @@ impl Workspace {
         // Open files.
         let mut gone = Vec::new();
         let mut reloaded = false;
-        for t in &self.tabs {
-            let Tab::Editor(e) = t else { continue };
+        let eds: Vec<_> = self.editors().cloned().collect();
+        for e in &eds {
             let r = e.update(cx, |e, cx| {
                 let r = e.disk_check();
                 if r != DiskCheck::Same {
@@ -52,11 +52,9 @@ impl Workspace {
             }
         }
         for e in gone {
-            if let Some(i) = self.tabs.iter().position(|t| matches!(t, Tab::Editor(x) if *x == e)) {
-                let name = e.read(cx).title();
-                self.close_tab(i, window, cx);
-                self.status = format!("{name} was deleted on disk; its tab was closed");
-            }
+            let name = e.read(cx).title();
+            self.close_editor(&e, window, cx);
+            self.status = format!("{name} was deleted on disk; its tab was closed");
         }
         if reloaded {
             self.symbols.stale = true;

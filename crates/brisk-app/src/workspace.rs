@@ -13,6 +13,7 @@ mod menu_ui;
 mod problems_ui;
 pub(crate) mod project_ui;
 mod run_ui;
+mod tabs_ui;
 mod win_input;
 
 use crate::diff_view::DiffView;
@@ -212,6 +213,10 @@ pub struct Workspace {
     find: find_ui::Find,
     db: db_ui::Db,
     recent: Vec<PathBuf>,
+    /// The second editor group (split editor).
+    split: Option<tabs_ui::Split>,
+    /// Recently closed files (Reopen Closed Tab).
+    closed: Vec<PathBuf>,
     /// Expanded folders' modification times (the disk poll).
     dir_stamps: disk_ui::DirStamps,
     left: Option<LeftTool>,
@@ -379,6 +384,8 @@ impl Workspace {
             find: find_ui::Find::new(),
             db,
             recent: Vec::new(),
+            split: None,
+            closed: Vec::new(),
             dir_stamps: Default::default(),
             left: Some(LeftTool::Project),
             bottom: None,
@@ -405,7 +412,7 @@ impl Workspace {
     }
 
     fn editors(&self) -> impl Iterator<Item = &Entity<Editor>> {
-        self.tabs.iter().filter_map(|t| match t {
+        self.all_tabs().filter_map(|t| match t {
             Tab::Editor(e) => Some(e),
             _ => None,
         })
@@ -476,6 +483,7 @@ impl Workspace {
         self.recent.truncate(50);
         if let Some(i) = self.tabs.iter().position(|t| matches!(t, Tab::Editor(e) if e.read(cx).path.as_deref() == Some(path.as_path()))) {
             self.active = Some(i);
+        } else if self.activate_in_other_pane(&path, window, cx) {
         } else {
             let ed = cx.new(|cx| Editor::open(&path, cx));
             self.load_vcs_base(ed.clone(), cx);
@@ -516,9 +524,17 @@ impl Workspace {
             }
             if let Some(p) = e.read(cx).path.clone() {
                 self.ty_close(&p);
+                self.remember_closed(p);
             }
         }
         self.tabs.remove(i);
+        if self.tabs.is_empty() && self.split.is_some() {
+            // The group is empty: the other one takes the whole area.
+            self.collapse_empty_pane();
+            self.focus_editor(window, cx);
+            cx.notify();
+            return;
+        }
         self.active = if self.tabs.is_empty() { None } else { Some(i.min(self.tabs.len() - 1)) };
         match self.active.and_then(|i| self.tabs.get(i)) {
             Some(t) => {
@@ -849,6 +865,10 @@ impl Workspace {
                 }
             }
             A::ToggleFindWindow => self.toggle_find_window(window, cx),
+            A::CloseOtherTabs | A::CloseAllTabs | A::CloseTabsToRight | A::CloseTabsToLeft | A::ReopenClosedTab | A::SplitVertically
+            | A::SplitHorizontally | A::Unsplit | A::MoveToOppositeGroup | A::NextSplitter => {
+                self.tab_action(action, window, cx);
+            }
             A::ReformatCode | A::OptimizeImports => self.format_action(action, window, cx),
             A::FindInFiles => self.open_find(false, window, cx),
             A::ReplaceInFiles => self.open_find(true, window, cx),
@@ -1446,9 +1466,9 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_tabs(&self, tabs: &[Tab], current: Option<usize>, focused: bool, second: bool, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .id("tabs")
+            .id(("tabs", second as usize))
             .h(px(36.))
             .flex()
             .items_end()
@@ -1456,8 +1476,8 @@ impl Workspace {
             .bg(Theme::panel_alt())
             .border_b_1()
             .border_color(Theme::divider())
-            .children(self.tabs.iter().enumerate().map(|(i, t)| {
-                let active = self.active == Some(i);
+            .children(tabs.iter().enumerate().map(|(i, t)| {
+                let active = current == Some(i);
                 let (title, icon, color, name_color, dirty) = match t {
                     Tab::Editor(e) => {
                         let ed = e.read(cx);
@@ -1480,16 +1500,24 @@ impl Workspace {
                     .px(px(12.))
                     .text_size(px(13.))
                     .text_color(if active { Theme::text() } else { Theme::text_muted() })
-                    .when(active, |d| d.border_b_2().border_color(Theme::accent()).bg(Theme::editor_bg()))
+                    .when(active, |d| d.border_b_2().border_color(if focused { Theme::accent() } else { Theme::text_dim() }).bg(Theme::editor_bg()))
                     .hover(|s| s.bg(Theme::hover_row()))
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, window, cx| {
+                        this.focus_pane(second, window, cx);
                         this.save_all(cx);
                         this.active = Some(i);
                         this.focus_editor(window, cx);
                         cx.notify();
                     }))
-                    .on_mouse_down(MouseButton::Middle, cx.listener(move |this, _, window, cx| this.close_tab(i, window, cx)))
+                    .on_mouse_down(MouseButton::Middle, cx.listener(move |this, _, window, cx| {
+                        this.focus_pane(second, window, cx);
+                        this.close_tab(i, window, cx);
+                    }))
+                    .on_mouse_down(MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.tab_menu(second, i, e.position, window, cx);
+                    }))
                     .child(div().text_color(color).child(icon))
                     .child(div().text_color(name_color).child(title))
                     .when(dirty, |d| d.child(div().text_color(Theme::text_muted()).child("•")))
@@ -1497,6 +1525,7 @@ impl Workspace {
                         div().id(("tab-close", i)).text_color(Theme::text_dim()).hover(|s| s.text_color(Theme::text())).child("×")
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
+                                this.focus_pane(second, window, cx);
                                 this.close_tab(i, window, cx);
                             })),
                     )
@@ -1836,12 +1865,7 @@ impl Render for Workspace {
             (BottomTool::Services, _) => self.render_services(cx),
             _ => Self::render_placeholder(b.title(), b.stage()),
         });
-        let center: gpui::AnyElement = match self.active.and_then(|i| self.tabs.get(i)) {
-            Some(Tab::Editor(e)) => e.clone().into_any_element(),
-            Some(Tab::Diff(d)) => d.clone().into_any_element(),
-            Some(Tab::Grid(g)) => g.clone().into_any_element(),
-            None => self.render_welcome().into_any_element(),
-        };
+        let center = self.render_editor_area(cx);
 
         div()
             .id("workspace")
@@ -1871,8 +1895,7 @@ impl Render for Workspace {
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .when(!self.tabs.is_empty(), |d| d.child(self.render_tabs(cx)))
-                            .child(div().flex_1().min_h_0().font_family(MONO_FONT).child(center))
+                            .child(center)
                             .when_some(bottom, |d, panel| {
                                 d.child(div().h(px(bottom_h)).flex_shrink_0().bg(Theme::panel()).border_t_1().border_color(Theme::divider()).child(panel))
                             }),

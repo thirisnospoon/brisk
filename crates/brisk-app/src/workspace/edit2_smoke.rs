@@ -139,7 +139,42 @@ impl Workspace {
         eprintln!("smoke-edit2: undo -> back to the selection format: {}", ed.read(cx).text_string().contains("x=f(1,2)"));
     }
 
-    fn edit2_rest(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn edit2_rest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // --- Tabs and split ---
+        let third = self.root.join("third.py");
+        let _ = std::fs::write(&third, "x = 3
+");
+        self.open_file(&third, window, cx);
+        eprintln!("smoke-edit2: tabs -> {}", self.panes_for_smoke(cx));
+        self.dispatch(Action::SplitVertically, window, cx);
+        eprintln!("smoke-edit2: split right -> {}", self.panes_for_smoke(cx));
+        self.open_file(&self.root.join("stage2.py"), window, cx);
+        eprintln!("smoke-edit2: open a file of the other group -> {}", self.panes_for_smoke(cx));
+        self.dispatch(Action::MoveToOppositeGroup, window, cx);
+        eprintln!("smoke-edit2: move to opposite group -> {}", self.panes_for_smoke(cx));
+        self.dispatch(Action::NextSplitter, window, cx);
+        eprintln!("smoke-edit2: next splitter -> {}", self.panes_for_smoke(cx));
+        let editors = self.editors().count();
+        eprintln!("smoke-edit2: editors in both groups -> {editors}");
+        self.tab_menu(false, 0, gpui::point(gpui::px(300.), gpui::px(60.)), window, cx);
+        let labels: Vec<String> = self.menu.as_ref().map(|m| m.entries.iter().filter_map(|e| match e {
+            super::menu_ui::Entry::Item { label, enabled, .. } => Some(format!("{label}{}", if *enabled { "" } else { " (off)" })),
+            super::menu_ui::Entry::Separator => None,
+        }).collect()).unwrap_or_default();
+        self.menu = None;
+        eprintln!("smoke-edit2: tab menu -> {labels:?}");
+        self.dispatch(Action::CloseOtherTabs, window, cx);
+        eprintln!("smoke-edit2: close other tabs -> {}", self.panes_for_smoke(cx));
+        self.dispatch(Action::ReopenClosedTab, window, cx);
+        eprintln!("smoke-edit2: reopen closed tab -> {}", self.panes_for_smoke(cx));
+        self.dispatch(Action::Unsplit, window, cx);
+        eprintln!("smoke-edit2: unsplit -> {}", self.panes_for_smoke(cx));
+        self.dispatch(Action::SplitHorizontally, window, cx);
+        eprintln!("smoke-edit2: split down -> {}", self.panes_for_smoke(cx));
+        self.dispatch(Action::CloseTab, window, cx);
+        eprintln!("smoke-edit2: close the only tab of a group -> {}", self.panes_for_smoke(cx));
+        self.dispatch(Action::CloseAllTabs, window, cx);
+        eprintln!("smoke-edit2: close all -> {:?}", self.panes_for_smoke(cx));
         eprintln!("smoke-edit2: done");
         cx.quit();
     }

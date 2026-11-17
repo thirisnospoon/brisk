@@ -322,7 +322,7 @@ impl Workspace {
 
     fn retarget_tabs(&mut self, from: &Path, to: &Path, cx: &mut Context<Self>) {
         let mut moved = Vec::new();
-        for t in &self.tabs {
+        for t in self.all_tabs() {
             if let Tab::Editor(e) = t {
                 let Some(p) = e.read(cx).path.clone() else { continue };
                 if under(&p, from) {
@@ -347,14 +347,15 @@ impl Workspace {
     }
 
     fn close_tabs_under(&mut self, base: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        loop {
-            let i = self.tabs.iter().position(|t| matches!(t, Tab::Editor(e) if e.read(cx).path.as_deref().is_some_and(|p| under(p, base))));
-            let Some(i) = i else { break };
-            if let Tab::Editor(e) = &self.tabs[i] {
-                // Nothing to save: the file is gone.
-                e.update(cx, |e, _| e.buffer.mark_saved());
-            }
-            self.close_tab(i, window, cx);
+        let doomed: Vec<_> = self
+            .editors()
+            .filter(|e| e.read(cx).path.as_deref().is_some_and(|p| under(p, base)))
+            .cloned()
+            .collect();
+        for e in doomed {
+            // Nothing to save: the file is gone.
+            e.update(cx, |e, _| e.buffer.mark_saved());
+            self.close_editor(&e, window, cx);
         }
         self.recent.retain(|p| !under(p, base));
     }
