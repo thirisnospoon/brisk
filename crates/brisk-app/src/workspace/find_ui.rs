@@ -761,9 +761,11 @@ impl Workspace {
                 .flex()
                 .justify_center()
                 .pt(px(60.))
+                .occlude()
                 .child(
                     div()
                         .id("find-popup")
+                        .on_mouse_down_out(cx.listener(|this, _, window, cx| this.close_find(window, cx)))
                         .w(px(860.))
                         .h(px(620.))
                         .flex()

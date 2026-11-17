@@ -861,6 +861,12 @@ impl Render for Editor {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
+            // Completion, Quick Doc and Parameter Info close on a click anywhere outside the editor.
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                if this.close_insight() | this.caret_tip.take().is_some() {
+                    cx.notify();
+                }
+            }))
             .relative()
             .child(EditorElement { editor: cx.entity() })
             .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))

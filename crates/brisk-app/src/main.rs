@@ -17,13 +17,17 @@ use std::path::PathBuf;
 use workspace::Workspace;
 
 fn main() {
+    // Without an argument, reopen the last project like PyCharm; the current directory otherwise.
     let root = std::env::args()
         .nth(1)
         .map(PathBuf::from)
+        .or_else(|| workspace::project_ui::recent_projects().into_iter().next())
         .unwrap_or_else(|| std::env::current_dir().expect("no current dir"));
     let root = std::fs::canonicalize(&root).unwrap_or(root);
     // Strip the Windows verbatim prefix so paths display normally.
     let root = PathBuf::from(root.to_string_lossy().trim_start_matches(r"\\?\").to_string());
+
+    workspace::project_ui::remember_project(&root);
 
     Application::new().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1400.), px(900.)), cx);

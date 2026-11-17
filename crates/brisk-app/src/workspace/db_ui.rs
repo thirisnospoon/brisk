@@ -1108,6 +1108,7 @@ impl Workspace {
                         .border_1()
                         .border_color(if active { Theme::accent() } else { Theme::divider() })
                         .bg(Theme::bg())
+                        .cursor(if f.is_text() { gpui::CursorStyle::IBeam } else { gpui::CursorStyle::Arrow })
                         .child(value),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -1122,6 +1123,32 @@ impl Workspace {
                 }))
         };
         let caret = || div().w(px(1.5)).h(px(16.)).bg(Theme::caret());
+        // One option of a choice field: a button that picks this value.
+        fn choice(
+            id: (&'static str, usize),
+            on: bool,
+            label: &'static str,
+            cx: &mut Context<Workspace>,
+            pick: impl Fn(&mut Dialog) + 'static,
+        ) -> gpui::Stateful<gpui::Div> {
+            div()
+                .id(id)
+                .px(px(8.))
+                .rounded(px(4.))
+                .cursor_pointer()
+                .when(on, |x| x.bg(Theme::selection_row()))
+                .when(!on, |x| x.hover(|s| s.bg(Theme::hover_row())))
+                .text_color(if on { Theme::text() } else { Theme::text_muted() })
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    if let Some(d) = this.db.dialog.as_mut() {
+                        pick(d);
+                        d.test = None;
+                    }
+                    cx.notify();
+                }))
+        }
         let mut rows: Vec<gpui::AnyElement> = Vec::new();
         for &f in fields(d.ds.driver) {
             let active = d.field == f;
@@ -1129,25 +1156,25 @@ impl Workspace {
                 Field::Driver => div()
                     .flex()
                     .gap(px(4.))
-                    .children(Driver::ALL.iter().map(|&dr| {
-                        let on = dr == d.ds.driver;
-                        div().px(px(8.)).rounded(px(4.)).when(on, |x| x.bg(Theme::selection_row())).text_color(if on { Theme::text() } else { Theme::text_muted() }).child(dr.title())
+                    .children(Driver::ALL.iter().enumerate().map(|(i, &dr)| {
+                        choice(("ds-driver", i), dr == d.ds.driver, dr.title(), cx, move |d| {
+                            d.ds.set_driver(dr);
+                            d.port = if d.ds.port == 0 { String::new() } else { d.ds.port.to_string() };
+                        })
                     }))
                     .into_any_element(),
                 Field::Ssl => div()
                     .flex()
                     .gap(px(4.))
-                    .children([Ssl::Disable, Ssl::Prefer, Ssl::Require].into_iter().map(|s| {
-                        let on = s == d.ds.ssl;
-                        div().px(px(8.)).rounded(px(4.)).when(on, |x| x.bg(Theme::selection_row())).text_color(if on { Theme::text() } else { Theme::text_muted() }).child(s.title())
+                    .children([Ssl::Disable, Ssl::Prefer, Ssl::Require].into_iter().enumerate().map(|(i, s)| {
+                        choice(("ds-ssl", i), s == d.ds.ssl, s.title(), cx, move |d| d.ds.ssl = s)
                     }))
                     .into_any_element(),
                 Field::SavePassword => div()
                     .flex()
                     .gap(px(4.))
-                    .children([(true, "Forever"), (false, "Never")].into_iter().map(|(v, l)| {
-                        let on = v == d.ds.save_password;
-                        div().px(px(8.)).rounded(px(4.)).when(on, |x| x.bg(Theme::selection_row())).text_color(if on { Theme::text() } else { Theme::text_muted() }).child(l)
+                    .children([(true, "Forever"), (false, "Never")].into_iter().enumerate().map(|(i, (v, l))| {
+                        choice(("ds-savepw", i), v == d.ds.save_password, l, cx, move |d| d.ds.save_password = v)
                     }))
                     .into_any_element(),
                 _ => {
@@ -1206,6 +1233,8 @@ impl Workspace {
                 .flex()
                 .justify_center()
                 .pt(px(80.))
+                // A modal dialog with a form: clicks outside do nothing (no lost input), Esc closes it.
+                .occlude()
                 .child(
                     div()
                         .id("ds-dialog")

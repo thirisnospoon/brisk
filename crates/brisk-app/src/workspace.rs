@@ -6,6 +6,7 @@ mod find_ui;
 mod git_ui;
 mod lsp_ui;
 mod problems_ui;
+pub(crate) mod project_ui;
 mod run_ui;
 
 use crate::diff_view::DiffView;
@@ -86,6 +87,10 @@ enum PopupKind {
     Intentions,
     /// Shift+F6: the new name.
     Rename,
+    /// The project widget: New Project…, Open…, recent projects.
+    Projects,
+    /// "Open Project": This Window / New Window.
+    OpenWhere,
 }
 
 #[derive(Clone)]
@@ -108,8 +113,29 @@ impl Tab {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SeTab {
     All,
+    Classes,
     Files,
+    Symbols,
     Actions,
+}
+
+impl SeTab {
+    const ORDER: [SeTab; 5] = [SeTab::All, SeTab::Classes, SeTab::Files, SeTab::Symbols, SeTab::Actions];
+
+    fn title(self) -> &'static str {
+        match self {
+            SeTab::All => "All",
+            SeTab::Classes => "Classes",
+            SeTab::Files => "Files",
+            SeTab::Symbols => "Symbols",
+            SeTab::Actions => "Actions",
+        }
+    }
+
+    fn next(self) -> SeTab {
+        let i = Self::ORDER.iter().position(|t| *t == self).unwrap_or(0);
+        Self::ORDER[(i + 1) % Self::ORDER.len()]
+    }
 }
 
 #[derive(Clone)]
@@ -126,6 +152,9 @@ enum Target {
     Interpreter(PathBuf),
     Intention(Box<problems_ui::Intent>),
     Rename(String),
+    Project(project_ui::ProjectCmd),
+    /// A class or function from the symbol index: file, line, column.
+    Symbol(PathBuf, usize, usize, brisk_syntax::OutlineKind),
 }
 
 #[derive(Clone)]
@@ -150,6 +179,9 @@ pub struct Workspace {
     problems: problems_ui::Problems,
     lsp: lsp_ui::Lsp,
     nav: lsp_ui::Nav,
+    symbols: project_ui::Symbols,
+    /// The folder waiting for the This Window / New Window choice.
+    project_pending: Option<PathBuf>,
     tree: ProjectTree,
     tree_selected: Option<NodeId>,
     tree_scroll: UniformListScrollHandle,
@@ -195,6 +227,9 @@ impl Workspace {
             let f = PathBuf::from(f);
             cx.defer_in(window, move |this: &mut Self, window, cx| this.lsp_smoke(f, window, cx));
         }
+        if std::env::var_os("BRISK_SMOKE_UI").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.ui_smoke(window, cx));
+        }
         if let Some(f) = std::env::var_os("BRISK_SMOKE_RUN") {
             let f = PathBuf::from(f);
             cx.defer_in(window, move |this: &mut Self, window, cx| this.run_smoke(f, window, cx));
@@ -211,6 +246,7 @@ impl Workspace {
             let n = list.files.len();
             let _ = this.update(cx, |this, cx| {
                 this.files = Some(Arc::new(list));
+                this.ensure_symbols(cx);
                 this.status = format!("Indexed {n} files in {:.0?}", this.started.elapsed());
                 this.refresh_popup();
                 if this.find.open {
@@ -291,6 +327,8 @@ impl Workspace {
             problems: problems_ui::Problems::new(cx),
             lsp: lsp_ui::Lsp::new(),
             nav: lsp_ui::Nav::default(),
+            symbols: project_ui::Symbols::default(),
+            project_pending: None,
             tree,
             tree_selected: Some(0),
             tree_scroll: UniformListScrollHandle::new(),
@@ -356,6 +394,7 @@ impl Workspace {
             });
         }
         if saved > 0 {
+            self.symbols.stale = true;
             self.status = format!("Saved {saved} file(s)");
             self.refresh_git(cx);
             if self.bottom == Some(BottomTool::Problems) && self.problems.tab == problems_ui::ProblemsTab::Project {
@@ -657,9 +696,17 @@ impl Workspace {
             cx.notify();
             return;
         }
+        if matches!(action, A::SearchEverywhere | A::GotoFile | A::GotoClass | A::GotoSymbol) {
+            self.ensure_symbols(cx);
+        }
         match action {
             A::SearchEverywhere => self.open_popup(PopupKind::SearchEverywhere(SeTab::All)),
-            A::GotoFile | A::GotoClass | A::GotoSymbol => self.open_popup(PopupKind::SearchEverywhere(SeTab::Files)),
+            A::GotoFile => self.open_popup(PopupKind::SearchEverywhere(SeTab::Files)),
+            A::GotoClass => self.open_popup(PopupKind::SearchEverywhere(SeTab::Classes)),
+            A::GotoSymbol => self.open_popup(PopupKind::SearchEverywhere(SeTab::Symbols)),
+            A::OpenProject => self.project_cmd(project_ui::ProjectCmd::Open, window, cx),
+            A::NewProject => self.project_cmd(project_ui::ProjectCmd::New, window, cx),
+            A::RecentProjects => self.open_popup(PopupKind::Projects),
             A::FindAction => self.open_popup(PopupKind::FindAction),
             A::RecentFiles => self.open_popup(PopupKind::RecentFiles),
             A::GotoLine if self.active.is_some() => self.open_popup(PopupKind::GotoLine),
@@ -857,20 +904,27 @@ impl Workspace {
     // --- Popups ----------------------------------------------------------------
 
     fn open_popup(&mut self, kind: PopupKind) {
-        // Pressing the same shortcut again in Search Everywhere switches tabs, like PyCharm.
-        if let (Some(p), PopupKind::SearchEverywhere(_)) = (&mut self.popup, kind) {
+        // In an open Search Everywhere another tab's shortcut switches to that tab; the same
+        // shortcut again goes to the next tab, like PyCharm.
+        if let (Some(p), PopupKind::SearchEverywhere(want)) = (&mut self.popup, kind) {
             if let PopupKind::SearchEverywhere(t) = p.kind {
-                p.kind = PopupKind::SearchEverywhere(match t {
-                    SeTab::All => SeTab::Files,
-                    SeTab::Files => SeTab::Actions,
-                    SeTab::Actions => SeTab::All,
-                });
+                p.kind = PopupKind::SearchEverywhere(if want == t { t.next() } else { want });
+                p.selected = 0;
                 self.refresh_popup();
                 return;
             }
         }
         self.popup = Some(Popup { kind, query: String::new(), selected: 0, items: Vec::new() });
         self.refresh_popup();
+    }
+
+    /// Clicking a Search Everywhere tab or pressing Tab in it.
+    fn set_se_tab(&mut self, tab: SeTab) {
+        if let Some(p) = self.popup.as_mut() {
+            p.kind = PopupKind::SearchEverywhere(tab);
+            p.selected = 0;
+            self.refresh_popup();
+        }
     }
 
     fn action_items(&self, q: &str, limit: usize) -> Vec<PopupItem> {
@@ -932,13 +986,19 @@ impl Workspace {
         let q = p.query.clone();
         let items = match p.kind {
             PopupKind::SearchEverywhere(SeTab::All) => {
-                let mut v = self.file_items(&q, 30);
+                let mut v = self.symbol_items(&q, true, 5);
+                v.extend(self.file_items(&q, 30));
                 if !q.is_empty() {
+                    v.extend(self.symbol_items(&q, false, 8).into_iter().filter(|i| !matches!(i.target, Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Class))));
                     v.extend(self.action_items(&q, 8));
                 }
                 v
             }
+            PopupKind::SearchEverywhere(SeTab::Classes) => self.symbol_items(&q, true, 50),
+            PopupKind::SearchEverywhere(SeTab::Symbols) => self.symbol_items(&q, false, 50),
             PopupKind::SearchEverywhere(SeTab::Files) => self.file_items(&q, 50),
+            PopupKind::Projects => self.project_items(&q),
+            PopupKind::OpenWhere => self.open_where_items(&q),
             PopupKind::SearchEverywhere(SeTab::Actions) | PopupKind::FindAction => self.action_items(&q, 50),
             PopupKind::RecentFiles => {
                 let ql = q.to_lowercase();
@@ -975,8 +1035,8 @@ impl Workspace {
             "up" => p.selected = p.selected.saturating_sub(1),
             "down" => p.selected = (p.selected + 1).min(p.items.len().saturating_sub(1)),
             "tab" => {
-                if let PopupKind::SearchEverywhere(_) = p.kind {
-                    self.open_popup(PopupKind::SearchEverywhere(SeTab::All));
+                if let PopupKind::SearchEverywhere(t) = p.kind {
+                    self.set_se_tab(t.next());
                 }
             }
             "enter" => {
@@ -1007,6 +1067,11 @@ impl Workspace {
                     Some(t @ (Target::RunConfig(..) | Target::EditRunConfigs | Target::Interpreter(_))) => self.run_popup_pick(t, window, cx),
                     Some(Target::Intention(i)) => self.apply_intent(*i, window, cx),
                     Some(Target::Rename(n)) => self.apply_rename(n, window, cx),
+                    Some(Target::Project(c)) => {
+                        self.focus_editor(window, cx);
+                        self.project_cmd(c, window, cx);
+                    }
+                    Some(Target::Symbol(path, line, col, _)) => self.open_symbol(path, line, col, window, cx),
                     None => self.focus_editor(window, cx),
                 }
             }
@@ -1034,8 +1099,8 @@ impl Workspace {
                     // Re-pressing the opening shortcut (e.g. Ctrl+Shift+N) cycles tabs.
                     let stroke = keys::convert(k);
                     if let Resolution::Action(a) = self.resolver.key_down(stroke, &[]) {
-                        if matches!(a, Action::GotoFile | Action::GotoClass | Action::SearchEverywhere) {
-                            self.open_popup(PopupKind::SearchEverywhere(SeTab::Files));
+                        if matches!(a, Action::GotoFile | Action::GotoClass | Action::GotoSymbol | Action::SearchEverywhere) {
+                            self.dispatch(a, window, cx);
                         }
                     }
                 }
@@ -1068,8 +1133,20 @@ impl Workspace {
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        // A toolbar widget: text plus a small dimmed chevron, vertically centered.
         let chip = |id: &'static str, text: String| {
-            div().id(id).px(px(8.)).py(px(3.)).rounded(px(5.)).hover(|s| s.bg(Theme::hover_row())).cursor_pointer().child(text)
+            div()
+                .id(id)
+                .h(px(28.))
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .rounded(px(5.))
+                .hover(|s| s.bg(Theme::hover_row()))
+                .cursor_pointer()
+                .child(text)
+                .child(div().text_size(px(9.)).text_color(Theme::text_muted()).child("▼"))
         };
         div()
             .h(px(40.))
@@ -1087,14 +1164,17 @@ impl Workspace {
                     self.project_name().chars().take(2).collect::<String>().to_uppercase(),
                 ),
             )
-            .child(chip("tb-project", format!("{} ⌄", self.project_name())))
+            .child(chip("tb-project", self.project_name()).on_click(cx.listener(|this, _, _, cx| {
+                this.open_popup(PopupKind::Projects);
+                cx.notify();
+            })))
             .child(
-                chip("tb-branch", format!("⎇ {} ⌄", self.branch_label()))
+                chip("tb-branch", format!("⎇ {}", self.branch_label()))
                     .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Branches, w, cx))),
             )
             .child(div().flex_1())
             .child(
-                chip("tb-config", format!("{} ⌄", self.run_widget_label()))
+                chip("tb-config", self.run_widget_label())
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.reload_runs();
                         this.open_popup(PopupKind::RunConfigs(false));
@@ -1429,13 +1509,19 @@ impl Workspace {
             PopupKind::Interpreters => ("Python Interpreter", "Type to filter"),
             PopupKind::Intentions => ("Context Actions", "Type to filter"),
             PopupKind::Rename => ("Rename", "New name"),
+            PopupKind::Projects => ("Projects", "Type to filter"),
+            PopupKind::OpenWhere => ("Open Project", "Type to filter"),
         };
         let tabs = match p.kind {
             PopupKind::SearchEverywhere(t) => Some(t),
             _ => None,
         };
         let selected = p.selected;
-        let indexing = self.files.is_none() && matches!(p.kind, PopupKind::SearchEverywhere(_));
+        let indexing = match p.kind {
+            PopupKind::SearchEverywhere(SeTab::Classes | SeTab::Symbols) => self.symbols_indexing(),
+            PopupKind::SearchEverywhere(_) => self.files.is_none(),
+            _ => false,
+        };
         Some(
             div()
                 .absolute()
@@ -1445,9 +1531,17 @@ impl Workspace {
                 .flex()
                 .justify_center()
                 .pt(px(90.))
+                .occlude()
                 .child(
                     div()
                         .id("popup")
+                        // A click outside the popup closes it, as in PyCharm; the backdrop keeps the
+                        // click from reaching what is underneath.
+                        .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                            this.popup = None;
+                            this.focus_editor(window, cx);
+                            cx.notify();
+                        }))
                         .w(px(680.))
                         .max_h(px(520.))
                         .flex()
@@ -1461,20 +1555,27 @@ impl Workspace {
                         .text_size(px(13.))
                         .text_color(Theme::text())
                         .when_some(tabs, |d, t| {
-                            let tab = |name: &str, on: bool| {
-                                div().px(px(10.)).py(px(4.)).rounded(px(5.)).when(on, |d| d.bg(Theme::selection_row())).child(name.to_string())
-                            };
                             d.child(
                                 div()
                                     .flex()
                                     .gap(px(4.))
                                     .px(px(10.))
                                     .pt(px(8.))
-                                    .child(tab("All", t == SeTab::All))
-                                    .child(tab("Classes", false))
-                                    .child(tab("Files", t == SeTab::Files))
-                                    .child(tab("Symbols", false))
-                                    .child(tab("Actions", t == SeTab::Actions))
+                                    .children(SeTab::ORDER.iter().enumerate().map(|(i, &tab)| {
+                                        div()
+                                            .id(("se-tab", i))
+                                            .px(px(10.))
+                                            .py(px(4.))
+                                            .rounded(px(5.))
+                                            .cursor_pointer()
+                                            .when(tab == t, |d| d.bg(Theme::selection_row()))
+                                            .when(tab != t, |d| d.hover(|s| s.bg(Theme::hover_row())))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.set_se_tab(tab);
+                                                cx.notify();
+                                            }))
+                                            .child(tab.title())
+                                    }))
                                     .child(div().flex_1())
                                     .child(div().text_color(Theme::text_dim()).text_size(px(11.)).child("Tab to switch")),
                             )
@@ -1510,6 +1611,10 @@ impl Workspace {
                                 .when(p.items.is_empty() && !indexing && !p.query.is_empty(), |d| {
                                     d.child(div().px(px(14.)).py(px(6.)).text_color(Theme::text_muted()).child("Nothing found"))
                                 })
+                                .when(
+                                    p.items.is_empty() && !indexing && p.query.is_empty() && matches!(p.kind, PopupKind::SearchEverywhere(SeTab::Classes | SeTab::Symbols)),
+                                    |d| d.child(div().px(px(14.)).py(px(6.)).text_color(Theme::text_dim()).child("Type a name: a prefix, or word starts like gcw for get_current_window")),
+                                )
                                 .children(p.items.iter().enumerate().map(|(i, it)| {
                                     let (icon, color) = match &it.target {
                                         Target::File(_) => file_icon(&it.label, false),
@@ -1527,6 +1632,12 @@ impl Workspace {
                                         Target::Interpreter(_) => ("◆", gpui::rgb(0x4b8bbe).into()),
                                         Target::Intention(_) => ("✦", gpui::rgb(0xe0b84a).into()),
                                         Target::Rename(_) => ("✎", gpui::rgb(0x4b8bbe).into()),
+                                        Target::Project(project_ui::ProjectCmd::New) => ("+", Theme::text_muted()),
+                                        Target::Project(project_ui::ProjectCmd::Open) => ("▰", gpui::rgb(0x8c8f96).into()),
+                                        Target::Project(_) => ("▣", gpui::rgb(0x4b8bbe).into()),
+                                        Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Class) => ("C", gpui::rgb(0x4b8bbe).into()),
+                                        Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Method) => ("m", gpui::rgb(0xe0a85a).into()),
+                                        Target::Symbol(..) => ("ƒ", gpui::rgb(0xb07fd5).into()),
                                     };
                                     div()
                                         .id(("item", i))
