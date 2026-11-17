@@ -52,6 +52,8 @@ impl Theme {
     /// Other occurrences of the identifier under the caret (and their scrollbar marks).
     pub fn occurrence() -> Hsla { rgb(0x344134).into() }
     pub fn occurrence_mark() -> Hsla { rgb(0xa7a77c).into() }
+    /// Bookmark marks in the gutter.
+    pub fn bookmark() -> Hsla { rgb(0x5f8dd3).into() }
     pub fn error() -> Hsla { rgb(0xe55765).into() }
     /// Lane colors in the Git log graph.
     pub fn graph_lane(i: usize) -> Hsla {

@@ -1,6 +1,7 @@
 //! Main window: tool window stripes, project tree, editor tabs, popups, status bar.
 //! All shortcuts go through brisk-keymap's PyCharm keymap.
 
+mod bookmarks_ui;
 mod db_ui;
 mod disk_ui;
 mod edit2_smoke;
@@ -102,6 +103,12 @@ enum PopupKind {
     FileName,
     /// Delete confirmation.
     FileDelete,
+    /// Ctrl+F12.
+    FileStructure,
+    /// Shift+F11.
+    Bookmarks,
+    /// Ctrl+F11: pick a digit or letter.
+    BookmarkMnemonic,
 }
 
 #[derive(Clone)]
@@ -168,6 +175,10 @@ enum Target {
     Symbol(PathBuf, usize, usize, brisk_syntax::OutlineKind),
     /// Run the pending file operation with this target.
     FileDo(PathBuf),
+    /// A bookmark: file and line.
+    Bookmark(PathBuf, usize),
+    /// Ctrl+F11: set a bookmark with this mnemonic.
+    Mnemonic(char),
 }
 
 #[derive(Clone)]
@@ -213,6 +224,10 @@ pub struct Workspace {
     find: find_ui::Find,
     db: db_ui::Db,
     recent: Vec<PathBuf>,
+    /// Bookmarks of files that are not open.
+    bookmarks: Vec<bookmarks_ui::Stored>,
+    /// Items of the File Structure / Bookmarks popup, taken when it opens.
+    structure: Vec<PopupItem>,
     /// The second editor group (split editor).
     split: Option<tabs_ui::Split>,
     /// Recently closed files (Reopen Closed Tab).
@@ -314,6 +329,7 @@ impl Workspace {
         cx.defer_in(window, |this: &mut Self, _, cx| this.refresh_git(cx));
 
         window.focus(&tree_focus);
+        let saved_bookmarks = bookmarks_ui::load(&root);
         cx.defer_in(window, |this: &mut Self, window, cx| this.start_disk_poll(window, cx));
         // Closing the window saves everything first (PyCharm never asks).
         let me = cx.entity().downgrade();
@@ -384,6 +400,8 @@ impl Workspace {
             find: find_ui::Find::new(),
             db,
             recent: Vec::new(),
+            bookmarks: saved_bookmarks,
+            structure: Vec::new(),
             split: None,
             closed: Vec::new(),
             dir_stamps: Default::default(),
@@ -455,6 +473,7 @@ impl Workspace {
             self.show_toast(p, true, cx);
         }
         if saved > 0 {
+            self.persist_bookmarks(cx);
             self.symbols.stale = true;
             self.status = format!("Saved {saved} file(s)");
             self.refresh_git(cx);
@@ -488,6 +507,7 @@ impl Workspace {
             let ed = cx.new(|cx| Editor::open(&path, cx));
             self.load_vcs_base(ed.clone(), cx);
             self.watch_editor(&ed, window, cx);
+            self.adopt_bookmarks(&ed, cx);
             self.add_tab(Tab::Editor(ed));
         }
         if let Some(e) = self.active_editor() {
@@ -508,7 +528,7 @@ impl Workspace {
         if i >= self.tabs.len() {
             return;
         }
-        if let Tab::Editor(e) = &self.tabs[i] {
+        if let Tab::Editor(e) = self.tabs[i].clone() {
             let saved = e.update(cx, |e, _| e.save());
             let ed = e.read(cx);
             if ed.buffer.is_dirty() && ed.read_error.is_none() && ed.path.is_some() {
@@ -526,6 +546,8 @@ impl Workspace {
                 self.ty_close(&p);
                 self.remember_closed(p);
             }
+            let e = e.clone();
+            self.stash_bookmarks(&e, cx);
         }
         self.tabs.remove(i);
         if self.tabs.is_empty() && self.split.is_some() {
@@ -679,6 +701,11 @@ impl Workspace {
         }
         if self.tree_focus.is_focused(window) && self.tree_file_key(&e.keystroke, cx) {
             cx.stop_propagation();
+            return;
+        }
+        if self.popup.is_none() && self.bookmark_jump_key(&e.keystroke, window, cx) {
+            cx.stop_propagation();
+            cx.notify();
             return;
         }
         if self.terminal_focused(window, cx) {
@@ -865,6 +892,9 @@ impl Workspace {
                 }
             }
             A::ToggleFindWindow => self.toggle_find_window(window, cx),
+            A::ToggleBookmark | A::ToggleBookmarkWithMnemonic | A::ShowBookmarks | A::FileStructurePopup => {
+                self.bookmark_action(action, window, cx);
+            }
             A::CloseOtherTabs | A::CloseAllTabs | A::CloseTabsToRight | A::CloseTabsToLeft | A::ReopenClosedTab | A::SplitVertically
             | A::SplitHorizontally | A::Unsplit | A::MoveToOppositeGroup | A::NextSplitter => {
                 self.tab_action(action, window, cx);
@@ -1106,6 +1136,8 @@ impl Workspace {
             PopupKind::Projects => self.project_items(&q),
             PopupKind::OpenWhere => self.open_where_items(&q),
             PopupKind::FileName | PopupKind::FileDelete => self.file_op_items(&q),
+            PopupKind::FileStructure | PopupKind::Bookmarks => self.structure_items(&q),
+            PopupKind::BookmarkMnemonic => self.mnemonic_items(&q),
             PopupKind::SearchEverywhere(SeTab::Actions) | PopupKind::FindAction => self.action_items(&q, 50),
             PopupKind::RecentFiles => {
                 let ql = q.to_lowercase();
@@ -1180,6 +1212,8 @@ impl Workspace {
                     }
                     Some(Target::Symbol(path, line, col, _)) => self.open_symbol(path, line, col, window, cx),
                     Some(Target::FileDo(t)) => self.run_file_op(t, window, cx),
+                    Some(Target::Bookmark(path, line)) => self.open_symbol(path, line, 0, window, cx),
+                    Some(Target::Mnemonic(c)) => self.pick_mnemonic(c, window, cx),
                     None => self.focus_editor(window, cx),
                 }
             }
@@ -1632,6 +1666,9 @@ impl Workspace {
             PopupKind::Rename => ("Rename", "New name"),
             PopupKind::Projects => ("Projects", "Type to filter"),
             PopupKind::OpenWhere => ("Open Project", "Type to filter"),
+            PopupKind::FileStructure => ("File Structure", "Type to filter"),
+            PopupKind::Bookmarks => ("Bookmarks", "Type to filter"),
+            PopupKind::BookmarkMnemonic => ("Add Bookmark with Mnemonic", "Type a digit or letter, then Enter"),
             PopupKind::FileName | PopupKind::FileDelete => match &self.file_op {
                 Some(op) => (op.title(), op.placeholder()),
                 None => ("", ""),
@@ -1764,6 +1801,7 @@ impl Workspace {
                                         Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Method) => ("m", gpui::rgb(0xe0a85a).into()),
                                         Target::Symbol(..) => ("ƒ", gpui::rgb(0xb07fd5).into()),
                                         Target::FileDo(_) => ("✓", Theme::file_added()),
+                                        Target::Bookmark(..) | Target::Mnemonic(_) => ("▮", Theme::bookmark()),
                                     };
                                     div()
                                         .id(("item", i))
@@ -1847,7 +1885,7 @@ impl Render for Workspace {
             Some(LeftTool::Project) => Some(self.render_project(cx).into_any_element()),
             Some(LeftTool::Structure) => Some(self.render_structure(cx).into_any_element()),
             Some(LeftTool::Commit) => Some(self.render_commit(cx)),
-            Some(LeftTool::Bookmarks) => Some(Self::render_placeholder("Bookmarks", "Stage 1: F11 / Ctrl+F11 bookmarks.")),
+            Some(LeftTool::Bookmarks) => Some(self.render_bookmarks(cx)),
             None => None,
         };
         let bottom_h = match self.bottom {

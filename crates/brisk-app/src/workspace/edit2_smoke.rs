@@ -140,6 +140,48 @@ impl Workspace {
     }
 
     fn edit2_rest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // --- Method navigation, File Structure, bookmarks ---
+        let file = self.root.join("stage2.py");
+        self.open_file(&file, window, cx);
+        let Some(ed) = self.active_editor().cloned() else { return };
+        ed.update(cx, |e, _| e.buffer.set_caret(0, false));
+        let mut seen = Vec::new();
+        for a in [Action::NextMethod, Action::NextMethod, Action::NextMethod, Action::PreviousMethod] {
+            self.dispatch(a, window, cx);
+            seen.push(ed.read(cx).caret_line_col());
+        }
+        eprintln!("smoke-edit2: alt-down x3, alt-up -> {seen:?}");
+        self.dispatch(Action::FileStructurePopup, window, cx);
+        let sel = self.popup.as_ref().map(|p| p.selected);
+        eprintln!("smoke-edit2: file structure -> {} selected={sel:?}", self.smoke_popup());
+        self.smoke_query("add");
+        self.smoke_press("enter", window, cx);
+        eprintln!("smoke-edit2: 'add' + enter -> caret {:?}", ed.read(cx).caret_line_col());
+        self.dispatch(Action::ToggleBookmark, window, cx);
+        ed.update(cx, |e, _| e.buffer.set_caret(e.buffer.line_start(16), false));
+        self.dispatch(Action::ToggleBookmarkWithMnemonic, window, cx);
+        self.smoke_query("3");
+        eprintln!("smoke-edit2: ctrl-f11 popup -> {}", self.smoke_popup());
+        self.smoke_press("enter", window, cx);
+        eprintln!("smoke-edit2: bookmarks in the editor -> {:?}", ed.update(cx, |e, _| e.bookmark_lines()));
+        ed.update(cx, |e, _| e.buffer.set_caret(0, false));
+        self.smoke_press("ctrl-3", window, cx);
+        eprintln!("smoke-edit2: ctrl-3 -> caret line {}", ed.read(cx).caret_line_col().0);
+        ed.update(cx, |e, _| {
+            e.buffer.set_caret(0, false);
+            e.buffer.insert("# shifted
+");
+        });
+        self.dispatch(Action::ShowBookmarks, window, cx);
+        eprintln!("smoke-edit2: after inserting a line, shift-f11 -> {}", self.smoke_popup());
+        self.popup = None;
+        self.dispatch(Action::Undo, window, cx);
+        self.dispatch(Action::CloseTab, window, cx);
+        eprintln!("smoke-edit2: tab closed, stored -> {:?}", self.all_bookmarks(cx).iter().map(|b| (b.line, b.mnemonic)).collect::<Vec<_>>());
+        self.open_file(&file, window, cx);
+        let back = self.active_editor().map(|e| e.update(cx, |e, _| e.bookmark_lines()));
+        eprintln!("smoke-edit2: reopened -> {back:?}, saved file has project: {}", std::fs::read_to_string(brisk_db::config_dir().join("bookmarks.json")).map(|s| s.contains("stage2.py")).unwrap_or(false));
+
         // --- Tabs and split ---
         let third = self.root.join("third.py");
         let _ = std::fs::write(&third, "x = 3

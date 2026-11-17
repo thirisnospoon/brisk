@@ -15,6 +15,7 @@ use gpui::prelude::*;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+mod bookmarks;
 mod disk;
 mod find;
 mod fold;
@@ -97,6 +98,8 @@ pub struct Editor {
     pub is_field: bool,
     /// Collapsed regions.
     folds: fold::Folds,
+    /// F11 / Ctrl+F11 bookmarks.
+    bookmarks: bookmarks::Bookmarks,
     /// The mouse is over the gutter: show the fold markers.
     gutter_hover: bool,
     /// The file's encoding (kept on save).
@@ -222,6 +225,7 @@ impl Editor {
             last_replace: String::new(),
             is_field: false,
             folds: Default::default(),
+            bookmarks: Default::default(),
             gutter_hover: false,
             encoding,
             encoding_note: None,
@@ -270,6 +274,7 @@ impl Editor {
             last_replace: String::new(),
             is_field: false,
             folds: Default::default(),
+            bookmarks: Default::default(),
             gutter_hover: false,
             encoding: Default::default(),
             encoding_note: None,
@@ -636,6 +641,10 @@ impl Editor {
             self.insight.signature = None;
         }
         match action {
+            A::NextMethod | A::PreviousMethod if !self.is_field => {
+                self.goto_method(action == A::NextMethod, cx);
+                return true;
+            }
             A::ExpandRegion | A::CollapseRegion | A::ExpandAll | A::CollapseAll if !self.is_field => {
                 match action {
                     A::ExpandRegion => self.expand_at_caret(),
@@ -1164,6 +1173,8 @@ struct Prepaint {
     fold_marks: Vec<(usize, ShapedLine)>,
     /// "..." drawn after a collapsed header.
     placeholder: ShapedLine,
+    /// Bookmarks on screen: (row index, mnemonic shaped).
+    bookmark_marks: Vec<(usize, Option<ShapedLine>)>,
     gutter_w: Pixels,
     char_w: Pixels,
     marks: marks::CaretMarks,
@@ -1204,6 +1215,7 @@ impl Element for EditorElement {
             ed.refresh_vcs();
             ed.refresh_line_extent();
             ed.sync_folds();
+            ed.sync_bookmarks();
             if ed.show_gutter {
                 ed.fold_headers()
             } else {
@@ -1307,7 +1319,19 @@ impl Element for EditorElement {
             numbers.push(window.text_system().shape_line(SharedString::from(num.clone()), font_size, &[run(num.len(), color)], None));
         }
         let placeholder = window.text_system().shape_line("...".into(), font_size, &[run(3, Theme::text_muted())], None);
-        Prepaint { lines, numbers, rows, fold_marks, placeholder, gutter_w, char_w, marks }
+        let mut bookmark_marks = Vec::new();
+        if ed.show_gutter {
+            for (line, m) in ed.bookmark_lines_now() {
+                if let Ok(i) = rows.binary_search(&line) {
+                    let shaped = m.map(|c| {
+                        let s = c.to_string();
+                        window.text_system().shape_line(s.clone().into(), px(10.5), &[run(s.len(), Theme::bg())], None)
+                    });
+                    bookmark_marks.push((i, shaped));
+                }
+            }
+        }
+        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, gutter_w, char_w, marks }
     }
 
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), pp: &mut Prepaint, window: &mut Window, cx: &mut App) {
@@ -1535,6 +1559,19 @@ impl Element for EditorElement {
             for (n, y) in pp.numbers.iter().zip(&line_ys) {
                 let x = bounds.left() + pp.gutter_w - px(30.) - n.width;
                 let _ = n.paint(point(x, *y), lh, window, cx);
+            }
+            for (i, m) in &pp.bookmark_marks {
+                let y = line_ys[*i];
+                let x = bounds.left() + px(4.);
+                match m {
+                    Some(text) => {
+                        window.paint_quad(fill(Bounds::new(point(x, y + px(3.)), size(px(13.), lh - px(6.))), Theme::bookmark()).corner_radii(px(2.)));
+                        let _ = text.paint(point(x + (px(13.) - text.width) / 2., y), lh, window, cx);
+                    }
+                    None => {
+                        window.paint_quad(fill(Bounds::new(point(x + px(3.), y + px(4.)), size(px(7.), lh - px(8.))), Theme::bookmark()).corner_radii(px(1.)));
+                    }
+                }
             }
             for (i, g) in &pp.fold_marks {
                 let _ = g.paint(point(bounds.left() + pp.gutter_w - px(15.), line_ys[*i]), lh, window, cx);

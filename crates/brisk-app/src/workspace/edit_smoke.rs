@@ -8,7 +8,7 @@ use gpui::{Context, Entity, EntityInputHandler, Focusable, KeyDownEvent, Keystro
 use std::path::PathBuf;
 
 impl Workspace {
-    fn smoke_press(&mut self, keys: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn smoke_press(&mut self, keys: &str, window: &mut Window, cx: &mut Context<Self>) {
         for k in keys.split(' ') {
             let ev = KeyDownEvent { keystroke: Keystroke::parse(k).expect("keystroke"), is_held: false };
             self.on_key_down(&ev, window, cx);
@@ -230,7 +230,7 @@ impl Workspace {
         .detach();
     }
 
-    fn smoke_query(&mut self, text: &str) {
+    pub(super) fn smoke_query(&mut self, text: &str) {
         if let Some(p) = self.popup.as_mut() {
             p.query = text.into();
             p.selected = 0;
@@ -238,7 +238,7 @@ impl Workspace {
         self.refresh_popup();
     }
 
-    fn smoke_popup(&self) -> String {
+    pub(super) fn smoke_popup(&self) -> String {
         match &self.popup {
             None => "closed".into(),
             Some(p) => format!("{:?} {:?}", p.kind, p.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()),
