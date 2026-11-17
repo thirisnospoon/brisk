@@ -144,6 +144,40 @@ impl ProjectTree {
         self.rows_dirty = true;
     }
 
+    /// The loaded node for a path, if its folder has been read.
+    pub fn find(&self, path: &Path) -> Option<NodeId> {
+        let rel = path.strip_prefix(self.root()).ok()?;
+        let mut cur = 0;
+        for comp in rel.components() {
+            let name = comp.as_os_str().to_string_lossy();
+            cur = *self.nodes[cur].children.as_ref()?.iter().find(|&&c| self.nodes[c].name == name)?;
+        }
+        Some(cur)
+    }
+
+    /// Re-read a folder after files changed in it, keeping its expanded subfolders expanded.
+    pub fn reload(&mut self, id: NodeId) {
+        let mut open = Vec::new();
+        let mut stack = vec![id];
+        while let Some(n) = stack.pop() {
+            if let Some(ch) = &self.nodes[n].children {
+                for &c in ch {
+                    if self.nodes[c].expanded {
+                        open.push(self.nodes[c].path.clone());
+                        stack.push(c);
+                    }
+                }
+            }
+        }
+        self.refresh(id);
+        for p in open {
+            if let Some(n) = self.reveal(&p) {
+                self.expand(n);
+            }
+        }
+        self.rows_dirty = true;
+    }
+
     /// Flattened visible rows; the UI renders only the slice in view.
     pub fn rows(&mut self) -> &[Row] {
         if self.rows_dirty {
@@ -250,6 +284,26 @@ impl FileList {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reload_keeps_expanded_folders() {
+        let d = std::env::temp_dir().join(format!("brisk-reload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("a/b")).unwrap();
+        std::fs::create_dir_all(d.join("c")).unwrap();
+        std::fs::write(d.join("a/b/x.py"), "").unwrap();
+        let mut t = super::ProjectTree::new(&d);
+        let b = t.reveal(&d.join("a/b/x.py")).unwrap();
+        assert!(!t.nodes[b].is_dir);
+        std::fs::write(d.join("a/new.py"), "").unwrap();
+        let a = t.find(&d.join("a")).unwrap();
+        t.reload(a);
+        assert!(t.find(&d.join("a/new.py")).is_some());
+        let bdir = t.find(&d.join("a/b")).unwrap();
+        assert!(t.nodes[bdir].expanded, "a/b stays expanded");
+        assert!(t.find(&d.join("a/b/x.py")).is_some());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     use super::*;
     use std::fs;
 

@@ -3,6 +3,7 @@
 
 mod db_ui;
 mod edit_smoke;
+mod files_ui;
 mod find_ui;
 mod git_ui;
 mod lsp_ui;
@@ -94,6 +95,10 @@ enum PopupKind {
     Projects,
     /// "Open Project": This Window / New Window.
     OpenWhere,
+    /// New / rename / copy / move in the Project view: the name or target path.
+    FileName,
+    /// Delete confirmation.
+    FileDelete,
 }
 
 #[derive(Clone)]
@@ -158,6 +163,8 @@ enum Target {
     Project(project_ui::ProjectCmd),
     /// A class or function from the symbol index: file, line, column.
     Symbol(PathBuf, usize, usize, brisk_syntax::OutlineKind),
+    /// Run the pending file operation with this target.
+    FileDo(PathBuf),
 }
 
 #[derive(Clone)]
@@ -185,6 +192,8 @@ pub struct Workspace {
     symbols: project_ui::Symbols,
     /// The open context menu.
     menu: Option<menu_ui::ContextMenu>,
+    /// The file operation waiting for a name or a confirmation.
+    file_op: Option<files_ui::FileOp>,
     /// The folder waiting for the This Window / New Window choice.
     project_pending: Option<PathBuf>,
     tree: ProjectTree,
@@ -338,6 +347,7 @@ impl Workspace {
             nav: lsp_ui::Nav::default(),
             symbols: project_ui::Symbols::default(),
             menu: None,
+            file_op: None,
             project_pending: None,
             tree,
             tree_selected: Some(0),
@@ -606,6 +616,10 @@ impl Workspace {
         }
         let stroke = keys::convert(&e.keystroke);
         if stroke.is_modifier_only() {
+            return;
+        }
+        if self.tree_focus.is_focused(window) && self.tree_file_key(&e.keystroke, cx) {
+            cx.stop_propagation();
             return;
         }
         if self.terminal_focused(window, cx) {
@@ -1027,6 +1041,7 @@ impl Workspace {
             PopupKind::SearchEverywhere(SeTab::Files) => self.file_items(&q, 50),
             PopupKind::Projects => self.project_items(&q),
             PopupKind::OpenWhere => self.open_where_items(&q),
+            PopupKind::FileName | PopupKind::FileDelete => self.file_op_items(&q),
             PopupKind::SearchEverywhere(SeTab::Actions) | PopupKind::FindAction => self.action_items(&q, 50),
             PopupKind::RecentFiles => {
                 let ql = q.to_lowercase();
@@ -1100,6 +1115,7 @@ impl Workspace {
                         self.project_cmd(c, window, cx);
                     }
                     Some(Target::Symbol(path, line, col, _)) => self.open_symbol(path, line, col, window, cx),
+                    Some(Target::FileDo(t)) => self.run_file_op(t, window, cx),
                     None => self.focus_editor(window, cx),
                 }
             }
@@ -1324,6 +1340,7 @@ impl Workspace {
                                     .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
                                     .hover(|s| s.bg(Theme::hover_row()))
                                     .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| this.tree_click(id, e, window, cx)))
+                                    .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| this.tree_menu(id, e.position, window, cx)))
                                     .child(div().w(px(12.)).text_color(Theme::text_muted()).child(chevron))
                                     .child(div().w(px(16.)).text_color(icon_color).child(icon))
                                     .child(div().text_color(name_color).whitespace_nowrap().child(label))
@@ -1539,6 +1556,10 @@ impl Workspace {
             PopupKind::Rename => ("Rename", "New name"),
             PopupKind::Projects => ("Projects", "Type to filter"),
             PopupKind::OpenWhere => ("Open Project", "Type to filter"),
+            PopupKind::FileName | PopupKind::FileDelete => match &self.file_op {
+                Some(op) => (op.title(), op.placeholder()),
+                None => ("", ""),
+            },
         };
         let tabs = match p.kind {
             PopupKind::SearchEverywhere(t) => Some(t),
@@ -1666,6 +1687,7 @@ impl Workspace {
                                         Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Class) => ("C", gpui::rgb(0x4b8bbe).into()),
                                         Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Method) => ("m", gpui::rgb(0xe0a85a).into()),
                                         Target::Symbol(..) => ("ƒ", gpui::rgb(0xb07fd5).into()),
+                                        Target::FileDo(_) => ("✓", Theme::file_added()),
                                     };
                                     div()
                                         .id(("item", i))

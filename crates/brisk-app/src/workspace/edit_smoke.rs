@@ -206,9 +206,92 @@ impl Workspace {
             pause(250).await;
             let menu_open = this.read_with(cx, |this, _| this.menu.is_some()).unwrap_or(true);
             eprintln!("smoke-edit: click outside the menu -> menu open={menu_open}");
+            let _ = this.update_in(cx, |this, window, cx| this.files_smoke(window, cx));
+            // Right click on a Project view row (scan down the panel until a menu opens).
+            let mut y = 50.;
+            while y < 260. {
+                super::win_input::right_click(sx(120.), sx(y));
+                pause(120).await;
+                let got = this.read_with(cx, |this, _| this.menu.as_ref().map(|m| (this.tree_selected, m.entries.len()))).ok().flatten();
+                if let Some((sel, n)) = got {
+                    let name = this.read_with(cx, |this, _| sel.map(|i| this.tree.nodes[i].name.clone())).ok().flatten();
+                    eprintln!("smoke-edit: right click on tree row at y={y} -> menu with {n} entries for {name:?}");
+                    let _ = this.update(cx, |this, cx| {
+                        this.menu = None;
+                        cx.notify();
+                    });
+                    break;
+                }
+                y += 8.;
+            }
             eprintln!("smoke-edit: done");
             let _ = cx.update(|_, cx| cx.quit());
         })
         .detach();
+    }
+
+    fn smoke_query(&mut self, text: &str) {
+        if let Some(p) = self.popup.as_mut() {
+            p.query = text.into();
+            p.selected = 0;
+        }
+        self.refresh_popup();
+    }
+
+    fn smoke_popup(&self) -> String {
+        match &self.popup {
+            None => "closed".into(),
+            Some(p) => format!("{:?} {:?}", p.kind, p.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()),
+        }
+    }
+
+    fn smoke_select(&mut self, p: &std::path::Path, window: &mut Window) {
+        self.left = Some(super::LeftTool::Project);
+        self.tree_selected = self.tree.reveal(p);
+        window.focus(&self.tree_focus);
+    }
+
+    /// New / rename / copy / move / delete through the Project view's keys.
+    fn files_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let root = self.root.clone();
+        let exists = |p: &str| root.join(p).exists();
+        self.smoke_select(&root.join("models.py"), window);
+        self.smoke_press("alt-insert", window, cx);
+        self.smoke_press("down down enter", window, cx);
+        self.smoke_query("pkg/helper");
+        eprintln!("smoke-edit: new python file popup -> {}", self.smoke_popup());
+        self.smoke_press("enter", window, cx);
+        let tab = self.active_editor().and_then(|e| e.read(cx).path.clone());
+        eprintln!("smoke-edit: created pkg/helper.py={} open tab={:?}", exists("pkg/helper.py"), tab.as_ref().map(|p| p.strip_prefix(&root).unwrap_or(p).to_path_buf()));
+        if let Some(e) = self.active_editor().cloned() {
+            e.update(cx, |e, cx| e.replace_text_in_range(None, "x = 1", window, cx));
+        }
+        self.smoke_select(&root.join("pkg/helper.py"), window);
+        self.smoke_press("shift-f6", window, cx);
+        eprintln!("smoke-edit: rename popup -> {}", self.smoke_popup());
+        self.smoke_query("util.py");
+        self.smoke_press("enter", window, cx);
+        let tab = self.active_editor().and_then(|e| e.read(cx).path.clone());
+        let saved = std::fs::read_to_string(root.join("pkg/util.py")).unwrap_or_default();
+        eprintln!("smoke-edit: renamed -> helper.py={} util.py={} (content {saved:?}) tab now {:?}", exists("pkg/helper.py"), exists("pkg/util.py"), tab.as_ref().map(|p| p.strip_prefix(&root).unwrap_or(p).to_path_buf()));
+        self.smoke_select(&root.join("pkg/util.py"), window);
+        self.smoke_press("f5", window, cx);
+        self.smoke_query("pkg/util.py");
+        eprintln!("smoke-edit: copy onto itself -> {}", self.smoke_popup());
+        self.smoke_query("pkg/util_copy.py");
+        self.smoke_press("enter", window, cx);
+        eprintln!("smoke-edit: copied -> util_copy.py={}", exists("pkg/util_copy.py"));
+        self.smoke_select(&root.join("pkg/util_copy.py"), window);
+        self.smoke_press("f6", window, cx);
+        self.smoke_query(".");
+        self.smoke_press("enter", window, cx);
+        eprintln!("smoke-edit: moved to root -> pkg/util_copy.py={} util_copy.py={}", exists("pkg/util_copy.py"), exists("util_copy.py"));
+        self.smoke_select(&root.join("util_copy.py"), window);
+        self.smoke_press("delete", window, cx);
+        eprintln!("smoke-edit: delete popup -> {}", self.smoke_popup());
+        self.smoke_press("enter", window, cx);
+        eprintln!("smoke-edit: deleted -> util_copy.py={} tabs={}", exists("util_copy.py"), self.tabs.len());
+        let rows: Vec<String> = self.tree.rows().to_vec().iter().map(|r| format!("{}{}", "  ".repeat(r.depth), self.tree.nodes[r.id].name)).collect();
+        eprintln!("smoke-edit: tree now {rows:?}");
     }
 }
