@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 
 mod disk;
 mod find;
+mod fold;
+mod marks;
 mod lsp;
 mod scroll;
 pub use disk::{Conflict, DiskCheck};
@@ -32,9 +34,17 @@ struct LayoutCache {
     /// Left edge of the text column (unscrolled); `text_x` is where column 0 is drawn.
     text_left: Pixels,
     text_x: Pixels,
-    first_line: usize,
+    /// Buffer lines shown, one per display row from the top (folds skip lines).
+    rows: Vec<usize>,
     lines: Vec<ShapedLine>,
     char_w: Pixels,
+}
+
+impl LayoutCache {
+    /// The shaped text of a buffer line, if it is on screen.
+    fn shaped(&self, line: usize) -> Option<&ShapedLine> {
+        self.rows.binary_search(&line).ok().map(|i| &self.lines[i])
+    }
 }
 
 pub struct Editor {
@@ -85,6 +95,10 @@ pub struct Editor {
     last_replace: String,
     /// A one-line input (search fields): no find bar of its own, Enter is handled by the owner.
     pub is_field: bool,
+    /// Collapsed regions.
+    folds: fold::Folds,
+    /// The mouse is over the gutter: show the fold markers.
+    gutter_hover: bool,
     /// The file's encoding (kept on save).
     encoding: brisk_text::encoding::TextEncoding,
     /// A save had to switch the encoding to UTF-8 (shown once in the status bar).
@@ -207,6 +221,8 @@ impl Editor {
             last_find: find::FindOpts::default(),
             last_replace: String::new(),
             is_field: false,
+            folds: Default::default(),
+            gutter_hover: false,
             encoding,
             encoding_note: None,
             disk_stamp: disk::stamp(path),
@@ -253,6 +269,8 @@ impl Editor {
             last_find: find::FindOpts::default(),
             last_replace: String::new(),
             is_field: false,
+            folds: Default::default(),
+            gutter_hover: false,
             encoding: Default::default(),
             encoding_note: None,
             disk_stamp: None,
@@ -530,9 +548,10 @@ impl Editor {
     }
 
     fn ensure_caret_visible(&mut self) {
+        self.sync_folds();
         let (line, _) = self.caret_line_col();
         let vh = self.layout.as_ref().map(|l| f32::from(l.bounds.size.height)).unwrap_or(600.0);
-        let y = line as f32 * LINE_HEIGHT;
+        let y = self.row_of(line) as f32 * LINE_HEIGHT;
         let margin = LINE_HEIGHT * 3.0;
         if y < self.scroll_y + margin {
             self.scroll_y = (y - margin).max(0.0);
@@ -544,14 +563,15 @@ impl Editor {
     }
 
     fn center_caret(&mut self) {
+        self.sync_folds();
         let (line, _) = self.caret_line_col();
         let vh = self.layout.as_ref().map(|l| f32::from(l.bounds.size.height)).unwrap_or(600.0);
-        self.scroll_y = (line as f32 * LINE_HEIGHT - vh / 3.0).max(0.0);
+        self.scroll_y = (self.row_of(line) as f32 * LINE_HEIGHT - vh / 3.0).max(0.0);
         self.clamp_scroll();
     }
 
     fn clamp_scroll(&mut self) {
-        let max = (self.buffer.len_lines().saturating_sub(1)) as f32 * LINE_HEIGHT;
+        let max = (self.display_rows().saturating_sub(1)) as f32 * LINE_HEIGHT;
         self.scroll_y = self.scroll_y.clamp(0.0, max.max(0.0));
         self.clamp_scroll_x();
     }
@@ -600,6 +620,20 @@ impl Editor {
         }
         if !matches!(action, A::EditorBackspace | A::EditorDelete | A::MoveLeft | A::MoveRight | A::SelectLeft | A::SelectRight | A::MoveWordLeft | A::MoveWordRight) {
             self.insight.signature = None;
+        }
+        match action {
+            A::ExpandRegion | A::CollapseRegion | A::ExpandAll | A::CollapseAll if !self.is_field => {
+                match action {
+                    A::ExpandRegion => self.expand_at_caret(),
+                    A::CollapseRegion => self.collapse_at_caret(),
+                    A::ExpandAll => self.expand_all(),
+                    _ => self.collapse_all(),
+                }
+                self.clamp_scroll();
+                cx.notify();
+                return true;
+            }
+            _ => {}
         }
         let b = &mut self.buffer;
         let page = self.layout.as_ref().map(|l| (f32::from(l.bounds.size.height) / LINE_HEIGHT) as usize).unwrap_or(30).max(1);
@@ -715,8 +749,15 @@ impl Editor {
             A::ShrinkSelection => b.collapse_selections(),
             _ => return false,
         }
+        match action {
+            A::MoveUp | A::SelectUp | A::PageUp => self.skip_folded_lines(false),
+            A::MoveDown | A::SelectDown | A::PageDown => self.skip_folded_lines(true),
+            _ => {}
+        }
         if !keep_scroll {
             self.ensure_caret_visible();
+        } else {
+            self.sync_folds();
         }
         if action == A::EditorBackspace {
             self.refilter_completion();
@@ -728,11 +769,10 @@ impl Editor {
     fn pos_for_point(&self, p: Point<Pixels>) -> Option<usize> {
         let l = self.layout.as_ref()?;
         let y = f32::from(p.y - l.bounds.top()) + self.scroll_y;
-        let line = ((y / LINE_HEIGHT).floor().max(0.0) as usize).min(self.buffer.len_lines().saturating_sub(1));
+        let line = self.line_of_row((y / LINE_HEIGHT).floor().max(0.0) as usize);
         let x = p.x - l.text_x;
         let text = self.buffer.line(line);
-        let col = if line >= l.first_line && line < l.first_line + l.lines.len() {
-            let shaped = &l.lines[line - l.first_line];
+        let col = if let Some(shaped) = l.shaped(line) {
             byte_to_char(&text, shaped.closest_index_for_x(x.max(px(0.))))
         } else {
             ((f32::from(x) / f32::from(l.char_w)).round().max(0.0) as usize).min(text.chars().count())
@@ -748,6 +788,10 @@ impl Editor {
         self.insight.doc = None;
         self.insight.signature = None;
         if self.scrollbar_down(e.position) {
+            cx.notify();
+            return;
+        }
+        if self.fold_click(e.position) {
             cx.notify();
             return;
         }
@@ -780,6 +824,11 @@ impl Editor {
     }
 
     fn on_mouse_move(&mut self, e: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let in_gutter = self.show_gutter && self.layout.as_ref().is_some_and(|l| e.position.x < l.text_left);
+        if in_gutter != self.gutter_hover {
+            self.gutter_hover = in_gutter;
+            cx.notify();
+        }
         // Selection and scrollbar drags are handled window-wide (`global_drag`).
         if self.selecting || self.drag.is_some() {
             return;
@@ -843,7 +892,7 @@ impl Editor {
     fn line_col_for_point(&self, p: Point<Pixels>) -> (usize, usize) {
         let Some(l) = self.layout.as_ref() else { return (0, 0) };
         let y = f32::from(p.y - l.bounds.top()) + self.scroll_y;
-        let line = ((y / LINE_HEIGHT).floor().max(0.0) as usize).min(self.buffer.len_lines().saturating_sub(1));
+        let line = self.line_of_row((y / LINE_HEIGHT).floor().max(0.0) as usize);
         let col = (f32::from(p.x - l.text_x) / f32::from(l.char_w)).round().max(0.0) as usize;
         (line, col)
     }
@@ -967,6 +1016,12 @@ impl Render for Editor {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !*hovered && this.gutter_hover {
+                    this.gutter_hover = false;
+                    cx.notify();
+                }
+            }))
             .child(EditorElement { editor: cx.entity() })
             .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))
             .when_some(self.render_tooltip(), |d, t| d.child(t))
@@ -1065,10 +1120,10 @@ impl EntityInputHandler for Editor {
     fn bounds_for_range(&mut self, _range: Range<usize>, _bounds: Bounds<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<Bounds<Pixels>> {
         let l = self.layout.as_ref()?;
         let (line, col) = self.caret_line_col();
-        let y = l.bounds.top() + px(line as f32 * LINE_HEIGHT - self.scroll_y);
-        let x = if line >= l.first_line && line < l.first_line + l.lines.len() {
+        let y = l.bounds.top() + px(self.row_of(line) as f32 * LINE_HEIGHT - self.scroll_y);
+        let x = if let Some(shaped) = l.shaped(line) {
             let text = self.buffer.line(line);
-            l.text_x + l.lines[line - l.first_line].x_for_index(char_to_byte(&text, col))
+            l.text_x + shaped.x_for_index(char_to_byte(&text, col))
         } else {
             l.text_x
         };
@@ -1089,9 +1144,15 @@ struct EditorElement {
 struct Prepaint {
     lines: Vec<ShapedLine>,
     numbers: Vec<ShapedLine>,
-    first_line: usize,
+    /// Buffer line of each display row on screen.
+    rows: Vec<usize>,
+    /// Gutter fold markers: (row index, collapsed or expanded glyph).
+    fold_marks: Vec<(usize, ShapedLine)>,
+    /// "..." drawn after a collapsed header.
+    placeholder: ShapedLine,
     gutter_w: Pixels,
     char_w: Pixels,
+    marks: marks::CaretMarks,
 }
 
 impl IntoElement for EditorElement {
@@ -1124,38 +1185,71 @@ impl Element for EditorElement {
         let mono = font(MONO_FONT);
         let run = |len: usize, color: gpui::Hsla| TextRun { len, font: mono.clone(), color, background_color: None, underline: None, strikethrough: None };
 
-        self.editor.update(cx, |ed, _| {
+        let headers = self.editor.update(cx, |ed, _| {
             ed.reparse();
             ed.refresh_vcs();
             ed.refresh_line_extent();
+            ed.sync_folds();
+            if ed.show_gutter {
+                ed.fold_headers()
+            } else {
+                Vec::new()
+            }
         });
         let ed = self.editor.read(cx);
         let b = &ed.buffer;
         let n_lines = b.len_lines();
-        let first_line = ((ed.scroll_y / LINE_HEIGHT).floor() as usize).min(n_lines.saturating_sub(1));
+        let total_rows = ed.display_rows();
+        let first_row = ((ed.scroll_y / LINE_HEIGHT).floor() as usize).min(total_rows.saturating_sub(1));
         let visible = (f32::from(bounds.size.height) / LINE_HEIGHT).ceil() as usize + 1;
-        let last_line = (first_line + visible).min(n_lines);
+        let mut rows = Vec::with_capacity(visible);
+        let mut next = ed.line_of_row(first_row);
+        while rows.len() < visible && next < n_lines {
+            rows.push(next);
+            next = ed.next_shown_line(next);
+        }
 
         let digit = window.text_system().shape_line("0".into(), font_size, &[run(1, Theme::text())], None);
         let char_w = digit.width;
         let digits = n_lines.to_string().len().max(3);
-        let gutter_w = if ed.show_gutter { char_w * digits as f32 + px(32.) } else { px(0.) };
+        let gutter_w = if ed.show_gutter { char_w * digits as f32 + px(46.) } else { px(0.) };
 
-        // Highlights for the visible byte range in one query.
+        // Highlights: one query per run of consecutive shown lines (folds split them).
         let rope = b.rope();
-        let byte_lo = rope.char_to_byte(b.line_start(first_line));
-        let byte_hi = if last_line < n_lines { rope.char_to_byte(b.line_start(last_line)) } else { rope.len_bytes() };
-        let spans = match &ed.syntax {
-            Some(s) => s.highlights(&ed.text_cache.1, byte_lo..byte_hi),
-            None if ed.is_sql() => brisk_syntax::highlight_sql(&ed.text_cache.1, byte_lo..byte_hi),
-            None => Vec::new(),
+        let line_bytes = |l: usize| rope.char_to_byte(b.line_start(l));
+        let end_bytes = |l: usize| if l + 1 < n_lines { line_bytes(l + 1) } else { rope.len_bytes() };
+        let mut spans = Vec::new();
+        let mut i = 0;
+        while i < rows.len() {
+            let mut j = i;
+            while j + 1 < rows.len() && rows[j + 1] == rows[j] + 1 {
+                j += 1;
+            }
+            let range = line_bytes(rows[i])..end_bytes(rows[j]);
+            spans.extend(match &ed.syntax {
+                Some(s) => s.highlights(&ed.text_cache.1, range),
+                None if ed.is_sql() => brisk_syntax::highlight_sql(&ed.text_cache.1, range),
+                None => Vec::new(),
+            });
+            i = j + 1;
+        }
+        let (byte_lo, byte_hi) = match (rows.first(), rows.last()) {
+            (Some(&a), Some(&z)) => (line_bytes(a), end_bytes(z)),
+            _ => (0, 0),
         };
+        let marks = ed.caret_marks(byte_lo..byte_hi);
 
         let (caret_line, _) = ed.caret_line_col();
-        let mut lines = Vec::with_capacity(last_line - first_line);
-        let mut numbers = Vec::with_capacity(last_line - first_line);
+        let mut lines = Vec::with_capacity(rows.len());
+        let mut numbers = Vec::with_capacity(rows.len());
+        let mut fold_marks = Vec::new();
         let mut si = 0;
-        for l in first_line..last_line {
+        for (ri, &l) in rows.iter().enumerate() {
+            let folded = ed.is_folded_header(l);
+            if folded || (ed.gutter_hover && headers.binary_search(&l).is_ok()) {
+                let (glyph, color) = if folded { ("▸", Theme::text_muted()) } else { ("▾", Theme::gutter_fg()) };
+                fold_marks.push((ri, window.text_system().shape_line(glyph.into(), px(11.), &[run(glyph.len(), color)], None)));
+            }
             let text = b.line(l);
             let lb = rope.char_to_byte(b.line_start(l));
             let le = lb + text.len();
@@ -1198,7 +1292,8 @@ impl Element for EditorElement {
             let color = if l == caret_line { Theme::gutter_fg_active() } else { Theme::gutter_fg() };
             numbers.push(window.text_system().shape_line(SharedString::from(num.clone()), font_size, &[run(num.len(), color)], None));
         }
-        Prepaint { lines, numbers, first_line, gutter_w, char_w }
+        let placeholder = window.text_system().shape_line("...".into(), font_size, &[run(3, Theme::text_muted())], None);
+        Prepaint { lines, numbers, rows, fold_marks, placeholder, gutter_w, char_w, marks }
     }
 
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), pp: &mut Prepaint, window: &mut Window, cx: &mut App) {
@@ -1211,15 +1306,18 @@ impl Element for EditorElement {
         let lh = px(LINE_HEIGHT);
         let text_left = bounds.left() + pp.gutter_w + px(8.);
         let text_x = text_left - px(ed.scroll_x);
-        let y_of = |l: usize| bounds.top() + px(l as f32 * LINE_HEIGHT - ed.scroll_y);
-        let first = pp.first_line;
-        let last = first + pp.lines.len();
+        let y_of = |l: usize| bounds.top() + px(ed.row_of(l) as f32 * LINE_HEIGHT - ed.scroll_y);
+        let rows = &pp.rows;
+        let first = rows.first().copied().unwrap_or(0);
+        let last = rows.last().map_or(0, |l| l + 1);
+        let idx_of = |line: usize| rows.binary_search(&line).ok();
         let x_of = |line: usize, col: usize| -> Pixels {
-            if line >= first && line < last {
-                let t = b.line(line);
-                text_x + pp.lines[line - first].x_for_index(char_to_byte(&t, col))
-            } else {
-                text_x
+            match idx_of(line) {
+                Some(i) => {
+                    let t = b.line(line);
+                    text_x + pp.lines[i].x_for_index(char_to_byte(&t, col))
+                }
+                None => text_x,
             }
         };
 
@@ -1230,15 +1328,14 @@ impl Element for EditorElement {
         if b.selections.iter().all(|s| s.is_empty()) {
             for s in &b.selections {
                 let (l, _) = b.pos_to_line_col(s.head);
-                if l >= first && l < last {
+                if idx_of(l).is_some() {
                     under.push(fill(Bounds::new(point(bounds.left(), y_of(l)), size(bounds.size.width, lh)), Theme::current_line()));
                 }
             }
         }
         // Indent guides: one at each enclosing indentation level (columns 0, 4, 8, ...).
         let unit = b.indent_unit.chars().count().max(1);
-        for i in 0..pp.lines.len() {
-            let l = first + i;
+        for &l in rows.iter() {
             let t = b.line(l);
             let ws = if t.trim().is_empty() { 0 } else { t.chars().take_while(|c| *c == ' ').count() };
             for c in (0..ws).step_by(unit) {
@@ -1253,7 +1350,7 @@ impl Element for EditorElement {
             for (r, cur) in ed.visible_matches(lo, hi) {
                 let (l1, c1) = b.pos_to_line_col(r.start);
                 let (l2, c2) = b.pos_to_line_col(r.end);
-                for l in l1.max(first)..=l2.min(last.saturating_sub(1)) {
+                for l in (l1.max(first)..=l2.min(last.saturating_sub(1))).filter(|&l| idx_of(l).is_some()) {
                     let sx = if l == l1 { x_of(l, c1) } else { text_x };
                     let ex = if l == l2 { x_of(l, c2) } else { x_of(l, b.line_len(l)) + pp.char_w };
                     if ex > sx {
@@ -1261,6 +1358,20 @@ impl Element for EditorElement {
                     }
                 }
             }
+        }
+        // Identifier occurrences and the matching brackets under the caret.
+        let mark_fill = |r: &Range<usize>, color: gpui::Hsla, under: &mut Vec<gpui::PaintQuad>| {
+            let (l1, c1) = b.pos_to_line_col(r.start);
+            let (l2, c2) = b.pos_to_line_col(r.end);
+            if l1 == l2 && idx_of(l1).is_some() {
+                under.push(fill(Bounds::from_corners(point(x_of(l1, c1), y_of(l1)), point(x_of(l1, c2), y_of(l1) + lh)), color));
+            }
+        };
+        for r in &pp.marks.occurrences {
+            mark_fill(r, Theme::occurrence(), &mut under);
+        }
+        for r in &pp.marks.brackets {
+            mark_fill(r, Theme::bracket_match(), &mut under);
         }
         // Selections.
         for s in &b.selections {
@@ -1270,7 +1381,7 @@ impl Element for EditorElement {
             let r = s.range();
             let (l1, c1) = b.pos_to_line_col(r.start);
             let (l2, c2) = b.pos_to_line_col(r.end);
-            for l in l1.max(first)..=l2.min(last.saturating_sub(1)) {
+            for l in (l1.max(first)..=l2.min(last.saturating_sub(1))).filter(|&l| idx_of(l).is_some()) {
                 let sx = if l == l1 { x_of(l, c1) } else { text_x };
                 let ex = if l == l2 { x_of(l, c2) } else { x_of(l, b.line_len(l)) + pp.char_w };
                 if ex > sx {
@@ -1281,14 +1392,14 @@ impl Element for EditorElement {
         if focused {
             for s in &b.selections {
                 let (l, c) = b.pos_to_line_col(s.head);
-                if l >= first && l < last {
+                if idx_of(l).is_some() {
                     carets.push(fill(Bounds::new(point(x_of(l, c), y_of(l)), size(px(2.), lh)), Theme::caret()));
                 }
             }
         }
         // VCS change markers (PyCharm: colored bar right of the line numbers).
         let mut markers: Vec<gpui::PaintQuad> = Vec::new();
-        let mx = bounds.left() + pp.gutter_w - px(9.);
+        let mx = bounds.left() + pp.gutter_w - px(23.);
         for ch in &ed.vcs_changes {
             use brisk_git::LineChangeKind as K;
             match ch.kind {
@@ -1308,18 +1419,28 @@ impl Element for EditorElement {
                 }
             }
         }
-        let line_ys: Vec<Pixels> = (0..pp.lines.len()).map(|i| y_of(first + i)).collect();
+        let line_ys: Vec<Pixels> = rows.iter().map(|&l| y_of(l)).collect();
+        // Collapsed headers: a "..." box after the line.
+        let mut folded_boxes: Vec<(gpui::PaintQuad, Point<Pixels>)> = Vec::new();
+        for (i, &l) in rows.iter().enumerate() {
+            if ed.is_folded_header(l) {
+                let x = x_of(l, b.line_len(l)) + pp.char_w;
+                let w = pp.placeholder.width + px(8.);
+                let q = fill(Bounds::new(point(x, line_ys[i] + px(2.)), size(w, lh - px(4.))), Theme::hover_row()).corner_radii(px(3.));
+                folded_boxes.push((q, point(x + px(4.), line_ys[i])));
+            }
+        }
         // Problems: wavy underlines (errors and warnings) and marks on the right edge.
         let mut waves: Vec<(Point<Pixels>, Pixels, gpui::Hsla)> = Vec::new();
         let mut stripe: Vec<gpui::PaintQuad> = Vec::new();
-        let total = (b.len_lines().max(1) as f32 * LINE_HEIGHT).max(f32::from(bounds.size.height));
+        let total = (ed.display_rows() as f32 * LINE_HEIGHT).max(f32::from(bounds.size.height));
         for d in &ed.diagnostics {
             let color = severity_color(d.severity);
             if d.severity != Severity::Unused {
                 let r = ed.diag_range(d);
                 let (l1, c1) = b.pos_to_line_col(r.start);
                 let (l2, c2) = b.pos_to_line_col(r.end);
-                for l in l1.max(first)..=l2.min(last.saturating_sub(1)) {
+                for l in (l1.max(first)..=l2.min(last.saturating_sub(1))).filter(|&l| idx_of(l).is_some()) {
                     let sx = if l == l1 { x_of(l, c1) } else { text_x };
                     let mut ex = if l == l2 { x_of(l, c2) } else { x_of(l, b.line_len(l)) };
                     if ex <= sx {
@@ -1328,13 +1449,13 @@ impl Element for EditorElement {
                     waves.push((point(sx, y_of(l) + lh - px(3.)), ex - sx, color));
                 }
             }
-            let y = bounds.top() + px(d.start.line as f32 * LINE_HEIGHT / total * f32::from(bounds.size.height));
+            let y = bounds.top() + px(ed.row_of(d.start.line) as f32 * LINE_HEIGHT / total * f32::from(bounds.size.height));
             stripe.push(fill(Bounds::new(point(bounds.right() - px(8.), y), size(px(6.), px(3.))), color));
         }
         let mut thumbs: Vec<gpui::PaintQuad> = Vec::new();
         if ed.show_gutter {
             let vh = f32::from(bounds.size.height);
-            let line_y = |l: usize| bounds.top() + px(l as f32 * LINE_HEIGHT / total * vh);
+            let line_y = |l: usize| bounds.top() + px(ed.row_of(l) as f32 * LINE_HEIGHT / total * vh);
             // Changed lines and search matches on the track too, like PyCharm's error stripe.
             for ch in &ed.vcs_changes {
                 use brisk_git::LineChangeKind as K;
@@ -1356,6 +1477,16 @@ impl Element for EditorElement {
                     }
                 }
             }
+            if pp.marks.occurrence_lines.len() > 1 {
+                let mut last_y = -10.0f32;
+                for &l in &pp.marks.occurrence_lines {
+                    let y = line_y(l);
+                    if f32::from(y) - last_y >= 2.0 {
+                        stripe.push(fill(Bounds::new(point(bounds.right() - px(8.), y), size(px(6.), px(2.))), Theme::occurrence_mark()));
+                        last_y = f32::from(y);
+                    }
+                }
+            }
             let thumb = gpui::hsla(0., 0., 1., 0.13);
             if let Some((top, h)) = ed.v_thumb(vh) {
                 thumbs.push(fill(Bounds::new(point(bounds.right() - px(scroll::BAR - 2.), bounds.top() + px(top)), size(px(scroll::BAR - 4.), px(h))), thumb).corner_radii(px(4.)));
@@ -1368,7 +1499,7 @@ impl Element for EditorElement {
         let dragging = ed.selecting || ed.drag.is_some();
         let caret_xy = {
             let (l, c) = b.pos_to_line_col(b.primary().head);
-            (l >= first && l < last).then(|| point(x_of(l, c), y_of(l)))
+            idx_of(l).is_some().then(|| point(x_of(l, c), y_of(l)))
         };
 
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
@@ -1378,14 +1509,21 @@ impl Element for EditorElement {
             for (line, y) in pp.lines.iter().zip(&line_ys) {
                 let _ = line.paint(point(text_x, *y), lh, window, cx);
             }
+            for (q, at) in folded_boxes {
+                window.paint_quad(q);
+                let _ = pp.placeholder.paint(at, lh, window, cx);
+            }
             for (o, w, color) in waves {
                 window.paint_underline(o, w, &gpui::UnderlineStyle { color: Some(color), thickness: px(1.), wavy: true });
             }
             // Gutter (painted over text so horizontal overflow never covers line numbers).
             window.paint_quad(fill(Bounds::new(bounds.origin, size(text_left - bounds.left() - px(2.), bounds.size.height)), Theme::editor_bg()));
             for (n, y) in pp.numbers.iter().zip(&line_ys) {
-                let x = bounds.left() + pp.gutter_w - px(16.) - n.width;
+                let x = bounds.left() + pp.gutter_w - px(30.) - n.width;
                 let _ = n.paint(point(x, *y), lh, window, cx);
+            }
+            for (i, g) in &pp.fold_marks {
+                let _ = g.paint(point(bounds.left() + pp.gutter_w - px(15.), line_ys[*i]), lh, window, cx);
             }
             for q in markers {
                 window.paint_quad(q);
@@ -1420,9 +1558,10 @@ impl Element for EditorElement {
         }
 
         let lines = std::mem::take(&mut pp.lines);
+        let rows = std::mem::take(&mut pp.rows);
         let char_w = pp.char_w;
         self.editor.update(cx, |ed, _| {
-            ed.layout = Some(LayoutCache { bounds, caret_xy, text_left, text_x, first_line: first, lines, char_w });
+            ed.layout = Some(LayoutCache { bounds, caret_xy, text_left, text_x, rows, lines, char_w });
         });
     }
 }

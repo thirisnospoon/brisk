@@ -315,6 +315,146 @@ impl SyntaxTree {
         out
     }
 
+    /// The bracket at `byte` and its partner, from the tree (brackets in strings and comments
+    /// are not tokens, so they never match). Byte ranges: (this one, the other one).
+    pub fn bracket_pair(&self, byte: usize) -> Option<(Range<usize>, Range<usize>)> {
+        let tree = self.tree.as_ref()?;
+        let leaf = tree.root_node().descendant_for_byte_range(byte, byte + 1)?;
+        if leaf.child_count() != 0 || leaf.start_byte() != byte {
+            return None;
+        }
+        let close_of = |k: &str| match k {
+            "(" => Some(")"),
+            "[" => Some("]"),
+            "{" => Some("}"),
+            "${" | "#{" => Some("}"),
+            _ => None,
+        };
+        let open_of = |k: &str| match k {
+            ")" => Some("("),
+            "]" => Some("["),
+            "}" => Some("{"),
+            _ => None,
+        };
+        let kind = leaf.kind();
+        if close_of(kind).is_none() && open_of(kind).is_none() {
+            return None;
+        }
+        let parent = leaf.parent()?;
+        let mut c = parent.walk();
+        let kids: Vec<_> = parent.children(&mut c).collect();
+        let at = kids.iter().position(|k| k.id() == leaf.id())?;
+        if let Some(close) = close_of(kind) {
+            // The nearest unmatched closer after it among the siblings.
+            let mut depth = 0;
+            for k in &kids[at + 1..] {
+                if k.kind() == kind {
+                    depth += 1;
+                } else if k.kind() == close {
+                    if depth == 0 {
+                        return Some((leaf.byte_range(), k.byte_range()));
+                    }
+                    depth -= 1;
+                }
+            }
+        } else if let Some(open) = open_of(kind) {
+            let mut depth = 0;
+            for k in kids[..at].iter().rev() {
+                if k.kind() == kind {
+                    depth += 1;
+                } else if k.kind() == open || (open == "{" && matches!(k.kind(), "${" | "#{")) {
+                    if depth == 0 {
+                        return Some((leaf.byte_range(), k.byte_range()));
+                    }
+                    depth -= 1;
+                }
+            }
+        }
+        None
+    }
+
+    /// The identifier token covering `byte` (for highlighting its other occurrences).
+    pub fn identifier_at(&self, byte: usize) -> Option<Range<usize>> {
+        let tree = self.tree.as_ref()?;
+        let leaf = tree.root_node().descendant_for_byte_range(byte, byte)?;
+        let k = leaf.kind();
+        (leaf.child_count() == 0 && (k.contains("identifier") || matches!(k, "bare_key" | "variable_name" | "tag_name" | "property_name" | "class_name")))
+            .then(|| leaf.byte_range())
+    }
+
+    /// Whether the token at `byte` is an identifier of the same kind family (used to skip
+    /// matches inside strings and comments).
+    pub fn is_identifier(&self, range: Range<usize>) -> bool {
+        self.identifier_at(range.start).is_some_and(|r| r == range)
+    }
+
+    /// Foldable regions as (first line, last line), sorted by first line: definitions,
+    /// compound statements, multi-line literals and argument lists, import groups.
+    pub fn fold_ranges(&self) -> Vec<(usize, usize)> {
+        let Some(tree) = &self.tree else { return Vec::new() };
+        let foldable = |k: &str| -> bool {
+            match self.lang {
+                Lang::Python => matches!(
+                    k,
+                    "class_definition" | "function_definition" | "if_statement" | "for_statement" | "while_statement"
+                        | "try_statement" | "with_statement" | "match_statement" | "elif_clause" | "else_clause"
+                        | "except_clause" | "finally_clause" | "case_clause" | "dictionary" | "list" | "tuple" | "set"
+                        | "argument_list" | "parameters" | "string" | "list_comprehension" | "dictionary_comprehension"
+                        | "parenthesized_expression"
+                ),
+                Lang::Markdown => matches!(k, "section" | "fenced_code_block" | "list"),
+                Lang::Yaml => matches!(k, "block_mapping_pair" | "block_sequence_item" | "flow_mapping" | "flow_sequence"),
+                Lang::Toml => matches!(k, "table" | "table_array_element" | "inline_table" | "array"),
+                Lang::Html => matches!(k, "element" | "script_element" | "style_element" | "comment"),
+                _ => matches!(
+                    k,
+                    "object" | "array" | "statement_block" | "class_body" | "block" | "rule_set" | "arguments"
+                        | "formal_parameters" | "object_type" | "interface_body" | "enum_body" | "switch_body"
+                        | "template_string" | "comment" | "jsx_element" | "compound_statement" | "do_group"
+                        | "declaration_list" | "keyframe_block_list" | "parenthesized_expression"
+                ),
+            }
+        };
+        let mut out = Vec::new();
+        let mut stack = vec![tree.root_node()];
+        while let Some(node) = stack.pop() {
+            let (a, mut z) = (node.start_position().row, node.end_position().row);
+            // A node ending at column 0 really ends on the line before.
+            if node.end_position().column == 0 && z > a {
+                z -= 1;
+            }
+            if z > a && foldable(node.kind()) {
+                out.push((a, z));
+            }
+            let mut c = node.walk();
+            let kids: Vec<_> = node.children(&mut c).collect();
+            // Python: runs of import statements fold together.
+            if self.lang == Lang::Python {
+                let mut i = 0;
+                while i < kids.len() {
+                    let is_import = |k: &tree_sitter::Node| matches!(k.kind(), "import_statement" | "import_from_statement" | "future_import_statement");
+                    if is_import(&kids[i]) {
+                        let st = i;
+                        while i + 1 < kids.len() && is_import(&kids[i + 1]) {
+                            i += 1;
+                        }
+                        let (a, z) = (kids[st].start_position().row, kids[i].end_position().row);
+                        if z > a {
+                            out.push((a, z));
+                        }
+                    }
+                    i += 1;
+                }
+            }
+            if z > a || node.parent().is_none() {
+                stack.extend(kids.into_iter().filter(|k| k.end_position().row > k.start_position().row));
+            }
+        }
+        out.sort();
+        out.dedup_by_key(|r| r.0);
+        out
+    }
+
     /// Top-level and nested classes/functions for the Structure tool window (Alt+7).
     pub fn outline(&self, text: &str) -> Vec<OutlineItem> {
         let mut out = Vec::new();
@@ -439,6 +579,45 @@ foo(1);", "'a'", Highlight::String),
             let got = spans.iter().find(|sp| sp.range.contains(&at)).map(|sp| sp.kind);
             assert_eq!(got, Some(*want), "{file}: {needle} in {spans:?}");
         }
+    }
+
+    #[test]
+    fn brackets_and_identifiers() {
+        let src = "x = f(a, (b), \")\")[0]
+";
+        let mut s = SyntaxTree::new(Lang::Python);
+        s.parse(src);
+        let open = src.find('(').unwrap();
+        let (_, other) = s.bracket_pair(open).unwrap();
+        assert_eq!(&src[other.clone()], ")");
+        assert_eq!(other.start, src.find(")[").unwrap());
+        assert_eq!(s.bracket_pair(other.start).unwrap().1.start, open);
+        // The ")" inside the string is not a bracket.
+        assert!(s.bracket_pair(src.find("\")\"").unwrap() + 1).is_none());
+        let a = src.find('a').unwrap();
+        assert_eq!(s.identifier_at(a), Some(a..a + 1));
+        assert_eq!(s.identifier_at(src.find('"').unwrap() + 1), None);
+    }
+
+    #[test]
+    fn folds() {
+        let src = "import os
+import sys
+
+class A:
+    def f(self):
+        x = [
+            1,
+        ]
+        return x
+";
+        let mut s = SyntaxTree::new(Lang::Python);
+        s.parse(src);
+        let f = s.fold_ranges();
+        assert!(f.contains(&(0, 1)), "{f:?}");
+        assert!(f.contains(&(3, 8)), "{f:?}");
+        assert!(f.contains(&(4, 8)), "{f:?}");
+        assert!(f.contains(&(5, 7)), "{f:?}");
     }
 
     #[test]

@@ -95,6 +95,24 @@ pub struct Buffer {
     version: u64,
     saved_version: u64,
     group_window: Duration,
+    /// Recent edits as (version after, start, removed chars, inserted chars), in application
+    /// order, so positions kept outside the buffer (folds, bookmarks) can follow them.
+    changes: std::collections::VecDeque<(u64, usize, usize, usize)>,
+    /// Changes after this version are all in `changes`.
+    changes_floor: u64,
+}
+
+/// Move a char position through a list of edits from [`Buffer::changes_since`]. A position
+/// inside a removed range goes to its start.
+pub fn map_through(mut pos: usize, changes: &[(usize, usize, usize)]) -> usize {
+    for &(start, removed, inserted) in changes {
+        if pos >= start + removed {
+            pos = pos - removed + inserted;
+        } else if pos > start {
+            pos = start;
+        }
+    }
+    pos
 }
 
 impl Buffer {
@@ -114,6 +132,8 @@ impl Buffer {
             version: 0,
             saved_version: 0,
             group_window: Duration::from_millis(1000),
+            changes: Default::default(),
+            changes_floor: 0,
         }
     }
 
@@ -244,6 +264,7 @@ impl Buffer {
             let removed = self.rope.slice(r.clone()).to_string();
             self.rope.remove(r.clone());
             self.rope.insert(r.start, s);
+            self.log_change(r.start, r.len(), s.chars().count());
             records.push(EditRecord { start: r.start, removed, inserted: s.clone() });
         }
 
@@ -272,12 +293,32 @@ impl Buffer {
         }
     }
 
+    /// Record one rope edit (tagged with the version it produces).
+    fn log_change(&mut self, start: usize, removed: usize, inserted: usize) {
+        self.changes.push_back((self.version + 1, start, removed, inserted));
+        while self.changes.len() > 4096 {
+            if let Some((v, ..)) = self.changes.pop_front() {
+                // Changes of version v may now be incomplete.
+                self.changes_floor = self.changes_floor.max(v);
+            }
+        }
+    }
+
+    /// The edits made after `version`, in order; None when they are no longer all known.
+    pub fn changes_since(&self, version: u64) -> Option<Vec<(usize, usize, usize)>> {
+        if version < self.changes_floor {
+            return None;
+        }
+        Some(self.changes.iter().filter(|c| c.0 > version).map(|&(_, s, r, i)| (s, r, i)).collect())
+    }
+
     pub fn undo(&mut self) -> bool {
         let Some(t) = self.undo.pop() else { return false };
         for e in t.edits.iter().rev() {
             let end = e.start + e.inserted.chars().count();
             self.rope.remove(e.start..end);
             self.rope.insert(e.start, &e.removed);
+            self.log_change(e.start, end - e.start, e.removed.chars().count());
         }
         self.selections = t.before.clone();
         self.version += 1;
@@ -291,6 +332,7 @@ impl Buffer {
             let end = e.start + e.removed.chars().count();
             self.rope.remove(e.start..end);
             self.rope.insert(e.start, &e.inserted);
+            self.log_change(e.start, end - e.start, e.inserted.chars().count());
         }
         self.selections = t.after.clone();
         self.version += 1;

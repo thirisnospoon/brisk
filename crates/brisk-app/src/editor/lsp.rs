@@ -294,7 +294,7 @@ impl Editor {
     fn point_of(&self, pos: usize) -> Option<Point<Pixels>> {
         let l = self.layout.as_ref()?;
         let (line, col) = self.buffer.pos_to_line_col(pos);
-        let y = l.bounds.top() + px(line as f32 * LINE_HEIGHT - self.scroll_y);
+        let y = l.bounds.top() + px(self.row_of(line) as f32 * LINE_HEIGHT - self.scroll_y);
         Some(point(l.text_x + l.char_w * col as f32, y))
     }
 

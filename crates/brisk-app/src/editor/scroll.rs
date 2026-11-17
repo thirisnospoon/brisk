@@ -45,7 +45,7 @@ impl Editor {
     }
 
     pub(super) fn max_scroll_y(&self) -> f32 {
-        self.buffer.len_lines().saturating_sub(1) as f32 * LINE_HEIGHT
+        self.display_rows().saturating_sub(1) as f32 * LINE_HEIGHT
     }
 
     pub(super) fn clamp_scroll_x(&mut self) {
@@ -58,8 +58,8 @@ impl Editor {
         let Some(l) = self.layout.as_ref() else { return };
         let (line, col) = self.buffer.pos_to_line_col(self.buffer.primary().head);
         let text = self.buffer.line(line);
-        let x = if line >= l.first_line && line < l.first_line + l.lines.len() {
-            f32::from(l.lines[line - l.first_line].x_for_index(super::char_to_byte(&text, col)))
+        let x = if let Some(shaped) = l.shaped(line) {
+            f32::from(shaped.x_for_index(super::char_to_byte(&text, col)))
         } else {
             col as f32 * f32::from(l.char_w)
         };
@@ -75,7 +75,7 @@ impl Editor {
     /// Vertical thumb: (top, height) relative to the editor's top; None when all text fits.
     pub(super) fn v_thumb(&self, vh: f32) -> Option<(f32, f32)> {
         let max = self.max_scroll_y();
-        if (self.buffer.len_lines() as f32) * LINE_HEIGHT <= vh || max <= 0.0 {
+        if (self.display_rows() as f32) * LINE_HEIGHT <= vh || max <= 0.0 {
             return None;
         }
         let h = (vh * vh / (max + vh)).clamp(MIN_THUMB.min(vh), vh);

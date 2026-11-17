@@ -47,6 +47,11 @@ impl Theme {
     /// Search match highlight.
     pub fn search_hit() -> Hsla { rgb(0x32593d).into() }
     pub fn search_current() -> Hsla { rgb(0x2e7d4a).into() }
+    /// The bracket next to the caret and its partner.
+    pub fn bracket_match() -> Hsla { rgb(0x3b514d).into() }
+    /// Other occurrences of the identifier under the caret (and their scrollbar marks).
+    pub fn occurrence() -> Hsla { rgb(0x344134).into() }
+    pub fn occurrence_mark() -> Hsla { rgb(0xa7a77c).into() }
     pub fn error() -> Hsla { rgb(0xe55765).into() }
     /// Lane colors in the Git log graph.
     pub fn graph_lane(i: usize) -> Hsla {

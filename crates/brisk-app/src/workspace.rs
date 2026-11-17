@@ -3,6 +3,7 @@
 
 mod db_ui;
 mod disk_ui;
+mod edit2_smoke;
 mod edit_smoke;
 mod files_ui;
 mod find_ui;
@@ -247,6 +248,9 @@ impl Workspace {
         if let Some(f) = std::env::var_os("BRISK_SMOKE_EDIT") {
             let f = PathBuf::from(f);
             cx.defer_in(window, move |this: &mut Self, window, cx| this.edit_smoke(f, window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_EDIT2").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.edit2_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_DISK").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.disk_smoke(window, cx));
