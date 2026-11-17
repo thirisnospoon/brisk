@@ -235,6 +235,24 @@ pub fn fix_all(ruff: &Path, root: &Path, file: &Path, text: &str, only: Option<&
     run(c, Some(text))
 }
 
+/// Reformat Code: `ruff format` on the text, or only on `lines` (first and last, 0-based)
+/// when there is a selection. Returns the formatted text.
+pub fn format_text(ruff: &Path, root: &Path, file: &Path, text: &str, lines: Option<(usize, usize)>) -> Result<String, String> {
+    let mut c = command(ruff, root);
+    c.args(["format", "--quiet", "--force-exclude"]);
+    if let Some((a, z)) = lines {
+        // 1-based line:column; column 1 of the line after the last one ends the range.
+        c.arg(format!("--range={}:1-{}:1", a + 1, z + 2));
+    }
+    c.arg("--stdin-filename").arg(file).arg("-");
+    run(c, Some(text))
+}
+
+/// Optimize Imports: drop unused imports and sort them (ruff rules F401 and I001).
+pub fn optimize_imports(ruff: &Path, root: &Path, file: &Path, text: &str) -> Result<String, String> {
+    fix_all(ruff, root, file, text, Some("F401,I001"))
+}
+
 /// Apply edits to text (positions refer to the original text). Used by tests and as the
 /// reference for the editor, which applies the same edits through its undo history.
 pub fn apply_edits(text: &str, edits: &[Edit]) -> String {

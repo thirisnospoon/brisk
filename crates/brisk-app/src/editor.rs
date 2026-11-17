@@ -494,12 +494,26 @@ impl Editor {
     }
 
     /// Replace the whole text (ruff `--fix` output) as one undoable step.
+    /// Replace the text with a new version (formatter, quick fixes) as one undoable edit of
+    /// only the part that differs, so the caret, folds and scroll position stay where they were.
     pub fn replace_all_text(&mut self, text: &str, cx: &mut Context<Self>) {
-        let text = text.replace("\r\n", "\n");
-        if text != self.text() {
-            self.buffer.set_text(&text);
-            cx.notify();
+        let new = text.replace("\r\n", "\n");
+        let old = self.text().to_string();
+        if new == old {
+            return;
         }
+        let (line, col) = self.caret_line_col();
+        let prefix = old.chars().zip(new.chars()).take_while(|(a, b)| a == b).count();
+        let (old_n, new_n) = (old.chars().count(), new.chars().count());
+        let max_suffix = old_n.min(new_n) - prefix;
+        let suffix = old.chars().rev().zip(new.chars().rev()).take(max_suffix).take_while(|(a, b)| a == b).count();
+        let middle: String = new.chars().skip(prefix).take(new_n - prefix - suffix).collect();
+        self.buffer.replace_ranges(vec![(prefix..old_n - suffix, middle)]);
+        let line = line.min(self.buffer.len_lines().saturating_sub(1));
+        let col = col.min(self.buffer.line_len(line));
+        let pos = self.buffer.line_col_to_pos(line, col);
+        self.buffer.set_caret(pos, false);
+        cx.notify();
     }
 
     pub fn caret_line_col(&self) -> (usize, usize) {

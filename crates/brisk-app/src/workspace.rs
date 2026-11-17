@@ -849,6 +849,7 @@ impl Workspace {
                 }
             }
             A::ToggleFindWindow => self.toggle_find_window(window, cx),
+            A::ReformatCode | A::OptimizeImports => self.format_action(action, window, cx),
             A::FindInFiles => self.open_find(false, window, cx),
             A::ReplaceInFiles => self.open_find(true, window, cx),
             A::HideAllToolWindows => {

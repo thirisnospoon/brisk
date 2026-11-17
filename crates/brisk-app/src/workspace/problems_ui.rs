@@ -563,3 +563,53 @@ impl Workspace {
         .detach();
     }
 }
+
+impl Workspace {
+    /// Ctrl+Alt+L (the selected lines, else the file) and Ctrl+Alt+O, with ruff.
+    pub(super) fn format_action(&mut self, action: brisk_keymap::Action, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ed) = self.focused_editor(window, cx).or_else(|| self.active_editor().cloned()) else { return };
+        let (path, python) = {
+            let e = ed.read(cx);
+            (e.path.clone(), e.is_python())
+        };
+        let Some(path) = path.filter(|_| python) else {
+            self.status = "Reformat Code and Optimize Imports work on Python files (ruff)".into();
+            cx.notify();
+            return;
+        };
+        let Some(ruff) = self.ruff() else {
+            self.show_toast("ruff not found: install it in the project interpreter (pip install ruff)".into(), true, cx);
+            return;
+        };
+        let (text, lines) = {
+            let e = ed.read(cx);
+            let sel = e.buffer.primary();
+            let lines = (!sel.is_empty() && e.buffer.selections.len() == 1).then(|| {
+                let r = sel.range();
+                let (a, _) = e.buffer.pos_to_line_col(r.start);
+                let (z, zc) = e.buffer.pos_to_line_col(r.end);
+                (a, if zc == 0 && z > a { z - 1 } else { z })
+            });
+            (e.text_string(), lines)
+        };
+        let reformat = action == brisk_keymap::Action::ReformatCode;
+        let result = if reformat {
+            brisk_lint::format_text(&ruff, &self.root, &path, &text, lines)
+        } else {
+            brisk_lint::optimize_imports(&ruff, &self.root, &path, &text)
+        };
+        let what = if reformat { if lines.is_some() { "Reformatted the selected lines" } else { "Reformatted the file" } } else { "Optimized imports" };
+        match result {
+            Ok(out) if out.is_empty() && !text.is_empty() => self.status = "ruff returned nothing; the file was not changed".into(),
+            Ok(out) => {
+                let changed = out.replace("\r\n", "\n") != text;
+                if changed {
+                    ed.update(cx, |e, cx| e.replace_all_text(&out, cx));
+                }
+                self.status = if changed { format!("{what} (ruff)") } else { "No changes: the code is already formatted".into() };
+            }
+            Err(e) => self.show_toast(format!("ruff: {e}"), true, cx),
+        }
+        cx.notify();
+    }
+}

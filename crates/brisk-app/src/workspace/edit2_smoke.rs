@@ -97,8 +97,49 @@ impl Workspace {
         .detach();
     }
 
-    /// The Stage 2 checks after folding (filled in as features land).
-    fn edit2_more(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    /// The Stage 2 checks after folding.
+    fn edit2_more(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Reformat and Optimize Imports need ruff: wait for interpreter discovery.
+        let bg = cx.background_executor().clone();
+        cx.spawn_in(window, async move |this, cx| {
+            for _ in 0..100 {
+                if this.read_with(cx, |this, _| this.runs.all.is_some()).unwrap_or(true) {
+                    break;
+                }
+                bg.timer(std::time::Duration::from_millis(100)).await;
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.format_smoke(window, cx);
+                this.edit2_rest(window, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn format_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let file = self.root.join("messy.py");
+        let _ = std::fs::write(&file, "import sys\nimport os\nimport json\ndef f( a,b ):\n  return {'a':a,\n'b':b}\nx=f(1,2)\ny = [ 1,2 ]\nprint(os.getcwd(),x,y)\n");
+        self.open_file(&file, window, cx);
+        let Some(ed) = self.active_editor().cloned() else { return };
+        self.dispatch(Action::OptimizeImports, window, cx);
+        eprintln!("smoke-edit2: optimize imports -> {:?} | status {:?}", ed.read(cx).text_string().lines().take(2).collect::<Vec<_>>(), self.status);
+        // Select only the "y = [ 1,2 ]" line: the rest stays as it is.
+        ed.update(cx, |e, _| {
+            let l = e.text_string().lines().position(|l| l.starts_with("y =")).unwrap_or(0);
+            let (a, z) = (e.buffer.line_start(l), e.buffer.line_end(l));
+            e.buffer.selections = vec![brisk_text::Selection { anchor: a, head: z, goal_col: None }];
+        });
+        self.dispatch(Action::ReformatCode, window, cx);
+        let t = ed.read(cx).text_string();
+        eprintln!("smoke-edit2: reformat selection -> y line {:?}, x line {:?}", t.lines().find(|l| l.starts_with("y")), t.lines().find(|l| l.starts_with("x")));
+        ed.update(cx, |e, _| e.buffer.set_caret(0, false));
+        self.dispatch(Action::ReformatCode, window, cx);
+        eprintln!("smoke-edit2: reformat file -> {:?} | status {:?}", ed.read(cx).text_string(), self.status);
+        self.dispatch(Action::Undo, window, cx);
+        eprintln!("smoke-edit2: undo -> back to the selection format: {}", ed.read(cx).text_string().contains("x=f(1,2)"));
+    }
+
+    fn edit2_rest(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         eprintln!("smoke-edit2: done");
         cx.quit();
     }
