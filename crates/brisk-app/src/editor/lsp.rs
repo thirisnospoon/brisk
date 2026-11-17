@@ -1,7 +1,7 @@
 //! Code-insight popups drawn over the editor: completion list, Quick Documentation and
 //! Parameter Info. The workspace asks ty and hands the results here.
 
-use super::{Editor, EditorEvent, LINE_HEIGHT};
+use super::{line_height, Editor, EditorEvent};
 use crate::theme::{Theme, MONO_FONT};
 use brisk_lsp::{CompletionItem, DocBlock, Signature};
 use gpui::prelude::*;
@@ -294,7 +294,7 @@ impl Editor {
     fn point_of(&self, pos: usize) -> Option<Point<Pixels>> {
         let l = self.layout.as_ref()?;
         let (line, col) = self.buffer.pos_to_line_col(pos);
-        let y = l.bounds.top() + px(self.row_of(line) as f32 * LINE_HEIGHT - self.scroll_y);
+        let y = l.bounds.top() + px(self.row_of(line) as f32 * line_height() - self.scroll_y);
         Some(point(l.text_x + l.char_w * col as f32, y))
     }
 
@@ -316,7 +316,7 @@ impl Editor {
                     gpui::div()
                         .absolute()
                         .left(rel.x.max(px(4.)) - px(12.))
-                        .top((rel.y - px(LINE_HEIGHT + 8.)).max(px(0.)))
+                        .top((rel.y - px(line_height() + 8.)).max(px(0.)))
                         .px(px(8.))
                         .py(px(3.))
                         .rounded(px(5.))
@@ -334,7 +334,7 @@ impl Editor {
         }
         if let Some(c) = &self.insight.completion {
             if let Some(p) = self.point_of(c.start) {
-                let rel = p - origin + point(px(-22.), px(LINE_HEIGHT + 2.));
+                let rel = p - origin + point(px(-22.), px(line_height() + 2.));
                 let rows = c.shown.iter().enumerate().skip(c.top).take(VISIBLE).map(|(i, &ix)| {
                     let it = &c.items[ix];
                     let (badge, color) = kind_badge(it.kind);
@@ -387,7 +387,7 @@ impl Editor {
                 Anchor::Mouse(pos, m) => self.point_of(pos).map(|p| point(m.x.min(p.x + px(400.)), p.y)),
             };
             if let Some(p) = at {
-                let rel = p - origin + point(px(0.), px(LINE_HEIGHT + 2.));
+                let rel = p - origin + point(px(0.), px(line_height() + 2.));
                 let blocks = d.blocks.iter().map(|b| match b {
                     DocBlock::Code(code) => gpui::div()
                         .px(px(10.))

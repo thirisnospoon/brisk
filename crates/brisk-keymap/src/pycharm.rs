@@ -143,6 +143,8 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("alt-right", A::NextTab, None);
     k.bind("alt-left", A::PreviousTab, None);
     k.bind("ctrl-alt-s", A::Settings, None);
+    k.bind("alt-shift-.", A::IncreaseFontSize, None);
+    k.bind("alt-shift-,", A::DecreaseFontSize, None);
     k.bind("ctrl-alt-shift-s", A::ProjectStructure, None);
     k.bind("ctrl-alt-y", A::ReloadFromDisk, None);
     k.bind("enter", A::OpenSelected, PV);

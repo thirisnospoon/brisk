@@ -1,6 +1,6 @@
 //! Code editor view. Renders only visible lines; highlighting is computed for the visible range.
 
-use crate::theme::{Theme, MONO_FONT};
+use crate::theme::Theme;
 use brisk_keymap::Action;
 use brisk_lint::{Diagnostic, Fix, Severity};
 use brisk_syntax::{Lang, SyntaxTree};
@@ -27,8 +27,10 @@ mod scroll;
 pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
 
-pub const LINE_HEIGHT: f32 = 20.0;
-pub const FONT_SIZE: f32 = 13.5;
+pub fn line_height() -> f32 {
+    crate::settings::line_height()
+}
+
 
 struct LayoutCache {
     bounds: Bounds<Pixels>,
@@ -103,6 +105,10 @@ pub struct Editor {
     /// F11 / Ctrl+F11 bookmarks.
     bookmarks: bookmarks::Bookmarks,
     sel_stack: select::SelStack,
+    /// Ctrl+wheel distance not yet turned into a font size step.
+    zoom_acc: f32,
+    /// `.editorconfig` settings for this file.
+    pub editorconfig: crate::editorconfig::EditorConfig,
     /// The mouse is over the gutter: show the fold markers.
     gutter_hover: bool,
     /// The file's encoding (kept on save).
@@ -194,6 +200,15 @@ impl Editor {
                 _ => Some("#".into()),
             };
         }
+        if err.is_none() {
+            crate::local_history::record(path, &text.replace("\r\n", "\n"), crate::local_history::Label::Opened);
+        }
+        // Indent and line endings: .editorconfig, else what the file already uses.
+        let editorconfig = crate::editorconfig::for_file(path);
+        buffer.indent_unit = editorconfig.indent_unit().or_else(|| crate::editorconfig::detect_indent(&text)).unwrap_or_else(|| "    ".into());
+        if let Some(crlf) = editorconfig.crlf {
+            buffer.line_ending = if crlf { brisk_text::LineEnding::CrLf } else { brisk_text::LineEnding::Lf };
+        }
         let mut ed = Self {
             path: Some(path.to_path_buf()),
             buffer,
@@ -230,6 +245,8 @@ impl Editor {
             folds: Default::default(),
             bookmarks: Default::default(),
             sel_stack: Default::default(),
+            zoom_acc: 0.0,
+            editorconfig,
             gutter_hover: false,
             encoding,
             encoding_note: None,
@@ -280,6 +297,8 @@ impl Editor {
             folds: Default::default(),
             bookmarks: Default::default(),
             sel_stack: Default::default(),
+            zoom_acc: 0.0,
+            editorconfig: Default::default(),
             gutter_hover: false,
             encoding: Default::default(),
             encoding_note: None,
@@ -507,6 +526,12 @@ impl Editor {
     /// Replace the text with a new version (formatter, quick fixes) as one undoable edit of
     /// only the part that differs, so the caret, folds and scroll position stay where they were.
     pub fn replace_all_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.replace_all_quiet(text);
+        cx.notify();
+    }
+
+    /// The same without a repaint: one undoable minimal edit, the caret keeps its line and column.
+    pub(crate) fn replace_all_quiet(&mut self, text: &str) {
         let new = text.replace("\r\n", "\n");
         let old = self.text().to_string();
         if new == old {
@@ -523,7 +548,14 @@ impl Editor {
         let col = col.min(self.buffer.line_len(line));
         let pos = self.buffer.line_col_to_pos(line, col);
         self.buffer.set_caret(pos, false);
-        cx.notify();
+    }
+
+    /// "4 spaces" / "2 spaces" / "Tab" for the status bar.
+    pub fn indent_label(&self) -> String {
+        match self.buffer.indent_unit.as_str() {
+            "\t" => "Tab".into(),
+            u => format!("{} spaces", u.chars().count()),
+        }
     }
 
     pub fn caret_line_col(&self) -> (usize, usize) {
@@ -575,12 +607,12 @@ impl Editor {
         self.sync_folds();
         let (line, _) = self.caret_line_col();
         let vh = self.layout.as_ref().map(|l| f32::from(l.bounds.size.height)).unwrap_or(600.0);
-        let y = self.row_of(line) as f32 * LINE_HEIGHT;
-        let margin = LINE_HEIGHT * 3.0;
+        let y = self.row_of(line) as f32 * line_height();
+        let margin = line_height() * 3.0;
         if y < self.scroll_y + margin {
             self.scroll_y = (y - margin).max(0.0);
-        } else if y + LINE_HEIGHT > self.scroll_y + vh - margin {
-            self.scroll_y = y + LINE_HEIGHT - vh + margin;
+        } else if y + line_height() > self.scroll_y + vh - margin {
+            self.scroll_y = y + line_height() - vh + margin;
         }
         self.clamp_scroll();
         self.ensure_caret_visible_x();
@@ -590,12 +622,12 @@ impl Editor {
         self.sync_folds();
         let (line, _) = self.caret_line_col();
         let vh = self.layout.as_ref().map(|l| f32::from(l.bounds.size.height)).unwrap_or(600.0);
-        self.scroll_y = (self.row_of(line) as f32 * LINE_HEIGHT - vh / 3.0).max(0.0);
+        self.scroll_y = (self.row_of(line) as f32 * line_height() - vh / 3.0).max(0.0);
         self.clamp_scroll();
     }
 
     fn clamp_scroll(&mut self) {
-        let max = (self.display_rows().saturating_sub(1)) as f32 * LINE_HEIGHT;
+        let max = (self.display_rows().saturating_sub(1)) as f32 * line_height();
         self.scroll_y = self.scroll_y.clamp(0.0, max.max(0.0));
         self.clamp_scroll_x();
     }
@@ -664,7 +696,7 @@ impl Editor {
             _ => {}
         }
         let b = &mut self.buffer;
-        let page = self.layout.as_ref().map(|l| (f32::from(l.bounds.size.height) / LINE_HEIGHT) as usize).unwrap_or(30).max(1);
+        let page = self.layout.as_ref().map(|l| (f32::from(l.bounds.size.height) / line_height()) as usize).unwrap_or(30).max(1);
         let mut keep_scroll = false;
         match action {
             A::MoveLeft => b.move_carets(Movement::Left, false),
@@ -690,12 +722,12 @@ impl Editor {
             A::SelectDocStart => b.move_carets(Movement::DocStart, true),
             A::SelectDocEnd => b.move_carets(Movement::DocEnd, true),
             A::ScrollUp => {
-                self.scroll_y -= LINE_HEIGHT;
+                self.scroll_y -= line_height();
                 self.clamp_scroll();
                 keep_scroll = true;
             }
             A::ScrollDown => {
-                self.scroll_y += LINE_HEIGHT;
+                self.scroll_y += line_height();
                 self.clamp_scroll();
                 keep_scroll = true;
             }
@@ -795,7 +827,7 @@ impl Editor {
     fn pos_for_point(&self, p: Point<Pixels>) -> Option<usize> {
         let l = self.layout.as_ref()?;
         let y = f32::from(p.y - l.bounds.top()) + self.scroll_y;
-        let line = self.line_of_row((y / LINE_HEIGHT).floor().max(0.0) as usize);
+        let line = self.line_of_row((y / line_height()).floor().max(0.0) as usize);
         let x = p.x - l.text_x;
         let text = self.buffer.line(line);
         let col = if let Some(shaped) = l.shaped(line) {
@@ -918,7 +950,7 @@ impl Editor {
     fn line_col_for_point(&self, p: Point<Pixels>) -> (usize, usize) {
         let Some(l) = self.layout.as_ref() else { return (0, 0) };
         let y = f32::from(p.y - l.bounds.top()) + self.scroll_y;
-        let line = self.line_of_row((y / LINE_HEIGHT).floor().max(0.0) as usize);
+        let line = self.line_of_row((y / line_height()).floor().max(0.0) as usize);
         let col = (f32::from(p.x - l.text_x) / f32::from(l.char_w)).round().max(0.0) as usize;
         (line, col)
     }
@@ -941,8 +973,21 @@ impl Editor {
         }
     }
 
-    fn on_scroll(&mut self, e: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let d = e.delta.pixel_delta(px(LINE_HEIGHT));
+    fn on_scroll(&mut self, e: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let d = e.delta.pixel_delta(px(line_height()));
+        if e.modifiers.control && !self.is_field {
+            // Ctrl+wheel: font size in all editors (wheel up = bigger), one step per notch.
+            self.zoom_acc += f32::from(d.y);
+            let step = line_height();
+            while self.zoom_acc.abs() >= step {
+                let up = self.zoom_acc > 0.0;
+                self.zoom_acc -= if up { step } else { -step };
+                crate::settings::zoom(Some(if up { 1.0 } else { -1.0 }));
+            }
+            self.clamp_scroll();
+            window.refresh();
+            return;
+        }
         self.scroll_by(f32::from(d.x), f32::from(d.y), e.modifiers.shift);
         cx.notify();
     }
@@ -980,8 +1025,8 @@ impl Editor {
     fn render_tooltip(&self) -> Option<gpui::AnyElement> {
         let l = self.layout.as_ref()?;
         let (i, at) = match (self.hover, self.caret_tip) {
-            (Some((i, p)), _) => (i, p + point(px(0.), px(LINE_HEIGHT))),
-            (None, Some(i)) => (i, l.caret_xy? + point(px(0.), px(LINE_HEIGHT + 2.))),
+            (Some((i, p)), _) => (i, p + point(px(0.), px(line_height()))),
+            (None, Some(i)) => (i, l.caret_xy? + point(px(0.), px(line_height() + 2.))),
             _ => return None,
         };
         let d = self.diagnostics.get(i)?;
@@ -1146,14 +1191,14 @@ impl EntityInputHandler for Editor {
     fn bounds_for_range(&mut self, _range: Range<usize>, _bounds: Bounds<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<Bounds<Pixels>> {
         let l = self.layout.as_ref()?;
         let (line, col) = self.caret_line_col();
-        let y = l.bounds.top() + px(self.row_of(line) as f32 * LINE_HEIGHT - self.scroll_y);
+        let y = l.bounds.top() + px(self.row_of(line) as f32 * line_height() - self.scroll_y);
         let x = if let Some(shaped) = l.shaped(line) {
             let text = self.buffer.line(line);
             l.text_x + shaped.x_for_index(char_to_byte(&text, col))
         } else {
             l.text_x
         };
-        Some(Bounds::new(point(x, y), size(px(2.), px(LINE_HEIGHT))))
+        Some(Bounds::new(point(x, y), size(px(2.), px(line_height()))))
     }
 
     fn character_index_for_point(&mut self, _: Point<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
@@ -1209,8 +1254,8 @@ impl Element for EditorElement {
     }
 
     fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), window: &mut Window, cx: &mut App) -> Prepaint {
-        let font_size = px(FONT_SIZE);
-        let mono = font(MONO_FONT);
+        let font_size = px(crate::settings::font_size());
+        let mono = font(crate::settings::editor_font());
         let run = |len: usize, color: gpui::Hsla| TextRun { len, font: mono.clone(), color, background_color: None, underline: None, strikethrough: None };
 
         let headers = self.editor.update(cx, |ed, _| {
@@ -1229,8 +1274,8 @@ impl Element for EditorElement {
         let b = &ed.buffer;
         let n_lines = b.len_lines();
         let total_rows = ed.display_rows();
-        let first_row = ((ed.scroll_y / LINE_HEIGHT).floor() as usize).min(total_rows.saturating_sub(1));
-        let visible = (f32::from(bounds.size.height) / LINE_HEIGHT).ceil() as usize + 1;
+        let first_row = ((ed.scroll_y / line_height()).floor() as usize).min(total_rows.saturating_sub(1));
+        let visible = (f32::from(bounds.size.height) / line_height()).ceil() as usize + 1;
         let mut rows = Vec::with_capacity(visible);
         let mut next = ed.line_of_row(first_row);
         while rows.len() < visible && next < n_lines {
@@ -1344,10 +1389,10 @@ impl Element for EditorElement {
 
         let ed = self.editor.read(cx);
         let b = &ed.buffer;
-        let lh = px(LINE_HEIGHT);
+        let lh = px(line_height());
         let text_left = bounds.left() + pp.gutter_w + px(8.);
         let text_x = text_left - px(ed.scroll_x);
-        let y_of = |l: usize| bounds.top() + px(ed.row_of(l) as f32 * LINE_HEIGHT - ed.scroll_y);
+        let y_of = |l: usize| bounds.top() + px(ed.row_of(l) as f32 * line_height() - ed.scroll_y);
         let rows = &pp.rows;
         let first = rows.first().copied().unwrap_or(0);
         let last = rows.last().map_or(0, |l| l + 1);
@@ -1474,7 +1519,7 @@ impl Element for EditorElement {
         // Problems: wavy underlines (errors and warnings) and marks on the right edge.
         let mut waves: Vec<(Point<Pixels>, Pixels, gpui::Hsla)> = Vec::new();
         let mut stripe: Vec<gpui::PaintQuad> = Vec::new();
-        let total = (ed.display_rows() as f32 * LINE_HEIGHT).max(f32::from(bounds.size.height));
+        let total = (ed.display_rows() as f32 * line_height()).max(f32::from(bounds.size.height));
         for d in &ed.diagnostics {
             let color = severity_color(d.severity);
             if d.severity != Severity::Unused {
@@ -1490,13 +1535,13 @@ impl Element for EditorElement {
                     waves.push((point(sx, y_of(l) + lh - px(3.)), ex - sx, color));
                 }
             }
-            let y = bounds.top() + px(ed.row_of(d.start.line) as f32 * LINE_HEIGHT / total * f32::from(bounds.size.height));
+            let y = bounds.top() + px(ed.row_of(d.start.line) as f32 * line_height() / total * f32::from(bounds.size.height));
             stripe.push(fill(Bounds::new(point(bounds.right() - px(8.), y), size(px(6.), px(3.))), color));
         }
         let mut thumbs: Vec<gpui::PaintQuad> = Vec::new();
         if ed.show_gutter {
             let vh = f32::from(bounds.size.height);
-            let line_y = |l: usize| bounds.top() + px(ed.row_of(l) as f32 * LINE_HEIGHT / total * vh);
+            let line_y = |l: usize| bounds.top() + px(ed.row_of(l) as f32 * line_height() / total * vh);
             // Changed lines and search matches on the track too, like PyCharm's error stripe.
             for ch in &ed.vcs_changes {
                 use brisk_git::LineChangeKind as K;
@@ -1528,7 +1573,7 @@ impl Element for EditorElement {
                     }
                 }
             }
-            let thumb = gpui::hsla(0., 0., 1., 0.13);
+            let thumb = Theme::scroll_thumb();
             if let Some((top, h)) = ed.v_thumb(vh) {
                 thumbs.push(fill(Bounds::new(point(bounds.right() - px(scroll::BAR - 2.), bounds.top() + px(top)), size(px(scroll::BAR - 4.), px(h))), thumb).corner_radii(px(4.)));
             }

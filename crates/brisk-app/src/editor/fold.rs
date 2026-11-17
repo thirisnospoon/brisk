@@ -305,7 +305,7 @@ impl Editor {
             return false;
         }
         let y = f32::from(p.y - l.bounds.top()) + self.scroll_y;
-        let line = self.line_of_row((y / super::LINE_HEIGHT).floor().max(0.0) as usize);
+        let line = self.line_of_row((y / super::line_height()).floor().max(0.0) as usize);
         let gutter_right = l.text_left - gpui::px(8.);
         if p.x < l.text_left && p.x >= gutter_right - gpui::px(20.) {
             let header = self.is_folded_header(line) || self.fold_headers().binary_search(&line).is_ok();
@@ -336,7 +336,7 @@ impl Editor {
     pub fn fold_marker_point(&self, line: usize) -> Option<gpui::Point<gpui::Pixels>> {
         let l = self.layout.as_ref()?;
         l.rows.binary_search(&line).ok()?;
-        let y = l.bounds.top() + gpui::px(self.row_of(line) as f32 * super::LINE_HEIGHT - self.scroll_y + super::LINE_HEIGHT / 2.);
+        let y = l.bounds.top() + gpui::px(self.row_of(line) as f32 * super::line_height() - self.scroll_y + super::line_height() / 2.);
         Some(gpui::point(l.text_left - gpui::px(17.), y))
     }
 

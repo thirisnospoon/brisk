@@ -9,11 +9,13 @@ mod edit_smoke;
 mod files_ui;
 mod find_ui;
 mod git_ui;
+mod history_ui;
 mod lsp_ui;
 mod menu_ui;
 mod problems_ui;
 pub(crate) mod project_ui;
 mod run_ui;
+mod settings_ui;
 mod tabs_ui;
 mod win_input;
 
@@ -111,6 +113,8 @@ enum PopupKind {
     BookmarkMnemonic,
     /// Ctrl+Shift+V.
     PasteHistory,
+    /// Show Local History.
+    LocalHistory,
 }
 
 #[derive(Clone)]
@@ -183,6 +187,8 @@ enum Target {
     Mnemonic(char),
     /// Paste from History: entry index.
     Clip(usize),
+    /// A Local History revision: file and time (ms).
+    History(PathBuf, u64),
 }
 
 #[derive(Clone)]
@@ -227,6 +233,7 @@ pub struct Workspace {
     toast_gen: u64,
     find: find_ui::Find,
     db: db_ui::Db,
+    settings_dialog: Option<settings_ui::SettingsDialog>,
     recent: Vec<PathBuf>,
     /// Bookmarks of files that are not open.
     bookmarks: Vec<bookmarks_ui::Stored>,
@@ -280,6 +287,20 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_EDIT2").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.edit2_smoke(window, cx));
+        }
+        // Screenshot helpers: open a file and/or the Settings dialog at start.
+        if let Some(f) = std::env::var_os("BRISK_OPEN_FILE") {
+            let f = PathBuf::from(f);
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.open_file(&f, window, cx));
+        }
+        if std::env::var_os("BRISK_OPEN_SETTINGS").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| {
+                this.open_settings(window);
+                cx.notify();
+            });
+        }
+        if std::env::var_os("BRISK_SMOKE_SETTINGS").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.settings_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_DISK").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.disk_smoke(window, cx));
@@ -425,6 +446,7 @@ impl Workspace {
             ctrl_tap: None,
             ctrl_alone: false,
             ctrl_clone: false,
+            settings_dialog: None,
             status: "Indexing…".into(),
             started: Instant::now(),
         }
@@ -710,6 +732,11 @@ impl Workspace {
             cx.stop_propagation();
             return;
         }
+        if self.settings_dialog.is_some() {
+            self.settings_key(e, window, cx);
+            cx.stop_propagation();
+            return;
+        }
         if self.find.open {
             self.find_key(e, window, cx);
             cx.stop_propagation();
@@ -919,6 +946,7 @@ impl Workspace {
             }
             A::ToggleFindWindow => self.toggle_find_window(window, cx),
             A::PasteFromHistory if self.focused_editor(window, cx).is_some() => self.open_popup(PopupKind::PasteHistory),
+            A::ShowLocalHistory => self.show_local_history(cx),
             A::ToggleBookmark | A::ToggleBookmarkWithMnemonic | A::ShowBookmarks | A::FileStructurePopup => {
                 self.bookmark_action(action, window, cx);
             }
@@ -983,7 +1011,10 @@ impl Workspace {
                     window.focus(&self.tree_focus);
                 }
             }
-            A::NewElement | A::Settings | A::ProjectStructure => {
+            A::Settings | A::IncreaseFontSize | A::DecreaseFontSize | A::ResetFontSize | A::QuickSwitchTheme => {
+                self.settings_action(action, window, cx);
+            }
+            A::NewElement | A::ProjectStructure => {
                 self.status = format!("{} — coming soon", action.info().title);
             }
             _ => {
@@ -1163,7 +1194,7 @@ impl Workspace {
             PopupKind::Projects => self.project_items(&q),
             PopupKind::OpenWhere => self.open_where_items(&q),
             PopupKind::FileName | PopupKind::FileDelete => self.file_op_items(&q),
-            PopupKind::FileStructure | PopupKind::Bookmarks => self.structure_items(&q),
+            PopupKind::FileStructure | PopupKind::Bookmarks | PopupKind::LocalHistory => self.structure_items(&q),
             PopupKind::BookmarkMnemonic => self.mnemonic_items(&q),
             PopupKind::PasteHistory => clip_items(&q),
             PopupKind::SearchEverywhere(SeTab::Actions) | PopupKind::FindAction => self.action_items(&q, 50),
@@ -1208,6 +1239,12 @@ impl Workspace {
             }
             "enter" => {
                 let target = p.items.get(p.selected).map(|i| i.target.clone());
+                if let (true, Some(Target::History(path, at))) = (k.modifiers.control, target.clone()) {
+                    self.popup = None;
+                    self.history_revert(path, at, window, cx);
+                    cx.notify();
+                    return;
+                }
                 self.popup = None;
                 match target {
                     Some(Target::File(path)) => self.open_file(&path, window, cx),
@@ -1242,6 +1279,7 @@ impl Workspace {
                     Some(Target::FileDo(t)) => self.run_file_op(t, window, cx),
                     Some(Target::Bookmark(path, line)) => self.open_symbol(path, line, 0, window, cx),
                     Some(Target::Mnemonic(c)) => self.pick_mnemonic(c, window, cx),
+                    Some(Target::History(path, at)) => self.history_diff(path, at, window, cx),
                     Some(Target::Clip(i)) => {
                         self.focus_editor(window, cx);
                         if let (Some(t), Some(ed)) = (crate::editor::clipboard_history().get(i).cloned(), self.active_editor().cloned()) {
@@ -1628,6 +1666,7 @@ impl Workspace {
 
     fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let enc = self.active_editor().map(|e| e.read(cx).encoding_label()).unwrap_or_default();
+        let indent = self.active_editor().map(|e| e.read(cx).indent_label()).unwrap_or_default();
         let (pos, eol, lang, crumbs) = match self.active_editor() {
             Some(e) => {
                 let e = e.read(cx);
@@ -1664,7 +1703,7 @@ impl Workspace {
                 d.child(item(pos))
                     .child(item(eol.into()))
                     .child(item(enc))
-                    .child(item("4 spaces".into()))
+                    .child(item(indent))
                     .child(item(lang.into()))
             })
             .child(
@@ -1704,6 +1743,7 @@ impl Workspace {
             PopupKind::Bookmarks => ("Bookmarks", "Type to filter"),
             PopupKind::BookmarkMnemonic => ("Add Bookmark with Mnemonic", "Type a digit or letter, then Enter"),
             PopupKind::PasteHistory => ("Paste from History", "Type to filter"),
+            PopupKind::LocalHistory => ("Local History", "Enter: show diff · Ctrl+Enter: revert"),
             PopupKind::FileName | PopupKind::FileDelete => match &self.file_op {
                 Some(op) => (op.title(), op.placeholder()),
                 None => ("", ""),
@@ -1838,6 +1878,7 @@ impl Workspace {
                                         Target::FileDo(_) => ("✓", Theme::file_added()),
                                         Target::Bookmark(..) | Target::Mnemonic(_) => ("▮", Theme::bookmark()),
                                         Target::Clip(_) => ("¶", Theme::text_muted()),
+                                        Target::History(..) => ("◷", Theme::text_muted()),
                                     };
                                     div()
                                         .id(("item", i))
@@ -1984,6 +2025,7 @@ impl Render for Workspace {
             .children(self.render_popup(cx))
             .children(self.render_find_popup(cx))
             .children(self.render_ds_dialog(cx))
+            .children(self.render_settings(cx))
             .children(self.render_menu(viewport, cx))
     }
 }

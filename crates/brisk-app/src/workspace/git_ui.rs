@@ -440,7 +440,7 @@ impl Workspace {
         Some(FileChange { path: rel, old_path: old, status: st })
     }
 
-    fn open_diff(&mut self, d: Entity<DiffView>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_diff(&mut self, d: Entity<DiffView>, window: &mut Window, cx: &mut Context<Self>) {
         let title = d.read(cx).title.clone();
         if let Some(i) = self.tabs.iter().position(|t| matches!(t, Tab::Diff(x) if x.read(cx).title == title)) {
             self.tabs[i] = Tab::Diff(d);

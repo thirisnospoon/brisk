@@ -7,8 +7,11 @@
 mod diff_view;
 mod grid_view;
 mod editor;
+mod editorconfig;
 mod keys;
+mod local_history;
 mod terminal_view;
+mod settings;
 mod theme;
 mod workspace;
 
@@ -28,6 +31,7 @@ fn main() {
     let root = PathBuf::from(root.to_string_lossy().trim_start_matches(r"\\?\").to_string());
 
     workspace::project_ui::remember_project(&root);
+    settings::load();
 
     Application::new().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1400.), px(900.)), cx);

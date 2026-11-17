@@ -182,6 +182,10 @@ actions! {
     MoveToOppositeGroup => "Move to Opposite Group", "Window";
     NextSplitter => "Go to Next Splitter", "Window";
     Settings => "Settings", "File";
+    IncreaseFontSize => "Increase Font Size in All Editors", "View";
+    DecreaseFontSize => "Decrease Font Size in All Editors", "View";
+    ResetFontSize => "Reset Font Size", "View";
+    QuickSwitchTheme => "Switch Light / Dark Theme", "View";
     ProjectStructure => "Project Structure", "File";
     ReloadFromDisk => "Reload All from Disk", "File";
     OpenSelected => "Open / Jump to Source", "File";

@@ -3,7 +3,7 @@
 //! The query and replacement fields are small editors, so selection, clipboard and undo work in
 //! them as anywhere else. Matching is shared with Find in Files (`brisk_search::Query`).
 
-use super::{Editor, LINE_HEIGHT};
+use super::{line_height, Editor};
 use crate::theme::Theme;
 use gpui::prelude::*;
 use gpui::{div, px, Context, Entity, Keystroke, Subscription, Window};
@@ -162,8 +162,8 @@ impl Editor {
         self.buffer.selections = vec![brisk_text::Selection { anchor: m.start, head: m.end, goal_col: None }];
         let (line, _) = self.buffer.pos_to_line_col(m.start);
         let vh = self.layout.as_ref().map(|l| f32::from(l.bounds.size.height)).unwrap_or(600.0);
-        let y = self.row_of(line) as f32 * LINE_HEIGHT;
-        if y < self.scroll_y || y + LINE_HEIGHT > self.scroll_y + vh {
+        let y = self.row_of(line) as f32 * line_height();
+        if y < self.scroll_y || y + line_height() > self.scroll_y + vh {
             self.center_caret();
         }
         self.ensure_caret_visible_x();

@@ -75,6 +75,14 @@ impl Editor {
             self.disk_conflict = Some(if now.is_none() { Conflict::Deleted } else { Conflict::Changed });
             return Ok(false);
         }
+        // .editorconfig: trailing whitespace (not on the caret line) and the final newline.
+        if self.editorconfig.trim_trailing_whitespace.is_some() || self.editorconfig.insert_final_newline.is_some() {
+            let old = self.buffer.text();
+            let fixed = self.editorconfig.fix_on_save(&old, Some(self.caret_line_col().0));
+            if fixed != old {
+                self.replace_all_quiet(&fixed);
+            }
+        }
         let text = self.buffer.text_for_save();
         let bytes = match encoding::encode(&text, self.encoding) {
             Ok(b) => b,
@@ -86,6 +94,7 @@ impl Editor {
             }
         };
         std::fs::write(&p, bytes)?;
+        crate::local_history::record(&p, &self.buffer.text(), crate::local_history::Label::Saved);
         self.buffer.mark_saved();
         self.disk_stamp = stamp(&p);
         Ok(true)
@@ -102,6 +111,7 @@ impl Editor {
         self.disk_stamp = stamp(&p);
         self.disk_conflict = None;
         let text = text.replace("\r\n", "\n");
+        crate::local_history::record(&p, &text, crate::local_history::Label::External);
         if text == self.buffer.text() {
             self.buffer.mark_saved();
             return false;
@@ -193,13 +203,13 @@ impl Editor {
                 .gap(px(8.))
                 .px(px(12.))
                 .py(px(6.))
-                .bg(gpui::rgb(0x3d3423))
+                .bg(Theme::warning_bg())
                 .border_b_1()
                 .border_color(Theme::divider())
                 .text_size(px(13.))
                 .text_color(Theme::text())
                 .cursor(gpui::CursorStyle::Arrow)
-                .child(div().text_color(gpui::rgb(0xe0b84a)).child("⚠"))
+                .child(div().text_color(Theme::warning()).child("⚠"))
                 .child(div().flex_1().child(msg))
                 .when(c == Conflict::Changed, |d| d.child(button("disk-reload", "Reload from Disk", true, cx)))
                 .child(button("disk-keep", keep, false, cx))

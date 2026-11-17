@@ -1,7 +1,7 @@
 //! Scrolling: horizontal scroll for long lines, the scrollbars (with error, change and search
 //! marks on the vertical one), dragging them, and auto-scroll while selecting past an edge.
 
-use super::{Editor, LINE_HEIGHT};
+use super::{line_height, Editor};
 use gpui::{Context, MouseMoveEvent, Pixels, Point, Window};
 
 /// Scrollbar track thickness.
@@ -45,7 +45,7 @@ impl Editor {
     }
 
     pub(super) fn max_scroll_y(&self) -> f32 {
-        self.display_rows().saturating_sub(1) as f32 * LINE_HEIGHT
+        self.display_rows().saturating_sub(1) as f32 * line_height()
     }
 
     pub(super) fn clamp_scroll_x(&mut self) {
@@ -75,7 +75,7 @@ impl Editor {
     /// Vertical thumb: (top, height) relative to the editor's top; None when all text fits.
     pub(super) fn v_thumb(&self, vh: f32) -> Option<(f32, f32)> {
         let max = self.max_scroll_y();
-        if (self.display_rows() as f32) * LINE_HEIGHT <= vh || max <= 0.0 {
+        if (self.display_rows() as f32) * line_height() <= vh || max <= 0.0 {
             return None;
         }
         let h = (vh * vh / (max + vh)).clamp(MIN_THUMB.min(vh), vh);
