@@ -105,6 +105,27 @@ impl Query {
         }
     }
 
+    /// Byte ranges of all non-empty matches in `text`, at most `limit`.
+    pub fn ranges(&self, text: &str, limit: usize) -> Vec<Range<usize>> {
+        self.re.find_iter(text).filter(|m| m.start() != m.end()).take(limit).map(|m| m.range()).collect()
+    }
+
+    /// The replacement for the match at `range` (found by [`Query::ranges`]): `$1`/`${name}`
+    /// expand in regex mode only.
+    pub fn expand(&self, text: &str, range: Range<usize>, with: &str) -> String {
+        if !self.regex_mode {
+            return with.to_string();
+        }
+        match self.re.captures_at(text, range.start).filter(|c| c.get(0).is_some_and(|m| m.range() == range)) {
+            Some(caps) => {
+                let mut out = String::new();
+                caps.expand(with, &mut out);
+                out
+            }
+            None => with.to_string(),
+        }
+    }
+
     /// Replace every match; `$1`/`${name}` expand in regex mode only. Returns (text, count).
     pub fn replace(&self, text: &str, with: &str) -> (String, usize) {
         let n = self.re.find_iter(text).filter(|m| m.start() != m.end()).count();

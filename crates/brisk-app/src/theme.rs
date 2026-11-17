@@ -46,6 +46,7 @@ impl Theme {
     pub fn diff_filler_bg() -> Hsla { rgb(0x232427).into() }
     /// Search match highlight.
     pub fn search_hit() -> Hsla { rgb(0x32593d).into() }
+    pub fn search_current() -> Hsla { rgb(0x2e7d4a).into() }
     pub fn error() -> Hsla { rgb(0xe55765).into() }
     /// Lane colors in the Git log graph.
     pub fn graph_lane(i: usize) -> Hsla {

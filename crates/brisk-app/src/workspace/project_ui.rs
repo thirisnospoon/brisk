@@ -355,7 +355,7 @@ impl Workspace {
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
             // Real platform input: WM_LBUTTONDOWN/UP posted to our own window, in physical pixels.
             let scale = cx.update(|window, _| window.scale_factor()).unwrap_or(1.);
-            let click = |_: &mut gpui::AsyncWindowContext, x: f32, y: f32| post_click(x * scale, y * scale);
+            let click = |_: &mut gpui::AsyncWindowContext, x: f32, y: f32| super::win_input::click(x * scale, y * scale);
             // Wait for the file list and the symbol index.
             for _ in 0..200 {
                 pause(50).await;
@@ -440,40 +440,3 @@ impl Workspace {
     }
 }
 
-/// Posts a left click to the top-level window of this thread (the Brisk window).
-#[cfg(windows)]
-fn post_click(x: f32, y: f32) {
-    #[link(name = "user32")]
-    extern "system" {
-        fn EnumThreadWindows(thread: u32, f: extern "system" fn(isize, isize) -> i32, l: isize) -> i32;
-        fn IsWindowVisible(h: isize) -> i32;
-        fn PostMessageW(h: isize, msg: u32, w: usize, l: isize) -> i32;
-    }
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn GetCurrentThreadId() -> u32;
-    }
-    extern "system" fn found(h: isize, out: isize) -> i32 {
-        unsafe {
-            if IsWindowVisible(h) != 0 {
-                *(out as *mut isize) = h;
-                return 0;
-            }
-        }
-        1
-    }
-    let mut hwnd: isize = 0;
-    unsafe {
-        EnumThreadWindows(GetCurrentThreadId(), found, &mut hwnd as *mut isize as isize);
-        if hwnd == 0 {
-            return;
-        }
-        let l = ((y as i32 as isize & 0xffff) << 16) | (x as i32 as isize & 0xffff);
-        PostMessageW(hwnd, 0x0200, 0, l); // WM_MOUSEMOVE
-        PostMessageW(hwnd, 0x0201, 1, l); // WM_LBUTTONDOWN
-        PostMessageW(hwnd, 0x0202, 0, l); // WM_LBUTTONUP
-    }
-}
-
-#[cfg(not(windows))]
-fn post_click(_: f32, _: f32) {}

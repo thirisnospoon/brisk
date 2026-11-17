@@ -15,7 +15,9 @@ use gpui::prelude::*;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+mod find;
 mod lsp;
+mod scroll;
 pub use lsp::Anchor;
 
 pub const LINE_HEIGHT: f32 = 20.0;
@@ -25,6 +27,8 @@ struct LayoutCache {
     bounds: Bounds<Pixels>,
     /// Primary caret, window coordinates (for the F2 tooltip).
     caret_xy: Option<Point<Pixels>>,
+    /// Left edge of the text column (unscrolled); `text_x` is where column 0 is drawn.
+    text_left: Pixels,
     text_x: Pixels,
     first_line: usize,
     lines: Vec<ShapedLine>,
@@ -39,6 +43,16 @@ pub struct Editor {
     text_cache: (u64, String),
     focus: FocusHandle,
     scroll_y: f32,
+    scroll_x: f32,
+    /// (buffer version, longest line in chars): the horizontal scroll range.
+    max_line: (u64, usize),
+    /// A scrollbar thumb being dragged.
+    drag: Option<scroll::Drag>,
+    /// Pointer position during a selection drag (drives auto-scroll past the edges).
+    drag_pos: Option<Point<Pixels>>,
+    autoscrolling: bool,
+    /// Alt+drag column selection: the (line, column) where it started.
+    column_anchor: Option<(usize, usize)>,
     layout: Option<LayoutCache>,
     selecting: bool,
     marked: Option<Range<usize>>,
@@ -62,6 +76,13 @@ pub struct Editor {
     caret_tip: Option<usize>,
     /// Completion, Quick Documentation, Parameter Info.
     insight: lsp::Insight,
+    /// Ctrl+F / Ctrl+R bar.
+    find: Option<find::FindBar>,
+    /// The last search, for F3 after the bar is closed and for reopening it.
+    last_find: find::FindOpts,
+    last_replace: String,
+    /// A one-line input (search fields): no find bar of its own, Enter is handled by the owner.
+    pub is_field: bool,
 }
 
 /// Events for the workspace.
@@ -81,6 +102,8 @@ pub enum EditorEvent {
     HoverDoc(usize, Point<Pixels>),
     /// Ctrl+Click at this char position.
     CtrlClick(usize),
+    /// Right click at this window position: show the context menu.
+    ContextMenu(Point<Pixels>),
 }
 
 impl gpui::EventEmitter<EditorEvent> for Editor {}
@@ -152,6 +175,12 @@ impl Editor {
             text_cache: (u64::MAX, String::new()),
             focus: cx.focus_handle(),
             scroll_y: 0.0,
+            scroll_x: 0.0,
+            max_line: (u64::MAX, 0),
+            drag: None,
+            drag_pos: None,
+            autoscrolling: false,
+            column_anchor: None,
             layout: None,
             selecting: false,
             marked: None,
@@ -167,6 +196,10 @@ impl Editor {
             hover: None,
             caret_tip: None,
             insight: lsp::Insight::default(),
+            find: None,
+            last_find: find::FindOpts::default(),
+            last_replace: String::new(),
+            is_field: false,
         };
         ed.reparse();
         ed
@@ -184,6 +217,12 @@ impl Editor {
             text_cache: (u64::MAX, String::new()),
             focus: cx.focus_handle(),
             scroll_y: 0.0,
+            scroll_x: 0.0,
+            max_line: (u64::MAX, 0),
+            drag: None,
+            drag_pos: None,
+            autoscrolling: false,
+            column_anchor: None,
             layout: None,
             selecting: false,
             marked: None,
@@ -199,6 +238,10 @@ impl Editor {
             hover: None,
             caret_tip: None,
             insight: lsp::Insight::default(),
+            find: None,
+            last_find: find::FindOpts::default(),
+            last_replace: String::new(),
+            is_field: false,
         }
     }
 
@@ -512,6 +555,7 @@ impl Editor {
             self.scroll_y = y + LINE_HEIGHT - vh + margin;
         }
         self.clamp_scroll();
+        self.ensure_caret_visible_x();
     }
 
     fn center_caret(&mut self) {
@@ -524,11 +568,34 @@ impl Editor {
     fn clamp_scroll(&mut self) {
         let max = (self.buffer.len_lines().saturating_sub(1)) as f32 * LINE_HEIGHT;
         self.scroll_y = self.scroll_y.clamp(0.0, max.max(0.0));
+        self.clamp_scroll_x();
+    }
+
+    /// Smoke checks: (scroll x, scroll y, max x, max y) and the text area's bounds.
+    pub fn scroll_state(&self) -> (f32, f32, f32, f32, Option<Bounds<Pixels>>) {
+        (self.scroll_x, self.scroll_y, self.max_scroll_x(), self.max_scroll_y(), self.layout.as_ref().map(|l| l.bounds))
     }
 
     /// Execute an editor action. Returns false if this action isn't an editor action.
-    pub fn perform(&mut self, action: Action, _window: &mut Window, cx: &mut Context<Self>) -> bool {
+    pub fn perform(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) -> bool {
         use Action as A;
+        if !self.is_field {
+            match action {
+                A::Find => {
+                    self.open_find(false, window, cx);
+                    return true;
+                }
+                A::Replace => {
+                    self.open_find(true, window, cx);
+                    return true;
+                }
+                A::FindNext | A::FindPrevious => {
+                    self.find_next(action == A::FindNext, window, cx);
+                    return true;
+                }
+                _ => {}
+            }
+        }
         if self.read_error.is_some() && !matches!(action, A::Copy | A::SelectAll | A::MoveUp | A::MoveDown | A::MoveLeft | A::MoveRight | A::PageUp | A::PageDown | A::MoveDocStart | A::MoveDocEnd) {
             return true;
         }
@@ -536,6 +603,11 @@ impl Editor {
         self.insight.doc = None;
         if action == A::EditorEscape && self.close_insight() {
             cx.notify();
+            return true;
+        }
+        // Esc in the editor closes the search bar, after popups and before multi-carets.
+        if action == A::EditorEscape && self.find.is_some() && self.buffer.selections.len() == 1 {
+            self.close_find(window, cx);
             return true;
         }
         if !matches!(action, A::EditorBackspace) {
@@ -690,13 +762,23 @@ impl Editor {
         self.insight.completion = None;
         self.insight.doc = None;
         self.insight.signature = None;
+        if self.scrollbar_down(e.position) {
+            cx.notify();
+            return;
+        }
         let Some(pos) = self.pos_for_point(e.position) else { return };
         if e.modifiers.control && !e.modifiers.alt && !e.modifiers.shift && e.click_count == 1 {
             cx.emit(EditorEvent::CtrlClick(pos));
             cx.notify();
             return;
         }
-        if e.modifiers.alt && e.modifiers.shift || e.modifiers.alt && !e.modifiers.control {
+        if e.modifiers.alt && !e.modifiers.shift && !e.modifiers.control && e.click_count == 1 {
+            // Alt+drag: column (block) selection.
+            let (line, col) = self.line_col_for_point(e.position);
+            self.column_anchor = Some((line, col));
+            self.buffer.set_caret(pos, false);
+            self.selecting = true;
+        } else if e.modifiers.alt && e.modifiers.shift {
             self.buffer.add_caret(pos);
         } else if e.click_count == 2 {
             let r = self.buffer.word_range_at(pos);
@@ -713,11 +795,8 @@ impl Editor {
     }
 
     fn on_mouse_move(&mut self, e: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selecting && e.pressed_button == Some(MouseButton::Left) {
-            if let Some(pos) = self.pos_for_point(e.position) {
-                self.buffer.set_caret(pos, true);
-                cx.notify();
-            }
+        // Selection and scrollbar drags are handled window-wide (`global_drag`).
+        if self.selecting || self.drag.is_some() {
             return;
         }
         // Problem tooltip on hover, only over the text itself.
@@ -758,13 +837,53 @@ impl Editor {
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
-        self.selecting = false;
+        self.end_drag();
+    }
+
+    /// Right click: move the caret there unless it hits the selection, then ask for the menu.
+    fn on_right_down(&mut self, e: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus);
+        self.close_insight();
+        if let Some(pos) = self.pos_for_point(e.position) {
+            let inside = self.buffer.selections.iter().any(|s| !s.is_empty() && s.range().contains(&pos));
+            if !inside {
+                self.buffer.set_caret(pos, false);
+            }
+        }
+        cx.emit(EditorEvent::ContextMenu(e.position));
+        cx.notify();
+    }
+
+    /// Line and (unclamped) column under a point: column selection may reach past line ends.
+    fn line_col_for_point(&self, p: Point<Pixels>) -> (usize, usize) {
+        let Some(l) = self.layout.as_ref() else { return (0, 0) };
+        let y = f32::from(p.y - l.bounds.top()) + self.scroll_y;
+        let line = ((y / LINE_HEIGHT).floor().max(0.0) as usize).min(self.buffer.len_lines().saturating_sub(1));
+        let col = (f32::from(p.x - l.text_x) / f32::from(l.char_w)).round().max(0.0) as usize;
+        (line, col)
+    }
+
+    /// Alt+drag: one selection per line between the anchor and the pointer.
+    pub(super) fn drag_column(&mut self, p: Point<Pixels>) {
+        let Some((al, ac)) = self.column_anchor else { return };
+        let (line, col) = self.line_col_for_point(p);
+        let (l0, l1) = (al.min(line), al.max(line));
+        let sels: Vec<Selection> = (l0..=l1)
+            .map(|l| {
+                let len = self.buffer.line_len(l);
+                let a = self.buffer.line_col_to_pos(l, ac.min(len));
+                let h = self.buffer.line_col_to_pos(l, col.min(len));
+                Selection { anchor: a, head: h, goal_col: None }
+            })
+            .collect();
+        if !sels.is_empty() {
+            self.buffer.selections = sels;
+        }
     }
 
     fn on_scroll(&mut self, e: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
         let d = e.delta.pixel_delta(px(LINE_HEIGHT));
-        self.scroll_y -= f32::from(d.y);
-        self.clamp_scroll();
+        self.scroll_by(f32::from(d.x), f32::from(d.y), e.modifiers.shift);
         cx.notify();
     }
 }
@@ -849,29 +968,39 @@ impl Focusable for Editor {
 
 impl Render for Editor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let bar = self.render_find_bar(cx);
+        let text_area = gpui::div()
+            .id("editor-text")
+            .flex_1()
+            .min_h(px(0.))
+            .relative()
+            .cursor(gpui::CursorStyle::IBeam)
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_down))
+            .on_mouse_move(cx.listener(Self::on_mouse_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_scroll_wheel(cx.listener(Self::on_scroll))
+            .child(EditorElement { editor: cx.entity() })
+            .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))
+            .when_some(self.render_tooltip(), |d, t| d.child(t))
+            .children(self.render_insight(cx));
         gpui::div()
             .id("editor")
             .key_context("Editor")
             .track_focus(&self.focus)
             .size_full()
-            .cursor(gpui::CursorStyle::IBeam)
+            .flex()
+            .flex_col()
             .bg(Theme::editor_bg())
-            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
-            .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .on_scroll_wheel(cx.listener(Self::on_scroll))
             // Completion, Quick Doc and Parameter Info close on a click anywhere outside the editor.
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 if this.close_insight() | this.caret_tip.take().is_some() {
                     cx.notify();
                 }
             }))
-            .relative()
-            .child(EditorElement { editor: cx.entity() })
-            .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))
-            .when_some(self.render_tooltip(), |d, t| d.child(t))
-            .children(self.render_insight(cx))
+            .children(bar)
+            .child(text_area)
     }
 }
 
@@ -1011,6 +1140,7 @@ impl Element for EditorElement {
         self.editor.update(cx, |ed, _| {
             ed.reparse();
             ed.refresh_vcs();
+            ed.refresh_line_extent();
         });
         let ed = self.editor.read(cx);
         let b = &ed.buffer;
@@ -1092,7 +1222,8 @@ impl Element for EditorElement {
         let ed = self.editor.read(cx);
         let b = &ed.buffer;
         let lh = px(LINE_HEIGHT);
-        let text_x = bounds.left() + pp.gutter_w + px(8.);
+        let text_left = bounds.left() + pp.gutter_w + px(8.);
+        let text_x = text_left - px(ed.scroll_x);
         let y_of = |l: usize| bounds.top() + px(l as f32 * LINE_HEIGHT - ed.scroll_y);
         let first = pp.first_line;
         let last = first + pp.lines.len();
@@ -1126,6 +1257,22 @@ impl Element for EditorElement {
             for c in (0..ws).step_by(unit) {
                 let x = text_x + pp.char_w * c as f32;
                 under.push(fill(Bounds::new(point(x, y_of(l)), size(px(1.), lh)), Theme::indent_guide()));
+            }
+        }
+        // Search matches: all of them, the current one brighter.
+        if ed.find.is_some() {
+            let lo = b.line_start(first);
+            let hi = if last < b.len_lines() { b.line_start(last) } else { b.len_chars() };
+            for (r, cur) in ed.visible_matches(lo, hi) {
+                let (l1, c1) = b.pos_to_line_col(r.start);
+                let (l2, c2) = b.pos_to_line_col(r.end);
+                for l in l1.max(first)..=l2.min(last.saturating_sub(1)) {
+                    let sx = if l == l1 { x_of(l, c1) } else { text_x };
+                    let ex = if l == l2 { x_of(l, c2) } else { x_of(l, b.line_len(l)) + pp.char_w };
+                    if ex > sx {
+                        under.push(fill(Bounds::from_corners(point(sx, y_of(l)), point(ex, y_of(l) + lh)), if cur { Theme::search_current() } else { Theme::search_hit() }));
+                    }
+                }
             }
         }
         // Selections.
@@ -1195,8 +1342,43 @@ impl Element for EditorElement {
                 }
             }
             let y = bounds.top() + px(d.start.line as f32 * LINE_HEIGHT / total * f32::from(bounds.size.height));
-            stripe.push(fill(Bounds::new(point(bounds.right() - px(9.), y), size(px(7.), px(3.))), color));
+            stripe.push(fill(Bounds::new(point(bounds.right() - px(8.), y), size(px(6.), px(3.))), color));
         }
+        let mut thumbs: Vec<gpui::PaintQuad> = Vec::new();
+        if ed.show_gutter {
+            let vh = f32::from(bounds.size.height);
+            let line_y = |l: usize| bounds.top() + px(l as f32 * LINE_HEIGHT / total * vh);
+            // Changed lines and search matches on the track too, like PyCharm's error stripe.
+            for ch in &ed.vcs_changes {
+                use brisk_git::LineChangeKind as K;
+                let color = match ch.kind {
+                    K::Added => Theme::vcs_added(),
+                    K::Modified => Theme::vcs_modified(),
+                    K::Deleted => Theme::vcs_deleted(),
+                };
+                let h = (f32::from(line_y(ch.lines.end) - line_y(ch.lines.start))).max(2.0);
+                stripe.insert(0, fill(Bounds::new(point(bounds.right() - px(11.), line_y(ch.lines.start)), size(px(2.), px(h))), color));
+            }
+            if ed.find.is_some() {
+                let mut last_y = -10.0f32;
+                for (r, _) in ed.visible_matches(0, b.len_chars()) {
+                    let y = line_y(b.pos_to_line_col(r.start).0);
+                    if f32::from(y) - last_y >= 2.0 {
+                        stripe.push(fill(Bounds::new(point(bounds.right() - px(8.), y), size(px(6.), px(2.))), Theme::search_current()));
+                        last_y = f32::from(y);
+                    }
+                }
+            }
+            let thumb = gpui::hsla(0., 0., 1., 0.13);
+            if let Some((top, h)) = ed.v_thumb(vh) {
+                thumbs.push(fill(Bounds::new(point(bounds.right() - px(scroll::BAR - 2.), bounds.top() + px(top)), size(px(scroll::BAR - 4.), px(h))), thumb).corner_radii(px(4.)));
+            }
+            let vw = f32::from(bounds.right() - text_left) - scroll::BAR;
+            if let Some((left, w)) = ed.h_thumb(vw) {
+                thumbs.push(fill(Bounds::new(point(text_left + px(left), bounds.bottom() - px(scroll::BAR - 2.)), size(px(w), px(scroll::BAR - 4.))), thumb).corner_radii(px(4.)));
+            }
+        }
+        let dragging = ed.selecting || ed.drag.is_some();
         let caret_xy = {
             let (l, c) = b.pos_to_line_col(b.primary().head);
             (l >= first && l < last).then(|| point(x_of(l, c), y_of(l)))
@@ -1213,7 +1395,7 @@ impl Element for EditorElement {
                 window.paint_underline(o, w, &gpui::UnderlineStyle { color: Some(color), thickness: px(1.), wavy: true });
             }
             // Gutter (painted over text so horizontal overflow never covers line numbers).
-            window.paint_quad(fill(Bounds::new(bounds.origin, size(pp.gutter_w, bounds.size.height)), Theme::editor_bg()));
+            window.paint_quad(fill(Bounds::new(bounds.origin, size(text_left - bounds.left() - px(2.), bounds.size.height)), Theme::editor_bg()));
             for (n, y) in pp.numbers.iter().zip(&line_ys) {
                 let x = bounds.left() + pp.gutter_w - px(16.) - n.width;
                 let _ = n.paint(point(x, *y), lh, window, cx);
@@ -1224,15 +1406,36 @@ impl Element for EditorElement {
             for q in carets {
                 window.paint_quad(q);
             }
+            for q in thumbs {
+                window.paint_quad(q);
+            }
             for q in stripe {
                 window.paint_quad(q);
             }
         });
+        // While dragging (selection or a scrollbar), follow the mouse anywhere in the window.
+        if dragging {
+            let ed = self.editor.clone();
+            window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
+                if phase == gpui::DispatchPhase::Bubble && e.pressed_button == Some(MouseButton::Left) {
+                    ed.update(cx, |ed, cx| ed.global_drag(e, window, cx));
+                }
+            });
+            let ed = self.editor.clone();
+            window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
+                if phase == gpui::DispatchPhase::Bubble {
+                    ed.update(cx, |ed, cx| {
+                        ed.end_drag();
+                        cx.notify();
+                    });
+                }
+            });
+        }
 
         let lines = std::mem::take(&mut pp.lines);
         let char_w = pp.char_w;
         self.editor.update(cx, |ed, _| {
-            ed.layout = Some(LayoutCache { bounds, caret_xy, text_x, first_line: first, lines, char_w });
+            ed.layout = Some(LayoutCache { bounds, caret_xy, text_left, text_x, first_line: first, lines, char_w });
         });
     }
 }

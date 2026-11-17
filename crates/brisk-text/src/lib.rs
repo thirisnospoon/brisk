@@ -86,6 +86,8 @@ pub struct Buffer {
     pub selections: Vec<Selection>,
     pub indent_unit: String,
     pub line_comment: Option<String>,
+    /// Typing `(` inserts `()` and so on. Off in search fields.
+    pub auto_pairs: bool,
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
     version: u64,
@@ -104,6 +106,7 @@ impl Buffer {
             selections: vec![Selection::caret(0)],
             indent_unit: "    ".into(),
             line_comment: Some("#".into()),
+            auto_pairs: true,
             undo: Vec::new(),
             redo: Vec::new(),
             version: 0,
@@ -334,8 +337,10 @@ impl Buffer {
             '\'' => Some('\''),
             _ => None,
         };
+        let closing = closing.filter(|_| self.auto_pairs);
         // Overtype a closing char that's already there.
-        if matches!(c, ')' | ']' | '}' | '"' | '\'')
+        if self.auto_pairs
+            && matches!(c, ')' | ']' | '}' | '"' | '\'')
             && self.selections.iter().all(|s| s.is_empty() && self.char_at(s.head) == Some(c))
         {
             self.move_carets(Movement::Right, false);

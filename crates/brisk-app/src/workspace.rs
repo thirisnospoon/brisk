@@ -2,12 +2,15 @@
 //! All shortcuts go through brisk-keymap's PyCharm keymap.
 
 mod db_ui;
+mod edit_smoke;
 mod find_ui;
 mod git_ui;
 mod lsp_ui;
+mod menu_ui;
 mod problems_ui;
 pub(crate) mod project_ui;
 mod run_ui;
+mod win_input;
 
 use crate::diff_view::DiffView;
 use crate::editor::Editor;
@@ -180,6 +183,8 @@ pub struct Workspace {
     lsp: lsp_ui::Lsp,
     nav: lsp_ui::Nav,
     symbols: project_ui::Symbols,
+    /// The open context menu.
+    menu: Option<menu_ui::ContextMenu>,
     /// The folder waiting for the This Window / New Window choice.
     project_pending: Option<PathBuf>,
     tree: ProjectTree,
@@ -226,6 +231,10 @@ impl Workspace {
         if let Some(f) = std::env::var_os("BRISK_SMOKE_LSP") {
             let f = PathBuf::from(f);
             cx.defer_in(window, move |this: &mut Self, window, cx| this.lsp_smoke(f, window, cx));
+        }
+        if let Some(f) = std::env::var_os("BRISK_SMOKE_EDIT") {
+            let f = PathBuf::from(f);
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.edit_smoke(f, window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_UI").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.ui_smoke(window, cx));
@@ -328,6 +337,7 @@ impl Workspace {
             lsp: lsp_ui::Lsp::new(),
             nav: lsp_ui::Nav::default(),
             symbols: project_ui::Symbols::default(),
+            menu: None,
             project_pending: None,
             tree,
             tree_selected: Some(0),
@@ -378,6 +388,9 @@ impl Workspace {
         if let Some(e) = self.active_editor() {
             if e.read(cx).focus_handle(cx).is_focused(window) {
                 return Some(e.clone());
+            }
+            if let Some(f) = e.read(cx).find_field_focused(window, cx) {
+                return Some(f);
             }
         }
         self.git.as_ref().map(|g| g.message.clone()).filter(|m| m.read(cx).focus_handle(cx).is_focused(window))
@@ -568,6 +581,14 @@ impl Workspace {
 
     fn on_key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.shift_alone = false;
+        if self.menu.is_some() {
+            if !e.keystroke.modifiers.modified() || e.keystroke.key == "escape" {
+                self.menu_key(e, window, cx);
+                cx.stop_propagation();
+                return;
+            }
+            self.menu = None;
+        }
         if self.db.dialog.is_some() {
             self.db_dialog_key(e, window, cx);
             cx.stop_propagation();
@@ -602,6 +623,13 @@ impl Workspace {
         if self.git_pre_key(e, window, cx) {
             cx.stop_propagation();
             return;
+        }
+        // The search bar handles Enter, Esc, F3, Tab and its toggles typed in its fields.
+        if let Some(ed) = self.active_editor().cloned() {
+            if ed.read(cx).find_field_focused(window, cx).is_some() && ed.update(cx, |ed, cx| ed.find_key(&e.keystroke, window, cx)) {
+                cx.stop_propagation();
+                return;
+            }
         }
         // The completion list takes arrows, Enter, Tab and Esc while it is open.
         let m = &e.keystroke.modifiers;
@@ -1715,7 +1743,8 @@ impl Focusable for Workspace {
 }
 
 impl Render for Workspace {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let viewport = window.viewport_size();
         let left: Option<gpui::AnyElement> = match self.left {
             Some(LeftTool::Project) => Some(self.render_project(cx).into_any_element()),
             Some(LeftTool::Structure) => Some(self.render_structure(cx).into_any_element()),
@@ -1789,5 +1818,6 @@ impl Render for Workspace {
             .children(self.render_popup(cx))
             .children(self.render_find_popup(cx))
             .children(self.render_ds_dialog(cx))
+            .children(self.render_menu(viewport, cx))
     }
 }

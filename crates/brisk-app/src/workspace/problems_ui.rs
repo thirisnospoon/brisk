@@ -106,6 +106,7 @@ impl Workspace {
                 window.focus(&this.problems.focus.clone());
                 cx.notify();
             }
+            EditorEvent::ContextMenu(at) => this.open_editor_menu(ed.clone(), *at, cx),
             ev => this.lsp_editor_event(ed.clone(), ev, window, cx),
         })
         .detach();

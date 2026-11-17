@@ -321,7 +321,7 @@ impl Workspace {
             }
             E::HoverDoc(pos, at) => self.quick_doc(ed, Some((pos, at)), cx),
             E::CtrlClick(pos) => self.goto_declaration(ed, Some(pos), false, window, cx),
-            E::ShowProblems => {}
+            E::ShowProblems | E::ContextMenu(_) => {}
         }
     }
 
