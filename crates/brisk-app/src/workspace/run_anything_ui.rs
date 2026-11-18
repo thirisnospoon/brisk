@@ -58,8 +58,8 @@ impl Workspace {
             Some(Parsed::Config(cfg)) => self.run_config(cfg, window, cx),
             Some(Parsed::Shell(cmdline)) => {
                 self.save_all(cx);
-                let python = self.runs.interpreter(&self.root).map(|i| i.path);
-                let cmd = run_anything::shell_command(&self.root, &cmdline, python.as_deref());
+                let env = self.terminal_activation().map(|a| a.env).unwrap_or_default();
+                let cmd = run_anything::shell_command(&self.root, &cmdline, env);
                 // The configuration only names the tab and lets Rerun repeat the command.
                 let cfg = RunConfig { name: line.clone(), target: cmdline, ..RunConfig::default() };
                 self.run_command(cfg, cmd, window, cx);

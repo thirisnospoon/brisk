@@ -4,7 +4,7 @@
 //! configuration runs it; anything else runs through the shell with the project venv
 //! activated. Typed commands are remembered per project.
 
-use brisk_run::{split_args, Command, Interpreter, RunConfig, RunKind};
+use brisk_run::{split_args, Command, RunConfig, RunKind};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -86,30 +86,18 @@ pub fn parse(root: &Path, text: &str) -> Option<Parsed> {
     })
 }
 
-/// The shell process for a command line: the project venv (if the interpreter is one)
-/// activated through PATH and VIRTUAL_ENV, like PyCharm's terminal.
-pub fn shell_command(root: &Path, line: &str, python: Option<&Path>) -> Command {
+/// The shell process for a command line, with `activation` (the project interpreter's venv
+/// or conda environment, see `terminal_env`) like the Terminal.
+pub fn shell_command(root: &Path, line: &str, activation: HashMap<String, String>) -> Command {
     let mut env = HashMap::new();
     env.insert("PYTHONUNBUFFERED".into(), "1".into());
     env.insert("PYTHONIOENCODING".into(), "UTF-8".into());
-    env.extend(venv_env(python));
+    env.extend(activation);
     #[cfg(windows)]
     let (program, args) = (std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into()), vec!["/C".to_string(), line.to_string()]);
     #[cfg(not(windows))]
     let (program, args) = ("/bin/sh".to_string(), vec!["-c".to_string(), line.to_string()]);
     Command { program: program.into(), args, cwd: root.to_path_buf(), env }
-}
-
-/// PATH and VIRTUAL_ENV of an activated venv; empty when `python` is not in a venv.
-pub fn venv_env(python: Option<&Path>) -> HashMap<String, String> {
-    let mut env = HashMap::new();
-    let Some(python) = python else { return env };
-    let Some(venv) = Interpreter::venv_dir_of(python) else { return env };
-    let sep = if cfg!(windows) { ";" } else { ":" };
-    let bin = python.parent().unwrap_or(&venv);
-    env.insert("PATH".into(), format!("{}{sep}{}", bin.display(), std::env::var("PATH").unwrap_or_default()));
-    env.insert("VIRTUAL_ENV".into(), venv.display().to_string());
-    env
 }
 
 /// Typed commands, newest first.
