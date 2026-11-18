@@ -2139,29 +2139,45 @@ impl Workspace {
     }
 
     fn render_welcome(&self) -> impl IntoElement {
+        // A two-column grid: labels right-aligned, shortcuts left-aligned, equal rows.
         let km = self.resolver.keymap();
-        let row = |label: &str, a: Action| {
-            div()
-                .flex()
-                .gap(px(16.))
-                .child(div().w(px(180.)).text_color(Theme::text_muted()).child(label.to_string()))
-                .child(div().text_color(Theme::modified()).child(km.shortcut_label(a).unwrap_or_default()))
-        };
+        let items = [
+            ("Search Everywhere", Action::SearchEverywhere),
+            ("Go to File", Action::GotoFile),
+            ("Recent Files", Action::RecentFiles),
+            ("Find Action", Action::FindAction),
+            ("Project View", Action::ToggleProjectWindow),
+            ("Terminal", Action::ToggleTerminalWindow),
+        ];
+        let cell = || div().h(px(30.)).flex().items_center();
         div()
             .size_full()
             .flex()
-            .flex_col()
             .items_center()
             .justify_center()
-            .gap(px(10.))
             .bg(Theme::editor_bg())
-            .text_size(px(14.))
-            .child(row("Search Everywhere", Action::SearchEverywhere))
-            .child(row("Go to File", Action::GotoFile))
-            .child(row("Recent Files", Action::RecentFiles))
-            .child(row("Find Action", Action::FindAction))
-            .child(row("Project View", Action::ToggleProjectWindow))
-            .child(row("Terminal", Action::ToggleTerminalWindow))
+            .font_family(ui_font())
+            .text_size(px(13.))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(18.))
+                    .child(div().flex().flex_col().items_end().children(items.iter().map(|(label, _)| cell().text_color(Theme::text_muted()).child(*label))))
+                    .child(div().flex().flex_col().items_start().children(items.iter().map(|(_, a)| {
+                        cell().child(
+                            div()
+                                .px(px(6.))
+                                .h(px(20.))
+                                .flex()
+                                .items_center()
+                                .rounded(px(4.))
+                                .bg(Theme::hover_row())
+                                .text_color(Theme::accent())
+                                .text_size(px(12.))
+                                .child(km.shortcut_label(*a).unwrap_or_default()),
+                        )
+                    }))),
+            )
     }
 
     fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
