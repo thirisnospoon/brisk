@@ -376,7 +376,7 @@ impl Workspace {
             .border_1()
             .border_color(Theme::divider())
             .rounded(px(8.))
-            .shadow_lg()
+            .map(crate::ui_kit::floating)
             .text_size(px(13.))
             // A press inside a menu panel is not a click outside.
             .on_any_mouse_down(|_, _, cx| cx.stop_propagation())

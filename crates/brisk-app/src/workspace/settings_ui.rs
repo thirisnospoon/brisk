@@ -242,7 +242,7 @@ impl Workspace {
                         .border_1()
                         .border_color(Theme::divider())
                         .rounded(px(10.))
-                        .shadow_lg()
+                        .map(crate::ui_kit::floating)
                         .text_size(px(13.))
                         .text_color(Theme::text())
                         .child(div().font_weight(gpui::FontWeight::SEMIBOLD).pb(px(8.)).child("Settings"))

@@ -1724,7 +1724,9 @@ impl Workspace {
             .items_center()
             .justify_center()
             .rounded(px(5.))
-            .when(active, |d| d.bg(Theme::selection_row()))
+            .when(active && !crate::theme::islands(), |d| d.bg(Theme::selection_row()))
+            .when(crate::theme::islands(), |d| d.size(px(32.)).rounded(px(8.)))
+            .when(active && crate::theme::islands(), |d| d.bg(Theme::text().opacity(0.14)))
             .when(!active, |d| d.hover(|s| s.bg(Theme::hover_row())))
             .active(|s| s.bg(Theme::press()))
             .cursor_pointer()
@@ -2259,7 +2261,7 @@ impl Workspace {
             .when(!crate::theme::islands(), |d| d.border_t_1().border_color(Theme::border()))
             .text_size(px(12.))
             .text_color(Theme::text_muted())
-            .child(div().child(crumbs))
+            .when(!crate::theme::islands(), |d| d.child(div().child(crumbs)))
             .child(div().flex_1())
             .child(item(self.active_editor().and_then(|e| e.read(cx).caret_problem()).unwrap_or_else(|| self.status.clone())))
             .when(!pos.is_empty(), |d| {
@@ -2354,7 +2356,7 @@ impl Workspace {
                         .border_1()
                         .border_color(Theme::divider())
                         .rounded(px(10.))
-                        .shadow_lg()
+                        .map(crate::ui_kit::floating)
                         .overflow_hidden()
                         .text_size(px(13.))
                         .text_color(Theme::text())
@@ -2677,11 +2679,7 @@ impl Render for Workspace {
                             .flex()
                             .flex_col()
                             .when(islands, |d| d.gap(px(crate::ui_kit::ISLAND_GAP)))
-                            .map(|d| if islands {
-                                d.child(crate::ui_kit::island(div().flex_1().min_h_0().flex().flex_col().bg(Theme::editor_bg()).child(center)))
-                            } else {
-                                d.child(center)
-                            })
+                            .child(center)
                             .when_some(bottom, |d, panel| {
                                 let p = div().h(px(bottom_h)).flex_shrink_0().flex().bg(Theme::panel())
                                     .when(!islands, |d| d.border_t_1().border_color(Theme::divider()))

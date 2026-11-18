@@ -284,17 +284,47 @@ impl Workspace {
             .flex_col()
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| this.focus_pane(second, window, cx)))
             .when(!tabs.is_empty(), |d| d.child(self.render_tabs(tabs, active, focused, second, cx)))
+            .when(crate::theme::islands(), |d| d.children(self.render_crumbs(tabs, active, cx)))
             .child(div().flex_1().min_h_0().font_family(mono_font()).child(self.pane_content(tabs, active)))
             .into_any_element()
     }
 
+    /// Islands: the active file's path as breadcrumbs under the tabs (Classic shows it in the
+    /// status bar).
+    fn render_crumbs(&self, tabs: &[Tab], active: Option<usize>, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let Some(Tab::Editor(e)) = active.and_then(|i| tabs.get(i)) else { return None };
+        let path = e.read(cx).path.clone()?;
+        let rel = path.strip_prefix(&self.root).ok()?;
+        let mut parts = vec![self.project_name()];
+        parts.extend(rel.iter().map(|p| p.to_string_lossy().into_owned()));
+        let last = parts.len() - 1;
+        let mut row = div().h(px(24.)).flex_shrink_0().flex().items_center().gap(px(4.)).px(px(12.)).text_size(px(12.)).font_family(crate::theme::ui_font()).whitespace_nowrap().overflow_hidden();
+        for (i, p) in parts.into_iter().enumerate() {
+            if i > 0 {
+                row = row.child(crate::icons::icon("chevron-right", 10., Theme::text_dim()));
+            }
+            row = row.child(div().text_color(if i == last { Theme::text() } else { Theme::text_muted() }).child(p));
+        }
+        Some(row.into_any_element())
+    }
+
     /// The editor area: one group, or two with a divider.
     pub(super) fn render_editor_area(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let Some(s) = &self.split else {
-            return self.render_pane(&self.tabs, self.active, true, false, cx);
+        // Islands: every editor group is an island of its own (rounded on all four corners),
+        // with the frame's gap between two groups instead of a divider line.
+        let islands = crate::theme::islands();
+        let island = |pane: gpui::AnyElement| -> gpui::AnyElement {
+            if islands {
+                crate::ui_kit::island(div().flex_1().min_h_0().min_w_0().flex().flex_col().bg(Theme::editor_bg()).child(pane)).into_any_element()
+            } else {
+                pane
+            }
         };
-        let mine = self.render_pane(&self.tabs, self.active, true, s.second, cx);
-        let other = self.render_pane(&s.other.tabs, s.other.active, false, !s.second, cx);
+        let Some(s) = &self.split else {
+            return island(self.render_pane(&self.tabs, self.active, true, false, cx));
+        };
+        let mine = island(self.render_pane(&self.tabs, self.active, true, s.second, cx));
+        let other = island(self.render_pane(&s.other.tabs, s.other.active, false, !s.second, cx));
         let (a, b) = if s.second { (other, mine) } else { (mine, other) };
         let line = div().flex_shrink_0().bg(Theme::divider());
         div()
@@ -304,8 +334,9 @@ impl Workspace {
             .flex()
             .when(s.vertical, |d| d.flex_row())
             .when(!s.vertical, |d| d.flex_col())
+            .when(islands, |d| d.gap(px(crate::ui_kit::ISLAND_GAP)))
             .child(a)
-            .child(if s.vertical { line.w(px(1.)).h_full() } else { line.h(px(1.)).w_full() })
+            .when(!islands, |d| d.child(if s.vertical { line.w(px(1.)).h_full() } else { line.h(px(1.)).w_full() }))
             .child(b)
             .into_any_element()
     }

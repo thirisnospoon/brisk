@@ -1,7 +1,7 @@
 //! Shared controls: one look for text inputs and buttons (height, padding, radius, border,
 //! placeholder position), so toolbars and dialogs line up.
 
-use gpui::{div, px, prelude::*, Div, Entity, Stateful};
+use gpui::{div, px, prelude::*, Div, Entity, Stateful, Styled};
 
 use crate::editor::Editor;
 use crate::theme::{ui_font, Theme};
@@ -82,6 +82,22 @@ pub fn island(d: Div) -> Div {
         .child(div().absolute().top_0().right_0().child(cap("island-tr")))
         .child(div().absolute().bottom_0().left_0().child(cap("island-bl")))
         .child(div().absolute().bottom_0().right_0().child(cap("island-br")))
+}
+
+/// Popups, menus, dialogs and notices: in Islands, radius 10 and a soft two-layer shadow;
+/// in Classic, the usual large shadow (the element keeps its own radius).
+pub fn floating<E: Styled>(e: E) -> E {
+    if !crate::theme::islands() {
+        return e.shadow_lg();
+    }
+    let a = if crate::settings::is_light() { 0.5 } else { 1. };
+    let layer = |alpha: f32, y: f32, blur: f32| gpui::BoxShadow {
+        color: gpui::hsla(0., 0., 0., alpha * a),
+        offset: gpui::point(px(0.), px(y)),
+        blur_radius: px(blur),
+        spread_radius: px(0.),
+    };
+    e.rounded(px(10.)).shadow(vec![layer(0.32, 12., 32.), layer(0.22, 2., 6.)])
 }
 
 /// A text button of the same height as the inputs; `primary` is filled with the accent.

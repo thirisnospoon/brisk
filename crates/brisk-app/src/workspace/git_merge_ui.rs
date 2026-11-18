@@ -537,7 +537,7 @@ pub(super) fn dialog_frame(id: &'static str, w: f32, title: &str) -> gpui::State
         .border_1()
         .border_color(Theme::divider())
         .rounded(px(10.))
-        .shadow_lg()
+        .map(crate::ui_kit::floating)
         .text_size(px(13.))
         .text_color(Theme::text())
         .child(div().font_weight(gpui::FontWeight::SEMIBOLD).pb(px(10.)).child(title.to_string()))

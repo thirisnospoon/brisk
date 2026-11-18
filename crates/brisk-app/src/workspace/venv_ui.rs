@@ -171,7 +171,7 @@ impl Workspace {
                 .bg(Theme::panel())
                 .border_1()
                 .border_color(Theme::divider())
-                .shadow_lg()
+                .map(crate::ui_kit::floating)
                 .text_size(px(13.))
                 .text_color(Theme::text())
                 .child(div().child(format!("The project lists its requirements in {}. Install them into the new environment?", o.req.label())))

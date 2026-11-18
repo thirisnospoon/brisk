@@ -865,7 +865,7 @@ impl Workspace {
                 .bg(Theme::panel())
                 .border_1()
                 .border_color(if *err { Theme::error() } else { Theme::divider() })
-                .shadow_lg()
+                .map(crate::ui_kit::floating)
                 .text_size(px(13.))
                 .text_color(Theme::text())
                 .child(crate::icons::icon(if *err { "triangle-alert" } else { "circle-check" }, 16., if *err { Theme::error() } else { Theme::file_added() }))
