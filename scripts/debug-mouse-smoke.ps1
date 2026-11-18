@@ -1,6 +1,6 @@
 param([string]$Exe, [string]$Project, [string]$File, [string]$AppData, [string]$OutDir, [string]$Steps)
 # Starts brisk paused at the first breakpoint (BRISK_SMOKE_DEBUG_HOLD), then runs $Steps against
-# its own window with posted mouse messages: "shot:name; click:x,y; dbl:x,y; rclick:x,y; key:vk; char:text; move:x,y; wait:ms".
+# its own window with posted mouse messages: "shot:name; click:x,y; dbl:x,y; rclick:x,y; key:vk; skey:vk (with Shift); char:text; move:x,y; wait:ms".
 # Coordinates are client pixels of brisk's window. stderr goes to $OutDir\log.txt.
 # Example (1750x1125 client, 100% scale; find positions on a "shot:" first): add a breakpoint on
 # line 10 by its number, right click the one on line 7, Esc, Step Over, Stop:
@@ -16,6 +16,11 @@ public class W {
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr p);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
+  [DllImport("user32.dll")] public static extern bool GetKeyboardState(byte[] s);
+  [DllImport("user32.dll")] public static extern bool SetKeyboardState(byte[] s);
   public struct RECT { public int L, T, R, B; }
   public struct POINT { public int X, Y; }
 }
@@ -69,6 +74,16 @@ foreach ($s in ($Steps -split ';')) {
     'rclick' { $x, $y = $v -split ','; RClick ([int]$x) ([int]$y) }
     'move' { $x, $y = $v -split ','; MMove ([int]$x) ([int]$y) }
     'char' { foreach ($ch in $v.ToCharArray()) { [void][W]::PostMessage($h, 0x102, [IntPtr][int]$ch, [IntPtr]1); Start-Sleep -Milliseconds 40 } }
+    'skey' {
+      # Shift+key: Shift is set in the key state shared with brisk's thread while the key is posted.
+      $me = [W]::GetCurrentThreadId(); $them = [W]::GetWindowThreadProcessId($h, [IntPtr]0)
+      [void][W]::AttachThreadInput($me, $them, $true)
+      $ks = New-Object byte[] 256; [void][W]::GetKeyboardState($ks); $ks[0x10] = 0x80; $ks[0xA0] = 0x80; [void][W]::SetKeyboardState($ks)
+      [void][W]::PostMessage($h, 0x100, [IntPtr]([int]$v), [IntPtr]1); Start-Sleep -Milliseconds 40; [void][W]::PostMessage($h, 0x101, [IntPtr]([int]$v), [IntPtr]0xC0000001)
+      Start-Sleep -Milliseconds 300
+      $ks[0x10] = 0; $ks[0xA0] = 0; [void][W]::SetKeyboardState($ks)
+      [void][W]::AttachThreadInput($me, $them, $false)
+    }
     'key' { [void][W]::PostMessage($h, 0x100, [IntPtr]([int]$v), [IntPtr]1); Start-Sleep -Milliseconds 40; [void][W]::PostMessage($h, 0x101, [IntPtr]([int]$v), [IntPtr]0xC0000001) }
   }
   Start-Sleep -Milliseconds 300

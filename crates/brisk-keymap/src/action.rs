@@ -207,6 +207,7 @@ actions! {
     MuteBreakpoints => "Mute Breakpoints", "Run";
     StepOver => "Step Over", "Run";
     StepInto => "Step Into", "Run";
+    SmartStepInto => "Smart Step Into", "Run";
     StepOut => "Step Out", "Run";
     Resume => "Resume Program", "Run";
     RunToCursor => "Run to Cursor", "Run";

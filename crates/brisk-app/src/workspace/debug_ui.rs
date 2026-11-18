@@ -159,6 +159,15 @@ pub struct Debug {
     /// The program's threads at a stop: (id, name). The chooser shows when there are several.
     pub threads: Vec<(i64, String)>,
     pub threads_open: bool,
+    /// Smart Step Into: the calls on the line (debugpy stepInTargets) to choose from.
+    pub smart_step: Option<SmartStep>,
+}
+
+pub struct SmartStep {
+    pub thread: i64,
+    /// (target id, label).
+    pub targets: Vec<(i64, String)>,
+    pub sel: usize,
 }
 
 impl Debug {
@@ -191,6 +200,7 @@ impl Debug {
             muted: false,
             threads: Vec::new(),
             threads_open: false,
+            smart_step: None,
         }
     }
 
@@ -1128,6 +1138,7 @@ impl Workspace {
             A::ToggleBreakpoint => self.toggle_breakpoint_here(window, cx),
             A::ViewBreakpoints => self.open_bp_dialog(cx),
             A::MuteBreakpoints => self.toggle_mute_breakpoints(cx),
+            A::SmartStepInto => self.smart_step_into(cx),
             A::Debug => {
                 self.reload_runs();
                 let cfg = self.runs.file.selected_config().cloned().or_else(|| self.context_config(window, cx));
@@ -1534,6 +1545,132 @@ impl Workspace {
         }
         self.focus_editor(window, cx);
         cx.notify();
+    }
+
+    // --- Smart Step Into ----------------------------------------------------------------
+
+    /// Shift+F7: the calls on the stop line; one call steps into it right away.
+    fn smart_step_into(&mut self, cx: &mut Context<Self>) {
+        let (Some(thread), Some(frame)) = (self.debug.paused_thread(), self.debug.frames.get(self.debug.frame).map(|f| f.id)) else {
+            self.status = "The debugger is not paused".into();
+            return;
+        };
+        let Some(s) = &self.debug.session else { return };
+        let rx = s.client.request("stepInTargets", json!({"frameId": frame}));
+        cx.spawn(async move |this, cx| {
+            let res = rx.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.debug.paused_thread() != Some(thread) {
+                    return;
+                }
+                let targets: Vec<(i64, String)> = match &res {
+                    Ok(Ok(v)) => v
+                        .get("targets")
+                        .and_then(Value::as_array)
+                        .map(|a| a.iter().filter_map(|t| Some((t.get("id")?.as_i64()?, t.get("label").and_then(Value::as_str).unwrap_or("?").to_string()))).collect())
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                match targets.len() {
+                    // Nothing to choose (or no support): a plain Step Into.
+                    0 => {
+                        this.debug_request("stepIn", json!({"threadId": thread}));
+                        this.set_running(cx);
+                    }
+                    1 => {
+                        this.debug_request("stepIn", json!({"threadId": thread, "targetId": targets[0].0}));
+                        this.set_running(cx);
+                    }
+                    _ => this.debug.smart_step = Some(SmartStep { thread, targets, sel: 0 }),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Step into the chosen call.
+    pub(super) fn smart_step_go(&mut self, i: usize, cx: &mut Context<Self>) {
+        let Some(st) = self.debug.smart_step.take() else { return };
+        if let Some((id, _)) = st.targets.get(i) {
+            if self.debug.paused_thread() == Some(st.thread) {
+                self.debug_request("stepIn", json!({"threadId": st.thread, "targetId": id}));
+                self.set_running(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    pub(super) fn smart_step_key(&mut self, e: &gpui::KeyDownEvent, cx: &mut Context<Self>) {
+        let Some(st) = self.debug.smart_step.as_mut() else { return };
+        let n = st.targets.len();
+        match e.keystroke.key.as_str() {
+            "escape" => self.debug.smart_step = None,
+            "up" => st.sel = (st.sel + n - 1) % n.max(1),
+            "down" | "tab" => st.sel = (st.sel + 1) % n.max(1),
+            "enter" | "f7" => {
+                let i = st.sel;
+                self.smart_step_go(i, cx);
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+
+    pub(super) fn render_smart_step(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let st = self.debug.smart_step.as_ref()?;
+        let rows = st.targets.iter().enumerate().map(|(i, (_, label))| {
+            let selected = i == st.sel;
+            div()
+                .id(("smart-step", i))
+                .h(px(24.))
+                .px(px(10.))
+                .flex()
+                .items_center()
+                .rounded(px(4.))
+                .cursor_pointer()
+                .font_family(MONO_FONT)
+                .when(selected, |x| x.bg(Theme::selection_row()))
+                .when(!selected, |x| x.hover(|s| s.bg(Theme::hover_row())))
+                .child(label.clone())
+                .on_click(cx.listener(move |this, _, _, cx| this.smart_step_go(i, cx)))
+        });
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .flex()
+                .justify_center()
+                .items_start()
+                .pt(px(120.))
+                .occlude()
+                .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
+                    this.debug.smart_step = None;
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .id("smart-step-popup")
+                        .min_w(px(260.))
+                        .flex()
+                        .flex_col()
+                        .p(px(6.))
+                        .gap(px(2.))
+                        .bg(Theme::panel())
+                        .border_1()
+                        .border_color(Theme::divider())
+                        .rounded(px(8.))
+                        .shadow_lg()
+                        .text_size(px(13.))
+                        .text_color(Theme::text())
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(div().px(px(10.)).pb(px(4.)).text_size(px(12.)).text_color(Theme::text_dim()).child("Smart Step Into  (Enter: step into · Esc: cancel)"))
+                        .children(rows),
+                )
+                .into_any_element(),
+        )
     }
 
     /// The thread list for the chooser above Frames.
@@ -2883,7 +3020,44 @@ impl Workspace {
                 let _ = std::fs::remove_file(&thr);
                 let _ = cx;
             });
+            let smart = dir.join("dbg_smart.py");
+            let _ = std::fs::write(&smart, "def a(x):\n    return x + 1\n\n\ndef b(x):\n    return x * 2\n\n\nr = a(b(3))\nprint(r)\n");
+            let _ = this.update_in(cx, |t, w, cx| {
+                t.open_file(&smart, w, cx);
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.toggle_breakpoint(8, cx));
+                }
+                t.dispatch(Action::DebugContext, w, cx);
+            });
+            let s = settled!();
+            wait(800).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                eprintln!("smoke-debug: smart step {s:?} at {:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                t.dispatch(Action::SmartStepInto, w, cx);
+            });
+            let mut labels = Vec::new();
+            for _ in 0..50 {
+                wait(100).await;
+                labels = this.update(cx, |t, _| t.debug.smart_step.as_ref().map(|s| s.targets.iter().map(|t| t.1.clone()).collect::<Vec<_>>())).ok().flatten().unwrap_or_default();
+                if !labels.is_empty() {
+                    break;
+                }
+            }
+            let _ = this.update_in(cx, |t, _, cx| {
+                let i = labels.iter().position(|l| l.starts_with("a")).unwrap_or(0);
+                eprintln!("smoke-debug: smart step targets {labels:?} -> choose {:?}", labels.get(i));
+                t.smart_step_go(i, cx);
+            });
+            let s = settled!();
+            wait(800).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                let x = t.debug.vars.iter().find(|r| r.var.name == "x").map(|r| r.var.value.clone());
+                eprintln!("smoke-debug: smart step into a -> {s:?} at {:?} x={x:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                t.dispatch(Action::Resume, w, cx);
+            });
+            until!(|s: Option<State>| s == Some(State::Ended));
             let _ = this.update_in(cx, |_, _, cx| {
+                let _ = std::fs::remove_file(&smart);
                 let _ = std::fs::remove_file(&raise);
                 let _ = std::fs::remove_file(&test);
                 let _ = std::fs::remove_file(&exc);
