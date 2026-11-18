@@ -1,11 +1,19 @@
-//! Caret marks, as in PyCharm: the bracket next to the caret and its partner, and the other
-//! occurrences of the identifier under the caret (also as marks on the scrollbar).
+//! Caret marks, as in PyCharm: the bracket next to the caret and its partner, and, once the
+//! caret has rested for `OCCURRENCE_DELAY`, the other usages of the identifier under it (also
+//! as marks on the scrollbar). In Python the usages come from the syntax tree's scopes (a
+//! local `x` in one function does not light up `x` in another); elsewhere, and for attribute
+//! names, from the same identifier text. No ty needed.
 
 use super::Editor;
+use gpui::Context;
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 /// Whole-file occurrence marks only for files up to this size (bytes).
 const STRIPE_LIMIT: usize = 2 * 1024 * 1024;
+
+/// How long the caret rests before its usages are highlighted.
+const OCCURRENCE_DELAY: Duration = Duration::from_millis(300);
 
 #[derive(Default)]
 pub struct CaretMarks {
@@ -17,12 +25,117 @@ pub struct CaretMarks {
     pub occurrence_lines: Vec<usize>,
 }
 
+/// Usages of the identifier at the caret, computed once per caret position and text version.
+pub struct Occurrences {
+    /// (caret, buffer version) they are for.
+    key: (usize, u64),
+    since: Instant,
+    ready: bool,
+    /// Char ranges, sorted.
+    all: Vec<Range<usize>>,
+    lines: Vec<usize>,
+}
+
+impl Default for Occurrences {
+    fn default() -> Self {
+        Self { key: (usize::MAX, u64::MAX), since: Instant::now(), ready: false, all: Vec::new(), lines: Vec::new() }
+    }
+}
+
 fn is_word(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
 impl Editor {
-    /// Marks for the visible byte range. Uses `text_cache` (fresh after `reparse`).
+    /// Prepaint: restart the delay when the caret or the text changed; compute the usages
+    /// once it has passed. Uses `text_cache` (fresh after `reparse`).
+    pub(super) fn update_occurrences(&mut self, cx: &mut Context<Self>) {
+        let b = &self.buffer;
+        let single = b.selections.len() == 1 && b.primary().is_empty() && self.read_error.is_none();
+        let key = if single { (b.primary().head, b.version()) } else { (usize::MAX, b.version()) };
+        if key != self.occ.key {
+            self.occ = Occurrences { key, since: Instant::now(), ..Default::default() };
+            if single {
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(OCCURRENCE_DELAY).await;
+                    let _ = this.update(cx, |e, cx| {
+                        if e.occ.key == key {
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
+            }
+            return;
+        }
+        if self.occ.ready || !single || self.occ.since.elapsed() < OCCURRENCE_DELAY || self.text_cache.0 != b.version() {
+            return;
+        }
+        self.fill_occurrences();
+    }
+
+    /// Compute the usages for the current caret now (also for smokes, without the delay).
+    pub(super) fn fill_occurrences(&mut self) {
+        let head = self.buffer.primary().head;
+        self.occ.key = (head, self.buffer.version());
+        self.occ.ready = true;
+        let all = self.occurrences_at(head);
+        let rope = self.buffer.rope();
+        let mut lines: Vec<usize> = all.iter().map(|r| rope.char_to_line(r.start)).collect();
+        lines.dedup();
+        self.occ.all = all;
+        self.occ.lines = if self.text_cache.1.len() <= STRIPE_LIMIT { lines } else { Vec::new() };
+    }
+
+    /// Usages (char ranges) of the identifier at char `head`, or the one just before it.
+    fn occurrences_at(&self, head: usize) -> Vec<Range<usize>> {
+        let Some(s) = &self.syntax else { return Vec::new() };
+        let text = &self.text_cache.1;
+        let rope = self.buffer.rope();
+        let to_chars = |r: Range<usize>| rope.byte_to_char(r.start)..rope.byte_to_char(r.end);
+        let hb = rope.char_to_byte(head);
+        if let Some(refs) = s.name_refs(text, hb) {
+            return refs.ranges.into_iter().map(to_chars).collect();
+        }
+        let before = (head > 0).then(|| rope.char_to_byte(head - 1));
+        let Some(word) = s.identifier_at(hb).or_else(|| before.and_then(|p| s.identifier_at(p))) else {
+            return Vec::new();
+        };
+        let name = &text[word.clone()];
+        if name.is_empty() || text.len() > STRIPE_LIMIT {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        let mut from = 0;
+        while let Some(i) = text[from..].find(name) {
+            let st = from + i;
+            let en = st + name.len();
+            from = en;
+            let left_ok = !text[..st].chars().next_back().is_some_and(is_word);
+            let right_ok = !text[en..].chars().next().is_some_and(is_word);
+            if left_ok && right_ok && s.is_identifier(st..en) {
+                out.push(to_chars(st..en));
+            }
+        }
+        out
+    }
+
+    /// The variable at the caret and its usages in this file, from the syntax tree (Python):
+    /// Rename and Find Usages without ty.
+    pub fn name_refs_at_caret(&mut self) -> Option<brisk_syntax::NameRefs> {
+        self.reparse();
+        let head = self.buffer.primary().head;
+        let hb = self.buffer.rope().char_to_byte(head);
+        let text = self.text().to_string();
+        self.syntax.as_ref()?.name_refs(&text, hb)
+    }
+
+    /// Smokes: how many usages are highlighted now (none until the caret has rested).
+    pub fn shown_occurrences(&self) -> usize {
+        self.caret_marks(0..self.text_cache.1.len()).occurrences.len()
+    }
+
+    /// Marks for the visible byte range.
     pub(super) fn caret_marks(&self, bytes: Range<usize>) -> CaretMarks {
         let mut out = CaretMarks::default();
         let b = &self.buffer;
@@ -36,7 +149,6 @@ impl Editor {
         let rope = b.rope();
         let head = b.primary().head;
         let hb = rope.char_to_byte(head);
-        let to_chars = |r: Range<usize>| rope.byte_to_char(r.start)..rope.byte_to_char(r.end);
 
         // Brackets: the one after the caret, else the one before it.
         let before = (head > 0).then(|| rope.char_to_byte(head - 1));
@@ -45,42 +157,15 @@ impl Editor {
             None => scan_pair(text, hb).or_else(|| before.and_then(|p| scan_pair(text, p))),
         };
         if let Some((a, z)) = pair {
-            out.brackets = vec![to_chars(a), to_chars(z)];
+            out.brackets = vec![rope.byte_to_char(a.start)..rope.byte_to_char(a.end), rope.byte_to_char(z.start)..rope.byte_to_char(z.end)];
         }
 
-        // Occurrences of the identifier under the caret (not in strings or comments).
-        let Some(s) = &self.syntax else { return out };
-        let Some(word) = s.identifier_at(hb).or_else(|| before.and_then(|p| s.identifier_at(p))) else {
-            return out;
-        };
-        let name = &text[word.clone()];
-        if name.is_empty() {
-            return out;
-        }
-        let find_all = |range: Range<usize>, mut f: Box<dyn FnMut(Range<usize>) + '_>| {
-            let hay = &text[range.clone()];
-            let mut from = 0;
-            while let Some(i) = hay[from..].find(name) {
-                let st = range.start + from + i;
-                let en = st + name.len();
-                from += i + name.len();
-                let left_ok = !text[..st].chars().next_back().is_some_and(is_word);
-                let right_ok = !text[en..].chars().next().is_some_and(is_word);
-                if left_ok && right_ok && s.is_identifier(st..en) {
-                    f(st..en);
-                }
-            }
-        };
-        let lo = floor_char(text, bytes.start.min(text.len()));
-        let hi = floor_char(text, bytes.end.min(text.len()));
-        let mut occ = Vec::new();
-        find_all(lo..hi, Box::new(|r| occ.push(r)));
-        out.occurrences = occ.into_iter().map(to_chars).collect();
-        if text.len() <= STRIPE_LIMIT {
-            let mut lines = Vec::new();
-            find_all(0..text.len(), Box::new(|r| lines.push(rope.byte_to_line(r.start))));
-            lines.dedup();
-            out.occurrence_lines = lines;
+        // Usages, once the caret has rested (see `update_occurrences`).
+        if self.occ.ready && self.occ.key == (head, b.version()) && !self.occ.all.is_empty() {
+            let lo = rope.byte_to_char(floor_char(text, bytes.start.min(text.len())));
+            let hi = rope.byte_to_char(floor_char(text, bytes.end.min(text.len())));
+            out.occurrences = self.occ.all.iter().filter(|r| r.end >= lo && r.start <= hi).cloned().collect();
+            out.occurrence_lines = self.occ.lines.clone();
         }
         out
     }

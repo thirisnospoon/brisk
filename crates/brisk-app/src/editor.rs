@@ -83,6 +83,7 @@ pub struct Editor {
     /// (buffer version, longest line in chars): the horizontal scroll range.
     max_line: (u64, usize),
     big: big::BigFile,
+    occ: marks::Occurrences,
     /// A scrollbar thumb being dragged.
     drag: Option<scroll::Drag>,
     /// The scrollbar under the mouse.
@@ -275,6 +276,7 @@ impl Editor {
             smooth_task: None,
             max_line: (u64::MAX, 0),
             big: Default::default(),
+            occ: Default::default(),
             drag: None,
             bar_hover: None,
             middle: None,
@@ -342,6 +344,7 @@ impl Editor {
             smooth_task: None,
             max_line: (u64::MAX, 0),
             big: Default::default(),
+            occ: Default::default(),
             drag: None,
             bar_hover: None,
             middle: None,
@@ -1484,6 +1487,8 @@ impl Element for EditorElement {
         let headers = self.editor.update(cx, |ed, cx| {
             ed.reparse();
             ed.background_parse(cx);
+            ed.schedule_folds(cx);
+            ed.update_occurrences(cx);
             ed.refresh_vcs();
             ed.refresh_line_extent();
             ed.sync_folds();

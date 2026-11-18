@@ -1,7 +1,8 @@
 //! Large files (over `BIG_LINES` lines): whole-file work that runs on every edit is throttled
-//! so typing stays fast. Fold markers and the longest-line width refresh at most once a
-//! second while typing, completion words come from the lines around the caret, and inlay
-//! hints are off. The syntax tree itself is reparsed incrementally (brisk-syntax); a reparse
+//! so typing stays fast. The longest-line width refreshes at most once a second while
+//! typing, completion words come from the lines around the caret, and inlay hints are off.
+//! From `LAZY_FOLD_LINES` lines on, fold markers are recomputed on a background thread
+//! `FOLD_DEBOUNCE` after the last edit instead of on every frame. The syntax tree itself is reparsed incrementally (brisk-syntax); a reparse
 //! on the UI thread gets `PARSE_BUDGET`, and one that needs longer (error recovery after an
 //! unclosed bracket can take seconds) finishes on a background thread while the shifted old
 //! tree keeps the highlights in place.
@@ -16,6 +17,12 @@ pub const BIG_LINES: usize = 20_000;
 /// How often throttled whole-file work may run while the text keeps changing.
 const REFRESH: Duration = Duration::from_millis(1000);
 
+/// From this many lines on, fold markers are computed off the UI thread.
+pub const LAZY_FOLD_LINES: usize = 5_000;
+
+/// Pause in typing before the fold markers are recomputed.
+const FOLD_DEBOUNCE: Duration = Duration::from_millis(300);
+
 /// Longest reparse on the UI thread in a large file.
 pub const PARSE_BUDGET: Duration = Duration::from_millis(30);
 
@@ -24,7 +31,9 @@ pub const WORD_WINDOW: usize = 2_000;
 
 #[derive(Default)]
 pub struct BigFile {
-    folds_at: Option<Instant>,
+    /// Buffer version a fold recompute is scheduled for, and whether one is running.
+    folds_for: Option<u64>,
+    folds_running: bool,
     extent_at: Option<Instant>,
     /// A background parse is running.
     parsing: bool,
@@ -43,7 +52,7 @@ impl Editor {
         let Some((lang, text, tree)) = self.syntax.as_ref().and_then(|s| s.stale_job()) else { return };
         self.big.parsing = true;
         let job = cx.background_executor().spawn(async move {
-            let tree = brisk_syntax::parse_full(lang, &text, Some(&tree));
+            let tree = brisk_syntax::parse_full(lang, &text, tree.as_ref());
             (text, tree)
         });
         cx.spawn(async move |this, cx| {
@@ -53,17 +62,69 @@ impl Editor {
                 if let (Some(s), Some(tree)) = (e.syntax.as_mut(), tree) {
                     s.adopt(&text, tree);
                 }
-                // Repaint with the new tree; if the text moved on, the next frame starts another job.
-                e.folds.candidates.0 = None;
+                // Repaint with the new tree; fold markers from it too (also those computed
+                // while there was no tree yet). If the text moved on, the next frame starts
+                // another job.
+                e.big.folds_for = None;
+                if let Some(c) = e.folds.candidates.0.as_mut() {
+                    *c = u64::MAX;
+                }
                 cx.notify();
             });
         })
         .detach();
     }
 
-    /// Large file and the folds were refreshed less than a second ago: keep them for now.
-    pub(super) fn defer_folds(&mut self) -> bool {
-        defer(self.buffer.len_lines(), &mut self.big.folds_at)
+    /// Smokes: a complete syntax tree for the current text (highlighting is not stale).
+    pub fn syntax_ready(&self) -> bool {
+        self.syntax.as_ref().is_some_and(|s| s.tree().is_some() && !s.is_stale())
+    }
+
+    /// Smokes: the fold markers are up to date with the text.
+    pub fn folds_fresh(&self) -> bool {
+        self.folds.candidates.0 == Some(self.buffer.version())
+    }
+
+    /// Fold markers come from `schedule_folds` (a long file with a grammar).
+    pub(super) fn lazy_folds(&self) -> bool {
+        self.syntax.is_some() && self.buffer.len_lines() >= LAZY_FOLD_LINES
+    }
+
+    /// Prepaint: once typing pauses for `FOLD_DEBOUNCE`, recompute the fold regions from a
+    /// copy of the syntax tree on a background thread.
+    pub(super) fn schedule_folds(&mut self, cx: &mut Context<Self>) {
+        let v = self.buffer.version();
+        let fresh = self.folds.candidates.0 == Some(v);
+        if !self.lazy_folds() || fresh || self.folds.candidates.0.is_none() || self.big.folds_running || self.big.folds_for == Some(v) {
+            return;
+        }
+        self.big.folds_for = Some(v);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(FOLD_DEBOUNCE).await;
+            let job = this
+                .update(cx, |e, cx| {
+                    // Still typing (a newer edit scheduled its own), or the tree is being
+                    // finished in the background (its arrival schedules again).
+                    if e.buffer.version() != v || e.big.folds_running {
+                        return None;
+                    }
+                    e.reparse();
+                    let s = e.syntax.as_ref().filter(|s| !s.is_stale())?;
+                    let (lang, tree) = (s.lang(), s.tree()?.clone());
+                    e.big.folds_running = true;
+                    Some(cx.background_executor().spawn(async move { brisk_syntax::fold_ranges_of(lang, &tree) }))
+                })
+                .ok()
+                .flatten();
+            let Some(job) = job else { return };
+            let regions = job.await;
+            let _ = this.update(cx, |e, cx| {
+                e.big.folds_running = false;
+                e.folds.candidates = (Some(v), regions);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Large file and the longest line was measured less than a second ago.

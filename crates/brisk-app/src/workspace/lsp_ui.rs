@@ -226,7 +226,7 @@ fn is_ident(c: char) -> bool {
 }
 
 impl Workspace {
-    fn no_ty(&mut self, what: &str) {
+    pub(super) fn no_ty(&mut self, what: &str) {
         self.status = match &self.lsp.state {
             TyState::Missing => format!("{what} needs ty: install it in the project interpreter (pip install ty)"),
             TyState::Failed(e) => format!("{what}: {e}"),
@@ -618,7 +618,7 @@ impl Workspace {
 
     /// Alt+F7: usages in the Find tool window, like PyCharm's Find Usages.
     fn find_usages(&mut self, ed: Entity<Editor>, at: Option<Pos>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else { return self.no_ty("Find Usages") };
+        let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else { return self.local_usages(ed, window, cx) };
         let p = at.unwrap_or(p);
         let name = {
             let e = ed.read(cx);
@@ -653,7 +653,7 @@ impl Workspace {
 
     /// Shift+F6: check the symbol can be renamed, then ask for the new name.
     fn start_rename(&mut self, ed: Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else { return self.no_ty("Rename") };
+        let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else { return self.local_rename(ed, cx) };
         let fut = ty.prepare_rename(&path, p);
         cx.spawn_in(window, async move |this, cx| {
             let res = fut.await;
