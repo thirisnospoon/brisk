@@ -1,6 +1,6 @@
 param([string]$Exe, [string]$Project, [string]$File, [string]$AppData, [string]$OutDir, [string]$Steps)
 # Starts brisk paused at the first breakpoint (BRISK_SMOKE_DEBUG_HOLD), then runs $Steps against
-# its own window with posted mouse messages: "shot:name; click:x,y; dbl:x,y; rclick:x,y; key:vk; wait:ms".
+# its own window with posted mouse messages: "shot:name; click:x,y; dbl:x,y; rclick:x,y; key:vk; char:text; wait:ms".
 # Coordinates are client pixels of brisk's window. stderr goes to $OutDir\log.txt.
 # Example (1750x1125 client, 100% scale; find positions on a "shot:" first): add a breakpoint on
 # line 10 by its number, right click the one on line 7, Esc, Step Over, Stop:
@@ -67,6 +67,7 @@ foreach ($s in ($Steps -split ';')) {
     'click' { $x, $y = $v -split ','; Click ([int]$x) ([int]$y) }
     'dbl' { $x, $y = $v -split ','; Click ([int]$x) ([int]$y); Start-Sleep -Milliseconds 30; Click ([int]$x) ([int]$y) }
     'rclick' { $x, $y = $v -split ','; RClick ([int]$x) ([int]$y) }
+    'char' { foreach ($ch in $v.ToCharArray()) { [void][W]::PostMessage($h, 0x102, [IntPtr][int]$ch, [IntPtr]1); Start-Sleep -Milliseconds 40 } }
     'key' { [void][W]::PostMessage($h, 0x100, [IntPtr]([int]$v), [IntPtr]1); Start-Sleep -Milliseconds 40; [void][W]::PostMessage($h, 0x101, [IntPtr]([int]$v), [IntPtr]0xC0000001) }
   }
   Start-Sleep -Milliseconds 300

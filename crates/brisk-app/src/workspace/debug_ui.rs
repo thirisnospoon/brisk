@@ -34,6 +34,8 @@ impl StoredBp {
 /// View Breakpoints (Ctrl+Shift+F8).
 pub struct BpDialog {
     pub sel: usize,
+    /// Typing goes into the condition: Space is a space, Esc / Enter leave the field.
+    pub editing: bool,
 }
 
 /// A row of View Breakpoints.
@@ -666,7 +668,7 @@ impl Workspace {
     pub(super) fn open_bp_dialog(&mut self, cx: &mut Context<Self>) {
         // The first line breakpoint is selected, as in PyCharm.
         let sel = if self.bp_rows(cx).len() > 2 { 2 } else { 0 };
-        self.debug.bp_dialog = Some(BpDialog { sel });
+        self.debug.bp_dialog = Some(BpDialog { sel, editing: false });
         cx.notify();
     }
 
@@ -768,12 +770,26 @@ impl Workspace {
             return;
         }
         match k.key.as_str() {
+            "escape" | "enter" if d.editing => d.editing = false,
             "escape" => self.debug.bp_dialog = None,
-            "up" => d.sel = sel.saturating_sub(1),
-            "down" => d.sel = (sel + 1).min(rows.len().saturating_sub(1)),
-            "space" => {
+            "up" => {
+                d.editing = false;
+                d.sel = sel.saturating_sub(1);
+            }
+            "down" => {
+                d.editing = false;
+                d.sel = (sel + 1).min(rows.len().saturating_sub(1));
+            }
+            "space" if !d.editing => {
                 if let Some(r) = row {
                     self.bp_toggle_row(&r, cx);
+                }
+            }
+            "space" => {
+                if let Some(BpRow::Line(p, l, b)) = row {
+                    let mut c = b.condition.unwrap_or_default();
+                    c.push(' ');
+                    self.bp_set_condition(&p, l, Some(c), cx);
                 }
             }
             "enter" | "f4" => {
@@ -796,6 +812,7 @@ impl Workspace {
             _ => {
                 // Typing edits the selected breakpoint's condition.
                 if let (Some(BpRow::Line(p, l, b)), Some(t)) = (row, k.key_char.as_deref().filter(|t| !t.chars().any(char::is_control))) {
+                    d.editing = true;
                     let mut c = b.condition.unwrap_or_default();
                     c.push_str(t);
                     self.bp_set_condition(&p, l, Some(c), cx);
@@ -807,6 +824,7 @@ impl Workspace {
 
     pub(super) fn render_bp_dialog(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let sel = self.debug.bp_dialog.as_ref()?.sel;
+        let editing = self.debug.bp_dialog.as_ref().is_some_and(|d| d.editing);
         let rows = self.bp_rows(cx);
         let sel = sel.min(rows.len().saturating_sub(1));
         let check = |on: bool| {
@@ -860,6 +878,7 @@ impl Workspace {
                     .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, w, cx| {
                         if let Some(d) = this.debug.bp_dialog.as_mut() {
                             d.sel = i;
+                            d.editing = false;
                         }
                         if ev.click_count() >= 2 {
                             this.bp_go_to(&row2, w, cx);
@@ -903,17 +922,25 @@ impl Workspace {
                     .child(div().text_color(Theme::text_muted()).child("Condition (type to edit):"))
                     .child(
                         div()
+                            .id("bp-condition")
                             .h(px(28.))
                             .px(px(8.))
                             .flex()
                             .items_center()
                             .rounded(px(5.))
                             .border_1()
-                            .border_color(Theme::accent())
+                            .border_color(if editing { Theme::accent() } else { Theme::divider() })
                             .bg(Theme::editor_bg())
                             .font_family(MONO_FONT)
+                            .cursor_text()
                             .child(cond)
-                            .child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret())),
+                            .when(editing, |x| x.child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret())))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(d) = this.debug.bp_dialog.as_mut() {
+                                    d.editing = true;
+                                }
+                                cx.notify();
+                            })),
                     )
                     .child(div().text_size(px(12.)).text_color(Theme::text_dim()).child("A Python expression: the debugger stops only when it is true. Empty: always."))
                     .into_any_element()
@@ -987,7 +1014,7 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                .child(div().flex_1().text_size(px(12.)).text_color(Theme::text_dim()).child("Space: enable/disable · Delete: remove · Enter: go to · Esc: close"))
+                                .child(div().flex_1().text_size(px(12.)).text_color(Theme::text_dim()).child("Space: enable/disable · type: condition · Delete: remove · Enter: go to · Esc: close"))
                                 .child(button("bp-remove", "Remove", false, is_line).on_click(cx.listener(move |this, _, _, cx| {
                                     if let Some(BpRow::Line(p, l, _)) = cur_rm.clone() {
                                         this.bp_remove(&p, l, cx);
@@ -1686,6 +1713,8 @@ impl Workspace {
                 "backspace" => {
                     ed.text.pop();
                 }
+                // gpui gives Space no key_char.
+                "space" if !ctrl => ed.text.push(' '),
                 "v" if ctrl => {
                     if let Some(t) = cx.read_from_clipboard().and_then(|c| c.text()) {
                         ed.text.push_str(t.lines().next().unwrap_or(""));
@@ -1808,6 +1837,7 @@ impl Workspace {
             "backspace" => {
                 self.debug.input.pop();
             }
+            "space" => self.debug.input.push(' '),
             "escape" => self.debug.input.clear(),
             "up" => {
                 if self.debug.history_pos > 0 {
@@ -2272,10 +2302,11 @@ impl Workspace {
                             .map(|e| e.read(cx).breakpoint_list().into_iter().map(|(l, b)| format!("{}{}", l + 1, b.condition.map(|c| format!(" if {c}")).unwrap_or_default())).collect())
                             .unwrap_or_default();
                         format!(
-                            "state={:?} top={:?} bps={bps:?} popup={} tab={:?} sel={:?} edit={:?} watches={:?}",
+                            "state={:?} top={:?} bps={bps:?} popup={} bpdlg={} tab={:?} sel={:?} edit={:?} watches={:?}",
                             t.debug.state(),
                             t.debug.frames.first().map(|f| f.line + 1),
                             t.popup.is_some(),
+                            t.debug.bp_dialog.as_ref().map_or("closed".to_string(), |d| format!("open(sel {} editing {})", d.sel, d.editing)),
                             t.debug.tab,
                             t.debug.sel.and_then(|s| t.debug.vars.get(s)).map(|r| r.var.name.clone()),
                             t.debug.edit.as_ref().map(|e| e.target),
