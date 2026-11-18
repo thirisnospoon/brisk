@@ -28,11 +28,11 @@ pub struct Git {
     pub repo: Repo,
     pub(super) status: Status,
     by_path: HashMap<String, FileStatus>,
-    branches: Vec<Branch>,
-    log: Vec<Commit>,
+    pub(super) branches: Vec<Branch>,
+    pub(super) log: Vec<Commit>,
     graph: Vec<GraphRow>,
     graph_w: f32,
-    log_selected: Option<usize>,
+    pub(super) log_selected: Option<usize>,
     details: Option<Details>,
     details_sel: Option<usize>,
     log_scroll: UniformListScrollHandle,
@@ -50,6 +50,8 @@ pub struct Git {
     pub dialog: Option<super::git_merge_ui::GitDialog>,
     /// Conflicted files at the last refresh: the Conflicts dialog opens when they appear.
     conflicts_seen: usize,
+    /// Text / Branch / User filters of the log.
+    pub(super) filter: super::git_log_filter::LogFilter,
 }
 
 impl Git {
@@ -77,6 +79,7 @@ impl Git {
             loaded: false,
             dialog: None,
             conflicts_seen: 0,
+            filter: super::git_log_filter::LogFilter::new(cx),
         }
     }
 
@@ -206,15 +209,20 @@ impl Workspace {
         let Some(g) = &self.git else { return };
         let repo = g.repo.clone();
         let want_log = self.bottom == Some(BottomTool::Git);
+        let query = g.filter.query.clone();
         let task = cx.background_executor().spawn(async move {
             let st = repo.status();
             let br = repo.branches().unwrap_or_default();
-            let log = want_log.then(|| repo.log(LOG_LIMIT).unwrap_or_default());
-            (st, br, log)
+            let log = want_log.then(|| repo.log_query(LOG_LIMIT, &query).unwrap_or_default());
+            (st, br, log, query)
         });
         cx.spawn(async move |this, cx| {
-            let (st, br, log) = task.await;
-            let _ = this.update(cx, |this, cx| this.apply_git(st, br, log, cx));
+            let (st, br, log, query) = task.await;
+            let _ = this.update(cx, |this, cx| {
+                // The filters changed while this ran: a newer refresh brings the right log.
+                let log = log.filter(|_| this.git.as_ref().is_some_and(|g| g.filter.query == query));
+                this.apply_git(st, br, log, cx)
+            });
         })
         .detach();
     }
@@ -641,6 +649,9 @@ impl Workspace {
 
     /// Keys handled before the keymap: commit message shortcuts and diff navigation.
     pub(super) fn git_pre_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.log_filter_key(e, window, cx) {
+            return true;
+        }
         let k = &e.keystroke;
         let m = &k.modifiers;
         if let Some(g) = &self.git {
@@ -1153,7 +1164,15 @@ impl Workspace {
             .h_full()
             .flex()
             .flex_col()
-            .when(n == 0, |d| d.child(div().p(px(12.)).text_size(px(13.)).text_color(Theme::text_muted()).child(if g.loaded { "No commits yet" } else { "Loading…" })))
+            .when(n == 0, |d| {
+                d.child(div().p(px(12.)).text_size(px(13.)).text_color(Theme::text_muted()).child(if !g.loaded {
+                    "Loading…"
+                } else if g.filter.query.is_empty() {
+                    "No commits yet"
+                } else {
+                    "No commits match the filters"
+                }))
+            })
             .child(commits);
 
         // Details pane.
@@ -1213,6 +1232,7 @@ impl Workspace {
                     .border_color(Theme::divider())
                     .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("Git"))
                     .child(div().text_color(Theme::text()).child("Log"))
+                    .child(self.render_log_filters(cx))
                     .child(div().flex_1())
                     .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(format!("{n} commits")))
                     .child(

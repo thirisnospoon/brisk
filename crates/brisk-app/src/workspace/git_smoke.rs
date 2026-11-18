@@ -86,6 +86,9 @@ impl Workspace {
             if !hold("annotate") && !hold("merge") && !hold("stash") {
                 Self::smoke_history(&this, cx, &bg, &root).await;
             }
+            if !["annotate", "merge", "stash", "history"].iter().any(|p| hold(p)) {
+                Self::smoke_log(&this, cx, &bg).await;
+            }
             let _ = this.update(cx, |_, cx| {
                 eprintln!("smoke-gitx: done");
                 if std::env::var_os("BRISK_SMOKE_GITX_HOLD").is_none() {
@@ -330,6 +333,50 @@ impl Workspace {
             eprintln!("smoke-gitx: selection history {:?} -> {}", dialog(this).and_then(|d| d.lines), show(this));
             this.smoke_press("escape", window, cx);
         });
+    }
+
+    async fn smoke_log(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor) {
+        fn subjects(this: &Workspace) -> Vec<String> {
+            this.git.as_ref().map(|g| g.log.iter().map(|c| c.subject.clone()).collect()).unwrap_or_default()
+        }
+        let _ = this.update_in(cx, |this, window, cx| {
+            if this.bottom != Some(super::BottomTool::Git) {
+                this.dispatch(Action::ToggleGitWindow, window, cx);
+            }
+            this.refresh_git(cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: log -> {} commits, selected {:?}", subjects(this).len(), this.git.as_ref().and_then(|g| g.log_selected));
+            // Text filter: typed into the field, the log reloads after a pause.
+            if let Some(f) = this.git.as_ref().map(|g| g.filter.field.clone()) {
+                window.focus(&gpui::Focusable::focus_handle(f.read(cx), cx));
+            }
+            this.smoke_type("feature", window, cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: log text 'feature' -> {:?}", subjects(this));
+            // Esc clears the text; User and Branch filters.
+            this.smoke_press("escape", window, cx);
+            this.set_log_author(Some("Bob".into()), cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update(cx, |this, cx| {
+            eprintln!("smoke-gitx: log user Bob -> {:?}", subjects(this));
+            this.set_log_author(None, cx);
+            this.set_log_branch(Some("feature".into()), cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update(cx, |this, _| eprintln!("smoke-gitx: log branch feature -> {:?}", subjects(this)));
+        if hold("log") {
+            return;
+        }
+        let _ = this.update_in(cx, |this, window, cx| {
+            this.clear_log_filters(window, cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update(cx, |this, _| eprintln!("smoke-gitx: log filters cleared -> {} commits", subjects(this).len()));
     }
 
     /// Labels of the open context menu (smoke tests).

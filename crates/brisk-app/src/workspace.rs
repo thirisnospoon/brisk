@@ -11,6 +11,7 @@ mod files_ui;
 mod find_ui;
 mod git_annotate_ui;
 mod git_history_ui;
+mod git_log_filter;
 mod git_merge_ui;
 mod git_stash_ui;
 mod git_smoke;
@@ -544,7 +545,8 @@ impl Workspace {
                 return Some(f);
             }
         }
-        self.git.as_ref().map(|g| g.message.clone()).filter(|m| m.read(cx).focus_handle(cx).is_focused(window))
+        let git_fields = self.git.as_ref().map(|g| [g.message.clone(), g.filter.field.clone()]).into_iter().flatten();
+        git_fields.into_iter().find(|m| m.read(cx).focus_handle(cx).is_focused(window))
     }
 
     fn save_all(&mut self, cx: &mut Context<Self>) {
