@@ -681,10 +681,10 @@ sys.exit(r)";
                     None => format!("Local ({})", t.number),
                 };
                 let state = t.run.as_ref().map(|r| match (r.running, r.code) {
-                    (true, _) => ("▶", rgb(0x5fb865)),
-                    (false, Some(0)) => ("✓", rgb(0x8c8f96)),
-                    (false, None) => ("■", rgb(0x8c8f96)),
-                    (false, _) => ("✗", rgb(0xf05d5d)),
+                    (true, _) => ("play", Theme::run_icon()),
+                    (false, Some(0)) => ("check", Theme::text_muted()),
+                    (false, None) => ("stop-solid", Theme::text_muted()),
+                    (false, _) => ("x", Theme::error()),
                 });
                 let id = t.id;
                 div()
@@ -704,8 +704,8 @@ sys.exit(r)";
                         window.focus(&this.focus);
                         cx.notify();
                     }))
-                    .when_some(state, |d, (g, c)| d.child(div().text_color(c).text_size(px(11.)).child(g)))
-                    .when(t.run.as_ref().is_some_and(|r| r.pinned), |d| d.child(div().text_size(px(11.)).text_color(Theme::accent()).child("📌")))
+                    .when_some(state, |d, (g, c)| d.child(crate::icons::icon(g, 12., c)))
+                    .when(t.run.as_ref().is_some_and(|r| r.pinned), |d| d.child(crate::icons::icon("pin", 12., Theme::accent())))
                     .child(name)
                     .child(
                         div().id(("term-close", t.id as usize)).text_color(Theme::text_dim()).hover(|s| s.text_color(Theme::text())).child("×").on_click(
@@ -751,11 +751,10 @@ impl TerminalPanel {
                 .items_center()
                 .justify_center()
                 .rounded(px(5.))
-                .text_color(color)
                 .hover(|s| s.bg(Theme::hover_row()))
                 .active(|s| s.bg(Theme::press()))
                 .cursor_pointer()
-                .child(glyph)
+                .child(crate::icons::icon(glyph, 16., color))
         };
         let tip = |t: &'static str| move |_: &mut Window, cx: &mut App| cx.new(|_| crate::workspace::Tip(t.into())).into();
         let toggle = |id: &'static str, glyph: &'static str, on: bool| {
@@ -768,12 +767,11 @@ impl TerminalPanel {
                 .items_center()
                 .justify_center()
                 .rounded(px(5.))
-                .text_color(if on { Theme::text() } else { Theme::text_muted() })
                 .when(on, |d| d.bg(Theme::selection_row()))
                 .when(!on, |d| d.hover(|s| s.bg(Theme::hover_row())))
                 .active(|s| s.bg(Theme::press()))
                 .cursor_pointer()
-                .child(glyph)
+                .child(crate::icons::icon(glyph, 16., if on { Theme::text() } else { Theme::text_muted() }))
         };
         div()
             .w(px(34.))
@@ -784,37 +782,36 @@ impl TerminalPanel {
             .gap(px(2.))
             .border_r_1()
             .border_color(Theme::border())
-            .child(button("run-rerun", "↻", rgb(0x5fb865).into()).tooltip(tip("Rerun  Ctrl+F5")).on_click(cx.listener(|_, _, _, cx| cx.emit(RunEvent::RerunRequested))))
+            .child(button("run-rerun", "rotate-cw", Theme::run_icon()).tooltip(tip("Rerun  Ctrl+F5")).on_click(cx.listener(|_, _, _, cx| cx.emit(RunEvent::RerunRequested))))
             .when(self.tests().is_some(), |d| {
                 let any_failed = self.tests().is_some_and(|t| t.finished && t.tree().tree.counts().failed > 0);
                 d.child(
-                    button("run-rerun-failed", "↻", if any_failed { rgb(0xf05d5d).into() } else { Theme::text_dim() })
-                        .child(div().text_size(px(9.)).text_color(if any_failed { rgb(0xf05d5d).into() } else { Theme::text_dim() }).child("✗"))
+                    button("run-rerun-failed", "rerun-failed", if any_failed { Theme::error() } else { Theme::text_dim().opacity(0.5) })
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(RunEvent::RerunFailedRequested))),
                 )
             })
             .child(
-                button("run-stop", "■", if running { rgb(0xf05d5d).into() } else { Theme::text_dim() }).tooltip(tip("Stop  Ctrl+F2")).on_click(cx.listener(|this, _, _, cx| {
+                button("run-stop", "stop-solid", if running { Theme::error() } else { Theme::text_dim().opacity(0.5) }).tooltip(tip("Stop  Ctrl+F2")).on_click(cx.listener(|this, _, _, cx| {
                     this.stop();
                     cx.notify();
                 })),
             )
             .child(div().w(px(18.)).h(px(1.)).my(px(3.)).bg(Theme::divider()))
-            .child(button("run-copy-cmd", "⧉", Theme::text_muted()).tooltip(tip("Copy command line")).on_click(cx.listener(|this, _, _, cx| this.copy_command_line(cx))))
-            .child(button("run-open-term", "›_", Theme::text_muted()).tooltip(tip("Open in Terminal")).on_click(cx.listener(|this, _, _, cx| this.open_in_terminal(cx))))
-            .child(toggle("run-pin", "📌", self.active_pinned()).tooltip(tip("Pin Tab: the next run opens a new tab")).child(pin_track()).on_click(cx.listener(|this, _, _, cx| {
+            .child(button("run-copy-cmd", "copy", Theme::text_muted()).tooltip(tip("Copy command line")).on_click(cx.listener(|this, _, _, cx| this.copy_command_line(cx))))
+            .child(button("run-open-term", "square-terminal", Theme::text_muted()).tooltip(tip("Open in Terminal")).on_click(cx.listener(|this, _, _, cx| this.open_in_terminal(cx))))
+            .child(toggle("run-pin", "pin", self.active_pinned()).tooltip(tip("Pin Tab: the next run opens a new tab")).child(pin_track()).on_click(cx.listener(|this, _, _, cx| {
                 this.toggle_pin();
                 cx.notify();
             })))
-            .child(toggle("run-wrap", "↵", self.soft_wrap).tooltip(tip("Soft-Wrap")).on_click(cx.listener(|this, _, _, cx| {
+            .child(toggle("run-wrap", "wrap-text", self.soft_wrap).tooltip(tip("Soft-Wrap")).on_click(cx.listener(|this, _, _, cx| {
                 this.toggle_soft_wrap();
                 cx.notify();
             })))
-            .child(toggle("run-follow", "⤓", self.scroll_to_end).tooltip(tip("Scroll to End")).on_click(cx.listener(|this, _, _, cx| {
+            .child(toggle("run-follow", "arrow-down-to-line", self.scroll_to_end).tooltip(tip("Scroll to End")).on_click(cx.listener(|this, _, _, cx| {
                 this.toggle_scroll_to_end();
                 cx.notify();
             })))
-            .child(button("run-clear", "⌫", Theme::text_muted()).tooltip(tip("Clear All")).on_click(cx.listener(|this, _, _, cx| {
+            .child(button("run-clear", "trash", Theme::text_muted()).tooltip(tip("Clear All")).on_click(cx.listener(|this, _, _, cx| {
                 this.clear();
                 cx.notify();
             })))

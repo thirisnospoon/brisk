@@ -167,7 +167,7 @@ impl Workspace {
                     .rounded(px(3.))
                     .border_1()
                     .border_color(if on { Theme::accent() } else { Theme::divider() })
-                    .when(on, |x| x.bg(Theme::accent()).text_color(gpui::white()).text_size(px(11.)).child("✓")),
+                    .when(on, |x| x.bg(Theme::accent()).child(crate::icons::icon("check-bold", 12., gpui::white()))),
             )
             .child("Show inlay hints")
             .child(div().text_color(Theme::text_dim()).child("(inferred types, parameter names)"))

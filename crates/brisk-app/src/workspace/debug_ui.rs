@@ -1223,7 +1223,7 @@ impl Workspace {
                 .rounded(px(3.))
                 .border_1()
                 .border_color(if on { Theme::accent() } else { Theme::text_dim() })
-                .when(on, |x| x.bg(Theme::accent()).text_color(gpui::white()).text_size(px(10.)).child("✓"))
+                .when(on, |x| x.bg(Theme::accent()).child(crate::icons::icon("check-bold", 10., gpui::white())))
         };
         let group = |label: &'static str| div().px(px(8.)).pt(px(6.)).pb(px(2.)).text_size(px(11.)).text_color(Theme::text_dim()).child(label);
         let mut list: Vec<gpui::AnyElement> = vec![group("PYTHON EXCEPTION BREAKPOINTS").into_any_element()];
@@ -2875,18 +2875,17 @@ impl Workspace {
             (Some(s), _) => format!("{} — finished", s.name),
             (None, _) => "No debug session. Shift+F9 debugs the selected configuration, Ctrl+Shift+F9 the current file.".into(),
         };
-        let tool = |id: &'static str, glyph: &'static str, tip: &'static str, on: bool, color: gpui::Hsla, action: Action, cx: &mut Context<Self>| {
+        let tool = |id: &'static str, icon: &'static str, tip: &'static str, on: bool, color: gpui::Hsla, action: Action, cx: &mut Context<Self>| {
             div()
                 .id(id)
                 .w(px(26.))
-                .h(px(24.))
+                .h(px(26.))
                 .flex()
                 .items_center()
                 .justify_center()
                 .rounded(px(5.))
-                .text_color(if on { color } else { Theme::text_dim() })
                 .when(on, |x| x.cursor_pointer().hover(|s| s.bg(Theme::hover_row())).active(|s| s.bg(Theme::press())))
-                .child(glyph)
+                .child(crate::icons::icon(icon, 16., if on { color } else { Theme::text_dim().opacity(0.5) }))
                 .tooltip(move |_, cx| cx.new(|_| super::Tip(tip.into())).into())
                 .on_click(cx.listener(move |this, _, w, cx| {
                     if on {
@@ -2894,7 +2893,8 @@ impl Workspace {
                     }
                 }))
         };
-        let green: gpui::Hsla = gpui::rgb(0x5fb865).into();
+        let green = Theme::run_icon();
+        let plain = Theme::text_muted();
         let toolbar = div()
             .flex()
             .items_center()
@@ -2903,34 +2903,33 @@ impl Workspace {
             .h(px(30.))
             .border_b_1()
             .border_color(Theme::divider())
-            .child(tool("dbg-rerun", "↻", "Rerun Debug Session", can_rerun, green, Action::RerunDebug, cx))
-            .child(tool("dbg-resume", "▶", "Resume Program  F9", paused && !d.pending, green, Action::Resume, cx))
-            .child(tool("dbg-pause", "‖", "Pause Program", running, Theme::accent(), Action::PauseProgram, cx))
-            .child(tool("dbg-stop", "■", "Stop  Ctrl+F2", live, Theme::error(), Action::Stop, cx))
+            .child(tool("dbg-rerun", "rotate-cw", "Rerun Debug Session", can_rerun, green, Action::RerunDebug, cx))
+            .child(tool("dbg-resume", "play", "Resume Program  F9", paused && !d.pending, green, Action::Resume, cx))
+            .child(tool("dbg-pause", "pause", "Pause Program", running, plain, Action::PauseProgram, cx))
+            .child(tool("dbg-stop", "stop-solid", "Stop  Ctrl+F2", live, Theme::error(), Action::Stop, cx))
             .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(Theme::divider()))
-            .child(tool("dbg-over", "↷", "Step Over  F8", paused, Theme::accent(), Action::StepOver, cx))
-            .child(tool("dbg-into", "↓", "Step Into  F7", paused, Theme::accent(), Action::StepInto, cx))
-            .child(tool("dbg-out", "↑", "Step Out  Shift+F8", paused, Theme::accent(), Action::StepOut, cx))
-            .child(tool("dbg-cursor", "⇥", "Run to Cursor  Alt+F9", paused, Theme::accent(), Action::RunToCursor, cx))
-            .child(tool("dbg-eval", "=", "Evaluate Expression  Alt+F8", paused, Theme::accent(), Action::EvaluateExpression, cx))
+            .child(tool("dbg-over", "step-over", "Step Over  F8", paused, plain, Action::StepOver, cx))
+            .child(tool("dbg-into", "step-into", "Step Into  F7", paused, plain, Action::StepInto, cx))
+            .child(tool("dbg-out", "step-out", "Step Out  Shift+F8", paused, plain, Action::StepOut, cx))
+            .child(tool("dbg-cursor", "arrow-right-to-line", "Run to Cursor  Alt+F9", paused, plain, Action::RunToCursor, cx))
+            .child(tool("dbg-eval", "calculator", "Evaluate Expression  Alt+F8", paused, plain, Action::EvaluateExpression, cx))
             .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(Theme::divider()))
-            .child(tool("dbg-bps", "●", "View Breakpoints  Ctrl+Shift+F8", true, Theme::breakpoint(), Action::ViewBreakpoints, cx))
+            .child(tool("dbg-bps", "breakpoints", "View Breakpoints  Ctrl+Shift+F8", true, Theme::breakpoint(), Action::ViewBreakpoints, cx))
             .child(
                 // Mute Breakpoints: a crossed-out dot, pressed while on.
                 div()
                     .id("dbg-mute")
                     .w(px(26.))
-                    .h(px(24.))
+                    .h(px(26.))
                     .flex()
                     .items_center()
                     .justify_center()
                     .rounded(px(5.))
                     .cursor_pointer()
-                    .when(d.muted, |x| x.bg(Theme::press()))
-                    .hover(|s| s.bg(Theme::hover_row()))
+                    .when(d.muted, |x| x.bg(Theme::selection_row()))
+                    .when(!d.muted, |x| x.hover(|s| s.bg(Theme::hover_row())))
                     .active(|s| s.bg(Theme::press()))
-                    .text_color(if d.muted { Theme::text_dim() } else { Theme::breakpoint() })
-                    .child(div().relative().child("●").child(div().absolute().top(px(8.)).left(px(-2.)).w(px(14.)).h(px(1.5)).bg(Theme::text_muted())))
+                    .child(crate::icons::icon("mute-breakpoints", 16., if d.muted { Theme::text() } else { plain }))
                     .tooltip(|_, cx| cx.new(|_| super::Tip("Mute Breakpoints".into())).into())
                     .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::MuteBreakpoints, w, cx))),
             )

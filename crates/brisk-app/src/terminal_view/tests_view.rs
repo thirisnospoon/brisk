@@ -39,6 +39,19 @@ pub struct TestsOutcome {
     pub results: Vec<(Option<PathBuf>, String, TestStatus)>,
 }
 
+/// The status as an icon of the test tree.
+pub(super) fn status_icon(s: TestStatus) -> gpui::Svg {
+    let (name, color): (&str, Hsla) = match s {
+        TestStatus::Passed => ("circle-check", crate::theme::Theme::run_passed()),
+        TestStatus::Failed => ("circle-x", Theme::error()),
+        TestStatus::Error => ("circle-alert", Theme::error()),
+        TestStatus::Skipped => ("circle-slash", Theme::text_muted()),
+        TestStatus::Running => ("loader-circle", rgb(0x6c9be8).into()),
+        TestStatus::Pending => ("circle", Theme::text_dim()),
+    };
+    crate::icons::icon(name, 14., color)
+}
+
 pub(super) fn status_glyph(s: TestStatus) -> (&'static str, Hsla) {
     match s {
         TestStatus::Passed => ("✓", rgb(0x5fb865).into()),
@@ -257,7 +270,7 @@ impl TerminalPanel {
             (f.tree.summary(t.finished), f.tree.nodes[0].status)
         };
         let n_rows = t.tree().tree.rows(&t.collapsed).len();
-        let (g, c) = status_glyph(root_status);
+        let root_icon = status_icon(root_status);
         div()
             .w(px(320.))
             .flex_none()
@@ -277,7 +290,7 @@ impl TerminalPanel {
                     .text_size(px(12.))
                     .border_b_1()
                     .border_color(Theme::divider())
-                    .child(div().text_color(c).child(g))
+                    .child(root_icon)
                     .child(div().text_color(Theme::text_muted()).overflow_hidden().whitespace_nowrap().child(summary)),
             )
             .child(
@@ -292,7 +305,7 @@ impl TerminalPanel {
                             .filter_map(|ix| rows.get(ix).copied())
                             .map(|i| {
                                 let n = &f.tree.nodes[i];
-                                let (g, c) = status_glyph(n.status);
+                                let icon = status_icon(n.status);
                                 let arrow = if n.children.is_empty() { " " } else if t.collapsed.contains(&i) { "▸" } else { "▾" };
                                 let done = matches!(n.status, TestStatus::Passed | TestStatus::Failed | TestStatus::Error | TestStatus::Skipped);
                                 let dur = (done && n.duration > 0.0).then(|| brisk_run::pytest::format_duration(n.duration));
@@ -320,7 +333,7 @@ impl TerminalPanel {
                                             cx.notify();
                                         })),
                                     )
-                                    .child(div().w(px(12.)).text_color(c).child(g))
+                                    .child(icon)
                                     .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_color(Theme::text()).child(n.name.clone()))
                                     .when_some(dur, |d, s| d.child(div().text_size(px(11.)).text_color(Theme::text_dim()).child(s)))
                                     .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {

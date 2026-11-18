@@ -376,6 +376,23 @@ pub struct Workspace {
     started: Instant,
 }
 
+/// An icon button of the title bar: 28 px square, hover background with radius 5.
+fn title_button(id: &'static str, icon: &'static str, color: gpui::Hsla, tip: &'static str) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .w(px(28.))
+        .h(px(28.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.))
+        .cursor_pointer()
+        .hover(|s| s.bg(Theme::hover_row()))
+        .active(|s| s.bg(Theme::press()))
+        .tooltip(move |_, cx| cx.new(|_| Tip(tip.into())).into())
+        .child(crate::icons::icon(icon, 16., color))
+}
+
 impl Workspace {
     pub fn new(root: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let branch = std::fs::read_to_string(root.join(".git/HEAD"))
@@ -1646,7 +1663,7 @@ impl Workspace {
 
     // --- Rendering -------------------------------------------------------------
 
-    fn stripe_button(&self, id: &'static str, glyph: &'static str, tip: &'static str, active: bool, action: Action, cx: &mut Context<Self>) -> impl IntoElement {
+    fn stripe_button(&self, id: &'static str, icon: &'static str, tip: &'static str, active: bool, action: Action, cx: &mut Context<Self>) -> impl IntoElement {
         let shortcut = self.resolver.keymap().shortcut_label(action).unwrap_or_default();
         let tooltip: SharedString = format!("{tip}  {shortcut}").into();
         div()
@@ -1656,9 +1673,7 @@ impl Workspace {
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(6.))
-            .text_size(px(14.))
-            .text_color(if active { Theme::text() } else { Theme::text_muted() })
+            .rounded(px(5.))
             .when(active, |d| d.bg(Theme::selection_row()))
             .when(!active, |d| d.hover(|s| s.bg(Theme::hover_row())))
             .active(|s| s.bg(Theme::press()))
@@ -1671,7 +1686,7 @@ impl Workspace {
                 }
             }))
             .tooltip(move |_window, cx| cx.new(|_| Tip(tooltip.clone())).into())
-            .child(glyph)
+            .child(crate::icons::icon(icon, 16., if active { Theme::text() } else { Theme::text_muted() }))
     }
 
     /// Hides the tool window on one side and gives the editor the focus.
@@ -1752,12 +1767,11 @@ impl Workspace {
                     .items_center()
                     .justify_center()
                     .rounded(px(5.))
-                    .text_size(px(16.))
                     .cursor_pointer()
                     .hover(|s| s.bg(Theme::hover_row()))
                     .active(|s| s.bg(Theme::press()))
                     .tooltip(|_, cx| cx.new(|_| Tip("Main Menu".into())).into())
-                    .child("☰")
+                    .child(crate::icons::icon("menu", 16., Theme::text_muted()))
                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _, w, cx| {
                         cx.stop_propagation();
                         this.dispatch(Action::MainMenu, w, cx);
@@ -1786,15 +1800,15 @@ impl Workspace {
                     })),
             )
             .child(
-                div().id("tb-run").px(px(6.)).text_color(gpui::rgb(0x5fb865)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).rounded(px(5.)).child("▶")
+                title_button("tb-run", "play", Theme::run_icon(), "Run")
                     .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Run, w, cx))),
             )
             .child(
-                div().id("tb-debug").px(px(6.)).text_color(gpui::rgb(0x5fb865)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).rounded(px(5.)).child("✱")
+                title_button("tb-debug", "bug", Theme::run_icon(), "Debug")
                     .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Debug, w, cx))),
             )
             .child(
-                div().id("tb-search").px(px(6.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).rounded(px(5.)).child("⌕")
+                title_button("tb-search", "search", Theme::text_muted(), "Search Everywhere  Double Shift")
                     .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::SearchEverywhere, w, cx))),
             )
     }
@@ -1811,21 +1825,21 @@ impl Workspace {
             .bg(Theme::panel())
             .border_r_1()
             .border_color(Theme::border())
-            .child(self.stripe_button("st-project", "▤", "Project", self.left == Some(LeftTool::Project), Action::ToggleProjectWindow, cx))
-            .child(self.stripe_button("st-commit", "✓", "Commit", self.left == Some(LeftTool::Commit), Action::ToggleCommitWindow, cx))
-            .child(self.stripe_button("st-structure", "≡", "Structure", self.left == Some(LeftTool::Structure), Action::ToggleStructureWindow, cx))
-            .child(self.stripe_button("st-bookmarks", "☆", "Bookmarks", self.left == Some(LeftTool::Bookmarks), Action::ToggleBookmarksWindow, cx))
+            .child(self.stripe_button("st-project", "folder", "Project", self.left == Some(LeftTool::Project), Action::ToggleProjectWindow, cx))
+            .child(self.stripe_button("st-commit", "git-commit", "Commit", self.left == Some(LeftTool::Commit), Action::ToggleCommitWindow, cx))
+            .child(self.stripe_button("st-structure", "list-tree", "Structure", self.left == Some(LeftTool::Structure), Action::ToggleStructureWindow, cx))
+            .child(self.stripe_button("st-bookmarks", "bookmark", "Bookmarks", self.left == Some(LeftTool::Bookmarks), Action::ToggleBookmarksWindow, cx))
             .child(div().flex_1())
-            .child(self.stripe_button("st-pyconsole", "≫", "Python Console", self.bottom == Some(BottomTool::PythonConsole), Action::TogglePythonConsole, cx))
-            .child(self.stripe_button("st-packages", "⬡", "Python Packages", self.bottom == Some(BottomTool::Packages), Action::TogglePythonPackages, cx))
-            .child(self.stripe_button("st-services", "⚙", "Services", self.bottom == Some(BottomTool::Services), Action::ToggleServicesWindow, cx))
-            .child(self.stripe_button("st-run", "▶", "Run", self.bottom == Some(BottomTool::Run), Action::ToggleRunWindow, cx))
-            .child(self.stripe_button("st-terminal", "›_", "Terminal", self.bottom == Some(BottomTool::Terminal), Action::ToggleTerminalWindow, cx))
-            .child(self.stripe_button("st-todo", "☑", "TODO", self.bottom == Some(BottomTool::Todo), Action::ToggleTodoWindow, cx))
-            .when(self.coverage.is_some(), |d| d.child(self.stripe_button("st-coverage", "◔", "Coverage", self.bottom == Some(BottomTool::Coverage), Action::ToggleCoverageWindow, cx)))
-            .when(self.profile.is_some(), |d| d.child(self.stripe_button("st-profiler", "⏱", "Profiler", self.bottom == Some(BottomTool::Profiler), Action::ToggleProfilerWindow, cx)))
-            .child(self.stripe_button("st-problems", "⚠", "Problems", self.bottom == Some(BottomTool::Problems), Action::ToggleProblemsWindow, cx))
-            .child(self.stripe_button("st-git", "⎇", "Git", self.bottom == Some(BottomTool::Git), Action::ToggleGitWindow, cx))
+            .child(self.stripe_button("st-pyconsole", "terminal", "Python Console", self.bottom == Some(BottomTool::PythonConsole), Action::TogglePythonConsole, cx))
+            .child(self.stripe_button("st-packages", "package", "Python Packages", self.bottom == Some(BottomTool::Packages), Action::TogglePythonPackages, cx))
+            .child(self.stripe_button("st-services", "server", "Services", self.bottom == Some(BottomTool::Services), Action::ToggleServicesWindow, cx))
+            .child(self.stripe_button("st-run", "play", "Run", self.bottom == Some(BottomTool::Run), Action::ToggleRunWindow, cx))
+            .child(self.stripe_button("st-terminal", "square-terminal", "Terminal", self.bottom == Some(BottomTool::Terminal), Action::ToggleTerminalWindow, cx))
+            .child(self.stripe_button("st-todo", "list-todo", "TODO", self.bottom == Some(BottomTool::Todo), Action::ToggleTodoWindow, cx))
+            .when(self.coverage.is_some(), |d| d.child(self.stripe_button("st-coverage", "chart-pie", "Coverage", self.bottom == Some(BottomTool::Coverage), Action::ToggleCoverageWindow, cx)))
+            .when(self.profile.is_some(), |d| d.child(self.stripe_button("st-profiler", "timer", "Profiler", self.bottom == Some(BottomTool::Profiler), Action::ToggleProfilerWindow, cx)))
+            .child(self.stripe_button("st-problems", "triangle-alert", "Problems", self.bottom == Some(BottomTool::Problems), Action::ToggleProblemsWindow, cx))
+            .child(self.stripe_button("st-git", "git-branch", "Git", self.bottom == Some(BottomTool::Git), Action::ToggleGitWindow, cx))
     }
 
     fn render_right_stripe(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1840,7 +1854,7 @@ impl Workspace {
             .bg(Theme::panel())
             .border_l_1()
             .border_color(Theme::border())
-            .child(self.stripe_button("st-database", "⛁", "Database", self.db.open, Action::ToggleDatabaseWindow, cx))
+            .child(self.stripe_button("st-database", "database", "Database", self.db.open, Action::ToggleDatabaseWindow, cx))
     }
 
     fn panel_header(title: &str) -> impl IntoElement {

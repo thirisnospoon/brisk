@@ -146,6 +146,8 @@ pub struct Editor {
     pub editorconfig: crate::editorconfig::EditorConfig,
     /// The mouse is over the gutter: show the fold markers.
     gutter_hover: bool,
+    /// The run icon under the mouse (its line): drawn on a hover background.
+    run_hover: Option<usize>,
     /// The file's encoding (kept on save).
     encoding: brisk_text::encoding::TextEncoding,
     /// A save had to switch the encoding to UTF-8 (shown once in the status bar).
@@ -311,6 +313,7 @@ impl Editor {
             zoom_acc: 0.0,
             editorconfig,
             gutter_hover: false,
+            run_hover: None,
             encoding,
             encoding_note: None,
             disk_stamp: disk::stamp(path),
@@ -377,6 +380,7 @@ impl Editor {
             zoom_acc: 0.0,
             editorconfig: Default::default(),
             gutter_hover: false,
+            run_hover: None,
             encoding: Default::default(),
             encoding_note: None,
             disk_stamp: None,
@@ -1008,6 +1012,11 @@ impl Editor {
             self.gutter_hover = in_gutter;
             cx.notify();
         }
+        let run_hover = if in_gutter { self.run_mark_at(e.position) } else { None };
+        if run_hover != self.run_hover {
+            self.run_hover = run_hover;
+            cx.notify();
+        }
         if self.annotation.is_some() {
             self.annotation_hover(e.position, cx);
         }
@@ -1281,8 +1290,9 @@ impl Render for Editor {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                if !*hovered && this.gutter_hover {
+                if !*hovered && (this.gutter_hover || this.run_hover.is_some()) {
                     this.gutter_hover = false;
+                    this.run_hover = None;
                     cx.notify();
                 }
                 if !*hovered {
@@ -1416,15 +1426,16 @@ struct Prepaint {
     /// Buffer line of each display row on screen.
     rows: Vec<usize>,
     /// Gutter fold markers: (row index, collapsed or expanded glyph).
-    fold_marks: Vec<(usize, ShapedLine)>,
+    fold_marks: Vec<(usize, bool)>,
     /// "..." drawn after a collapsed header.
     placeholder: ShapedLine,
     /// Bookmarks on screen: (row index, mnemonic shaped).
     bookmark_marks: Vec<(usize, Option<ShapedLine>)>,
     /// Breakpoints on screen: (row index, has a condition, verified by the debugger, enabled).
     breakpoint_marks: Vec<(usize, bool, Option<bool>, bool)>,
-    /// Run icons on screen: (row index, glyph), and the width of their column.
-    run_icons: Vec<(usize, ShapedLine)>,
+    /// Run icons on screen: (row index, last test status: passed?, under the mouse), and
+    /// the width of their column.
+    run_icons: Vec<(usize, Option<bool>, bool)>,
     run_slot: Pixels,
     /// Blame annotations on screen: (row index, label, age).
     annotations: Vec<(usize, ShapedLine, f32)>,
@@ -1533,8 +1544,7 @@ impl Element for EditorElement {
         for (ri, &l) in rows.iter().enumerate() {
             let folded = ed.is_folded_header(l);
             if folded || (ed.gutter_hover && headers.binary_search(&l).is_ok()) {
-                let (glyph, color) = if folded { ("▸", Theme::text_muted()) } else { ("▾", Theme::gutter_fg()) };
-                fold_marks.push((ri, window.text_system().shape_line(glyph.into(), px(11.), &[run(glyph.len(), color)], None)));
+                fold_marks.push((ri, folded));
             }
             let text = b.line(l);
             let lb = rope.char_to_byte(b.line_start(l));
@@ -1609,12 +1619,12 @@ impl Element for EditorElement {
         let mut run_icons = Vec::new();
         for m in ed.run_marks_now() {
             if let Ok(i) = rows.binary_search(&m.line) {
-                let (glyph, color): (&str, gpui::Hsla) = match ed.test_status(&m.target) {
-                    Some(brisk_run::TestStatus::Passed) => ("✓", gpui::rgb(0x5fb865).into()),
-                    Some(brisk_run::TestStatus::Failed | brisk_run::TestStatus::Error) => ("✗", Theme::error()),
-                    _ => ("▶", gpui::rgb(0x5fb865).into()),
+                let status = match ed.test_status(&m.target) {
+                    Some(brisk_run::TestStatus::Passed) => Some(true),
+                    Some(brisk_run::TestStatus::Failed | brisk_run::TestStatus::Error) => Some(false),
+                    _ => None,
                 };
-                run_icons.push((i, window.text_system().shape_line(glyph.into(), font_size * 0.85, &[run(glyph.len(), color)], None)));
+                run_icons.push((i, status, ed.run_hover == Some(m.line)));
             }
         }
         let mut annotations = Vec::new();
@@ -1891,29 +1901,28 @@ impl Element for EditorElement {
                     let _ = label.paint(point(ann_x0 + px(4.), y), lh, window, cx);
                 }
             }
-            for (n, y) in pp.numbers.iter().zip(&line_ys) {
+            for (row, (n, y)) in pp.numbers.iter().zip(&line_ys).enumerate() {
+                // A breakpoint takes the number's place, as in PyCharm.
+                if pp.breakpoint_marks.iter().any(|b| b.0 == row) {
+                    continue;
+                }
                 let x = bounds.left() + pp.gutter_w - px(30.) - pp.run_slot - n.width;
                 let _ = n.paint(point(x, *y), lh, window, cx);
             }
             for &(i, conditional, verified, enabled) in &pp.breakpoint_marks {
-                // A red circle over the line number (hollow when the debugger cannot stop there).
-                let y = line_ys[i];
-                let d = (lh - px(6.)).min(px(13.));
-                let x = bounds.left() + pp.gutter_w - px(30.) - pp.run_slot - d - px(1.);
-                let circle = Bounds::new(point(x, y + (lh - d) / 2.), size(d, d));
-                if !enabled && verified == Some(true) {
-                    window.paint_quad(fill(circle, Theme::text_dim()).corner_radii(d / 2.));
-                } else if !enabled {
-                    window.paint_quad(gpui::outline(circle, Theme::text_dim(), gpui::BorderStyle::Solid).corner_radii(d / 2.));
-                } else if verified == Some(false) {
-                    window.paint_quad(gpui::outline(circle, Theme::breakpoint(), gpui::BorderStyle::Solid).corner_radii(d / 2.));
-                } else {
-                    window.paint_quad(fill(circle, Theme::breakpoint()).corner_radii(d / 2.));
-                }
-                if conditional {
-                    let q = Bounds::new(point(x + d * 0.3, y + (lh - d) / 2. + d * 0.3), size(d * 0.4, d * 0.4));
-                    window.paint_quad(fill(q, Theme::editor_bg()).corner_radii(d * 0.2));
-                }
+                // A circle over the line number, snapped to device pixels (an SVG, so the edge is
+                // evenly antialiased): a ring when disabled or the debugger cannot stop there,
+                // a hole in it when it has a condition.
+                let d = 11.;
+                let c = point(bounds.left() + pp.gutter_w - px(30.) - pp.run_slot - px(1. + d / 2.), line_ys[i] + lh / 2.);
+                let color = if enabled { Theme::breakpoint() } else { Theme::text_dim() };
+                let solid = (enabled && verified != Some(false)) || (!enabled && verified == Some(true));
+                let name = match (solid, conditional) {
+                    (true, true) => "dot-hole",
+                    (true, false) => "dot",
+                    (false, _) => "ring",
+                };
+                crate::icons::paint_icon(window, cx, name, c, d, color);
             }
             if let Some(i) = exec_line.and_then(|l| idx_of(l)) {
                 // ▶ arrow at the bookmark slot.
@@ -1941,24 +1950,40 @@ impl Element for EditorElement {
                     }
                 }
             }
-            for (i, g) in &pp.run_icons {
-                // Centered in the column between the line numbers and the fold markers.
-                let x = text_left - px(31.) - pp.run_slot + (pp.run_slot - g.width) / 2.;
-                let _ = g.paint(point(x, line_ys[*i]), lh, window, cx);
+            for &(i, status, hover) in &pp.run_icons {
+                // Centered in the column between the line numbers and the fold markers: a play
+                // mark, with a green or red dot once its tests ran.
+                let c = point(text_left - px(31.) - pp.run_slot / 2., line_ys[i] + lh / 2.);
+                let scale = window.scale_factor();
+                if hover {
+                    let b = crate::icons::snapped_square(c, 18., scale);
+                    window.paint_quad(fill(b, Theme::hover_row()).corner_radii(px(4.)));
+                }
+                crate::icons::paint_icon(window, cx, "play-solid", c, 12., Theme::run_icon());
+                if let Some(ok) = status {
+                    let b = point(c.x + px(4.5), c.y + px(4.5));
+                    crate::icons::paint_icon(window, cx, "dot", b, 8., if hover { Theme::hover_row() } else { Theme::editor_bg() });
+                    crate::icons::paint_icon(window, cx, "dot", b, 6., if ok { Theme::run_passed() } else { Theme::error() });
+                }
             }
-            for (i, g) in &pp.fold_marks {
-                let _ = g.paint(point(bounds.left() + pp.gutter_w - px(15.), line_ys[*i]), lh, window, cx);
+            for &(i, folded) in &pp.fold_marks {
+                let c = point(bounds.left() + pp.gutter_w - px(12.), line_ys[i] + lh / 2.);
+                let (name, color) = if folded { ("chevron-right", Theme::text_muted()) } else { ("chevron-down", Theme::gutter_fg()) };
+                crate::icons::paint_icon(window, cx, name, c, 12., color);
             }
-            for q in markers {
+            for mut q in markers {
+                q.bounds = crate::icons::snap_bounds(q.bounds, window.scale_factor());
                 window.paint_quad(q);
             }
             for q in carets {
                 window.paint_quad(q);
             }
-            for q in thumbs {
+            for mut q in thumbs {
+                q.bounds = crate::icons::snap_bounds(q.bounds, window.scale_factor());
                 window.paint_quad(q);
             }
-            for q in stripe {
+            for mut q in stripe {
+                q.bounds = crate::icons::snap_bounds(q.bounds, window.scale_factor());
                 window.paint_quad(q);
             }
         });

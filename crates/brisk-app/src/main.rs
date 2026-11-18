@@ -6,6 +6,7 @@
 
 mod diff_view;
 mod grid_view;
+mod icons;
 mod editor;
 mod editorconfig;
 mod keys;
@@ -41,7 +42,7 @@ fn main() {
     workspace::project_ui::remember_project(&root);
     settings::load();
 
-    Application::new().run(move |cx: &mut App| {
+    Application::new().with_assets(icons::Assets).run(move |cx: &mut App| {
         // Fonts shipped next to the exe (or in BRISK_FONT_DIR): .ttf / .otf files are added to
         // the text system, so the UI does not depend on what Windows has installed.
         for dir in fonts_dirs() {

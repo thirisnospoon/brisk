@@ -84,6 +84,9 @@ impl Theme {
     pub fn error() -> Hsla { pick(0xe55765, 0xd5301f) }
     /// Breakpoint circles in the gutter.
     pub fn breakpoint() -> Hsla { pick(0xdb5c5c, 0xe55765) }
+    /// Run icons in the gutter and toolbars: a calm green.
+    pub fn run_icon() -> Hsla { pick(0x5a9e60, 0x3f8f4c) }
+    pub fn run_passed() -> Hsla { pick(0x5fb865, 0x369650) }
     /// The line where the debugger is paused.
     pub fn exec_line() -> Hsla { ui("exec_line", 0x2d4670, 0xc7dbff) }
     /// Lane colors in the Git log graph.
