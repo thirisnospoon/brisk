@@ -110,7 +110,7 @@ fn idea_import_and_temporaries() {
     std::fs::create_dir_all(root.join("app")).unwrap();
     std::fs::write(root.join("app/test_m.py"), "").unwrap();
     let (mut f, n) = load(&root);
-    assert_eq!(n, 4);
+    assert_eq!(n, 5); // the Unittests configuration is imported too
     let t = f.get("pytest in tests").unwrap();
     assert_eq!((t.kind, t.target.as_str(), t.keywords.as_str(), t.parameters.as_str()), (RunKind::Pytest, "tests", "not slow", "-x"));
     let cmd = build(&root, t, Path::new("python"));
