@@ -181,6 +181,8 @@ impl Workspace {
                 let _ = std::fs::create_dir_all(&pkg);
                 let _ = std::fs::write(pkg.join("__init__.py"), "");
                 let _ = std::fs::write(pkg.join("util.py"), "def add(a, b):\n    return a + b\n");
+                // An importer inside the package, which moves along with the folder later.
+                let _ = std::fs::write(pkg.join("inner.py"), "from smokepkg.util import add\n\nprint(add(3, 4))\n");
                 let _ = std::fs::write(this.root.join("uses_util.py"), "from smokepkg.util import add\nimport smokepkg.util\n\nprint(add(1, 2), smokepkg.util.add)\n");
                 // As the disk poll does when files appear: rescan, which tells ty.
                 this.reindex_files(cx);
@@ -198,6 +200,34 @@ impl Workspace {
                 eprintln!("smoke-intel: rename module -> {:?}", this.status);
                 let t = std::fs::read_to_string(this.root.join("uses_util.py")).unwrap_or_default();
                 eprintln!("smoke-intel: uses_util.py now {:?}", t.lines().take(2).collect::<Vec<_>>());
+            });
+            // Rename the package folder: imports of it everywhere follow, including files
+            // that moved with it.
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.file_op = Some(super::files_ui::FileOp::Rename(this.root.join("smokepkg")));
+                this.run_file_op(this.root.join("smokelib"), window, cx);
+            });
+            wait(&this, cx, &|this, _| this.lsp.moved.is_none() && this.root.join("smokelib").join("helpers.py").exists()).await;
+            pause(200).await;
+            let _ = this.update(cx, |this, _| {
+                eprintln!("smoke-intel: rename package -> {:?}", this.status);
+                let t = std::fs::read_to_string(this.root.join("uses_util.py")).unwrap_or_default();
+                eprintln!("smoke-intel: uses_util.py now {:?}", t.lines().take(2).collect::<Vec<_>>());
+                let t = std::fs::read_to_string(this.root.join("smokelib").join("inner.py")).unwrap_or_default();
+                eprintln!("smoke-intel: smokelib/inner.py now {:?}", t.lines().next().unwrap_or(""));
+                eprintln!("smoke-intel: old folder gone: {}", !this.root.join("smokepkg").exists());
+            });
+            // ty knows the new layout: the importer opens without unresolved imports.
+            let _ = this.update_in(cx, |this, window, cx| {
+                let f = this.root.join("uses_util.py");
+                this.open_file(&f, window, cx);
+            });
+            pause(2500).await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(ed) = this.active_editor() else { return };
+                let e = ed.read(cx);
+                let bad: Vec<String> = e.diagnostics.iter().filter(|d| d.code.starts_with("unresolved")).map(|d| d.title()).collect();
+                eprintln!("smoke-intel: {:?} unresolved after the move: {bad:?}", e.path.as_ref().and_then(|p| p.file_name()));
             });
             let _ = this.update(cx, |this, cx| {
                 if let Some(ed) = this.active_editor().cloned() {
