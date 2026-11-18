@@ -1,5 +1,5 @@
 Icons in this folder that are not listed below come from Lucide (https://lucide.dev),
-drawn on a 24 px grid with 2 px strokes. Brisk's own icons in the same style:
+drawn on a 24 px grid with 1.75 px strokes. Brisk's own icons in the same style:
 step-over, step-into, step-out, mute-breakpoints, rerun-failed, dot, ring, dot-hole,
 play-solid, stop-solid, breakpoints.
 
