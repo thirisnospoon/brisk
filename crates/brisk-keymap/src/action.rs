@@ -224,6 +224,7 @@ actions! {
     StashChanges => "Stash Changes", "Git";
     UnstashChanges => "Unstash Changes", "Git";
     ShowFileHistory => "Show History", "Git";
+    CompareWithBranch => "Compare with Branch…", "Git";
     ShowLocalHistory => "Show Local History", "Git";
 
     // Database

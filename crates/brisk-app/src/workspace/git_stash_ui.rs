@@ -38,10 +38,8 @@ impl Workspace {
         match action {
             A::StashChanges => self.open_stash_push(cx),
             A::UnstashChanges => self.open_unstash(cx),
-            A::ShowFileHistory => {
-                let _ = window;
-                self.show_file_history_action(cx);
-            }
+            A::ShowFileHistory => self.show_file_history_action(cx),
+            A::CompareWithBranch => self.compare_with_branch_action(window, cx),
             _ => {}
         }
     }

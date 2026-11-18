@@ -433,14 +433,19 @@ impl Workspace {
                 }
             }
             A::ResolveConflicts => self.open_conflicts(cx),
-            A::StashChanges | A::UnstashChanges | A::ShowFileHistory => self.git_more_action(action, window, cx),
+            A::StashChanges | A::UnstashChanges | A::ShowFileHistory | A::CompareWithBranch => self.git_more_action(action, window, cx),
             A::Annotate => match self.active_editor().cloned() {
                 Some(ed) => self.toggle_annotate(ed, cx),
                 None => self.status = "Annotate: open a file first".into(),
             },
             A::RollbackChanges => {
                 let files: Vec<FileChange> = if self.commit_focus.is_focused(window) {
-                    self.selected_change().into_iter().collect()
+                    let checked: Vec<FileChange> = self.git.as_ref().map(|g| g.rows().into_iter().filter(|c| c.status != FileStatus::Untracked && g.included(c)).collect()).unwrap_or_default();
+                    if checked.is_empty() {
+                        self.selected_change().into_iter().collect()
+                    } else {
+                        checked
+                    }
                 } else {
                     self.active_file_change(cx).into_iter().collect()
                 };
@@ -511,7 +516,9 @@ impl Workspace {
         let name = file_name(&c.path).to_string();
         let abs = g.repo.abs(&c.path);
         let title = format!("{name} ({short})");
-        let view = cx.new(|cx| DiffView::new(title, Some(abs), format!("{short}^"), &left, short.to_string(), &right, cx));
+        // A new file (the root commit too) has no left side: no "hash^" label there.
+        let left_label = if c.status == FileStatus::Added { String::new() } else { format!("{short}^") };
+        let view = cx.new(|cx| DiffView::new(title, Some(abs), left_label, &left, short.to_string(), &right, cx));
         self.open_diff(view, window, cx);
     }
 
@@ -627,7 +634,7 @@ impl Workspace {
             }
             PopupKind::VcsOperations => {
                 use Action as A;
-                [A::Commit, A::Push, A::UpdateProject, A::Branches, A::ShowDiff, A::RollbackChanges, A::Annotate, A::ShowFileHistory, A::ResolveConflicts, A::StashChanges, A::UnstashChanges, A::ToggleGitWindow, A::ToggleCommitWindow]
+                [A::Commit, A::Push, A::UpdateProject, A::Branches, A::ShowDiff, A::RollbackChanges, A::Annotate, A::ShowFileHistory, A::CompareWithBranch, A::ResolveConflicts, A::StashChanges, A::UnstashChanges, A::ToggleGitWindow, A::ToggleCommitWindow]
                     .into_iter()
                     .filter(|a| a.info().title.to_lowercase().contains(&ql))
                     .map(|a| PopupItem {
@@ -1200,6 +1207,15 @@ impl Workspace {
                         .when(dsel == Some(fi), |d| d.bg(Theme::selection_row()))
                         .when(!(dsel == Some(fi)), |d| d.hover(|s| s.bg(Theme::hover_row())))
                         .cursor_pointer()
+                        .on_mouse_down(gpui::MouseButton::Right, {
+                            let (h, f) = (hash.clone(), f.clone());
+                            cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
+                                if let Some(g) = this.git.as_mut() {
+                                    g.details_sel = Some(fi);
+                                }
+                                this.log_file_menu(h.clone(), f.clone(), e.position, cx);
+                            })
+                        })
                         .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                             if let Some(g) = this.git.as_mut() {
                                 g.details_sel = Some(fi);
