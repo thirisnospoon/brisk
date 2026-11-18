@@ -1245,6 +1245,11 @@ impl Workspace {
             A::MuteBreakpoints => self.toggle_mute_breakpoints(cx),
             A::SmartStepInto => self.smart_step_into(cx),
             A::AttachToProcess => self.list_processes(cx),
+            A::SetNextStatement => {
+                let Some(ed) = self.focused_editor(window, cx).or_else(|| self.active_editor().cloned()) else { return true };
+                let line = ed.read(cx).caret_line_col().0;
+                self.set_next_statement(ed, line, cx);
+            }
             A::Debug => {
                 self.reload_runs();
                 let cfg = self.runs.file.selected_config().cloned().or_else(|| self.context_config(window, cx));
@@ -1743,6 +1748,60 @@ impl Workspace {
             }
         }
         cx.notify();
+    }
+
+    // --- Set Next Statement -----------------------------------------------------------------
+
+    /// Jump to Cursor / a dragged execution arrow: the paused thread continues from `line`
+    /// of this editor's file without running the lines between (debugpy gotoTargets + goto).
+    pub(super) fn set_next_statement(&mut self, ed: Entity<Editor>, line: usize, cx: &mut Context<Self>) {
+        let Some(thread) = self.debug.paused_thread() else {
+            self.status = "Jump to Cursor: the debugger is not paused".into();
+            return;
+        };
+        let Some(path) = ed.read(cx).path.clone() else { return };
+        let Some(s) = &self.debug.session else { return };
+        let client = s.client.clone();
+        // debugpy moves the innermost frame, whatever file the target names: another file
+        // would mean that line number in the paused one. Other limits (into a loop, out of the
+        // function) debugpy reports itself, and the program stays paused where it was.
+        if self.debug.frames.first().and_then(|f| f.path.as_ref()) != Some(&path) {
+            let msg = format!("Cannot jump to line {}: only in the file where the program is paused", line + 1);
+            self.debug.info(msg.clone());
+            self.show_toast(msg, true, cx);
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let targets = client.request("gotoTargets", json!({"source": {"path": path.to_string_lossy()}, "line": line + 1})).await;
+            let target = match &targets {
+                Ok(Ok(v)) => v.pointer("/targets/0/id").and_then(Value::as_i64),
+                _ => None,
+            };
+            let res = match target {
+                Some(id) => match client.request("goto", json!({"threadId": thread, "targetId": id})).await {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(e)) => Err(e),
+                    Err(_) => Err("no reply".into()),
+                },
+                None => Err(match targets {
+                    Ok(Err(e)) => e,
+                    _ => "no target on this line".into(),
+                }),
+            };
+            let _ = this.update(cx, |this, cx| {
+                match res {
+                    // The thread stops again on the new line ("stopped", reason "goto").
+                    Ok(()) => this.status = format!("Next statement: line {}", line + 1),
+                    Err(e) => {
+                        let msg = format!("Cannot jump to line {}: {e}", line + 1);
+                        this.debug.info(msg.clone());
+                        this.show_toast(msg, true, cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     // --- Attach to Process ----------------------------------------------------------------
@@ -3298,6 +3357,76 @@ impl Workspace {
                 t.dispatch(Action::Resume, w, cx);
             });
             until!(|s: Option<State>| s == Some(State::Ended));
+            // Jump to Cursor: back to `x = 1` (x stays 2 until stepped), then into another frame (refused).
+            let jump = dir.join("dbg_jump.py");
+            let _ = std::fs::write(&jump, "def f():\n    x = 1\n    x = 2\n    x = 3\n    return x\n\n\nr = f()\nprint(\"r\", r)\n");
+            let _ = this.update_in(cx, |t, w, cx| {
+                t.open_file(&jump, w, cx);
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.toggle_breakpoint(3, cx));
+                }
+                t.dispatch(Action::DebugContext, w, cx);
+            });
+            let s = settled!();
+            wait(800).await;
+            let var = |t: &Workspace, n: &str| t.debug.vars.iter().find(|r| r.var.name == n).map(|r| r.var.value.clone());
+            let top = |t: &Workspace| t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1));
+            let _ = this.update_in(cx, |t, w, cx| {
+                eprintln!("smoke-debug: jump {s:?} at {:?} x={:?}", top(t), var(t, "x"));
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.go_to_line(1, cx));
+                }
+                t.dispatch(Action::SetNextStatement, w, cx);
+            });
+            let mut at = None;
+            for _ in 0..50 {
+                wait(100).await;
+                at = this.update(cx, |t, _| top(t)).ok().flatten();
+                if at.as_deref() == Some("f:2") {
+                    break;
+                }
+            }
+            wait(600).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                eprintln!("smoke-debug: jumped -> {at:?} x={:?}", var(t, "x"));
+                t.dispatch(Action::StepOver, w, cx);
+            });
+            let s = settled!();
+            wait(800).await;
+            let _ = this.update_in(cx, |t, _, cx| {
+                eprintln!("smoke-debug: after step {s:?} at {:?} x={:?}", top(t), var(t, "x"));
+                if let Some(ed) = t.active_editor().cloned() {
+                    t.set_next_statement(ed, 8, cx);
+                }
+            });
+            wait(2000).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                eprintln!("smoke-debug: jump out of f -> at {:?} console {:?}", top(t), t.debug.console.last().map(|l| l.0.trim().to_string()));
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.toggle_breakpoint(3, cx));
+                }
+                let _ = w;
+            });
+            // The removed breakpoint reaches debugpy first.
+            wait(500).await;
+            let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::Resume, w, cx));
+            let mut states = Vec::new();
+            for _ in 0..60 {
+                wait(100).await;
+                let st = this.update(cx, |t, _| t.debug.state()).ok().flatten();
+                if states.last() != Some(&st) {
+                    states.push(st);
+                }
+                if st == Some(State::Ended) {
+                    break;
+                }
+            }
+            wait(1000).await;
+            let _ = this.update(cx, |t, cx| {
+                let _ = cx;
+                eprintln!("smoke-debug: jump states {states:?} output {:?}", t.debug.console.iter().rev().map(|l| l.0.trim()).find(|l| l.starts_with("r ")));
+            });
+            let _ = std::fs::remove_file(&jump);
             let spin2 = dir.join("dbg_attach_target.py");
             let _ = std::fs::write(&spin2, "import time\n\nn = 0\nwhile True:\n    n += 1\n    time.sleep(0.05)\n");
             let python = this.update(cx, |t, _| t.runs.interpreter(&t.root).map(|i| i.path)).ok().flatten();

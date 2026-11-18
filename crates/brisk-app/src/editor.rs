@@ -184,6 +184,8 @@ pub enum EditorEvent {
     ShowCommit(String),
     /// A click on the run icon of this line (window position for the menu).
     RunMark(usize, Point<Pixels>),
+    /// The execution arrow was dragged to this line.
+    SetNextStatement(usize),
 }
 
 impl gpui::EventEmitter<EditorEvent> for Editor {}
@@ -946,6 +948,10 @@ impl Editor {
         if e.button == MouseButton::Left && self.annotation_click(e.position, cx) {
             return;
         }
+        if e.button == MouseButton::Left && self.exec_arrow_down(e.position) {
+            cx.notify();
+            return;
+        }
         if e.button == MouseButton::Left {
             if let Some(line) = self.run_mark_at(e.position) {
                 cx.emit(EditorEvent::RunMark(line, e.position));
@@ -1033,7 +1039,8 @@ impl Editor {
         }
     }
 
-    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
+    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.exec_drag_end(cx);
         self.end_drag();
     }
 
@@ -1610,6 +1617,7 @@ impl Element for EditorElement {
         let text_left = bounds.left() + pp.gutter_w + px(8.);
         let text_x = text_left - px(ed.scroll_x);
         let exec_line = ed.exec_line;
+        let exec_ghost = ed.exec_drag_target();
         let ann_x0 = bounds.left() + ed.annotation_left();
         let ann_w = ed.annotation_width(pp.char_w) - px(6.);
         let y_of = |l: usize| bounds.top() + px(ed.row_of(l) as f32 * line_height() - ed.scroll_y);
@@ -1815,7 +1823,7 @@ impl Element for EditorElement {
                 thumbs.push(fill(Bounds::new(point(text_left + px(left), bounds.bottom() - px(scroll::BAR - 2.)), size(px(w), px(scroll::BAR - 4.))), thumb).corner_radii(px(4.)));
             }
         }
-        let dragging = ed.selecting || ed.drag.is_some();
+        let dragging = ed.selecting || ed.drag.is_some() || ed.exec_dragging();
         let caret_xy = {
             let (l, c) = b.pos_to_line_col(b.primary().head);
             idx_of(l).is_some().then(|| point(x_of(l, c), y_of(l)))
@@ -1881,6 +1889,12 @@ impl Element for EditorElement {
                 let h = lh - px(8.);
                 window.paint_quad(fill(Bounds::new(point(x, y + px(4.)), size(px(9.), h)), Theme::accent()).corner_radii(px(2.)));
             }
+            if let Some(i) = exec_ghost.and_then(|l| idx_of(l)) {
+                // Where a dragged arrow would go.
+                let y = line_ys[i];
+                window.paint_quad(fill(Bounds::new(point(bounds.left() + px(5.), y + px(4.)), size(px(9.), lh - px(8.))), Theme::accent().opacity(0.45)).corner_radii(px(2.)));
+                window.paint_quad(fill(Bounds::new(point(text_x, y), size(bounds.right() - text_x, lh)), Theme::accent().opacity(0.08)));
+            }
             for (i, m) in &pp.bookmark_marks {
                 let y = line_ys[*i];
                 let x = bounds.left() + px(4.);
@@ -1927,6 +1941,7 @@ impl Element for EditorElement {
             window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
                 if phase == gpui::DispatchPhase::Bubble {
                     ed.update(cx, |ed, cx| {
+                        ed.exec_drag_end(cx);
                         ed.end_drag();
                         cx.notify();
                     });

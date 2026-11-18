@@ -28,6 +28,8 @@ pub struct Breakpoints {
     inline: Option<(u64, HashMap<usize, String>)>,
     /// Mute Breakpoints: all are drawn grey (the debugger gets none).
     muted: bool,
+    /// The execution arrow is being dragged: the line it would move to.
+    exec_drag: Option<usize>,
 }
 
 impl Editor {
@@ -181,6 +183,44 @@ impl Editor {
         }
         self.toggle_breakpoint(line, cx);
         true
+    }
+
+    /// A press on the execution arrow starts dragging it (Set Next Statement).
+    pub(super) fn exec_arrow_down(&mut self, p: gpui::Point<gpui::Pixels>) -> bool {
+        let (Some(l), Some(exec)) = (self.layout.as_ref(), self.exec_line) else { return false };
+        if !self.show_gutter || p.x < l.bounds.left() || p.x >= l.bounds.left() + gpui::px(18.) {
+            return false;
+        }
+        let y = f32::from(p.y - l.bounds.top()) + self.scroll_y;
+        if self.line_of_row((y / super::line_height()).floor().max(0.0) as usize) != exec {
+            return false;
+        }
+        self.breakpoints.exec_drag = Some(exec);
+        true
+    }
+
+    pub(super) fn exec_dragging(&self) -> bool {
+        self.breakpoints.exec_drag.is_some()
+    }
+
+    /// Where a dragged execution arrow is drawn.
+    pub(super) fn exec_drag_target(&self) -> Option<usize> {
+        self.breakpoints.exec_drag.filter(|t| Some(*t) != self.exec_line)
+    }
+
+    pub(super) fn exec_drag_to(&mut self, p: gpui::Point<gpui::Pixels>) {
+        let Some(l) = self.layout.as_ref() else { return };
+        let y = f32::from(p.y - l.bounds.top()) + self.scroll_y;
+        let line = self.line_of_row((y / super::line_height()).floor().max(0.0) as usize).min(self.buffer.len_lines().saturating_sub(1));
+        self.breakpoints.exec_drag = Some(line);
+    }
+
+    /// The arrow was dropped on another line: ask the debugger to continue from there.
+    pub(super) fn exec_drag_end(&mut self, cx: &mut gpui::Context<Self>) {
+        if let Some(t) = self.exec_drag_target() {
+            cx.emit(EditorEvent::SetNextStatement(t));
+        }
+        self.breakpoints.exec_drag = None;
     }
 
     /// Right click: the line of a breakpoint under the point in the line numbers, if any.

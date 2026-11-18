@@ -157,6 +157,9 @@ impl Workspace {
         ];
         if python {
             v.push(self.action_entry(&format!("Run '{name}'"), Action::RunContext, true, true));
+            if self.debug.paused_thread().is_some() {
+                v.push(self.action_entry("Jump to Cursor (Set Next Statement)", Action::SetNextStatement, true, true));
+            }
         }
         if let Some(p) = path {
             v.extend(self.git_menu_entries(&p, Some(&ed), cx));
