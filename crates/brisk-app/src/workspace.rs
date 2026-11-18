@@ -10,6 +10,7 @@ mod edit_smoke;
 mod files_ui;
 mod find_ui;
 mod git_annotate_ui;
+mod git_branch_ui;
 mod git_push_ui;
 mod git_compare_ui;
 mod git_history_ui;
@@ -1328,6 +1329,12 @@ impl Workspace {
             }
             "up" => p.selected = p.selected.saturating_sub(1),
             "down" => p.selected = (p.selected + 1).min(p.items.len().saturating_sub(1)),
+            // Branches popup: → shows the actions of the selected branch.
+            "right" if p.kind == PopupKind::Branches => {
+                if let Some(Target::Branch(b)) = p.items.get(p.selected).map(|i| i.target.clone()) {
+                    self.open_branch_actions(&b);
+                }
+            }
             "tab" => {
                 if let PopupKind::SearchEverywhere(t) = p.kind {
                     self.set_se_tab(t.next());

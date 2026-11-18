@@ -209,3 +209,30 @@ fn push_pull_fetch() {
     let _ = fs::remove_dir_all(&origin);
     let _ = fs::remove_dir_all(&other);
 }
+
+#[test]
+fn branch_merge_and_delete() {
+    let (d, repo) = temp_repo("branchops");
+    fs::write(d.join("a.py"), "x = 1\n").unwrap();
+    let files = vec!["a.py".to_string()];
+    repo.commit("first", &files, false, &files).unwrap();
+    let main = repo.git(&["branch", "--show-current"]).unwrap().trim().to_string();
+    assert!(repo.delete_branch(&main, true).is_err(), "never the current branch");
+    sh(&d, &["switch", "-q", "-c", "topic"]);
+    fs::write(d.join("b.py"), "y = 1\n").unwrap();
+    sh(&d, &["add", "b.py"]);
+    sh(&d, &["commit", "-q", "-m", "topic work"]);
+    sh(&d, &["switch", "-q", &main]);
+    assert!(!repo.is_merged("topic"));
+    let e = repo.delete_branch("topic", false).unwrap_err();
+    assert!(e.0.contains("not fully merged"), "{e:?}");
+    assert_eq!(repo.merge_into_current("topic").unwrap(), "Fast-forwarded to topic");
+    assert!(d.join("b.py").exists() && repo.is_merged("topic"));
+    repo.delete_branch("topic", false).unwrap();
+    sh(&d, &["switch", "-q", "-c", "spike"]);
+    sh(&d, &["commit", "-q", "--allow-empty", "-m", "spike"]);
+    sh(&d, &["switch", "-q", &main]);
+    repo.delete_branch("spike", true).unwrap();
+    assert!(repo.branches().unwrap().iter().all(|b| b.name != "spike" && b.name != "topic"));
+    let _ = fs::remove_dir_all(&d);
+}

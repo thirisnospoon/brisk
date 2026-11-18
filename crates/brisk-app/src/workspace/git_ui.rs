@@ -16,6 +16,7 @@ const LANE_W: f32 = 14.0;
 pub enum Pending {
     Rollback(Vec<FileChange>),
     CreateBranch(String),
+    Branch(super::git_branch_ui::BranchOp),
 }
 
 pub struct Details {
@@ -371,6 +372,7 @@ impl Workspace {
                 self.git_op("New Branch", move |r| r.create_branch(&n2).map(|_| format!("Created and checked out {n2}")), |_, _| {}, cx);
                 let _ = name;
             }
+            Pending::Branch(op) => self.run_branch_op(op, cx),
         }
     }
 
@@ -613,7 +615,7 @@ impl Workspace {
                         (false, false, Some(u)) => format!("tracks {u}"),
                         _ => String::new(),
                     };
-                    v.push(PopupItem { label: b.name.clone(), detail, hint: b.hash[..b.hash.len().min(8)].to_string(), target: Target::Branch(b.clone()) });
+                    v.push(PopupItem { label: b.name.clone(), detail, hint: format!("{}  →", &b.hash[..b.hash.len().min(8)]), target: Target::Branch(b.clone()) });
                 }
                 v
             }
@@ -1046,6 +1048,10 @@ impl Workspace {
                 .text_size(px(13.))
                 .hover(|s| s.bg(Theme::hover_row()))
                 .cursor_pointer()
+                .on_mouse_down(gpui::MouseButton::Right, {
+                    let b3 = b.clone();
+                    cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| this.branch_menu(&b3, e.position, cx))
+                })
                 .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                     if e.click_count() >= 2 {
                         this.checkout(b2.clone(), cx);

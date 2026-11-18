@@ -95,6 +95,9 @@ impl Workspace {
             if !["annotate", "merge", "stash", "history", "log", "logmenu"].iter().any(|p| hold(p)) {
                 Self::smoke_push(&this, cx, &bg, &root).await;
             }
+            if !["annotate", "merge", "stash", "history", "log", "logmenu", "push"].iter().any(|p| hold(p)) {
+                Self::smoke_branches(&this, cx, &bg, &root).await;
+            }
             let _ = this.update(cx, |_, cx| {
                 eprintln!("smoke-gitx: done");
                 if std::env::var_os("BRISK_SMOKE_GITX_HOLD").is_none() {
@@ -574,6 +577,66 @@ impl Workspace {
         pause(bg, 2500).await;
         let _ = this.update(cx, |this, _| eprintln!("smoke-gitx: update project -> toast {:?}, remote.py exists {}", toast(this), this.root.join("remote.py").exists()));
         let _ = std::fs::remove_dir_all(&other);
+    }
+
+    /// Branches popup: → on a branch, then one of its actions (by label).
+    fn smoke_branch_op(&mut self, branch: &str, op: &str, window: &mut Window, cx: &mut Context<Self>) -> Vec<String> {
+        self.dispatch(Action::Branches, window, cx);
+        let labels = |this: &Self| this.popup.as_ref().map(|p| p.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()).unwrap_or_default();
+        if let Some(p) = self.popup.as_mut() {
+            p.selected = p.items.iter().position(|i| i.label == branch).unwrap_or(0);
+        }
+        self.smoke_press("right", window, cx);
+        let ops = labels(self);
+        if let Some(p) = self.popup.as_mut() {
+            if let Some(i) = p.items.iter().position(|i| i.label.contains(op)) {
+                p.selected = i;
+                self.smoke_press("enter", window, cx);
+            }
+        }
+        ops
+    }
+
+    async fn smoke_branches(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
+        fn toast(this: &Workspace) -> String {
+            this.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default()
+        }
+        // topic: one commit ahead (merges as a fast-forward); spike: never merged.
+        for (b, f) in [("topic", "topic.py"), ("spike", "spike.py")] {
+            sh(root, &["switch", "-q", "-c", b]);
+            let _ = std::fs::write(root.join(f), "t = 1\n");
+            sh(root, &["add", f]);
+            commit_as(root, "Bob", "2025-09-01T10:00:00", &format!("Work on {b}"));
+            sh(root, &["switch", "-q", "main"]);
+        }
+        let _ = this.update(cx, |this, cx| this.refresh_git(cx));
+        pause(bg, 1200).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            let ops = this.smoke_branch_op("topic", "Merge", window, cx);
+            eprintln!("smoke-gitx: branch topic actions -> {ops:?}");
+        });
+        pause(bg, 1800).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: merge topic -> toast {:?}, topic.py {}", toast(this), this.root.join("topic.py").exists());
+            this.smoke_branch_op("spike", "Delete", window, cx);
+            let confirm: Vec<String> = this.popup.as_ref().map(|p| p.items.iter().map(|i| format!("{} | {}", i.label, i.detail)).collect()).unwrap_or_default();
+            eprintln!("smoke-gitx: delete unmerged spike -> {confirm:?}, selected {:?}", this.popup.as_ref().map(|p| p.selected));
+            // Up to Force Delete, Enter.
+            this.smoke_press("up enter", window, cx);
+        });
+        pause(bg, 1500).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: force delete spike -> toast {:?}", toast(this));
+            this.smoke_branch_op("topic", "Delete", window, cx);
+        });
+        pause(bg, 1500).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: delete merged topic -> toast {:?}, branches {:?}", toast(this), sh(&this.root, &["branch", "--format=%(refname:short)"]).lines().collect::<Vec<_>>());
+            let ops = this.smoke_branch_op("main", "Show in Log", window, cx);
+            let q = this.git.as_ref().map(|g| g.filter.query.branch.clone());
+            eprintln!("smoke-gitx: current branch actions -> {ops:?}, log branch filter {q:?}");
+        });
+        pause(bg, 800).await;
     }
 
     /// Labels of the open context menu (smoke tests).

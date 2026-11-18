@@ -4,6 +4,7 @@
 //! LFS, config) — the same approach PyCharm takes.
 
 mod blame;
+mod branch_ops;
 mod diff;
 mod graph;
 mod log_query;
