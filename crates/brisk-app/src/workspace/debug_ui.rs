@@ -43,7 +43,58 @@ pub struct BpDialog {
 pub enum BpRow {
     Raised,
     Uncaught,
+    /// An exception breakpoint for one class (index into `exc_classes`).
+    Class(usize, ExcClass),
     Line(PathBuf, usize, Breakpoint),
+}
+
+/// A Python exception breakpoint for a class: `ValueError`, `mypkg.MyError`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExcClass {
+    pub name: String,
+    /// Stop where it is raised, even if handled.
+    pub raised: bool,
+    /// Stop when nothing handles it.
+    pub uncaught: bool,
+    pub enabled: bool,
+}
+
+impl ExcClass {
+    fn new() -> Self {
+        Self { name: String::new(), raised: true, uncaught: true, enabled: true }
+    }
+}
+
+/// setExceptionBreakpoints arguments. With class breakpoints everything goes as
+/// exceptionOptions (debugpy then ignores `filters`); "Python Exceptions" alone means all.
+fn exception_args(muted: bool, raised: bool, uncaught: bool, classes: &[ExcClass]) -> Value {
+    if muted {
+        return json!({"filters": []});
+    }
+    let mut filters = Vec::new();
+    if raised {
+        filters.push("raised");
+    }
+    if uncaught {
+        filters.push("uncaught");
+    }
+    let classes: Vec<&ExcClass> = classes.iter().filter(|c| c.enabled && !c.name.trim().is_empty() && (c.raised || c.uncaught)).collect();
+    if classes.is_empty() {
+        return json!({"filters": filters});
+    }
+    let all = json!({"names": ["Python Exceptions"]});
+    let mut opts = Vec::new();
+    // Raised covers uncaught: the raise happens first.
+    if raised {
+        opts.push(json!({"path": [all], "breakMode": "always"}));
+    } else if uncaught {
+        opts.push(json!({"path": [all], "breakMode": "unhandled"}));
+    }
+    for c in classes {
+        let mode = if c.raised { "always" } else { "unhandled" };
+        opts.push(json!({"path": [all, {"names": [c.name.trim()]}], "breakMode": mode}));
+    }
+    json!({"filters": filters, "exceptionOptions": opts})
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,6 +206,7 @@ pub struct Debug {
     /// Python Exception Breakpoint: stop on raised (even handled) / uncaught exceptions.
     pub exc_raised: bool,
     pub exc_uncaught: bool,
+    pub exc_classes: Vec<ExcClass>,
     pub bp_dialog: Option<BpDialog>,
     /// Mute Breakpoints: none are sent (exception breakpoints neither); for this window only.
     pub muted: bool,
@@ -207,6 +259,7 @@ impl Debug {
             gen: 0,
             exc_raised: load_exc(root).0,
             exc_uncaught: load_exc(root).1,
+            exc_classes: load_exc_classes(root),
             bp_dialog: None,
             muted: false,
             threads: Vec::new(),
@@ -216,19 +269,9 @@ impl Debug {
         }
     }
 
-    /// debugpy's exception filters for setExceptionBreakpoints.
-    pub fn exception_filters(&self) -> Vec<&'static str> {
-        let mut v = Vec::new();
-        if self.muted {
-            return v;
-        }
-        if self.exc_raised {
-            v.push("raised");
-        }
-        if self.exc_uncaught {
-            v.push("uncaught");
-        }
-        v
+    /// setExceptionBreakpoints arguments for the current settings.
+    pub fn exception_args(&self) -> Value {
+        exception_args(self.muted, self.exc_raised, self.exc_uncaught, &self.exc_classes)
     }
 
     /// A session is starting, running or paused (Stop applies).
@@ -354,11 +397,28 @@ fn load_exc(root: &Path) -> (bool, bool) {
     (get("raised", false), get("uncaught", true))
 }
 
-fn save_exc(root: &Path, raised: bool, uncaught: bool) {
+fn load_exc_classes(root: &Path) -> Vec<ExcClass> {
+    let v = std::fs::read_to_string(exc_path()).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    let list = v.as_ref().and_then(|v| v.get(root.to_string_lossy().to_lowercase())).and_then(|p| p.get("classes")).and_then(Value::as_array).cloned().unwrap_or_default();
+    list.iter()
+        .filter_map(|c| {
+            let b = |k: &str, d: bool| c.get(k).and_then(Value::as_bool).unwrap_or(d);
+            Some(ExcClass { name: c.get("name")?.as_str()?.to_string(), raised: b("raised", true), uncaught: b("uncaught", true), enabled: b("enabled", true) })
+        })
+        .filter(|c| !c.name.is_empty())
+        .collect()
+}
+
+fn save_exc(root: &Path, raised: bool, uncaught: bool, classes: &[ExcClass]) {
     let path = exc_path();
     let mut all: serde_json::Map<String, Value> =
         std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default();
-    all.insert(root.to_string_lossy().to_lowercase(), json!({"raised": raised, "uncaught": uncaught}));
+    let classes: Vec<Value> = classes
+        .iter()
+        .filter(|c| !c.name.trim().is_empty())
+        .map(|c| json!({"name": c.name.trim(), "raised": c.raised, "uncaught": c.uncaught, "enabled": c.enabled}))
+        .collect();
+    all.insert(root.to_string_lossy().to_lowercase(), json!({"raised": raised, "uncaught": uncaught, "classes": classes}));
     if let Some(d) = path.parent() {
         let _ = std::fs::create_dir_all(d);
     }
@@ -747,7 +807,7 @@ impl Workspace {
             self.send_breakpoints(&p, cx);
         }
         if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) {
-            self.debug_request("setExceptionBreakpoints", json!({"filters": self.debug.exception_filters()}));
+            self.debug_request("setExceptionBreakpoints", self.debug.exception_args());
         }
         self.status = if muted { "Breakpoints muted".into() } else { "Breakpoints unmuted".into() };
         cx.notify();
@@ -859,6 +919,7 @@ impl Workspace {
 
     pub(super) fn bp_rows(&self, cx: &gpui::App) -> Vec<BpRow> {
         let mut v = vec![BpRow::Raised, BpRow::Uncaught];
+        v.extend(self.debug.exc_classes.iter().cloned().enumerate().map(|(i, c)| BpRow::Class(i, c)));
         for (p, bps) in self.all_breakpoints(cx) {
             v.extend(bps.into_iter().map(|(l, b)| BpRow::Line(p.clone(), l, b)));
         }
@@ -867,7 +928,7 @@ impl Workspace {
 
     pub(super) fn open_bp_dialog(&mut self, cx: &mut Context<Self>) {
         // The first line breakpoint is selected, as in PyCharm.
-        let sel = if self.bp_rows(cx).len() > 2 { 2 } else { 0 };
+        let sel = self.bp_rows(cx).iter().position(|r| matches!(r, BpRow::Line(..))).unwrap_or(0);
         self.debug.bp_dialog = Some(BpDialog { sel, editing: false });
         cx.notify();
     }
@@ -926,11 +987,50 @@ impl Workspace {
     pub(super) fn set_exception_breakpoints(&mut self, raised: bool, uncaught: bool, cx: &mut Context<Self>) {
         self.debug.exc_raised = raised;
         self.debug.exc_uncaught = uncaught;
-        save_exc(&self.root, raised, uncaught);
+        save_exc(&self.root, raised, uncaught, &self.debug.exc_classes);
         if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) {
-            self.debug_request("setExceptionBreakpoints", json!({"filters": self.debug.exception_filters()}));
+            self.debug_request("setExceptionBreakpoints", self.debug.exception_args());
         }
         cx.notify();
+    }
+
+    /// A class exception breakpoint changed: save and tell a running debugger.
+    pub(super) fn bp_update_class(&mut self, i: usize, f: impl FnOnce(&mut ExcClass), cx: &mut Context<Self>) {
+        if let Some(c) = self.debug.exc_classes.get_mut(i) {
+            f(c);
+        }
+        let (r, u) = (self.debug.exc_raised, self.debug.exc_uncaught);
+        self.set_exception_breakpoints(r, u, cx);
+    }
+
+    /// "+ Exception": a new class row, its name field ready for typing.
+    pub(super) fn bp_add_class(&mut self, cx: &mut Context<Self>) {
+        self.bp_drop_empty_classes(cx);
+        self.debug.exc_classes.push(ExcClass::new());
+        let i = self.debug.exc_classes.len() - 1;
+        let sel = self.bp_rows(cx).iter().position(|r| matches!(r, BpRow::Class(j, _) if *j == i)).unwrap_or(0);
+        if let Some(d) = self.debug.bp_dialog.as_mut() {
+            d.sel = sel;
+            d.editing = true;
+        }
+        cx.notify();
+    }
+
+    pub(super) fn bp_remove_class(&mut self, i: usize, cx: &mut Context<Self>) {
+        if i < self.debug.exc_classes.len() {
+            self.debug.exc_classes.remove(i);
+        }
+        let (r, u) = (self.debug.exc_raised, self.debug.exc_uncaught);
+        self.set_exception_breakpoints(r, u, cx);
+    }
+
+    /// A class row left without a name goes away.
+    fn bp_drop_empty_classes(&mut self, cx: &mut Context<Self>) {
+        if self.debug.exc_classes.iter().any(|c| c.name.trim().is_empty()) {
+            self.debug.exc_classes.retain(|c| !c.name.trim().is_empty());
+            let (r, u) = (self.debug.exc_raised, self.debug.exc_uncaught);
+            self.set_exception_breakpoints(r, u, cx);
+        }
     }
 
     /// Space / a click on the checkbox.
@@ -939,6 +1039,10 @@ impl Workspace {
         match row {
             BpRow::Raised => self.set_exception_breakpoints(!r, u, cx),
             BpRow::Uncaught => self.set_exception_breakpoints(r, !u, cx),
+            BpRow::Class(i, c) => {
+                let on = !c.enabled;
+                self.bp_update_class(*i, |c| c.enabled = on, cx);
+            }
             BpRow::Line(p, l, b) => self.bp_set_enabled(p, *l, !b.enabled, cx),
         }
     }
@@ -969,6 +1073,7 @@ impl Workspace {
             cx.notify();
             return;
         }
+        let was_editing = d.editing;
         match k.key.as_str() {
             "escape" | "enter" if d.editing => d.editing = false,
             "escape" => self.debug.bp_dialog = None,
@@ -980,11 +1085,13 @@ impl Workspace {
                 d.editing = false;
                 d.sel = (sel + 1).min(rows.len().saturating_sub(1));
             }
+            "insert" | "+" if !d.editing => self.bp_add_class(cx),
             "space" if !d.editing => {
                 if let Some(r) = row {
                     self.bp_toggle_row(&r, cx);
                 }
             }
+            "space" if matches!(row, Some(BpRow::Class(..))) => {}
             "space" => {
                 if let Some(BpRow::Line(p, l, b)) = row {
                     let mut c = b.condition.unwrap_or_default();
@@ -997,9 +1104,17 @@ impl Workspace {
                     self.bp_go_to(&r, window, cx);
                 }
             }
-            "delete" => {
-                if let Some(BpRow::Line(p, l, _)) = row {
-                    self.bp_remove(&p, l, cx);
+            "delete" => match row {
+                Some(BpRow::Line(p, l, _)) => self.bp_remove(&p, l, cx),
+                Some(BpRow::Class(i, _)) => self.bp_remove_class(i, cx),
+                _ => {}
+            },
+            "backspace" if matches!(row, Some(BpRow::Class(..))) => {
+                if let Some(BpRow::Class(i, _)) = row {
+                    d.editing = true;
+                    self.bp_update_class(i, |c| {
+                        c.name.pop();
+                    }, cx);
                 }
             }
             "backspace" => {
@@ -1010,6 +1125,14 @@ impl Workspace {
                 }
             }
             _ => {
+                // Typing edits a class name (letters, digits, _ and .).
+                if let (Some(BpRow::Class(i, _)), Some(t)) = (&row, k.key_char.as_deref().filter(|t| t.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.'))) {
+                    d.editing = true;
+                    let t = t.to_string();
+                    self.bp_update_class(*i, |c| c.name.push_str(&t), cx);
+                    cx.notify();
+                    return;
+                }
                 // Typing edits the selected breakpoint's condition.
                 if let (Some(BpRow::Line(p, l, b)), Some(t)) = (row, k.key_char.as_deref().filter(|t| !t.chars().any(char::is_control))) {
                     d.editing = true;
@@ -1018,6 +1141,10 @@ impl Workspace {
                     self.bp_set_condition(&p, l, Some(c), cx);
                 }
             }
+        }
+        // Leaving a class name field: an empty one is dropped.
+        if was_editing && !self.debug.bp_dialog.as_ref().is_some_and(|d| d.editing) {
+            self.bp_drop_empty_classes(cx);
         }
         cx.notify();
     }
@@ -1041,13 +1168,23 @@ impl Workspace {
         };
         let group = |label: &'static str| div().px(px(8.)).pt(px(6.)).pb(px(2.)).text_size(px(11.)).text_color(Theme::text_dim()).child(label);
         let mut list: Vec<gpui::AnyElement> = vec![group("PYTHON EXCEPTION BREAKPOINTS").into_any_element()];
+        let first_line = rows.iter().position(|r| matches!(r, BpRow::Line(..)));
         for (i, r) in rows.iter().enumerate() {
-            if i == 2 {
+            if Some(i) == first_line {
                 list.push(group("PYTHON LINE BREAKPOINTS").into_any_element());
             }
             let (on, label, detail) = match r {
                 BpRow::Raised => (self.debug.exc_raised, "On raised exceptions".to_string(), "even when handled".to_string()),
                 BpRow::Uncaught => (self.debug.exc_uncaught, "On uncaught exceptions".to_string(), String::new()),
+                BpRow::Class(_, c) => (
+                    c.enabled,
+                    if c.name.is_empty() { "<class name>".to_string() } else { c.name.clone() },
+                    match (c.raised, c.uncaught) {
+                        (true, _) => "on raise".to_string(),
+                        (false, true) => "on termination".to_string(),
+                        _ => "never".to_string(),
+                    },
+                ),
                 BpRow::Line(p, l, b) => {
                     let rel = p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/");
                     (b.enabled, format!("{rel}:{}", l + 1), b.condition.clone().map(|c| format!("if {c}")).unwrap_or_default())
@@ -1080,6 +1217,7 @@ impl Workspace {
                             d.sel = i;
                             d.editing = false;
                         }
+                        this.bp_drop_empty_classes(cx);
                         if ev.click_count() >= 2 {
                             this.bp_go_to(&row2, w, cx);
                         }
@@ -1145,6 +1283,44 @@ impl Workspace {
                     .child(div().text_size(px(12.)).text_color(Theme::text_dim()).child("A Python expression: the debugger stops only when it is true. Empty: always."))
                     .into_any_element()
             }
+            Some(BpRow::Class(i, c)) => {
+                let i = *i;
+                let flag = |id: &'static str, on: bool, label: &'static str, f: fn(&mut ExcClass)| {
+                    div().id(id).flex().items_center().gap(px(8.)).cursor_pointer().child(check(on)).child(label).on_click(cx.listener(move |this, _, _, cx| this.bp_update_class(i, f, cx)))
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("Python exception class"))
+                    .child(
+                        div()
+                            .id("bp-class-name")
+                            .h(px(28.))
+                            .px(px(8.))
+                            .flex()
+                            .items_center()
+                            .rounded(px(5.))
+                            .border_1()
+                            .border_color(if editing { Theme::accent() } else { Theme::divider() })
+                            .bg(Theme::editor_bg())
+                            .font_family(MONO_FONT)
+                            .cursor_text()
+                            .child(c.name.clone())
+                            .when(editing, |x| x.child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret())))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(d) = this.debug.bp_dialog.as_mut() {
+                                    d.editing = true;
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(flag("bp-class-enabled", c.enabled, "Enabled", |c| c.enabled = !c.enabled))
+                    .child(flag("bp-class-raise", c.raised, "On raise (even when handled)", |c| c.raised = !c.raised))
+                    .child(flag("bp-class-uncaught", c.uncaught, "On termination (uncaught)", |c| c.uncaught = !c.uncaught))
+                    .child(div().text_size(px(12.)).text_color(Theme::text_dim()).child("A built-in name (ValueError) or the full name of an importable class (mypkg.errors.MyError); its subclasses stop too. A class defined in the script being run cannot be found by debugpy."))
+                    .into_any_element()
+            }
             Some(BpRow::Raised) => div()
                 .flex()
                 .flex_col()
@@ -1162,6 +1338,7 @@ impl Workspace {
             None => div().into_any_element(),
         };
         let is_line = matches!(cur, Some(BpRow::Line(..)));
+        let removable = is_line || matches!(cur, Some(BpRow::Class(..)));
         let (cur_rm, cur_go) = (cur.clone(), cur.clone());
         Some(
             div()
@@ -1214,11 +1391,12 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                .child(div().flex_1().text_size(px(12.)).text_color(Theme::text_dim()).child("Space: enable/disable · type: condition · Delete: remove · Enter: go to · Esc: close"))
-                                .child(button("bp-remove", "Remove", false, is_line).on_click(cx.listener(move |this, _, _, cx| {
-                                    if let Some(BpRow::Line(p, l, _)) = cur_rm.clone() {
-                                        this.bp_remove(&p, l, cx);
-                                    }
+                                .child(div().flex_1().min_w_0().text_size(px(12.)).text_color(Theme::text_dim()).child("Space: on/off · type: edit · Insert: + exception · Delete: remove · Enter: go to · Esc: close"))
+                                .child(button("bp-add-class", "+ Exception", false, true).on_click(cx.listener(|this, _, _, cx| this.bp_add_class(cx))))
+                                .child(button("bp-remove", "Remove", false, removable).on_click(cx.listener(move |this, _, _, cx| match cur_rm.clone() {
+                                    Some(BpRow::Line(p, l, _)) => this.bp_remove(&p, l, cx),
+                                    Some(BpRow::Class(i, _)) => this.bp_remove_class(i, cx),
+                                    _ => {}
                                 })))
                                 .child(button("bp-goto", "Go to", false, is_line).on_click(cx.listener(move |this, _, w, cx| {
                                     if let Some(r) = cur_go.clone() {
@@ -1227,6 +1405,7 @@ impl Workspace {
                                 })))
                                 .child(button("bp-done", "Done", true, true).on_click(cx.listener(|this, _, _, cx| {
                                     this.debug.bp_dialog = None;
+                                    this.bp_drop_empty_classes(cx);
                                     cx.notify();
                                 }))),
                         ),
@@ -1572,7 +1751,7 @@ impl Workspace {
                 for (p, _) in self.all_breakpoints(cx) {
                     self.send_breakpoints(&p, cx);
                 }
-                self.debug_request("setExceptionBreakpoints", json!({"filters": self.debug.exception_filters()}));
+                self.debug_request("setExceptionBreakpoints", self.debug.exception_args());
                 self.debug_request("configurationDone", json!({}));
                 if let Some(s) = self.debug.session.as_mut() {
                     s.state = State::Running;
@@ -3209,6 +3388,7 @@ impl Workspace {
                     .map(|r| match r {
                         BpRow::Raised => format!("raised={}", t.debug.exc_raised),
                         BpRow::Uncaught => format!("uncaught={}", t.debug.exc_uncaught),
+                        BpRow::Class(_, c) => format!("class {}", c.name),
                         BpRow::Line(p, l, b) => format!("{}:{} enabled={}", p.file_name().unwrap_or_default().to_string_lossy(), l + 1, b.enabled),
                     })
                     .collect();
@@ -3357,6 +3537,40 @@ impl Workspace {
                 t.dispatch(Action::Resume, w, cx);
             });
             until!(|s: Option<State>| s == Some(State::Ended));
+            // Exception breakpoint for one class: a handled KeyError passes, a handled ValueError stops.
+            let excf = dir.join("dbg_exc_class.py");
+            let _ = std::fs::write(&excf, "def f():\n    try:\n        raise KeyError(\"k\")\n    except KeyError:\n        pass\n    try:\n        raise ValueError(\"v\")\n    except ValueError:\n        pass\n    return 1\n\n\nf()\n");
+            let _ = this.update_in(cx, |t, w, cx| {
+                t.open_file(&excf, w, cx);
+                t.dispatch(Action::ViewBreakpoints, w, cx);
+                t.bp_add_class(cx);
+                for ch in ["V", "a", "l", "u", "e", "E", "r", "r", "o", "r"] {
+                    let ks = gpui::Keystroke { modifiers: gpui::Modifiers::default(), key: ch.to_lowercase(), key_char: Some(ch.into()) };
+                    t.bp_dialog_key(&gpui::KeyDownEvent { keystroke: ks, is_held: false }, w, cx);
+                }
+                let ks = gpui::Keystroke { modifiers: gpui::Modifiers::default(), key: "enter".into(), key_char: None };
+                t.bp_dialog_key(&gpui::KeyDownEvent { keystroke: ks, is_held: false }, w, cx);
+                let saved = std::fs::read_to_string(exc_path()).unwrap_or_default().replace(char::is_whitespace, "");
+                eprintln!(
+                    "smoke-debug: exception class {:?} args {} saved={}",
+                    t.debug.exc_classes.iter().map(|c| (c.name.clone(), c.raised, c.uncaught)).collect::<Vec<_>>(),
+                    t.debug.exception_args(),
+                    saved.contains("\"name\":\"ValueError\"")
+                );
+                t.debug.bp_dialog = None;
+                t.dispatch(Action::DebugContext, w, cx);
+            });
+            let s = settled!();
+            wait(800).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                eprintln!("smoke-debug: class ValueError -> {s:?} at {:?} header={:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)), t.debug.exception);
+                if let Some(i) = t.debug.exc_classes.iter().position(|c| c.name == "ValueError") {
+                    t.bp_remove_class(i, cx);
+                }
+                t.dispatch(Action::Resume, w, cx);
+            });
+            until!(|s: Option<State>| s == Some(State::Ended));
+            let _ = std::fs::remove_file(&excf);
             // Jump to Cursor: back to `x = 1` (x stays 2 until stepped), then into another frame (refused).
             let jump = dir.join("dbg_jump.py");
             let _ = std::fs::write(&jump, "def f():\n    x = 1\n    x = 2\n    x = 3\n    return x\n\n\nr = f()\nprint(\"r\", r)\n");
@@ -3556,6 +3770,22 @@ mod tests {
         assert_eq!(names(targets_on_statement(&st, t(&["obj.run(xa(1))", "a(2)", "xa(1)"]))), ["obj.run(xa(1))", "xa(1)"]);
         // Nothing matches (labels debugpy shortened): keep all.
         assert_eq!(targets_on_statement("z = 1\n", t(&["q()"])).len(), 1);
+    }
+
+    #[test]
+    fn exception_breakpoint_args() {
+        let c = |n: &str, raised: bool| ExcClass { name: n.into(), raised, uncaught: true, enabled: true };
+        assert_eq!(exception_args(false, false, true, &[]), json!({"filters": ["uncaught"]}));
+        assert_eq!(exception_args(true, true, true, &[c("ValueError", true)]), json!({"filters": []}));
+        let v = exception_args(false, false, true, &[c("ValueError", true), c("KeyError", false), c("", true)]);
+        let opts = v["exceptionOptions"].as_array().unwrap();
+        assert_eq!(opts.len(), 3);
+        assert_eq!(opts[0], json!({"path": [{"names": ["Python Exceptions"]}], "breakMode": "unhandled"}));
+        assert_eq!(opts[1], json!({"path": [{"names": ["Python Exceptions"]}, {"names": ["ValueError"]}], "breakMode": "always"}));
+        assert_eq!(opts[2]["breakMode"], "unhandled");
+        // Nothing for all exceptions: only the classes.
+        let v = exception_args(false, false, false, &[ExcClass { enabled: false, ..c("A", true) }, c("B", true)]);
+        assert_eq!(v["exceptionOptions"].as_array().unwrap().len(), 1);
     }
 
     #[test]
