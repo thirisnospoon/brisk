@@ -41,16 +41,20 @@ pub enum Kind {
     Compound,
     FastApi,
     Flask,
+    Django,
+    DjangoTests,
 }
 
 impl Kind {
-    const ALL: [Kind; 6] = [Kind::Script, Kind::Module, Kind::Pytest, Kind::Compound, Kind::FastApi, Kind::Flask];
+    const ALL: [Kind; 8] = [Kind::Script, Kind::Module, Kind::Pytest, Kind::Compound, Kind::FastApi, Kind::Flask, Kind::Django, Kind::DjangoTests];
     fn of(c: &RunConfig) -> Kind {
         match (c.kind, c.module) {
             (RunKind::Pytest, _) => Kind::Pytest,
             (RunKind::Compound, _) => Kind::Compound,
             (RunKind::FastApi, _) => Kind::FastApi,
             (RunKind::Flask, _) => Kind::Flask,
+            (RunKind::Django, _) => Kind::Django,
+            (RunKind::DjangoTests, _) => Kind::DjangoTests,
             (_, true) => Kind::Module,
             _ => Kind::Script,
         }
@@ -63,12 +67,37 @@ impl Kind {
             Kind::Compound => "Compound",
             Kind::FastApi => "FastAPI",
             Kind::Flask => "Flask",
+            Kind::Django => "Django server",
+            Kind::DjangoTests => "Django tests",
+        }
+    }
+    /// The kind's chip in the form's Run row (all eight fit on one line).
+    fn short(self) -> &'static str {
+        match self {
+            Kind::Script => "Script",
+            Kind::Module => "Module",
+            k => k.title(),
+        }
+    }
+    /// One line under the template's title in "Add New Configuration".
+    fn hint(self) -> &'static str {
+        match self {
+            Kind::Script => "python script.py",
+            Kind::Module => "python -m package.module",
+            Kind::Pytest => "python -m pytest tests",
+            Kind::Compound => "several configurations together",
+            Kind::FastApi => "uvicorn main:app",
+            Kind::Flask => "flask --app app run",
+            Kind::Django => "manage.py runserver",
+            Kind::DjangoTests => "manage.py test",
         }
     }
     fn web(self) -> Option<RunKind> {
         match self {
             Kind::FastApi => Some(RunKind::FastApi),
             Kind::Flask => Some(RunKind::Flask),
+            Kind::Django => Some(RunKind::Django),
+            Kind::DjangoTests => Some(RunKind::DjangoTests),
             _ => None,
         }
     }
@@ -78,6 +107,8 @@ impl Kind {
             Kind::Compound => RunKind::Compound,
             Kind::FastApi => RunKind::FastApi,
             Kind::Flask => RunKind::Flask,
+            Kind::Django => RunKind::Django,
+            Kind::DjangoTests => RunKind::DjangoTests,
             _ => RunKind::Python,
         };
         c.module = self == Kind::Module;
@@ -120,6 +151,8 @@ pub struct RunDialog {
     /// The project's FastAPI and Flask applications (`module:app`), found when the dialog
     /// opens: a new or switched configuration of that kind gets it as its target.
     apps: Vec<(RunKind, String)>,
+    /// "Add New Configuration" (+ / Alt+Insert): the template list, with its selection.
+    adding: Option<usize>,
 }
 
 pub fn env_to_text(env: &BTreeMap<String, String>) -> String {
@@ -182,6 +215,7 @@ fn label(f: Field, kind: Kind) -> &'static str {
             Kind::Pytest => "Target:",
             Kind::Compound => "Configurations:",
             Kind::FastApi | Kind::Flask => "Application:",
+            Kind::Django | Kind::DjangoTests => "manage.py:",
         },
         Field::Keywords => "Keywords (-k):",
         Field::Parameters => "Parameters:",
@@ -335,7 +369,9 @@ impl RunDialog {
         let app = k.web().and_then(|w| self.apps.iter().find(|(a, _)| *a == w)).map(|(_, t)| t.clone());
         let Some(d) = self.draft() else { return };
         k.apply(&mut d.cfg);
-        if let Some(t) = app.filter(|_| !d.cfg.target.contains(':')) {
+        // Servers: `module:app`; Django: a `manage.py` path.
+        let fits = if matches!(k, Kind::Django | Kind::DjangoTests) { d.cfg.target.trim_end().ends_with("manage.py") } else { d.cfg.target.contains(':') };
+        if let Some(t) = app.filter(|_| !fits) {
             d.cfg.target = t;
         }
     }
@@ -347,6 +383,8 @@ impl RunDialog {
             Kind::Compound => "Compound",
             Kind::FastApi => "FastAPI",
             Kind::Flask => "Flask",
+            Kind::Django => "Django server",
+            Kind::DjangoTests => "Django tests",
             _ => "Unnamed",
         };
         let cfg = RunConfig { name: unique_name(base, &taken), ..Default::default() };
@@ -415,6 +453,9 @@ impl RunDialog {
                 };
                 return Err((i, Field::BeforeRun, format!("'{}': before launch, '{n}' is {why}", c.name)));
             }
+            if matches!(c.kind, RunKind::Django | RunKind::DjangoTests) && c.target.trim().is_empty() {
+                return Err((i, Field::Target, format!("'{}': the manage.py path is empty", c.name)));
+            }
             if matches!(c.kind, RunKind::FastApi | RunKind::Flask) && c.target.trim().is_empty() {
                 return Err((i, Field::Target, format!("'{}': Application is empty (module:app)", c.name)));
             }
@@ -437,8 +478,12 @@ impl Workspace {
         if let Some(i) = current {
             drafts[i].selected = true;
         }
-        let mut d = RunDialog { drafts, current: current.unwrap_or(0), field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new() };
+        let mut d = RunDialog { drafts, current: current.unwrap_or(0), field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None };
         d.apps = [RunKind::FastApi, RunKind::Flask].into_iter().filter_map(|k| brisk_run::web::find_app(&self.root, Some(k)).map(|(k, _, t)| (k, t))).collect();
+        if let Some((m, _)) = brisk_run::django::find_manage(&self.root) {
+            let rel = brisk_run::relativize(&self.root, &m);
+            d.apps.extend([(RunKind::Django, rel.clone()), (RunKind::DjangoTests, rel)]);
+        }
         d.focus(Field::Name, false);
         self.runs.dialog = Some(d);
         cx.notify();
@@ -485,6 +530,22 @@ impl Workspace {
         let order = d.fields();
         let pos = order.iter().position(|f| *f == d.field).unwrap_or(0);
         let text = d.field.is_text();
+        if let Some(sel) = d.adding {
+            let n = Kind::ALL.len();
+            match k.key.as_str() {
+                "escape" => d.adding = None,
+                "up" => d.adding = Some((sel + n - 1) % n),
+                "down" => d.adding = Some((sel + 1) % n),
+                "enter" => {
+                    d.adding = None;
+                    d.add(Kind::ALL[sel]);
+                    d.error = None;
+                }
+                _ => {}
+            }
+            cx.notify();
+            return;
+        }
         match k.key.as_str() {
             "escape" => return self.run_dialog_cancel(window, cx),
             "enter" => {
@@ -498,7 +559,7 @@ impl Workspace {
                 let i = if k.key == "up" { d.current.saturating_sub(1) } else { (d.current + 1).min(d.drafts.len().saturating_sub(1)) };
                 d.select_config(i);
             }
-            "insert" if m.alt => d.add(Kind::Script),
+            "insert" if m.alt => d.adding = Some(0),
             "d" if m.control => d.copy(),
             "delete" if m.alt => d.remove(),
             "tab" | "down" | "up" if !order.is_empty() => {
@@ -600,12 +661,7 @@ impl Workspace {
             .flex()
             .gap(px(2.))
             .pb(px(4.))
-            .child(tool("rc-add-py", "+ Py", "Add Python script configuration (Alt+Insert)", cx, |d| d.add(Kind::Script)))
-            .child(tool("rc-add-mod", "+ -m", "Add Python module configuration", cx, |d| d.add(Kind::Module)))
-            .child(tool("rc-add-pt", "+ pytest", "Add pytest configuration", cx, |d| d.add(Kind::Pytest)))
-            .child(tool("rc-add-fastapi", "+ FastAPI", "Add FastAPI configuration (uvicorn module:app)", cx, |d| d.add(Kind::FastApi)))
-            .child(tool("rc-add-flask", "+ Flask", "Add Flask server configuration (flask run)", cx, |d| d.add(Kind::Flask)))
-            .child(tool("rc-add-comp", "+ Compound", "Add Compound configuration (runs several together)", cx, |d| d.add(Kind::Compound)))
+            .child(tool("rc-add", "+", "Add New Configuration (Alt+Insert)", cx, |d| d.adding = if d.adding.is_some() { None } else { Some(0) }))
             .child(tool("rc-copy", "⧉", "Copy configuration (Ctrl+D)", cx, |d| d.copy()))
             .child(tool("rc-remove", "−", "Remove configuration (Alt+Delete)", cx, |d| d.remove()))
             .child(tool("rc-up", "↑", "Move up (Alt+Shift+↑)", cx, |d| d.move_by(true)))
@@ -619,7 +675,8 @@ impl Workspace {
                 let glyph = match Kind::of(&dr.cfg) {
                     Kind::Pytest => "⚗",
                     Kind::Compound => "◈",
-                    Kind::FastApi | Kind::Flask => "◎",
+                    Kind::FastApi | Kind::Flask | Kind::Django => "◎",
+                    Kind::DjangoTests => "⚗",
                     _ => "▶",
                 };
                 let name = if dr.cfg.name.trim().is_empty() { "<unnamed>".to_string() } else { dr.cfg.name.clone() };
@@ -644,8 +701,48 @@ impl Workspace {
                         cx.notify();
                     }))
             }))
-            .when(d.drafts.is_empty(), |x| x.child(div().p(px(8.)).text_color(Theme::text_dim()).child("No configurations. Add one with + above.")));
-        let left = div().w(px(220.)).flex_shrink_0().flex().flex_col().pr(px(10.)).border_r_1().border_color(Theme::divider()).child(list_tools).child(list);
+            .when(d.drafts.is_empty(), |x| x.child(div().p(px(8.)).text_color(Theme::text_dim()).child("No configurations. Add one with + above (Alt+Insert).")));
+        // "Add New Configuration": the templates in place of the list until one is picked.
+        let templates = d.adding.map(|sel| {
+            div()
+                .id("rc-templates")
+                .flex_1()
+                .overflow_y_scroll()
+                .child(div().px(px(6.)).pb(px(4.)).text_size(px(12.)).text_color(Theme::text_dim()).child("Add New Configuration"))
+                .children(Kind::ALL.iter().enumerate().map(|(i, &k)| {
+                    let on = i == sel;
+                    div()
+                        .id(("rc-template", i))
+                        .w_full()
+                        .px(px(6.))
+                        .py(px(3.))
+                        .rounded(px(4.))
+                        .cursor_pointer()
+                        .when(on, |x| x.bg(Theme::selection_row()))
+                        .when(!on, |x| x.hover(|s| s.bg(Theme::hover_row())))
+                        .child(div().child(k.title()))
+                        .child(div().text_size(px(11.5)).text_color(Theme::text_dim()).child(k.hint()))
+                        .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                            if let Some(d) = this.runs.dialog.as_mut() {
+                                d.adding = None;
+                                d.add(k);
+                                d.error = None;
+                            }
+                            cx.notify();
+                        }))
+                }))
+        });
+        let left = div()
+            .w(px(220.))
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .pr(px(10.))
+            .border_r_1()
+            .border_color(Theme::divider())
+            .child(list_tools)
+            .when_some(templates, |x, t| x.child(t))
+            .when(d.adding.is_none(), |x| x.child(list));
 
         // Right: the form.
         let caret = || div().w(px(1.5)).h(px(16.)).bg(Theme::caret());
@@ -656,19 +753,19 @@ impl Workspace {
                 let value: gpui::AnyElement = match f {
                     Field::Kind => div()
                         .flex()
-                        .gap(px(4.))
+                        .gap(px(2.))
                         .children(Kind::ALL.iter().enumerate().map(|(i, &k)| {
                             let on = k == kind;
                             div()
                                 .id(("rc-kind", i))
-                                .px(px(8.))
+                                .px(px(5.))
                                 .active(|s| s.bg(Theme::press()))
                                 .rounded(px(4.))
                                 .cursor_pointer()
                                 .when(on, |x| x.bg(Theme::selection_row()))
                                 .when(!on, |x| x.hover(|s| s.bg(Theme::hover_row())))
                                 .text_color(if on { Theme::text() } else { Theme::text_muted() })
-                                .child(k.title())
+                                .child(k.short())
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
                                     if let Some(d) = this.runs.dialog.as_mut() {
@@ -726,9 +823,12 @@ impl Workspace {
                                 Kind::Compound => "server;client (names of other configurations)".to_string(),
                                 Kind::FastApi => "main:app (module:variable; no app found in the project)".to_string(),
                                 Kind::Flask => "app:app or app:create_app() (no app found in the project)".to_string(),
+                                Kind::Django | Kind::DjangoTests => "manage.py (no Django manage.py found in the project)".to_string(),
                             },
                             Field::Parameters if kind == Kind::FastApi => "uvicorn options, e.g. --reload --port 8001".into(),
                             Field::Parameters if kind == Kind::Flask => "flask run options, e.g. --debug --port 5001".into(),
+                            Field::Parameters if kind == Kind::Django => "runserver address and options, e.g. 127.0.0.1:8001 --noreload".into(),
+                            Field::Parameters if kind == Kind::DjangoTests => "test labels and options, e.g. polls.tests -v 2 (empty: all)".into(),
                             Field::WorkingDirectory => if kind == Kind::Script { "the script's folder".into() } else { "the project root".into() },
                             Field::Env => "KEY=VALUE;KEY2=VALUE2 (wins over .env files)".into(),
                             Field::EnvFiles => ".env;config/dev.env (KEY=VALUE lines)".into(),
@@ -820,7 +920,7 @@ impl Workspace {
                 .child(
                     div()
                         .id("run-config-dialog")
-                        .w(px(860.))
+                        .w(px(980.))
                         .h(px(470.))
                         .flex()
                         .flex_col()
@@ -875,7 +975,7 @@ impl Workspace {
         let _ = std::fs::write(root.join("show_env.py"), "import os\nprint('env:', ' '.join(k + '=' + os.environ.get(k, '-') for k in 'ABC'))\n");
         let _ = std::fs::write(root.join(".env"), "# demo\nA=from-file\nB=from-file\nC=\"${A}-x\"\n");
         self.dispatch(brisk_keymap::Action::EditRunConfigurations, window, cx);
-        self.smoke_press("alt-insert", window, cx);
+        self.smoke_press("alt-insert enter", window, cx);
         self.rc_type("envdemo", window, cx);
         self.smoke_press("tab tab", window, cx); // Target
         self.rc_type("show_env.py", window, cx);
@@ -944,7 +1044,7 @@ impl Workspace {
             "{\n  \"configurations\": [{\"name\": \"server\", \"target\": \"server.py\"}, {\"name\": \"client\", \"target\": \"client.py\"}]\n}\n",
         );
         self.dispatch(brisk_keymap::Action::EditRunConfigurations, window, cx);
-        self.smoke_press("alt-insert", window, cx);
+        self.smoke_press("alt-insert enter", window, cx);
         self.rc_type("Both", window, cx);
         self.smoke_press("tab right right right", window, cx); // Run: Script -> Compound
         let fields_shown = self.runs.dialog.as_ref().and_then(|d| d.drafts.get(d.current)).map(|dr| fields(Kind::of(&dr.cfg), false));
@@ -1008,7 +1108,7 @@ impl Workspace {
         self.dispatch(brisk_keymap::Action::EditRunConfigurations, window, cx);
         eprintln!("smoke-runcfg: open -> {}", show(self));
         // Alt+Insert adds a script configuration with its name selected: type over it.
-        self.smoke_press("alt-insert", window, cx);
+        self.smoke_press("alt-insert enter", window, cx);
         self.rc_type("demo", window, cx);
         self.smoke_press("tab", window, cx); // Kind
         self.smoke_press("right", window, cx); // Script -> Module
@@ -1034,7 +1134,7 @@ impl Workspace {
         self.smoke_press("alt-shift-up", window, cx);
         eprintln!("smoke-runcfg: copied as pytest, moved up -> {}", show(self));
         // An empty name fails validation and keeps the dialog open on that field.
-        self.smoke_press("alt-insert", window, cx);
+        self.smoke_press("alt-insert enter", window, cx);
         self.smoke_press("ctrl-a backspace enter", window, cx);
         eprintln!("smoke-runcfg: empty name + enter -> {}", show(self));
         self.smoke_press("alt-delete", window, cx);
@@ -1068,6 +1168,18 @@ fn command_preview(root: &std::path::Path, c: &RunConfig, interp: &str) -> Strin
     }
     let python = c.interpreter.clone().unwrap_or_else(|| interp.to_string());
     let target = match (c.kind, c.module) {
+        (RunKind::Django | RunKind::DjangoTests, _) => {
+            let mut parts = vec![python];
+            if !c.interpreter_options.is_empty() {
+                parts.push(c.interpreter_options.clone());
+            }
+            parts.push(c.target.clone());
+            parts.push(if c.kind == RunKind::DjangoTests { "test" } else { "runserver" }.into());
+            if !c.parameters.is_empty() {
+                parts.push(c.parameters.clone());
+            }
+            return format!("› {}", parts.join(" "));
+        }
         (RunKind::FastApi | RunKind::Flask, _) => {
             // web::args already carries the parameters.
             let mut parts = vec![python];
@@ -1119,7 +1231,7 @@ mod tests {
 
     #[test]
     fn dialog_editing() {
-        let mut d = RunDialog { drafts: Vec::new(), current: 0, field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new() };
+        let mut d = RunDialog { drafts: Vec::new(), current: 0, field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None };
         d.add(Kind::Script);
         assert_eq!(d.drafts[0].cfg.name, "Unnamed");
         assert!(d.select_all);
@@ -1147,17 +1259,24 @@ mod tests {
 
 impl Workspace {
     /// The targets "+ FastAPI" and "+ Flask" get in a freshly opened dialog (smoke tests).
-    pub(super) fn web_dialog_probe(&mut self, cx: &mut Context<Self>) -> Vec<(String, String)> {
+    /// `keep` leaves the dialog open on the last one (for a screenshot).
+    pub(super) fn web_dialog_probe(&mut self, keep: bool, cx: &mut Context<Self>) -> Vec<(String, String)> {
         self.open_run_dialog(cx);
         let Some(d) = self.runs.dialog.as_mut() else { return Vec::new() };
         let mut out = Vec::new();
-        for k in [Kind::FastApi, Kind::Flask] {
+        for k in [Kind::FastApi, Kind::Flask, Kind::Django, Kind::DjangoTests] {
             d.add(k);
             if let Some(dr) = d.drafts.last() {
                 out.push((dr.cfg.name.clone(), dr.cfg.target.clone()));
             }
         }
-        self.runs.dialog = None;
+        if !keep {
+            self.runs.dialog = None;
+        } else if std::env::var("BRISK_SMOKE_WEB").as_deref() == Ok("dialog-add") {
+            if let Some(d) = self.runs.dialog.as_mut() {
+                d.adding = Some(6);
+            }
+        }
         out
     }
 }

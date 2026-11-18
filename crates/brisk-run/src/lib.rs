@@ -7,6 +7,7 @@ mod links;
 pub mod pytest;
 pub mod envfile;
 pub mod web;
+pub mod django;
 
 pub use config::{compound_names, import_idea, load, save, BeforeStep, RunConfig, RunFile, RunKind, CONFIG_FILE, MAX_TEMPORARY};
 pub use pytest::{is_test_file, split_nodeid, TestFeed, TestStatus, TestTree};
@@ -124,6 +125,11 @@ pub fn build(root: &Path, cfg: &RunConfig, python: &Path) -> Command {
         // Servers import `module:app` from the working directory (the project root by default).
         args.extend(web::args(cfg));
         let cwd = if cfg.working_directory.trim().is_empty() { root.to_path_buf() } else { resolve(root, &cfg.working_directory) };
+        return finish(root, cfg, python, args, cwd);
+    }
+    if matches!(cfg.kind, RunKind::Django | RunKind::DjangoTests) {
+        let (rest, cwd) = django::command(root, cfg);
+        args.extend(rest);
         return finish(root, cfg, python, args, cwd);
     }
     if cfg.kind == RunKind::Pytest {

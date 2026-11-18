@@ -103,6 +103,7 @@ pub fn server_package(kind: RunKind) -> Option<&'static str> {
     match kind {
         RunKind::FastApi => Some("uvicorn"),
         RunKind::Flask => Some("flask"),
+        RunKind::Django | RunKind::DjangoTests => Some("django"),
         _ => None,
     }
 }

@@ -373,6 +373,8 @@ impl Workspace {
                         (RunKind::Compound, _) => format!("compound: {}", brisk_run::compound_names(&c.target).join(", ")),
                         (RunKind::FastApi, _) => format!("uvicorn {}", c.target),
                         (RunKind::Flask, _) => format!("flask --app {} run", c.target),
+                        (RunKind::Django, _) => format!("{} runserver", c.target),
+                        (RunKind::DjangoTests, _) => format!("{} test", c.target),
                         (_, true) => format!("-m {}", c.target),
                         _ => c.target.clone(),
                     };
@@ -662,6 +664,10 @@ impl Workspace {
 /// server (PyCharm offers its FastAPI / Flask configuration for it).
 fn web_config(root: &Path, file: &Path) -> Option<RunConfig> {
     let src = std::fs::read_to_string(file).ok()?;
+    // Django's manage.py runs the development server (PyCharm's Django Server).
+    if file.file_name().is_some_and(|n| n == "manage.py") && src.contains("django") {
+        return Some(RunConfig::for_django(root, RunKind::Django, file, true));
+    }
     if src.contains("__name__ == \"__main__\"") || src.contains("__name__ == '__main__'") {
         return None;
     }
