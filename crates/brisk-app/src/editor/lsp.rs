@@ -284,6 +284,25 @@ impl Editor {
         format!("completion {c:?}, preview {preview:?} chars, doc blocks {d:?}, signature {s:?}")
     }
 
+    /// What Quick Documentation and the completion panel show as text, after Markdown:
+    /// for smokes checking that no `&gt;` or `\_` leaks through.
+    pub fn doc_shown_text(&self) -> (Option<String>, Option<String>) {
+        let plain = |blocks: &[DocBlock]| {
+            blocks
+                .iter()
+                .map(|b| match b {
+                    DocBlock::Code(c) => c.clone(),
+                    DocBlock::Text(t) => brisk_lsp::parse_doc_text(t, false).text,
+                    DocBlock::Rule => "---".into(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let quick = self.insight.doc.as_ref().map(|d| plain(&d.blocks));
+        let preview = self.insight.completion.as_ref().and_then(|c| c.shown.get(c.selected).map(|&i| plain(&brisk_lsp::doc_blocks(c.items[i].doc.trim())))).filter(|t| !t.is_empty());
+        (quick, preview)
+    }
+
     pub fn signature_open(&self) -> bool {
         self.insight.signature.is_some()
     }
@@ -425,7 +444,7 @@ impl Editor {
                 // Documentation of the selected item, beside the list (PyCharm's preview).
                 let doc = c.shown.get(c.selected).map(|&i| c.items[i].doc.trim()).filter(|d| !d.is_empty());
                 if let Some(doc) = doc {
-                    let lines: Vec<String> = doc.lines().take(14).map(|l| if l.is_empty() { " ".to_string() } else { l.to_string() }).collect();
+                    let blocks = brisk_lsp::doc_blocks(doc);
                     out.push(
                         gpui::div()
                             .id("completion-doc")
@@ -446,7 +465,7 @@ impl Editor {
                             .text_color(Theme::text_muted())
                             .cursor(gpui::CursorStyle::Arrow)
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .children(lines.into_iter().map(|l| gpui::div().child(l)))
+                            .children(super::doc_view::doc_elements(&blocks, "completion-doc-text", true))
                             .into_any_element(),
                     );
                 }
@@ -478,24 +497,7 @@ impl Editor {
             };
             if let Some(p) = at {
                 let rel = p - origin + point(px(0.), px(line_height() + 2.));
-                let blocks = d.blocks.iter().map(|b| match b {
-                    DocBlock::Code(code) => gpui::div()
-                        .px(px(10.))
-                        .py(px(6.))
-                        .font_family(MONO_FONT)
-                        .text_size(px(12.5))
-                        .text_color(Theme::text())
-                        .children(code.lines().map(|l| gpui::div().whitespace_nowrap().child(if l.is_empty() { " ".to_string() } else { l.to_string() })))
-                        .into_any_element(),
-                    DocBlock::Text(t) => gpui::div()
-                        .px(px(10.))
-                        .py(px(6.))
-                        .text_size(px(13.))
-                        .text_color(Theme::text())
-                        .children(t.split("\n\n").map(|para| gpui::div().pb(px(4.)).child(para.replace('\n', " "))))
-                        .into_any_element(),
-                    DocBlock::Rule => gpui::div().h(px(1.)).bg(Theme::divider()).into_any_element(),
-                });
+                let blocks = super::doc_view::doc_elements(&d.blocks, "quick-doc-text", false);
                 out.push(
                     gpui::div()
                         .id("quick-doc")

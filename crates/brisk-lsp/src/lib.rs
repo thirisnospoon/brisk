@@ -673,3 +673,6 @@ impl Ty {
 
 #[cfg(test)]
 mod tests;
+
+mod markdown;
+pub use markdown::{parse_doc_text, unescape_md, DocText, InlineStyle};

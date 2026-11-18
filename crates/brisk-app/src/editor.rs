@@ -25,6 +25,7 @@ mod find;
 mod fold;
 mod marks;
 mod lsp;
+mod doc_view;
 mod scroll;
 pub mod templates;
 pub use disk::{Conflict, DiskCheck};

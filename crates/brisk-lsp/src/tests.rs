@@ -104,3 +104,22 @@ fn real_ty() {
     drop(t);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn markdown_inline() {
+    // What ty sends for `defaultdict`: entities, escapes, hard breaks.
+    let d = parse_doc_text("defaultdict(default\\_factory=None, /, [...]) --&gt; dict  \n  \nIn \\_\\_getitem\\_\\_ only.", false);
+    assert_eq!(d.text, "defaultdict(default_factory=None, /, [...]) --> dict\n\nIn __getitem__ only.");
+    assert!(d.styles.is_empty(), "{:?}", d.styles);
+    let d = parse_doc_text("Serialize ``obj`` to a **JSON** str, see [docs](https://docs.python.org/3/) or https://x.org/a.", false);
+    assert_eq!(d.text, "Serialize obj to a JSON str, see docs or https://x.org/a.");
+    let st: Vec<(&str, &InlineStyle)> = d.styles.iter().map(|(r, s)| (&d.text[r.clone()], s)).collect();
+    assert_eq!(st, [("obj", &InlineStyle::Code), ("JSON", &InlineStyle::Bold), ("docs", &InlineStyle::Link("https://docs.python.org/3/".into())), ("https://x.org/a", &InlineStyle::Link("https://x.org/a".into()))]);
+    // Soft-wrapped lines join; list items and headings get their own lines; snake_case stays.
+    let d = parse_doc_text("# Notes\nfirst\nline\n- one_two\n- *three*", false);
+    assert_eq!(d.text, "Notes\nfirst line\n• one_two\n• three");
+    assert_eq!(parse_doc_text("str() -&gt; str  \nstr(x) -&gt; str  \nMake a  \nstring.", true).text, "str() -> str\nstr(x) -> str\nMake a string.");
+    let md = "Create a string  \nfrom an object.  \n  \n    indented  \n    lines";
+    assert_eq!(parse_doc_text(md, true).text, "Create a string from an object.\n\n\u{a0}\u{a0}\u{a0}\u{a0}indented\n\u{a0}\u{a0}\u{a0}\u{a0}lines");
+    assert_eq!(unescape_md("a &lt;b&gt; \\* &#39;c&#x27;"), "a <b> * 'c'");
+}

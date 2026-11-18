@@ -1,13 +1,21 @@
 //! `BRISK_SMOKE_INTEL=1`: code intelligence end to end with ty and ruff. Writes `intel.py` in
 //! the project, then checks Alt+Enter auto-import (and that one Undo takes it back),
 //! Optimize Imports, auto-import completion and the documentation preview beside the list.
-//! With `BRISK_SMOKE_INTEL_HOLD=1` it stops with the completion list and its preview open.
+//! With `BRISK_SMOKE_INTEL_HOLD=1` it stops with Quick Documentation (Ctrl+Q) open on
+//! `defaultdict`; with `BRISK_SMOKE_INTEL_HOLD=list`, with the completion list and its preview;
+//! with `BRISK_SMOKE_INTEL_HOLD=dumps`, with Quick Documentation on `json.dumps` (prose
+//! with inline code).
 
 use super::{Target, Workspace};
 use gpui::{AsyncWindowContext, Context, WeakEntity, Window};
 use std::time::{Duration, Instant};
 
 const SRC: &str = "import sys\nimport os\n\nx = defaultdict(list)\nprint(os.sep, x)\n";
+
+/// No HTML entity or backslash escape left over from ty's Markdown.
+fn clean(s: &str) -> bool {
+    !["&gt;", "&lt;", "&amp;", "\\_", "\\*"].iter().any(|e| s.contains(e))
+}
 
 impl Workspace {
     pub(super) fn intel_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -118,10 +126,52 @@ impl Workspace {
             let _ = this.update(cx, |this, cx| {
                 if let Some(ed) = this.active_editor() {
                     eprintln!("smoke-intel: after 'os.pa' -> {}", ed.read(cx).insight_summary());
+                    let preview = ed.read(cx).doc_shown_text().1.unwrap_or_default();
+                    eprintln!("smoke-intel: preview clean of Markdown escapes: {} ({:?}...)", clean(&preview), preview.chars().take(60).collect::<String>());
                 }
                 cx.notify();
             });
-            if std::env::var_os("BRISK_SMOKE_INTEL_HOLD").is_some() {
+            let hold = std::env::var("BRISK_SMOKE_INTEL_HOLD").ok();
+            if hold.as_deref() == Some("list") {
+                eprintln!("smoke-intel: holding");
+                return;
+            }
+            // Quick Documentation on `defaultdict`: ty's docstring has `--&gt;` and `\_`.
+            let target = if hold.as_deref() == Some("dumps") { "dumps(1)" } else { "defaultdict(list)" };
+            if target == "dumps(1)" {
+                let _ = this.update(cx, |this, cx| {
+                    let Some(ed) = this.active_editor().cloned() else { return };
+                    ed.update(cx, |e, cx| {
+                        e.close_insight();
+                        let end = e.buffer.len_chars();
+                        e.buffer.set_caret(end, false);
+                        e.type_for_smoke("\nimport json\njson.dumps(1)\n", cx);
+                    });
+                });
+                // Let the Parameter Info that `(` asks for arrive, then close it.
+                pause(800).await;
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(ed) = this.active_editor().cloned() else { return };
+                ed.update(cx, |e, _| while e.close_insight() {});
+                let t = text(this, cx);
+                let Some(at) = t.find(target) else { return };
+                ed.update(cx, |e, _| {
+                    e.close_insight();
+                    e.buffer.set_caret(t[..at].chars().count() + 3, false);
+                });
+                this.smoke_press("ctrl-q", window, cx);
+            });
+            wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| e.read(cx).doc_shown_text().0.is_some())).await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(ed) = this.active_editor() {
+                    let doc = ed.read(cx).doc_shown_text().0.unwrap_or_default();
+                    let after = doc.rsplit("---").next().unwrap_or("").trim();
+                    eprintln!("smoke-intel: Ctrl+Q clean of Markdown escapes: {}, text {:?}, {} lines", clean(&doc), after.lines().next().unwrap_or(""), doc.lines().count());
+                }
+                cx.notify();
+            });
+            if hold.is_some() {
                 eprintln!("smoke-intel: holding");
                 return;
             }
