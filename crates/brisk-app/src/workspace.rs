@@ -12,6 +12,7 @@ mod multi_smoke;
 mod pycon_smoke;
 mod run_tpl_smoke;
 mod run_term_smoke;
+mod test_view_smoke;
 mod debug_ui;
 mod disk_ui;
 mod edit2_smoke;
@@ -28,6 +29,7 @@ mod git_merge_ui;
 mod git_stash_ui;
 mod git_smoke;
 mod git_ui;
+pub(crate) use git_ui::fmt_time;
 mod history_ui;
 mod intel_smoke;
 mod complete_smoke;
@@ -453,6 +455,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNTPL").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_tpl_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_TESTVIEW").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.test_view_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_RUNTERM").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_term_smoke(window, cx));

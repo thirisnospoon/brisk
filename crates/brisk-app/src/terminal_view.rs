@@ -116,6 +116,10 @@ pub struct TerminalPanel {
     h_scroll: usize,
     /// Ctrl+F in the Run console.
     search: console_find::ConsoleSearch,
+    /// "Rerun Failed Tests First": pytest runs start with the last run's failures.
+    pub failed_first: bool,
+    /// The Test History list is open.
+    pub history_open: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -185,6 +189,9 @@ impl TerminalPanel {
                                         };
                                         t.session.inject(format!("\r\n\x1b[0m{end}\r\n\x1b[?25l").as_bytes());
                                         let tests = r.tests.as_mut().map(|t| t.finish());
+                                        if let Some(t) = r.tests.as_ref() {
+                                            TerminalPanel::save_test_history(&this.root, &r.name, t);
+                                        }
                                         cx.emit(RunEvent::Finished { name: r.name.clone(), code: r.code, tests });
                                     }
                                 }
@@ -226,6 +233,8 @@ impl TerminalPanel {
             scroll_to_end: true,
             h_scroll: 0,
             search: Default::default(),
+            failed_first: false,
+            history_open: false,
         }
     }
 
@@ -244,6 +253,13 @@ impl TerminalPanel {
         let mut spawn = cmd.clone();
         let tests = if cfg.kind == brisk_run::RunKind::Pytest {
             let events = brisk_run::pytest::attach(&mut spawn).map_err(|e| format!("Cannot prepare the test runner: {e}"))?;
+            if self.failed_first {
+                let failed = brisk_run::pytest::history::last_failed(&self.root, &cfg.name);
+                let list = events.with_extension("first");
+                if !failed.is_empty() && std::fs::write(&list, failed.join("\n")).is_ok() {
+                    spawn.env.insert("BRISK_TESTS_FIRST".into(), list.display().to_string());
+                }
+            }
             Some(tests_view::TestsView::start(events, id, self.events.clone()))
         } else {
             None

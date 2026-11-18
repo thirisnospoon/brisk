@@ -326,6 +326,48 @@ fn pytest_tree_from_events() {
     assert!(is_test_file(Path::new("x/test_a.py")) && is_test_file(Path::new("a_test.py")) && !is_test_file(Path::new("testing.py")));
 }
 
+/// Parameter sets under their function, the Show Passed / Show Ignored / by-duration view,
+/// HTML export and the Test History.
+#[test]
+fn pytest_tree_view_params_export_history() {
+    let mut t = TestTree::new();
+    t.apply(r#"{"event":"collected","tests":[{"id":"a.py::test_p[1-x]","file":"/p/a.py","line":4},{"id":"a.py::test_p[2-y]","file":"/p/a.py","line":4},{"id":"a.py::C::test_q[a::b]","file":"/p/a.py","line":9},{"id":"a.py::test_s","file":"/p/a.py","line":12}]}"#);
+    let fin = |id: &str, outcome: &str, d: f64| format!(r#"{{"event":"finish","id":"{id}","outcome":"{outcome}","duration":{d},"message":"{}","output":""}}"#, if outcome == "failed" { "assert <1>" } else { "" });
+    for l in [fin("a.py::test_p[1-x]", "passed", 0.1), fin("a.py::test_p[2-y]", "failed", 0.3), fin("a.py::C::test_q[a::b]", "passed", 0.5), fin("a.py::test_s", "skipped", 0.0)] {
+        t.apply(&l);
+    }
+    t.apply(r#"{"event":"done","exitstatus":1}"#);
+    let names = |rows: Vec<usize>| rows.iter().map(|&i| format!("{}{}", " ".repeat(t.nodes[i].depth), t.nodes[i].name)).collect::<Vec<_>>();
+    assert_eq!(names(t.rows(&Default::default())), ["Test Results", " a", "  test_p", "   [1-x]", "   [2-y]", "  C", "   test_q", "    [a::b]", "  test_s"]);
+    let g = t.nodes.iter().position(|n| n.name == "test_p").unwrap();
+    assert_eq!((t.nodes[g].id.as_str(), t.nodes[g].is_test, t.nodes[g].status, t.nodes[g].line), ("a.py::test_p", false, TestStatus::Failed, Some(4)));
+    assert_eq!(t.counts().total, 4);
+    let v = |p, i, d| TreeView { show_passed: p, show_ignored: i, by_duration: d };
+    assert_eq!(names(t.rows_view(&Default::default(), v(false, true, false))), ["Test Results", " a", "  test_p", "   [2-y]", "  test_s"]);
+    assert_eq!(names(t.rows_view(&Default::default(), v(false, false, false))), ["Test Results", " a", "  test_p", "   [2-y]"]);
+    assert_eq!(names(t.rows_view(&Default::default(), v(true, true, true))), ["Test Results", " a", "  C", "   test_q", "    [a::b]", "  test_p", "   [2-y]", "   [1-x]", "  test_s"]);
+    assert_eq!(t.failed_ids(), ["a.py::test_p[2-y]"]);
+
+    let html = t.to_html("pytest <a>");
+    assert!(html.contains("<title>pytest &lt;a&gt;</title>") && html.contains("Tests failed: 1, passed: 2, ignored: 1 of 4 tests"), "{html}");
+    assert!(html.contains("<span class=\"failed\">✗ [2-y]</span>") && html.contains("<pre>assert &lt;1&gt;</pre>"), "{html}");
+
+    let root = tmp("test-history");
+    let collected = r#"{"event":"collected","tests":[{"id":"a.py::t1","file":"","line":1},{"id":"a.py::t2","file":"","line":2}]}"#;
+    let events = format!("{collected}\n{}\n", fin("a.py::t2", "failed", 0.1));
+    for k in 0..12 {
+        pytest::history::save(&root, if k == 11 { "other" } else { "tests" }, &events).unwrap();
+    }
+    let list = pytest::history::list(&root);
+    assert_eq!(list.len(), 10);
+    assert_eq!(list[0].name, "other");
+    let back = pytest::history::load(&list[1]).unwrap();
+    assert_eq!(back.counts().total, 2);
+    assert_eq!(pytest::history::last_failed(&root, "tests"), ["a.py::t2"]);
+    assert!(pytest::history::last_failed(&root, "none").is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A real pytest session through the plugin: live tree, captured output, Rerun Failed.
 #[test]
 fn pytest_real_run() {
@@ -377,7 +419,7 @@ fn pytest_real_run() {
     // The failure points at the source line, as a link.
     assert!(d.lines().flat_map(find_links).any(|l| l.path.ends_with("test_calc.py") && l.line == 11), "{d}");
     let names: Vec<String> = t.rows(&Default::default()).iter().map(|&i| t.nodes[i].name.clone()).collect();
-    assert!(names.contains(&"test_param[1]".to_string()) && names.contains(&"TestBad".to_string()), "{names:?}");
+    assert!(names.contains(&"test_param".to_string()) && names.contains(&"[1]".to_string()) && names.contains(&"TestBad".to_string()), "{names:?}");
 
     // Rerun Failed Tests: only the failed node runs, from the same folder.
     let failed = t.failed_targets();
@@ -387,6 +429,16 @@ fn pytest_real_run() {
     assert_eq!(cmd2.args[2..], ["test_calc.py::TestBad::test_wrong"]);
     assert_eq!(feed2.tree.counts().total, 1, "{text2}");
     assert_eq!(feed2.tree.counts().failed, 1);
+    // Rerun Failed Tests First: the plugin runs the listed node ids before the rest.
+    let first = root.join("first.txt");
+    std::fs::write(&first, "test_calc.py::test_param[2]\ntest_calc.py::TestBad::test_wrong\n").unwrap();
+    let mut cmd3 = build(&root, &RunConfig { working_directory: String::new(), ..cfg.clone() }, &py.path);
+    let events3 = pytest::attach(&mut cmd3).unwrap();
+    cmd3.env.insert("BRISK_TESTS_FIRST".into(), first.display().to_string());
+    let out = cmd3.to_std().output().unwrap();
+    let order: Vec<String> = std::fs::read_to_string(&events3).unwrap().lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter(|v| v["event"] == "start").map(|v| v["id"].as_str().unwrap_or("").to_string()).collect();
+    assert_eq!(order[..2], ["test_calc.py::TestBad::test_wrong", "test_calc.py::test_param[2]"], "{}", String::from_utf8_lossy(&out.stdout));
+    let _ = std::fs::remove_file(&events3);
     drop(feed);
     drop(feed2);
     let _ = std::fs::remove_dir_all(&root);

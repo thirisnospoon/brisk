@@ -128,6 +128,20 @@ pub struct Counts {
     pub pending: usize,
 }
 
+/// Run window options of the test tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TreeView {
+    pub show_passed: bool,
+    pub show_ignored: bool,
+    pub by_duration: bool,
+}
+
+impl Default for TreeView {
+    fn default() -> Self {
+        TreeView { show_passed: true, show_ignored: true, by_duration: false }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TestTree {
     pub nodes: Vec<TestNode>,
@@ -194,9 +208,19 @@ impl TestTree {
             return i;
         }
         let parts = split_nodeid(id);
-        let parent = if parts.len() > 1 { self.ensure(&id[..id.len() - parts[parts.len() - 1].len() - 2]) } else { 0 };
         let last = parts[parts.len() - 1];
-        let name = if parts.len() == 1 {
+        // `test_x[1-2]`: PyCharm groups the parameter sets under `test_x`.
+        let param = (parts.len() > 1).then(|| last.find('[')).flatten().filter(|&b| b > 0 && last.ends_with(']'));
+        let parent = if let Some(b) = param {
+            self.ensure(&id[..id.len() - last.len() + b])
+        } else if parts.len() > 1 {
+            self.ensure(&id[..id.len() - last.len() - 2])
+        } else {
+            0
+        };
+        let name = if let Some(b) = param {
+            last[b..].to_string()
+        } else if parts.len() == 1 {
             // Module: PyCharm shows its name without the directory and extension.
             Path::new(last).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| last.to_string())
         } else {
@@ -237,6 +261,12 @@ impl TestTree {
                         n.file = Some(PathBuf::from(t.file));
                     }
                     n.line = t.line;
+                    // A parameter group goes to its function's line.
+                    if let Some(p) = n.parent.filter(|_| t.line.is_some()) {
+                        if self.nodes[p].line.is_none() && self.nodes[p].depth > 1 {
+                            self.nodes[p].line = t.line;
+                        }
+                    }
                 }
             }
             Event::Collecterror { id, message } => {
@@ -370,6 +400,99 @@ impl TestTree {
         out
     }
 
+    /// Visible rows with the Run window's view options: passed / ignored tests hidden (and
+    /// suites left empty by that), siblings sorted by duration, longest first.
+    pub fn rows_view(&self, collapsed: &HashSet<usize>, view: TreeView) -> Vec<usize> {
+        let hidden = |n: &TestNode| match n.status {
+            TestStatus::Passed => !view.show_passed,
+            TestStatus::Skipped => !view.show_ignored,
+            _ => false,
+        };
+        // Bottom-up: a suite is shown when any of its children is.
+        let mut shown = vec![false; self.nodes.len()];
+        for i in (0..self.nodes.len()).rev() {
+            let n = &self.nodes[i];
+            shown[i] = i == 0 || if n.children.is_empty() { !hidden(n) } else { n.children.iter().any(|&c| shown[c]) };
+        }
+        let mut out = Vec::new();
+        let mut stack = vec![0];
+        while let Some(i) = stack.pop() {
+            out.push(i);
+            if collapsed.contains(&i) {
+                continue;
+            }
+            let mut kids: Vec<usize> = self.nodes[i].children.iter().copied().filter(|&c| shown[c]).collect();
+            if view.by_duration {
+                kids.sort_by(|a, b| self.nodes[*b].duration.total_cmp(&self.nodes[*a].duration));
+            }
+            stack.extend(kids.into_iter().rev());
+        }
+        out
+    }
+
+    /// Node ids of the failed tests ("Rerun Failed Tests First" puts them in front).
+    pub fn failed_ids(&self) -> Vec<String> {
+        self.nodes.iter().filter(|n| n.is_test && matches!(n.status, TestStatus::Failed | TestStatus::Error)).map(|n| n.id.clone()).collect()
+    }
+
+    /// Build a tree from the plugin's events (a saved run of the Test History).
+    pub fn from_events(text: &str) -> Self {
+        let mut t = TestTree::new();
+        for l in text.lines() {
+            t.apply(l);
+        }
+        t
+    }
+
+    /// "Export Test Results" as a standalone HTML page: summary, then the tree with
+    /// statuses, durations and the failures' reports.
+    pub fn to_html(&self, title: &str) -> String {
+        fn esc(s: &str) -> String {
+            s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+        }
+        fn walk(t: &TestTree, i: usize, b: &mut String) {
+            let n = &t.nodes[i];
+            let (cls, mark) = match n.status {
+                TestStatus::Passed => ("passed", "✓"),
+                TestStatus::Failed => ("failed", "✗"),
+                TestStatus::Error => ("error", "!"),
+                TestStatus::Skipped => ("skipped", "⊘"),
+                TestStatus::Running => ("running", "◌"),
+                TestStatus::Pending => ("pending", "○"),
+            };
+            b.push_str(&format!("<li><span class=\"{cls}\">{mark} {}</span>", esc(&n.name)));
+            if n.duration > 0.0 {
+                b.push_str(&format!("<span class=\"d\">{}</span>", format_duration(n.duration)));
+            }
+            if n.is_test && !n.message.is_empty() {
+                b.push_str(&format!("<pre>{}</pre>", esc(&n.message)));
+            }
+            if !n.children.is_empty() {
+                b.push_str("<ul>");
+                for &c in &n.children {
+                    walk(t, c, b);
+                }
+                b.push_str("</ul>");
+            }
+            b.push_str("</li>\n");
+        }
+        let mut b = String::from("<!doctype html>\n<html><head><meta charset=\"utf-8\">");
+        b.push_str(&format!("<title>{}</title>\n", esc(title)));
+        b.push_str(concat!(
+            "<style>\nbody{font:14px system-ui,sans-serif;margin:24px;color:#222}h1{font-size:18px}.sum{color:#555;margin-bottom:16px}\n",
+            "ul{list-style:none;padding-left:18px;margin:0}li{margin:2px 0}\n",
+            ".passed{color:#2e7d32}.failed,.error{color:#c62828}.skipped{color:#777}.pending,.running{color:#999}\n",
+            ".d{color:#888;font-size:12px;margin-left:8px}pre{background:#f6f6f6;padding:8px;margin:4px 0 8px;white-space:pre-wrap}\n",
+            "</style></head><body>\n"
+        ));
+        b.push_str(&format!("<h1>{}</h1>\n<div class=\"sum\">{}</div>\n<ul>", esc(title), esc(&self.summary(true))));
+        for &c in &self.nodes[0].children {
+            walk(self, c, &mut b);
+        }
+        b.push_str("</ul>\n</body></html>\n");
+        b
+    }
+
     /// First failed test in tree order (PyCharm selects it when the run finishes).
     pub fn first_failed(&self) -> Option<usize> {
         self.rows(&HashSet::new()).into_iter().find(|&i| self.nodes[i].is_test && matches!(self.nodes[i].status, TestStatus::Failed | TestStatus::Error))
@@ -445,6 +568,19 @@ impl TestFeed {
         TestFeed { tree: TestTree::new(), path, offset: 0, partial: Vec::new() }
     }
 
+    /// A finished tree with no file behind it (a run from the Test History).
+    pub fn done(tree: TestTree) -> Self {
+        TestFeed { tree, path: PathBuf::new(), offset: 0, partial: Vec::new() }
+    }
+
+    /// Everything the plugin wrote so far (for the Test History).
+    pub fn events_text(&self) -> String {
+        if self.path.as_os_str().is_empty() {
+            return String::new();
+        }
+        std::fs::read_to_string(&self.path).unwrap_or_default()
+    }
+
     /// Read whatever was appended since the last call. Returns whether the tree changed.
     pub fn poll(&mut self) -> bool {
         let Ok(mut f) = std::fs::File::open(&self.path) else { return false };
@@ -470,6 +606,77 @@ impl TestFeed {
 
 impl Drop for TestFeed {
     fn drop(&mut self) {
+        if self.path.as_os_str().is_empty() {
+            return;
+        }
         let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// The Test History: the last [`history::HISTORY_RUNS`] test runs of a project, as the
+/// plugin's event files in `.brisk/test-history` (PyCharm keeps them per project too).
+pub mod history {
+    use super::TestTree;
+    use std::path::{Path, PathBuf};
+
+    pub const HISTORY_RUNS: usize = 10;
+
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Entry {
+        pub path: PathBuf,
+        /// The run configuration's name.
+        pub name: String,
+        /// Unix seconds.
+        pub time: i64,
+    }
+
+    pub fn dir(root: &Path) -> PathBuf {
+        root.join(".brisk").join("test-history")
+    }
+
+    /// Keep a finished run; the oldest beyond [`HISTORY_RUNS`] go.
+    pub fn save(root: &Path, name: &str, events: &str) -> std::io::Result<PathBuf> {
+        let d = dir(root);
+        std::fs::create_dir_all(&d)?;
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        let safe: String = name.chars().map(|c| if c.is_alphanumeric() || " _-.".contains(c) { c } else { '_' }).take(60).collect();
+        let mut p = d.join(format!("{now} {safe}.jsonl"));
+        let mut k = 1;
+        while p.exists() {
+            p = d.join(format!("{now}-{k} {safe}.jsonl"));
+            k += 1;
+        }
+        let meta = serde_json::json!({"event": "meta", "name": name, "time": (now / 1000) as i64});
+        std::fs::write(&p, format!("{meta}\n{events}"))?;
+        for old in list(root).into_iter().skip(HISTORY_RUNS) {
+            let _ = std::fs::remove_file(old.path);
+        }
+        Ok(p)
+    }
+
+    /// Saved runs, newest first.
+    pub fn list(root: &Path) -> Vec<Entry> {
+        let Ok(rd) = std::fs::read_dir(dir(root)) else { return Vec::new() };
+        let mut v: Vec<Entry> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
+            .filter_map(|path| {
+                let text = std::fs::read_to_string(&path).ok()?;
+                let meta: serde_json::Value = serde_json::from_str(text.lines().next()?).ok()?;
+                Some(Entry { name: meta["name"].as_str()?.to_string(), time: meta["time"].as_i64()?, path })
+            })
+            .collect();
+        v.sort_by(|a, b| b.time.cmp(&a.time).then_with(|| b.path.cmp(&a.path)));
+        v
+    }
+
+    pub fn load(e: &Entry) -> Option<TestTree> {
+        std::fs::read_to_string(&e.path).ok().map(|t| TestTree::from_events(&t))
+    }
+
+    /// Failed node ids of the configuration's latest saved run.
+    pub fn last_failed(root: &Path, name: &str) -> Vec<String> {
+        list(root).into_iter().find(|e| e.name == name).and_then(|e| load(&e)).map(|t| t.failed_ids()).unwrap_or_default()
     }
 }

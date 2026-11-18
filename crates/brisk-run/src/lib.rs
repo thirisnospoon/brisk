@@ -10,7 +10,7 @@ pub mod web;
 pub mod django;
 
 pub use config::{compound_names, import_idea, load, save, BeforeStep, OnStart, RunConfig, RunFile, RunKind, CONFIG_FILE, MAX_TEMPORARY, TEMPLATE_KINDS};
-pub use pytest::{is_test_file, split_nodeid, TestFeed, TestStatus, TestTree};
+pub use pytest::{is_test_file, split_nodeid, TestFeed, TestStatus, TestTree, TreeView};
 pub use interp::{discover_all, probe, project_venvs, venv_python, InterpKind, Interpreter};
 pub use links::{find_links, find_urls, Link};
 

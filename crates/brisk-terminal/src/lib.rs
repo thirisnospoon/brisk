@@ -125,6 +125,8 @@ enum Io {
     /// Plain pipes (PyCharm's Run console without "Emulate terminal"): exact output, stderr
     /// in red, line-buffered input echoed locally.
     Pipe(pipe::PipeIo),
+    /// No process: a saved run shown again (input goes nowhere).
+    None,
 }
 
 /// One terminal tab or one running process.
@@ -314,6 +316,7 @@ impl Session {
                 let _ = tx.send(Msg::Input(bytes));
             }
             Io::Pipe(p) => p.input(&self.term, &bytes),
+            Io::None => {}
         }
     }
 
@@ -436,6 +439,17 @@ impl Session {
         Ok(Self { term, io: Io::Pipe(io), size, pid: Some(pid) })
     }
 
+    /// A console with `text` and no process behind it (a run from the Test History).
+    pub fn offline(text: &str, cols: usize, rows: usize) -> Self {
+        let size = Size { cols: cols.max(2), rows: rows.max(1) };
+        let listener = Listener { callback: Arc::new(|_| {}), sender: Arc::new(OnceLock::new()) };
+        let config = Config { scrolling_history: RUN_HISTORY_LINES, ..Config::default() };
+        let term = Arc::new(FairMutex::new(Term::new(config, &size, listener)));
+        let s = Self { term, io: Io::None, size, pid: None };
+        s.inject(format!("{}\x1b[?25l", text.replace('\n', "\r\n")).as_bytes());
+        s
+    }
+
     /// Feed bytes to the emulator as if the program printed them (IDE messages such as
     /// "Process finished with exit code 0"). Use only after the child has exited.
     pub fn inject(&self, bytes: &[u8]) {
@@ -511,6 +525,7 @@ impl Session {
                 let _ = tx.send(Msg::Shutdown);
             }
             Io::Pipe(_) => self.kill(),
+            Io::None => {}
         }
     }
 

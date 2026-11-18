@@ -3,7 +3,8 @@
 
 use super::{RunEvent, TerminalPanel, TermEvent, LINK};
 use crate::theme::{Theme, mono_font};
-use brisk_run::{TestFeed, TestStatus, TestTree};
+use brisk_run::pytest::history;
+use brisk_run::{TestFeed, TestStatus, TestTree, TreeView};
 use futures::channel::mpsc;
 use gpui::prelude::*;
 use gpui::{div, font, px, rgb, uniform_list, Context, Hsla, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
@@ -23,6 +24,8 @@ pub(super) struct TestsView {
     pub scroll: UniformListScrollHandle,
     pub details_scroll: ScrollHandle,
     pub finished: bool,
+    /// Show Passed / Show Ignored / Sort by Duration.
+    pub view: TreeView,
 }
 
 impl Drop for TestsView {
@@ -67,7 +70,31 @@ impl TestsView {
                 }
             });
         }
-        TestsView { feed, stop, selected: 0, collapsed: HashSet::new(), scroll: UniformListScrollHandle::new(), details_scroll: ScrollHandle::new(), finished: false }
+        TestsView { feed, stop, selected: 0, collapsed: HashSet::new(), scroll: UniformListScrollHandle::new(), details_scroll: ScrollHandle::new(), finished: false, view: TreeView::default() }
+    }
+
+    /// A finished run from the Test History.
+    pub fn done(tree: TestTree) -> Self {
+        let mut t = TestsView {
+            feed: Arc::new(Mutex::new(TestFeed::done(tree))),
+            stop: Arc::new(AtomicBool::new(true)),
+            selected: 0,
+            collapsed: HashSet::new(),
+            scroll: UniformListScrollHandle::new(),
+            details_scroll: ScrollHandle::new(),
+            finished: true,
+            view: TreeView::default(),
+        };
+        let first = t.tree().tree.first_failed();
+        if let Some(i) = first {
+            t.select(i);
+        }
+        t
+    }
+
+    /// Visible rows with the view options.
+    pub fn rows(&self) -> Vec<usize> {
+        self.tree().tree.rows_view(&self.collapsed, self.view)
     }
 
     pub fn tree(&self) -> std::sync::MutexGuard<'_, TestFeed> {
@@ -108,7 +135,7 @@ impl TestsView {
                 self.collapsed.remove(&x);
                 p = f.tree.nodes[x].parent;
             }
-            f.tree.rows(&self.collapsed)
+            f.tree.rows_view(&self.collapsed, self.view)
         };
         self.selected = i;
         if let Some(ix) = rows.iter().position(|&r| r == i) {
@@ -166,7 +193,7 @@ impl TerminalPanel {
         let t = self.tests()?;
         let f = t.tree();
         let mut s = String::new();
-        for i in f.tree.rows(&t.collapsed) {
+        for i in f.tree.rows_view(&t.collapsed, t.view) {
             let n = &f.tree.nodes[i];
             s.push_str(&format!("{}{} {}\n", "  ".repeat(n.depth), status_glyph(n.status).0, n.name));
         }
@@ -184,6 +211,59 @@ impl TerminalPanel {
         let f = t.tree();
         let n = f.tree.nodes.get(t.selected)?;
         Some((n.name.clone(), node_location(&f.tree, t.selected)))
+    }
+
+    /// Show Passed / Show Ignored / Sort by Duration on the active tab's tree.
+    pub fn set_tests_view(&mut self, f: impl FnOnce(&mut TreeView)) {
+        if let Some(t) = self.tests_mut() {
+            f(&mut t.view);
+            let sel = t.selected;
+            t.select(sel);
+        }
+    }
+
+    /// "Export Test Results": the active tab's tree as an HTML page in
+    /// `.brisk/test-results`; returns its path.
+    pub fn export_tests(&self) -> Result<PathBuf, String> {
+        let t = self.tests().ok_or("No test results in this tab")?;
+        let name = self.tabs.get(self.active).and_then(|t| t.run.as_ref()).map(|r| r.name.clone()).unwrap_or_default();
+        let html = t.tree().tree.to_html(&format!("Test Results: {name}"));
+        let dir = self.root.join(".brisk").join("test-results");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let safe: String = name.chars().map(|c| if c.is_alphanumeric() || " _-.".contains(c) { c } else { '_' }).collect();
+        let p = dir.join(format!("{}.html", if safe.is_empty() { "tests".into() } else { safe }));
+        std::fs::write(&p, html).map_err(|e| format!("Cannot write {}: {e}", p.display()))?;
+        Ok(p)
+    }
+
+    /// Keep a finished test run in the Test History.
+    pub(super) fn save_test_history(root: &std::path::Path, name: &str, t: &TestsView) {
+        let events = t.tree().events_text();
+        if !events.trim().is_empty() {
+            let _ = history::save(root, name, &events);
+        }
+    }
+
+    /// Open a run from the Test History in a tab of its own.
+    pub fn open_history(&mut self, e: &history::Entry) -> Result<(), String> {
+        let tree = history::load(e).ok_or_else(|| format!("Cannot read {}", e.path.display()))?;
+        let summary = tree.summary(true);
+        let (cols, rows) = self.tabs.get(self.active).map(|t| t.session.size()).unwrap_or((120, 12));
+        let when = crate::workspace::fmt_time(e.time);
+        let session = brisk_terminal::Session::offline(&format!("Test History: '{}', {when}\n{summary}\n", e.name), cols, rows);
+        let id = self.next_id;
+        self.next_id += 1;
+        let name = format!("{} ({when})", e.name);
+        let cfg = brisk_run::RunConfig { name: name.clone(), kind: brisk_run::RunKind::Pytest, ..Default::default() };
+        let cmd = brisk_run::Command { program: PathBuf::new(), args: Vec::new(), cwd: self.root.clone(), env: Default::default() };
+        let tests = Some(TestsView::done(tree));
+        let now = std::time::Instant::now();
+        let run = super::RunTab { name, cfg, cmd, running: false, code: None, tests, started: now, ended: Some(now), pinned: true, stopped: false };
+        self.tabs.push(super::Tab { id, session, title: String::new(), number: 0, run: Some(run) });
+        self.active = self.tabs.len() - 1;
+        self.trim_run_tabs();
+        self.history_open = false;
+        Ok(())
     }
 
     /// "Rerun Failed Tests": the same configuration limited to the failed nodes, from the
@@ -213,7 +293,7 @@ impl TerminalPanel {
         let (rows, sel, has_children, parent, expanded) = {
             let f = t.tree();
             let n = f.tree.nodes.get(t.selected)?;
-            (f.tree.rows(&t.collapsed), t.selected, !n.children.is_empty(), n.parent, !t.collapsed.contains(&t.selected))
+            (f.tree.rows_view(&t.collapsed, t.view), t.selected, !n.children.is_empty(), n.parent, !t.collapsed.contains(&t.selected))
         };
         let pos = rows.iter().position(|&r| r == sel).unwrap_or(0);
         let t = self.tests_mut()?;
@@ -256,16 +336,76 @@ impl TerminalPanel {
             let f = t.tree();
             (f.tree.summary(t.finished), f.tree.nodes[0].status)
         };
-        let n_rows = t.tree().tree.rows(&t.collapsed).len();
+        let n_rows = t.rows().len();
         let (g, c) = status_glyph(root_status);
+        let view = t.view;
+        let tip = |s: &'static str| move |_: &mut gpui::Window, cx: &mut gpui::App| cx.new(|_| crate::workspace::Tip(s.into())).into();
+        let tool = |id: &'static str, glyph: &'static str, on: bool| {
+            div()
+                .id(id)
+                .w(px(22.))
+                .h(px(22.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(4.))
+                .text_size(px(12.))
+                .text_color(if on { Theme::text() } else { Theme::text_muted() })
+                .when(on, |d| d.bg(Theme::selection_row()))
+                .when(!on, |d| d.hover(|s| s.bg(Theme::hover_row())))
+                .active(|s| s.bg(Theme::press()))
+                .cursor_pointer()
+                .child(glyph)
+        };
+        let history = if self.history_open { history::list(&self.root) } else { Vec::new() };
         div()
             .w(px(320.))
             .flex_none()
             .h_full()
+            .relative()
             .flex()
             .flex_col()
             .border_r_1()
             .border_color(Theme::divider())
+            .child(
+                div()
+                    .h(px(26.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(2.))
+                    .px(px(4.))
+                    .border_b_1()
+                    .border_color(Theme::divider())
+                    .child(tool("tests-show-passed", "✓", view.show_passed).tooltip(tip("Show Passed")).on_click(cx.listener(|this, _, _, cx| {
+                        this.set_tests_view(|v| v.show_passed = !v.show_passed);
+                        cx.notify();
+                    })))
+                    .child(tool("tests-show-ignored", "⊘", view.show_ignored).tooltip(tip("Show Ignored")).on_click(cx.listener(|this, _, _, cx| {
+                        this.set_tests_view(|v| v.show_ignored = !v.show_ignored);
+                        cx.notify();
+                    })))
+                    .child(tool("tests-by-duration", "⏱", view.by_duration).tooltip(tip("Sort by Duration")).on_click(cx.listener(|this, _, _, cx| {
+                        this.set_tests_view(|v| v.by_duration = !v.by_duration);
+                        cx.notify();
+                    })))
+                    .child(tool("tests-failed-first", "✗↑", self.failed_first).tooltip(tip("Rerun Failed Tests First")).on_click(cx.listener(|this, _, _, cx| {
+                        this.failed_first = !this.failed_first;
+                        cx.notify();
+                    })))
+                    .child(div().flex_1())
+                    .child(tool("tests-history", "🕘", self.history_open).tooltip(tip("Test History")).on_click(cx.listener(|this, _, _, cx| {
+                        this.history_open = !this.history_open;
+                        cx.notify();
+                    })))
+                    .child(tool("tests-export", "⇪", false).tooltip(tip("Export Test Results (HTML)")).on_click(cx.listener(|this, _, _, cx| {
+                        match this.export_tests() {
+                            Ok(p) => cx.emit(RunEvent::OpenUrl(format!("file:///{}", p.display().to_string().replace('\\', "/")))),
+                            Err(e) => this.error = Some(e),
+                        }
+                        cx.notify();
+                    }))),
+            )
             .child(
                 div()
                     .h(px(24.))
@@ -287,7 +427,7 @@ impl TerminalPanel {
                     cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
                         let Some(t) = this.tests() else { return Vec::new() };
                         let f = t.tree();
-                        let rows = f.tree.rows(&t.collapsed);
+                        let rows = f.tree.rows_view(&t.collapsed, t.view);
                         range
                             .filter_map(|ix| rows.get(ix).copied())
                             .map(|i| {
@@ -344,6 +484,48 @@ impl TerminalPanel {
                 .flex_1()
                 .track_scroll(t.scroll.clone()),
             )
+            .when(self.history_open, |d| {
+                d.child(
+                    div()
+                        .id("tests-history-list")
+                        .absolute()
+                        .top(px(26.))
+                        .left(px(4.))
+                        .w(px(312.))
+                        .max_h(px(260.))
+                        .overflow_y_scroll()
+                        .occlude()
+                        .py(px(4.))
+                        .rounded(px(6.))
+                        .border_1()
+                        .border_color(Theme::border())
+                        .bg(Theme::panel())
+                        .shadow_md()
+                        .text_size(px(12.))
+                        .when(history.is_empty(), |d| d.child(div().px(px(8.)).py(px(4.)).text_color(Theme::text_muted()).child("No test runs yet")))
+                        .children(history.into_iter().enumerate().map(|(k, e)| {
+                            let when = crate::workspace::fmt_time(e.time);
+                            div()
+                                .id(("tests-history-row", k))
+                                .w_full()
+                                .flex()
+                                .gap(px(8.))
+                                .px(px(8.))
+                                .py(px(3.))
+                                .hover(|s| s.bg(Theme::hover_row()))
+                                .cursor_pointer()
+                                .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_color(Theme::text()).child(e.name.clone()))
+                                .child(div().text_color(Theme::text_dim()).child(when))
+                                .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    if let Err(err) = this.open_history(&e) {
+                                        this.error = Some(err);
+                                    }
+                                    cx.notify();
+                                }))
+                        })),
+                )
+            })
     }
 
     /// The selected test's captured output and failure, links clickable.
