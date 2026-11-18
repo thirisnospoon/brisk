@@ -30,6 +30,7 @@ mod menu_ui;
 mod problems_ui;
 pub(crate) mod project_ui;
 mod run_config_ui;
+mod run_marks_ui;
 mod run_ui;
 mod settings_ui;
 mod tabs_ui;
@@ -281,6 +282,8 @@ pub struct Workspace {
     debug: debug_ui::Debug,
     /// Created on first open of the Python Console.
     pyc: Option<console_ui::PyConsole>,
+    /// pytest results per file for the run icons in the gutter.
+    test_marks: run_marks_ui::TestMarks,
     /// Created on first open of Python Packages.
     packages: Option<packages_ui::Packages>,
     /// Created on first open of the TODO window; then kept current on save.
@@ -380,6 +383,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNCFG").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_dialog_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_PYCONSOLE").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.python_console_smoke(window, cx));
@@ -522,6 +528,7 @@ impl Workspace {
             db,
             debug,
             pyc: None,
+            test_marks: Default::default(),
             packages: None,
             todo: None,
             debug_edit: None,

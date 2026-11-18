@@ -110,6 +110,9 @@ impl Workspace {
         cx.subscribe_in(&p, window, |this: &mut Self, panel, ev: &RunEvent, window, cx| match ev {
             RunEvent::Open(path, line) => this.open_at(&path.clone(), *line, window, cx),
             RunEvent::Finished { name, code, tests } => {
+                if let Some(t) = tests {
+                    this.take_test_results(&t.results, cx);
+                }
                 this.status = match (tests, code) {
                     (Some(t), _) => t.summary.clone(),
                     (None, Some(c)) => format!("'{name}' finished with exit code {c}"),
@@ -188,7 +191,7 @@ impl Workspace {
         Some(for_path(&path, &scope))
     }
 
-    fn run_config(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn run_config(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
         self.save_all(cx);
         let python = match &cfg.interpreter {
             Some(p) => Some(brisk_run::resolve(&self.root, p)),

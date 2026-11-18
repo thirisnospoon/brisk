@@ -698,7 +698,7 @@ impl Workspace {
         self.status = "Pausing…".into();
     }
 
-    fn start_debug(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn start_debug(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
         self.save_all(cx);
         if self.debug.is_live() {
             self.stop_debug(cx);

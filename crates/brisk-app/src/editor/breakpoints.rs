@@ -114,7 +114,7 @@ impl Editor {
         if !self.show_gutter || self.is_field || !self.can_debug() {
             return false;
         }
-        let numbers_right = l.text_left - gpui::px(8. + 25.);
+        let numbers_right = l.text_left - gpui::px(8. + 25.) - self.run_slot();
         let numbers_left = l.bounds.left() + gpui::px(18.) + self.annotation_width(l.char_w);
         if p.x < numbers_left || p.x > numbers_right {
             return false;
@@ -131,7 +131,7 @@ impl Editor {
     /// Right click: the line of a breakpoint under the point in the line numbers, if any.
     pub(super) fn breakpoint_at_point(&self, p: gpui::Point<gpui::Pixels>) -> Option<usize> {
         let l = self.layout.as_ref()?;
-        if !self.show_gutter || p.x < l.bounds.left() + gpui::px(18.) + self.annotation_width(l.char_w) || p.x > l.text_left - gpui::px(8. + 25.) {
+        if !self.show_gutter || p.x < l.bounds.left() + gpui::px(18.) + self.annotation_width(l.char_w) || p.x > l.text_left - gpui::px(8. + 25.) - self.run_slot() {
             return None;
         }
         let y = f32::from(p.y - l.bounds.top()) + self.scroll_y;

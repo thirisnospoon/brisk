@@ -35,6 +35,8 @@ impl Drop for TestsView {
 pub struct TestsOutcome {
     pub summary: String,
     pub failed: bool,
+    /// Every test that ran: (file, node id, status), for the editor's run icons.
+    pub results: Vec<(Option<PathBuf>, String, TestStatus)>,
 }
 
 pub(super) fn status_glyph(s: TestStatus) -> (&'static str, Hsla) {
@@ -76,16 +78,24 @@ impl TestsView {
     pub fn finish(&mut self) -> TestsOutcome {
         self.stop.store(true, Ordering::SeqCst);
         self.finished = true;
-        let (summary, failed, first) = {
+        let (summary, failed, first, results) = {
             let mut f = self.tree();
             f.poll();
             let c = f.tree.counts();
-            (f.tree.summary(true), c.failed > 0, f.tree.first_failed())
+            let root = f.tree.rootdir.clone();
+            let results = f
+                .tree
+                .nodes
+                .iter()
+                .filter(|n| n.is_test)
+                .map(|n| (n.file.as_ref().map(|p| if p.is_absolute() { p.clone() } else { root.as_ref().map(|r| r.join(p)).unwrap_or_else(|| p.clone()) }), n.id.clone(), n.status))
+                .collect();
+            (f.tree.summary(true), c.failed > 0, f.tree.first_failed(), results)
         };
         if let Some(i) = first {
             self.select(i);
         }
-        TestsOutcome { summary, failed }
+        TestsOutcome { summary, failed, results }
     }
 
     /// Select a node, expanding its parents and scrolling it into view.
