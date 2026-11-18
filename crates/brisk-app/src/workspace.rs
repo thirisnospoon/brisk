@@ -15,6 +15,7 @@ mod run_term_smoke;
 mod test_view_smoke;
 mod ansi_smoke;
 mod latency_smoke;
+mod flood_smoke;
 mod test_runners_smoke;
 mod debug_ui;
 mod disk_ui;
@@ -492,6 +493,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_TESTRUNNERS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.test_runners_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_FLOOD").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.flood_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_LATENCY").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.latency_smoke(window, cx));

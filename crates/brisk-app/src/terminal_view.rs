@@ -86,6 +86,12 @@ pub enum RunEvent {
 impl gpui::EventEmitter<RunEvent> for TerminalPanel {}
 
 const LINK: [u8; 3] = [0x56, 0x8a, 0xf2];
+/// Shortest gap between two redraws caused by process output (Windows timers tick every 15.6 ms, so 8 ms
+/// waits come out as about one frame at 60 Hz).
+const FRAME: std::time::Duration = std::time::Duration::from_millis(8);
+/// Redraw requests from process output and renders of the panel (the flood smoke reads them).
+pub(crate) static PUMP_NOTIFIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub(crate) static PANEL_RENDERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// A grid row as text plus the cell column of every character.
 fn row_text(cells: &[brisk_terminal::CellView]) -> (String, Vec<usize>) {
@@ -161,9 +167,14 @@ impl TerminalPanel {
 
     fn with_mode(root: PathBuf, run_mode: bool, cx: &mut Context<Self>) -> Self {
         let (tx, mut rx) = mpsc::unbounded::<(u64, TermEvent)>();
-        // Pump PTY events onto the UI thread, coalescing bursts of output into one redraw.
+        // Pump PTY events onto the UI thread, coalescing bursts of output into one redraw, at
+        // most one per frame: a process printing 50k lines/s wakes the UI ~60 times a second.
         cx.spawn(async move |this, cx| {
+            let mut last_notify: Option<std::time::Instant> = None;
             while let Some(first) = rx.next().await {
+                if let Some(wait) = last_notify.and_then(|t| FRAME.checked_sub(t.elapsed())) {
+                    cx.background_executor().timer(wait).await;
+                }
                 let mut batch = vec![first];
                 while let Ok(ev) = rx.try_recv() {
                     batch.push(ev);
@@ -214,8 +225,10 @@ impl TerminalPanel {
                             this.search.dirty = true;
                         }
                     }
+                    PUMP_NOTIFIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     cx.notify();
                 });
+                last_notify = Some(std::time::Instant::now());
                 if alive.is_err() {
                     break;
                 }
@@ -924,6 +937,7 @@ impl Focusable for TerminalPanel {
 
 impl Render for TerminalPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        PANEL_RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         div()
             .id("terminal")
             .key_context("Terminal")
