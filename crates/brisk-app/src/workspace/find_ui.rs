@@ -245,6 +245,7 @@ impl Workspace {
                 if this.find.gen != gen {
                     return;
                 }
+                crate::stall::note("find: apply results");
                 let f = &mut this.find;
                 f.results = Arc::new(res);
                 f.files = Some(files);
