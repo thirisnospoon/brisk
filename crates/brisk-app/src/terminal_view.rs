@@ -14,6 +14,8 @@ use std::path::PathBuf;
 
 mod tests_view;
 mod console_find;
+mod dashboard;
+pub use dashboard::RunInfo;
 pub use tests_view::TestsOutcome;
 
 const CELL_H: f32 = 18.0;
@@ -41,6 +43,11 @@ struct RunTab {
     code: Option<i32>,
     /// pytest runs: the live test tree.
     tests: Option<tests_view::TestsView>,
+    /// Services shows how long a run took.
+    started: std::time::Instant,
+    ended: Option<std::time::Instant>,
+    /// Pin Tab: a new run of the configuration opens its own tab instead of replacing this one.
+    pinned: bool,
 }
 
 /// Events from the Run window.
@@ -153,6 +160,7 @@ impl TerminalPanel {
                                 if let Some(t) = this.tabs.iter_mut().find(|t| t.id == id) {
                                     if let Some(r) = t.run.as_mut() {
                                         r.running = false;
+                                        r.ended = Some(std::time::Instant::now());
                                         let code = r.code.map(|c| c.to_string()).unwrap_or_else(|| "-1".into());
                                         t.session.inject(format!("\r\n\x1b[0mProcess finished with exit code {code}\r\n\x1b[?25l").as_bytes());
                                         let tests = r.tests.as_mut().map(|t| t.finish());
@@ -202,6 +210,12 @@ impl TerminalPanel {
 
     /// Start (or restart, in its own tab) a run configuration.
     pub fn run(&mut self, cfg: brisk_run::RunConfig, cmd: brisk_run::Command) -> Result<(), String> {
+        self.run_in(cfg, cmd, None)
+    }
+
+    /// Run in tab `into` (a Rerun of that tab, pinned or not), else in the configuration's
+    /// unpinned tab, else in a new one.
+    pub fn run_in(&mut self, cfg: brisk_run::RunConfig, cmd: brisk_run::Command, into: Option<u64>) -> Result<(), String> {
         let id = self.next_id;
         self.next_id += 1;
         let tx = self.events.clone();
@@ -218,11 +232,18 @@ impl TerminalPanel {
         })
         .map_err(|e| format!("Cannot run {}: {e}", cmd.program.display()))?;
         let name = cfg.name.clone();
-        let tab = Tab { id, session, title: String::new(), number: 0, run: Some(RunTab { name: name.clone(), cfg, cmd, running: true, code: None, tests }) };
-        if let Some(i) = self.tabs.iter().position(|t| t.run.as_ref().is_some_and(|r| r.name == name)) {
+        let tab = Tab { id, session, title: String::new(), number: 0, run: Some(RunTab { name: name.clone(), cfg, cmd, running: true, code: None, tests, started: std::time::Instant::now(), ended: None, pinned: false }) };
+        let reuse = into
+            .and_then(|id| self.tabs.iter().position(|t| t.id == id && t.run.is_some()))
+            .or_else(|| self.tabs.iter().position(|t| t.run.as_ref().is_some_and(|r| r.name == name && !r.pinned)));
+        if let Some(i) = reuse {
             // PyCharm reuses the configuration's tab (stopping a run still in progress).
             self.tabs[i].session.kill();
+            let pinned = self.tabs[i].run.as_ref().is_some_and(|r| r.pinned);
             self.tabs[i] = tab;
+            if let Some(r) = self.tabs[i].run.as_mut() {
+                r.pinned = pinned;
+            }
             self.active = i;
         } else {
             self.tabs.push(tab);
@@ -233,11 +254,11 @@ impl TerminalPanel {
         Ok(())
     }
 
-    /// Close the oldest finished tabs beyond [`MAX_RUN_TABS`]; running ones stay.
+    /// Close the oldest finished tabs beyond [`MAX_RUN_TABS`]; running and pinned ones stay.
     fn trim_run_tabs(&mut self) {
         while self.tabs.len() > MAX_RUN_TABS {
             let active_id = self.tabs.get(self.active).map(|t| t.id);
-            let Some(i) = self.tabs.iter().position(|t| Some(t.id) != active_id && !t.run.as_ref().is_some_and(|r| r.running)) else { break };
+            let Some(i) = self.tabs.iter().position(|t| Some(t.id) != active_id && !t.run.as_ref().is_some_and(|r| r.running || r.pinned)) else { break };
             self.tabs.remove(i);
             self.active = active_id.and_then(|id| self.tabs.iter().position(|t| t.id == id)).unwrap_or(0);
         }
@@ -276,15 +297,31 @@ impl TerminalPanel {
         self.session().map(|s| s.size().0).unwrap_or(0)
     }
 
-    /// Ctrl+F5 in the Run window: run the active tab's command again.
-    pub fn rerun(&mut self) -> Result<Option<String>, String> {
-        let Some(r) = self.tabs.get(self.active).and_then(|t| t.run.as_ref()) else { return Ok(None) };
-        let (name, cfg, cmd) = (r.name.clone(), r.cfg.clone(), r.cmd.clone());
-        self.run(cfg, cmd)?;
-        Ok(Some(name))
+    /// The active Run tab's configuration and command (what Rerun starts again).
+    pub fn active_run(&self) -> Option<(brisk_run::RunConfig, brisk_run::Command, u64)> {
+        self.tabs.get(self.active).and_then(|t| t.run.as_ref().map(|r| (r.cfg.clone(), r.cmd.clone(), t.id)))
     }
 
-    /// Ctrl+F2: stop the active tab's process (or any running one).
+    /// Pin Tab / Unpin Tab on the active Run tab; returns whether it is pinned now.
+    pub fn toggle_pin(&mut self) -> bool {
+        match self.tabs.get_mut(self.active).and_then(|t| t.run.as_mut()) {
+            Some(r) => {
+                r.pinned = !r.pinned;
+                r.pinned
+            }
+            None => false,
+        }
+    }
+
+    fn active_pinned(&self) -> bool {
+        self.tabs.get(self.active).and_then(|t| t.run.as_ref()).is_some_and(|r| r.pinned)
+    }
+
+    /// Run tabs as (name, pinned) and the lines each keeps above its screen (smoke tests).
+    pub fn run_tabs_detail(&self) -> Vec<(String, bool, usize)> {
+        self.tabs.iter().filter_map(|t| t.run.as_ref().map(|r| (r.name.clone(), r.pinned, t.session.history_lines()))).collect()
+    }
+
     /// Stop every running process (smoke tests).
     pub fn stop_all(&mut self) {
         for t in self.tabs.iter().filter(|t| t.run.as_ref().is_some_and(|r| r.running)) {
@@ -292,6 +329,7 @@ impl TerminalPanel {
         }
     }
 
+    /// Ctrl+F2: stop the active tab's process (or any running one).
     pub fn stop(&mut self) -> bool {
         let running = |t: &&Tab| t.run.as_ref().is_some_and(|r| r.running);
         let pick = self.tabs.get(self.active).filter(running).or_else(|| self.tabs.iter().find(running));
@@ -614,6 +652,7 @@ impl TerminalPanel {
                         cx.notify();
                     }))
                     .when_some(state, |d, (g, c)| d.child(div().text_color(c).text_size(px(11.)).child(g)))
+                    .when(t.run.as_ref().is_some_and(|r| r.pinned), |d| d.child(div().text_size(px(11.)).text_color(Theme::accent()).child("📌")))
                     .child(name)
                     .child(
                         div().id(("term-close", t.id as usize)).text_color(Theme::text_dim()).hover(|s| s.text_color(Theme::text())).child("×").on_click(
@@ -669,6 +708,7 @@ impl TerminalPanel {
         let toggle = |id: &'static str, glyph: &'static str, on: bool| {
             div()
                 .id(id)
+                .relative()
                 .w(px(26.))
                 .h(px(26.))
                 .flex()
@@ -707,6 +747,10 @@ impl TerminalPanel {
                 })),
             )
             .child(div().w(px(18.)).h(px(1.)).my(px(3.)).bg(Theme::divider()))
+            .child(toggle("run-pin", "📌", self.active_pinned()).tooltip(tip("Pin Tab: the next run opens a new tab")).child(pin_track()).on_click(cx.listener(|this, _, _, cx| {
+                this.toggle_pin();
+                cx.notify();
+            })))
             .child(toggle("run-wrap", "↵", self.soft_wrap).tooltip(tip("Soft-Wrap")).on_click(cx.listener(|this, _, _, cx| {
                 this.toggle_soft_wrap();
                 cx.notify();
@@ -837,7 +881,8 @@ impl Element for TerminalElement {
             // After the resize: it re-wraps rows and moves lines into the history.
             p.refresh_search();
             if p.search.open {
-                marks = p.search.found.iter().enumerate().map(|(i, f)| (f.line, f.cols.clone(), i == p.search.current)).collect();
+                let current = p.search.current;
+                marks = p.search.found.iter().enumerate().flat_map(|(i, f)| f.parts().map(move |(l, c)| (l, c, i == current))).collect();
             }
             let tab = p.tabs.get(p.active)?;
             Some((tab.session.snapshot(), run_mode))
@@ -961,4 +1006,18 @@ impl Element for TerminalElement {
             }
         });
     }
+}
+
+thread_local! {
+    /// Where the Pin Tab button was painted: the smoke clicks it for real.
+    static PIN_BUTTON: std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>> = const { std::cell::Cell::new(None) };
+}
+
+fn pin_track() -> impl IntoElement {
+    gpui::canvas(|b, _, _| PIN_BUTTON.with(|c| c.set(Some(b))), |_, _, _, _| {}).absolute().top_0().left_0().size_full()
+}
+
+/// Center of the Pin Tab button in window pixels (smoke tests).
+pub fn pin_button_center() -> Option<(f32, f32)> {
+    PIN_BUTTON.with(|c| c.get()).map(|b| (f32::from(b.center().x), f32::from(b.center().y)))
 }

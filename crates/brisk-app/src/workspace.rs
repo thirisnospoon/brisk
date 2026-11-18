@@ -6,6 +6,8 @@ mod console_ui;
 mod packages_ui;
 mod todo_ui;
 mod db_ui;
+mod services_ui;
+mod pin_smoke;
 mod debug_ui;
 mod disk_ui;
 mod edit2_smoke;
@@ -300,6 +302,7 @@ pub struct Workspace {
     toast_gen: u64,
     find: find_ui::Find,
     db: db_ui::Db,
+    services: services_ui::Services,
     debug: debug_ui::Debug,
     /// Created on first open of the Python Console.
     pyc: Option<console_ui::PyConsole>,
@@ -432,6 +435,12 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_PIN").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.pin_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_SERVICES").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.services_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_CONSOLEFIND").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.console_find_smoke(window, cx));
@@ -602,6 +611,7 @@ impl Workspace {
             toast_gen: 0,
             find: find_ui::Find::new(),
             db,
+            services: services_ui::Services { selected: None, focus: cx.focus_handle() },
             debug,
             pyc: None,
             venv_busy: false,
@@ -921,6 +931,10 @@ impl Workspace {
                 }
             }
         }
+        if self.bottom == Some(BottomTool::Services) && self.services_key(e, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
         if self.menu.is_some() {
             if !e.keystroke.modifiers.modified() || e.keystroke.key == "escape" {
                 self.menu_key(e, window, cx);
@@ -1171,15 +1185,7 @@ impl Workspace {
             A::ToggleProfilerWindow => self.toggle_profiler_window(window, cx),
             A::RefreshPythonPackages | A::InstallPythonPackage | A::UninstallPythonPackage => self.python_packages_action(action, window, cx),
             A::RerunPythonConsole | A::StopPythonConsole | A::ClearPythonConsole => self.python_console_action(action, window, cx),
-            A::ToggleServicesWindow => {
-                self.toggle_bottom(BottomTool::Services, window, cx);
-                if self.bottom == Some(BottomTool::Services) {
-                    if let Some(g) = &self.db.results {
-                        let f = g.read(cx).focus_handle(cx);
-                        window.focus(&f);
-                    }
-                }
-            }
+            A::ToggleServicesWindow => self.toggle_services_window(window, cx),
             A::ToggleDatabaseWindow | A::NewDataSource | A::DataSourceProperties | A::OpenQueryConsole | A::EditTableData
             | A::RefreshDatabase | A::Disconnect | A::ExecuteQuery => self.db_action(action, window, cx),
             A::Stop if self.db.running.is_some() => {

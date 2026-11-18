@@ -148,15 +148,7 @@ impl Workspace {
                     Err(e) => this.show_toast(e, true, cx),
                 }
             }
-            RunEvent::RerunRequested => {
-                this.save_all(cx);
-                if let Err(e) = panel.update(cx, |p, cx| {
-                    cx.notify();
-                    p.rerun()
-                }) {
-                    this.show_toast(e, true, cx);
-                }
-            }
+            RunEvent::RerunRequested => this.rerun_active(window, cx),
         })
         .detach();
         self.runs.panel = Some(p.clone());
@@ -241,6 +233,16 @@ impl Workspace {
         self.run_command(cfg, cmd, window, cx);
     }
 
+    /// Rerun (Ctrl+F5 / ↻): the active tab's command again, after its Before launch steps.
+    pub(super) fn rerun_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((cfg, cmd, tab)) = self.runs.panel.as_ref().and_then(|p| p.read(cx).active_run()) else { return };
+        self.save_all(cx);
+        if self.before_launch(&cfg, before_launch_ui::Then::Rerun(cmd.clone(), tab), window, cx) {
+            return;
+        }
+        self.run_command_in(cfg, cmd, Some(tab), window, cx);
+    }
+
     /// A Compound: every member starts in its own Run tab.
     fn run_compound(&mut self, cfg: &RunConfig, window: &mut Window, cx: &mut Context<Self>) {
         let members = match self.runs.file.compound_members(cfg) {
@@ -274,11 +276,16 @@ impl Workspace {
 
     /// Start a prepared process in the Run window (a tab named after `cfg`).
     pub(super) fn run_command(&mut self, cfg: RunConfig, cmd: brisk_run::Command, window: &mut Window, cx: &mut Context<Self>) {
+        self.run_command_in(cfg, cmd, None, window, cx);
+    }
+
+    /// [`Self::run_command`] into Run tab `tab` (a Rerun keeps its tab, pinned or not).
+    pub(super) fn run_command_in(&mut self, cfg: RunConfig, cmd: brisk_run::Command, tab: Option<u64>, window: &mut Window, cx: &mut Context<Self>) {
         let panel = self.ensure_run_panel(window, cx);
         let name = cfg.name.clone();
         let res = panel.update(cx, |p, cx| {
             cx.notify();
-            p.run(cfg, cmd)
+            p.run_in(cfg, cmd, tab)
         });
         match res {
             Ok(()) => {
@@ -319,17 +326,7 @@ impl Workspace {
                     self.run_config(cfg, window, cx);
                 }
             }
-            A::Rerun => {
-                if let Some(p) = self.runs.panel.clone() {
-                    self.save_all(cx);
-                    if let Err(e) = p.update(cx, |p, cx| {
-                        cx.notify();
-                        p.rerun()
-                    }) {
-                        self.show_toast(e, true, cx);
-                    }
-                }
-            }
+            A::Rerun => self.rerun_active(window, cx),
             A::Stop => {
                 let stopped = self.runs.panel.as_ref().is_some_and(|p| p.update(cx, |p, cx| {
                     cx.notify();
@@ -381,6 +378,8 @@ impl Workspace {
                         (RunKind::Compound, _) => format!("compound: {}", brisk_run::compound_names(&c.target).join(", ")),
                         (RunKind::FastApi, _) => format!("uvicorn {}", c.target),
                         (RunKind::Flask, _) => format!("flask --app {} run", c.target),
+                        (RunKind::Django, _) => format!("{} runserver", c.target),
+                        (RunKind::DjangoTests, _) => format!("{} test", c.target),
                         (_, true) => format!("-m {}", c.target),
                         _ => c.target.clone(),
                     };
@@ -670,6 +669,10 @@ impl Workspace {
 /// server (PyCharm offers its FastAPI / Flask configuration for it).
 fn web_config(root: &Path, file: &Path) -> Option<RunConfig> {
     let src = std::fs::read_to_string(file).ok()?;
+    // Django's manage.py runs the development server (PyCharm's Django Server).
+    if file.file_name().is_some_and(|n| n == "manage.py") && src.contains("django") {
+        return Some(RunConfig::for_django(root, RunKind::Django, file, true));
+    }
     if src.contains("__name__ == \"__main__\"") || src.contains("__name__ == '__main__'") {
         return None;
     }

@@ -128,6 +128,10 @@ enum Io {
 }
 
 /// One terminal tab or one running process.
+/// How many lines of a Run console's output are kept: beyond it the oldest lines are dropped
+/// (the buffer is a ring), so a chatty process cannot grow memory without bound.
+pub const RUN_HISTORY_LINES: usize = 100_000;
+
 pub struct Session {
     term: Arc<FairMutex<Term<Listener>>>,
     io: Io,
@@ -148,39 +152,82 @@ pub struct CellView {
     pub selected: bool,
 }
 
-/// A search match on one grid row.
+/// A search match. Matching goes over logical lines (rows joined where the output was
+/// soft-wrapped), so a match may continue on the next rows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
-    /// Grid line: negative in the history, `0..rows` on the screen (as `display_offset` 0).
+    /// Grid line of the match's start: negative in the history, `0..rows` on the screen (as
+    /// `display_offset` 0).
     pub line: i32,
-    /// Columns of the match.
+    /// Columns of the match on `line`.
     pub cols: std::ops::Range<usize>,
-    /// The whole row, trailing blanks trimmed.
+    /// The rest of a match that continues on the following rows: `(line, columns)`.
+    pub more: Vec<(i32, std::ops::Range<usize>)>,
+    /// First row of the logical line.
+    pub row: i32,
+    /// The whole logical line, trailing blanks trimmed.
     pub text: String,
 }
 
-/// Matches of `needle` in rows given as `(line, [(column, char)])` (case-insensitive unless
-/// `case`); a match does not span rows.
-pub fn find_in_rows(rows: impl IntoIterator<Item = (i32, Vec<(usize, char)>)>, needle: &str, case: bool) -> Vec<Found> {
+impl Found {
+    /// Every row piece of the match: `(line, columns)`.
+    pub fn parts(&self) -> impl Iterator<Item = (i32, std::ops::Range<usize>)> + '_ {
+        std::iter::once((self.line, self.cols.clone())).chain(self.more.iter().cloned())
+    }
+}
+
+/// One grid row for [`find_in_rows`]: its line, its `(column, char)` cells and whether it
+/// continues on the next row (soft wrap).
+pub struct SearchRow {
+    pub line: i32,
+    pub cells: Vec<(usize, char)>,
+    pub wrapped: bool,
+}
+
+/// Matches of `needle` (case-insensitive unless `case`) in rows joined into logical lines.
+pub fn find_in_rows(rows: impl IntoIterator<Item = SearchRow>, needle: &str, case: bool) -> Vec<Found> {
     let fold = |c: char| if case { c } else { c.to_lowercase().next().unwrap_or(c) };
     let pat: Vec<char> = needle.chars().map(fold).collect();
     let mut out = Vec::new();
     if pat.is_empty() {
         return out;
     }
-    for (line, cells) in rows {
-        let chars: Vec<char> = cells.iter().map(|&(_, c)| fold(c)).collect();
+    // (line, column, char) of the logical line being collected.
+    let mut logical: Vec<(i32, usize, char)> = Vec::new();
+    let mut search = |logical: &mut Vec<(i32, usize, char)>| {
+        if logical.is_empty() {
+            return;
+        }
+        let chars: Vec<char> = logical.iter().map(|&(_, _, c)| fold(c)).collect();
+        let text: String = logical.iter().map(|&(_, _, c)| c).collect::<String>().trim_end().to_string();
+        let row = logical[0].0;
         let mut i = 0;
         while i + pat.len() <= chars.len() {
-            if chars[i..i + pat.len()] == pat[..] {
-                let text: String = cells.iter().map(|&(_, c)| c).collect::<String>().trim_end().to_string();
-                out.push(Found { line, cols: cells[i].0..cells[i + pat.len() - 1].0 + 1, text });
-                i += pat.len();
-            } else {
+            if chars[i..i + pat.len()] != pat[..] {
                 i += 1;
+                continue;
             }
+            // Split the match into row pieces.
+            let mut parts: Vec<(i32, std::ops::Range<usize>)> = Vec::new();
+            for &(l, c, _) in &logical[i..i + pat.len()] {
+                match parts.last_mut() {
+                    Some((pl, r)) if *pl == l => r.end = c + 1,
+                    _ => parts.push((l, c..c + 1)),
+                }
+            }
+            let (line, cols) = parts.remove(0);
+            out.push(Found { line, cols, more: parts, row, text: text.clone() });
+            i += pat.len();
+        }
+        logical.clear();
+    };
+    for r in rows {
+        logical.extend(r.cells.iter().map(|&(c, ch)| (r.line, c, ch)));
+        if !r.wrapped {
+            search(&mut logical);
         }
     }
+    search(&mut logical);
     out
 }
 
@@ -359,7 +406,7 @@ impl Session {
     ) -> std::io::Result<Self> {
         let size = Size { cols: cols.max(2), rows: rows.max(1) };
         let listener = Listener { callback: Arc::new(on_event), sender: Arc::new(OnceLock::new()) };
-        let config = Config { scrolling_history: 100_000, ..Config::default() };
+        let config = Config { scrolling_history: RUN_HISTORY_LINES, ..Config::default() };
         let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
         let (io, pid) = pipe::PipeIo::spawn(cmd, header, term.clone(), listener.callback.clone())?;
         Ok(Self { term, io: Io::Pipe(io), size, pid: Some(pid) })
@@ -372,6 +419,11 @@ impl Session {
         let mut p: alacritty_terminal::vte::ansi::Processor = alacritty_terminal::vte::ansi::Processor::new();
         p.advance(&mut *term, bytes);
         term.scroll_display(Scroll::Bottom);
+    }
+
+    /// Lines kept above the screen; at [`RUN_HISTORY_LINES`] the oldest output is being dropped.
+    pub fn history_lines(&self) -> usize {
+        self.term.lock().grid().history_size()
     }
 
     /// Plain text of the whole buffer (history and screen), trailing blanks trimmed.
@@ -409,7 +461,8 @@ impl Session {
                 let cell = &row[Column(c)];
                 (!cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)).then_some((c, cell.c))
             });
-            (l, cells.collect())
+            let wrapped = row[Column(grid.columns() - 1)].flags.contains(Flags::WRAPLINE);
+            SearchRow { line: l, cells: cells.collect(), wrapped }
         });
         find_in_rows(rows, needle, case)
     }
@@ -623,16 +676,25 @@ mod tests {
 
     #[test]
     fn finds_in_rows() {
-        let row = |l: i32, t: &str| (l, t.chars().enumerate().collect::<Vec<_>>());
+        let row = |l: i32, t: &str, wrapped: bool| SearchRow { line: l, cells: t.chars().enumerate().collect(), wrapped };
         // A wide char: its spacer column is missing from the row.
-        let wide = (2, vec![(0, '日'), (2, 'E'), (3, 'r'), (4, 'r')]);
-        let rows = vec![row(-1, "Error: x  error"), row(0, "ok"), wide];
-        let f = find_in_rows(rows.clone(), "error", false);
+        let wide = SearchRow { line: 2, cells: vec![(0, '日'), (2, 'E'), (3, 'r'), (4, 'r')], wrapped: false };
+        let rows = || vec![row(-1, "Error: x  error", false), row(0, "ok", false), wide_clone(&wide)];
+        fn wide_clone(w: &SearchRow) -> SearchRow {
+            SearchRow { line: w.line, cells: w.cells.clone(), wrapped: w.wrapped }
+        }
+        let f = find_in_rows(rows(), "error", false);
         assert_eq!(f.iter().map(|f| (f.line, f.cols.clone())).collect::<Vec<_>>(), vec![(-1, 0..5), (-1, 10..15)]);
         assert_eq!(f[0].text, "Error: x  error");
-        assert_eq!(find_in_rows(rows.clone(), "Error", true).len(), 1);
-        assert_eq!(find_in_rows(rows.clone(), "err", false).last().map(|f| (f.line, f.cols.clone())), Some((2, 2..5)));
-        assert!(find_in_rows(rows, "", false).is_empty());
+        assert_eq!(find_in_rows(rows(), "Error", true).len(), 1);
+        assert_eq!(find_in_rows(rows(), "err", false).last().map(|f| (f.line, f.cols.clone())), Some((2, 2..5)));
+        assert!(find_in_rows(rows(), "", false).is_empty());
+        // A match broken by soft wrap: "needle" over rows 5 and 6.
+        let wrapped = vec![row(5, "xxxxxxxnee", true), row(6, "dle yy", false), row(7, "dle", false)];
+        let f = find_in_rows(wrapped, "needle", false);
+        assert_eq!(f.len(), 1);
+        assert_eq!((f[0].line, f[0].cols.clone(), f[0].more.clone(), f[0].row), (5, 7..10, vec![(6, 0..3)], 5));
+        assert_eq!(f[0].text, "xxxxxxxneedle yy");
     }
 
     /// Spawns a real shell, runs a command and reads it back from the grid.

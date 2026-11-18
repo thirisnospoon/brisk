@@ -73,6 +73,11 @@ pub enum RunKind {
     FastApi,
     /// PyCharm's Flask server: `python -m flask --app <target> run`.
     Flask,
+    /// PyCharm's Django Server: `python <target> runserver <parameters>`; `target` is `manage.py`.
+    Django,
+    /// PyCharm's Django tests: `python <target> test <parameters>` (labels and options).
+    #[serde(rename = "djangotests")]
+    DjangoTests,
 }
 
 impl RunKind {

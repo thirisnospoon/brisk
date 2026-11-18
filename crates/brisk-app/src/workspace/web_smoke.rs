@@ -1,6 +1,8 @@
 //! BRISK_SMOKE_WEB=1 on an empty folder (the project interpreter needs fastapi, uvicorn
 //! and flask): FastAPI and Flask apps are found from their files, run as servers, answer
-//! HTTP on the address their output prints, and that address is a link that opens.
+//! HTTP on the address their output prints, and that address is a link that opens. Django
+//! runs against a stub `django` package written next to `site/manage.py` (it answers
+//! `runserver` and `test` the way Django prints them), so no Django install is needed.
 
 use super::Workspace;
 use gpui::{Context, Window};
@@ -27,6 +29,15 @@ impl Workspace {
         let _ = std::fs::create_dir_all(root.join("api"));
         let _ = std::fs::write(root.join("api/main.py"), "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/\")\ndef index():\n    return {\"hello\": \"fastapi\"}\n");
         let _ = std::fs::write(root.join("webapp.py"), "from flask import Flask\n\nweb = Flask(__name__)\n\n\n@web.route(\"/\")\ndef index():\n    return \"hello flask\"\n");
+        // A stub of Django's command line: enough to check what Brisk starts.
+        let _ = std::fs::create_dir_all(root.join("site/django/core/management"));
+        let _ = std::fs::write(root.join("site/manage.py"), "import os\nimport sys\n\n\ndef main():\n    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n    from django.core.management import execute_from_command_line\n    execute_from_command_line(sys.argv)\n\n\nif __name__ == '__main__':\n    main()\n");
+        let _ = std::fs::write(root.join("site/django/__init__.py"), "");
+        let _ = std::fs::write(root.join("site/django/core/__init__.py"), "");
+        let _ = std::fs::write(
+            root.join("site/django/core/management/__init__.py"),
+            "import http.server, os\n\n\nclass H(http.server.BaseHTTPRequestHandler):\n    def do_GET(self):\n        self.send_response(200)\n        self.end_headers()\n        self.wfile.write(b'hello django')\n\n\ndef execute_from_command_line(argv):\n    settings = os.environ['DJANGO_SETTINGS_MODULE']\n    if argv[1] == 'runserver':\n        addr = argv[2] if len(argv) > 2 else '127.0.0.1:8000'\n        host, port = addr.rsplit(':', 1)\n        print(f'Django version stub, using settings {settings!r}')\n        print(f'Starting development server at http://{addr}/')\n        http.server.HTTPServer((host, int(port)), H).serve_forever()\n    elif argv[1] == 'test':\n        print(f'Ran 1 test, labels {argv[2:]}, settings {settings}')\n        print('OK')\n",
+        );
         cx.spawn_in(window, async move |this, cx| {
             let bg = cx.background_executor().clone();
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
@@ -36,8 +47,12 @@ impl Workspace {
                     break;
                 }
             }
-            let _ = this.update(cx, |this, cx| eprintln!("smoke-web: dialog + FastAPI / + Flask -> {:?}", this.web_dialog_probe(cx)));
-            for (file, port) in [("api/main.py", 18765), ("webapp.py", 18766)] {
+            let keep = std::env::var("BRISK_SMOKE_WEB").is_ok_and(|v| v.starts_with("dialog"));
+            let _ = this.update(cx, |this, cx| eprintln!("smoke-web: dialog + FastAPI / + Flask / + Django / + Django tests -> {:?}", this.web_dialog_probe(keep, cx)));
+            if keep {
+                return;
+            }
+            for (file, params) in [("api/main.py", "--port 18765"), ("webapp.py", "--port 18766"), ("site/manage.py", "127.0.0.1:18767")] {
                 let path = root.join(file);
                 let _ = this.update_in(cx, |this, window, cx| {
                     this.open_file(&path, window, cx);
@@ -47,7 +62,7 @@ impl Workspace {
                     };
                     eprintln!("smoke-web: {file} -> {:?} '{}' target {:?}", cfg.kind, cfg.name, cfg.target);
                     // Fixed ports keep the smoke off servers already running on this machine.
-                    cfg.parameters = format!("--port {port}");
+                    cfg.parameters = params.to_string();
                     this.run_config(cfg, window, cx);
                 });
                 let mut url = None;
@@ -76,7 +91,23 @@ impl Workspace {
                 pause(200).await;
                 let _ = this.update(cx, |this, _| eprintln!("smoke-web: opened {:?}", this.last_url));
             }
-            // Stop both servers before quitting.
+            // Django tests through `manage.py test`.
+            let _ = this.update_in(cx, |this, window, cx| {
+                let mut cfg = brisk_run::RunConfig::for_django(&root, brisk_run::RunKind::DjangoTests, &root.join("site/manage.py"), false);
+                cfg.parameters = "polls".into();
+                this.run_config(cfg, window, cx);
+            });
+            for _ in 0..100 {
+                pause(100).await;
+                let out = this.update(cx, |t, cx| t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text())).ok().flatten().unwrap_or_default();
+                if out.contains("Process finished") {
+                    let first = out.lines().next().unwrap_or("").to_string();
+                    let ran = out.lines().find(|l| l.starts_with("Ran")).unwrap_or("-").to_string();
+                    eprintln!("smoke-web: django tests -> {first:?} / {ran:?}");
+                    break;
+                }
+            }
+            // Stop the servers before quitting.
             let _ = this.update(cx, |this, cx| {
                 if let Some(p) = this.runs.panel.clone() {
                     p.update(cx, |p, _| p.stop_all());
