@@ -113,6 +113,10 @@ pub struct Debug {
     /// The selected row of the variables tree.
     pub sel: Option<usize>,
     pub edit: Option<VarEdit>,
+    /// Stopped on an exception: "Type: message".
+    pub exception: Option<String>,
+    /// The working directory of the session (relative traceback paths).
+    pub cwd: PathBuf,
     pub tab: DebugTab,
     pub focus: FocusHandle,
     console_scroll: ScrollHandle,
@@ -141,6 +145,8 @@ impl Debug {
             watches: load_watches(root),
             sel: None,
             edit: None,
+            exception: None,
+            cwd: root.to_path_buf(),
             tab: DebugTab::Debugger,
             focus: cx.focus_handle(),
             console_scroll: ScrollHandle::new(),
@@ -287,6 +293,28 @@ fn save_watches(root: &Path, list: &[String]) {
     if let Ok(s) = serde_json::to_string_pretty(&Value::Object(all)) {
         let _ = std::fs::write(path, s);
     }
+}
+
+/// debugpy's exceptionInfo traceback lists the innermost frame first and ends with the
+/// exception line: Python's order (innermost last), without that line.
+fn python_order(stack: &str) -> String {
+    let mut lines: Vec<&str> = stack.trim_end().lines().collect();
+    while lines.last().is_some_and(|l| !l.starts_with(' ')) {
+        lines.pop();
+    }
+    if !lines.first().is_some_and(|l| l.trim_start().starts_with("File \"")) {
+        return lines.join("\n");
+    }
+    let mut frames: Vec<Vec<&str>> = Vec::new();
+    for l in lines {
+        if l.trim_start().starts_with("File \"") || frames.is_empty() {
+            frames.push(vec![l]);
+        } else if let Some(f) = frames.last_mut() {
+            f.push(l);
+        }
+    }
+    frames.reverse();
+    frames.concat().join("\n")
 }
 
 /// `python [opts] (-m module | script) args` → what debugpy launches.
@@ -631,6 +659,7 @@ impl Workspace {
         }
         self.debug.frames.clear();
         self.debug.idle_watches();
+        self.debug.exception = None;
         self.clear_exec_marks(cx);
     }
 
@@ -689,6 +718,8 @@ impl Workspace {
             cmd.args.retain(|a| a != "-p");
         }
         let launch = launch_for(&cmd);
+        self.debug.cwd = launch.cwd.clone();
+        self.debug.exception = None;
         let name = cfg.name.clone();
         self.debug.console.clear();
         self.debug.frames.clear();
@@ -785,6 +816,7 @@ impl Workspace {
         self.debug.frames.clear();
         self.debug.idle_watches();
         self.debug.edit = None;
+        self.debug.exception = None;
         self.clear_exec_marks(cx);
         for e in self.editors().cloned().collect::<Vec<_>>() {
             e.update(cx, |e, cx| {
@@ -838,8 +870,9 @@ impl Workspace {
                     }
                 }
                 if body.get("reason").and_then(Value::as_str) == Some("exception") {
-                    let d = body.get("description").or_else(|| body.get("text")).and_then(Value::as_str).unwrap_or("exception");
-                    self.debug.info(format!("Stopped on an exception: {d}"));
+                    let d = body.get("text").or_else(|| body.get("description")).and_then(Value::as_str).unwrap_or("exception");
+                    self.debug.exception = Some(d.to_string());
+                    self.exception_info(thread, cx);
                 }
                 self.debug.tab = DebugTab::Debugger;
                 self.bottom = Some(BottomTool::Debug);
@@ -864,6 +897,52 @@ impl Workspace {
             }
             _ => {}
         }
+        cx.notify();
+    }
+
+    /// Stopped on an exception: its type, message and traceback (DAP exceptionInfo).
+    fn exception_info(&mut self, thread: i64, cx: &mut Context<Self>) {
+        let Some(s) = &self.debug.session else { return };
+        let rx = s.client.request("exceptionInfo", json!({"threadId": thread}));
+        cx.spawn(async move |this, cx| {
+            let res = rx.await;
+            let _ = this.update(cx, |this, cx| {
+                let (head, stack) = match res {
+                    Ok(Ok(v)) => {
+                        let id = v.get("exceptionId").and_then(Value::as_str).unwrap_or("");
+                        let ty = v.pointer("/details/typeName").and_then(Value::as_str).unwrap_or(id);
+                        let msg = v.pointer("/details/message").or_else(|| v.get("description")).and_then(Value::as_str).unwrap_or("");
+                        let head = if msg.is_empty() { ty.to_string() } else { format!("{ty}: {msg}") };
+                        (head, v.pointer("/details/stackTrace").and_then(Value::as_str).unwrap_or("").to_string())
+                    }
+                    _ => (this.debug.exception.clone().unwrap_or_else(|| "exception".into()), String::new()),
+                };
+                this.debug.print("Traceback (most recent call last):\n", Line::Err);
+                let stack = python_order(&stack);
+                if !stack.is_empty() {
+                    this.debug.print(&format!("{stack}\n"), Line::Err);
+                }
+                this.debug.print(&format!("{head}\n"), Line::Err);
+                this.debug.exception = Some(head);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// A console link: `File "x.py", line N` (relative to the session's directory).
+    fn console_link(&self, path: &str, line: usize) -> Option<(PathBuf, usize)> {
+        let p = PathBuf::from(path);
+        let p = if p.is_absolute() { p } else { self.debug.cwd.join(p) };
+        p.is_file().then_some((p, line))
+    }
+
+    pub(super) fn open_console_link(&mut self, path: &Path, line: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_file(path, window, cx);
+        if let Some(ed) = self.active_editor().cloned() {
+            ed.update(cx, |e, cx| e.go_to_line(line.saturating_sub(1), cx));
+        }
+        self.focus_editor(window, cx);
         cx.notify();
     }
 
@@ -1546,10 +1625,25 @@ impl Workspace {
             .flex_col()
             .child(bar)
             .child(div().id("dbg-vars-list").flex_1().min_h_0().overflow_y_scroll().font_family(MONO_FONT).text_size(px(12.5)).children(rows));
-        div().size_full().flex().child(frames).child(vars).into_any_element()
+        let banner = d.exception.clone().map(|e| {
+            div()
+                .flex_shrink_0()
+                .px(px(8.))
+                .py(px(3.))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .bg(Theme::warning_bg())
+                .border_b_1()
+                .border_color(Theme::divider())
+                .text_color(Theme::error())
+                .child(div().font_weight(gpui::FontWeight::BOLD).child("Exception"))
+                .child(div().whitespace_nowrap().overflow_hidden().child(e))
+        });
+        div().size_full().flex().flex_col().children(banner).child(div().flex_1().min_h_0().flex().child(frames).child(vars)).into_any_element()
     }
 
-    fn render_console_tab(&mut self, window: &Window, _cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn render_console_tab(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let d = &self.debug;
         let focused = d.focus.is_focused(window);
         let can_eval = d.paused_thread().is_some();
@@ -1563,7 +1657,7 @@ impl Workspace {
             .py(px(4.))
             .font_family(MONO_FONT)
             .text_size(px(12.5))
-            .children(d.console.iter().map(|(t, k)| {
+            .children(d.console.iter().enumerate().map(|(ln, (t, k))| {
                 let color = match k {
                     Line::Out => Theme::text(),
                     Line::Err => Theme::error(),
@@ -1571,7 +1665,33 @@ impl Workspace {
                     Line::Input => Theme::accent(),
                     Line::Result => Theme::syntax(brisk_syntax::Highlight::String),
                 };
-                div().text_color(color).whitespace_nowrap().child(t.trim_end_matches('\n').to_string())
+                let line = t.trim_end_matches('\n');
+                let chars: Vec<char> = line.chars().collect();
+                let mut pieces: Vec<gpui::AnyElement> = Vec::new();
+                let mut at = 0;
+                if matches!(k, Line::Out | Line::Err) {
+                    for (j, l) in brisk_run::find_links(line).into_iter().enumerate() {
+                        let Some((path, n)) = self.console_link(&l.path, l.line) else { continue };
+                        if l.cols.start > at {
+                            pieces.push(div().child(chars[at..l.cols.start].iter().collect::<String>()).into_any_element());
+                        }
+                        pieces.push(
+                            div()
+                                .id(("dbg-link", ln * 64 + j))
+                                .text_color(Theme::accent())
+                                .underline()
+                                .cursor_pointer()
+                                .child(chars[l.cols.clone()].iter().collect::<String>())
+                                .on_click(cx.listener(move |this, _, w, cx| this.open_console_link(&path, n, w, cx)))
+                                .into_any_element(),
+                        );
+                        at = l.cols.end;
+                    }
+                }
+                if at < chars.len() || pieces.is_empty() {
+                    pieces.push(div().child(chars[at.min(chars.len())..].iter().collect::<String>()).into_any_element());
+                }
+                div().min_h(px(17.)).flex().text_color(color).whitespace_nowrap().children(pieces)
             }));
         let input = div()
             .h(px(26.))
@@ -1803,8 +1923,41 @@ impl Workspace {
                 eprintln!("smoke-debug: stop -> {stopped}; stop while starting: pending={pending} after={}", t.debug.pending);
             });
             wait(3000).await;
+            let _ = this.update_in(cx, |t, _, _| eprintln!("smoke-debug: late start dropped -> state={:?}", t.debug.state()));
+            // An uncaught exception: red header, traceback links in the console.
+            let exc = dir.join("dbg_exc.py");
+            let _ = std::fs::write(&exc, "def f(x):\n    return 1 / x\n\n\nf(0)\n");
+            let _ = this.update_in(cx, |t, w, cx| {
+                t.open_file(&exc, w, cx);
+                t.dispatch(Action::DebugContext, w, cx);
+            });
+            let p = until!(paused);
+            wait(1000).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                let links: Vec<(PathBuf, usize)> = t
+                    .debug
+                    .console
+                    .iter()
+                    .filter(|(_, k)| matches!(k, Line::Err | Line::Out))
+                    .flat_map(|(l, _)| brisk_run::find_links(l))
+                    .filter_map(|l| t.console_link(&l.path, l.line))
+                    .collect();
+                eprintln!("smoke-debug: exception paused={p} header={:?} frame={:?} links={:?}", t.debug.exception, t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)), links.iter().map(|(p, l)| format!("{}:{l}", p.file_name().unwrap_or_default().to_string_lossy())).collect::<Vec<_>>());
+                let err: Vec<&str> = t.debug.console.iter().filter(|(_, k)| *k == Line::Err).map(|(l, _)| l.trim_end()).collect();
+                eprintln!("smoke-debug: exception console {err:?}");
+                // Click on the first link: as the console's on_click does.
+                if let Some((p, l)) = links.first().cloned() {
+                    t.open_file(&spin, w, cx);
+                    t.open_console_link(&p, l, w, cx);
+                    let at = t.active_editor().map(|e| (e.read(cx).path.clone().and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string())), e.read(cx).caret_line_col().0 + 1));
+                    eprintln!("smoke-debug: link opens -> {at:?}");
+                }
+                t.dispatch(Action::Stop, w, cx);
+            });
+            until!(|s: Option<State>| s == Some(State::Ended));
             let _ = this.update_in(cx, |t, _, cx| {
-                eprintln!("smoke-debug: late start dropped -> state={:?}", t.debug.state());
+                eprintln!("smoke-debug: after stop exception={:?}", t.debug.exception);
+                let _ = std::fs::remove_file(&exc);
                 let _ = std::fs::remove_file(&spin);
                 eprintln!("smoke-debug: done");
                 cx.quit();
@@ -1818,6 +1971,12 @@ impl Workspace {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn traceback_in_python_order() {
+        let s = "  File \"a.py\", line 2, in f\n    return 1 / x\n  File \"a.py\", line 5, in <module>\n    f(0)\nZeroDivisionError: division by zero\n";
+        assert_eq!(python_order(s), "  File \"a.py\", line 5, in <module>\n    f(0)\n  File \"a.py\", line 2, in f\n    return 1 / x");
+    }
 
     #[test]
     fn launch_from_command() {
