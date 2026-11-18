@@ -160,8 +160,7 @@ impl Editor {
     /// Foldable regions (cached per buffer version).
     pub(super) fn fold_candidates(&mut self) -> &[(usize, usize)] {
         let v = self.buffer.version();
-        // A large file keeps slightly stale markers while typing (a full walk takes ~0.1 s).
-        if self.folds.candidates.0 != Some(v) && !(self.folds.candidates.0.is_some() && self.defer_folds()) {
+        if self.folds.candidates.0 != Some(v) {
             self.reparse();
             let c = match &self.syntax {
                 Some(s) => s.fold_ranges(),
@@ -177,8 +176,13 @@ impl Editor {
     }
 
     /// Lines that start a foldable region (gutter markers).
+    /// In a long file the markers come from `schedule_folds` (off the UI thread, after a
+    /// pause in typing) and may be a moment stale; folding commands still use fresh regions.
     pub(super) fn fold_headers(&mut self) -> Vec<usize> {
-        let mut h: Vec<usize> = self.fold_candidates().iter().map(|r| r.0).collect();
+        if !self.lazy_folds() || self.folds.candidates.0.is_none() {
+            self.fold_candidates();
+        }
+        let mut h: Vec<usize> = self.folds.candidates.1.iter().map(|r| r.0).collect();
         h.dedup();
         h
     }
@@ -251,6 +255,25 @@ impl Editor {
         self.sync_folds();
         let all = self.fold_candidates().to_vec();
         for (a, z) in all {
+            self.collapse_lines(a, z);
+        }
+    }
+
+    /// On opening a Python file, as PyCharm does by default: fold the first group of imports
+    /// (two or more lines) down to its first line.
+    pub fn collapse_imports(&mut self) {
+        if !self.is_python() {
+            return;
+        }
+        let is_import = |l: &str| l.starts_with("import ") || l.starts_with("from ");
+        let candidates = self.fold_candidates().to_vec();
+        let group = candidates.into_iter().find(|&(a, z)| {
+            (a..=z).all(|i| {
+                let l = self.buffer.line(i);
+                is_import(&l) || l.trim().is_empty() || l.starts_with([' ', '\t', ')']) || l.trim_start().starts_with('#')
+            }) && is_import(&self.buffer.line(a))
+        });
+        if let Some((a, z)) = group {
             self.collapse_lines(a, z);
         }
     }
@@ -344,6 +367,7 @@ impl Editor {
     /// Smoke checks: brackets and occurrences around the caret, as (line, column) pairs.
     pub fn caret_marks_for_smoke(&mut self) -> (Vec<(usize, usize)>, usize) {
         self.reparse();
+        self.fill_occurrences();
         let m = self.caret_marks(0..self.text_cache.1.len());
         (m.brackets.iter().map(|r| self.buffer.pos_to_line_col(r.start)).collect(), m.occurrences.len())
     }

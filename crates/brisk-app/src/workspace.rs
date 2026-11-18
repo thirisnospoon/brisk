@@ -35,7 +35,9 @@ mod history_ui;
 mod intel_smoke;
 mod complete_smoke;
 mod big_smoke;
+mod local_refs;
 mod mouse_smoke;
+mod scope_smoke;
 mod lsp_ui;
 mod main_menu;
 mod menu_ui;
@@ -416,6 +418,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_MOUSE").is_some() {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.mouse_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_SCOPE").is_some() {
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.scope_smoke(window, cx));
         }
         if let Some(f) = std::env::var_os("BRISK_SMOKE_BIG") {
             let f = PathBuf::from(f);
@@ -809,6 +814,7 @@ impl Workspace {
             self.watch_editor(&ed, window, cx);
             self.adopt_bookmarks(&ed, cx);
             self.adopt_breakpoints(&ed, cx);
+            ed.update(cx, |e, _| e.collapse_imports());
             if ed.read(cx).is_big() {
                 let msg = format!("Large file ({} lines): inlay hints are off; fold markers and completion words update lazily", ed.read(cx).buffer.len_lines());
                 self.status = msg.clone();

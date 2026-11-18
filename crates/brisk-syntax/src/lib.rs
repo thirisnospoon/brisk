@@ -2,7 +2,9 @@
 //!
 //! Highlighting is computed only for the visible byte range, so cost does not grow with file size.
 
+mod scope;
 mod sql;
+pub use scope::NameRefs;
 pub use sql::highlight_sql;
 
 use std::ops::Range;
@@ -291,7 +293,9 @@ impl SyntaxTree {
                 tree
             }
         };
-        self.stale = parsed.is_none() && old.is_some();
+        // Out of budget: keep the old tree (if any; the first parse of a large file has none)
+        // until a background parse brings a complete one.
+        self.stale = parsed.is_none();
         self.tree = parsed.or(old);
         self.parsed.clear();
         self.parsed.push_str(text);
@@ -303,11 +307,11 @@ impl SyntaxTree {
     }
 
     /// What a background `parse_full` needs: the current text and tree.
-    pub fn stale_job(&self) -> Option<(Lang, String, Tree)> {
+    pub fn stale_job(&self) -> Option<(Lang, String, Option<Tree>)> {
         if !self.stale {
             return None;
         }
-        Some((self.lang, self.parsed.clone(), self.tree.clone()?))
+        Some((self.lang, self.parsed.clone(), self.tree.clone()))
     }
 
     /// Installs a tree that `parse_full` built for `text`. If the text changed meanwhile, the
@@ -483,68 +487,7 @@ impl SyntaxTree {
     /// Foldable regions as (first line, last line), sorted by first line: definitions,
     /// compound statements, multi-line literals and argument lists, import groups.
     pub fn fold_ranges(&self) -> Vec<(usize, usize)> {
-        let Some(tree) = &self.tree else { return Vec::new() };
-        let foldable = |k: &str| -> bool {
-            match self.lang {
-                Lang::Python => matches!(
-                    k,
-                    "class_definition" | "function_definition" | "if_statement" | "for_statement" | "while_statement"
-                        | "try_statement" | "with_statement" | "match_statement" | "elif_clause" | "else_clause"
-                        | "except_clause" | "finally_clause" | "case_clause" | "dictionary" | "list" | "tuple" | "set"
-                        | "argument_list" | "parameters" | "string" | "list_comprehension" | "dictionary_comprehension"
-                        | "parenthesized_expression"
-                ),
-                Lang::Markdown => matches!(k, "section" | "fenced_code_block" | "list"),
-                Lang::Yaml => matches!(k, "block_mapping_pair" | "block_sequence_item" | "flow_mapping" | "flow_sequence"),
-                Lang::Toml => matches!(k, "table" | "table_array_element" | "inline_table" | "array"),
-                Lang::Html => matches!(k, "element" | "script_element" | "style_element" | "comment"),
-                _ => matches!(
-                    k,
-                    "object" | "array" | "statement_block" | "class_body" | "block" | "rule_set" | "arguments"
-                        | "formal_parameters" | "object_type" | "interface_body" | "enum_body" | "switch_body"
-                        | "template_string" | "comment" | "jsx_element" | "compound_statement" | "do_group"
-                        | "declaration_list" | "keyframe_block_list" | "parenthesized_expression"
-                ),
-            }
-        };
-        let mut out = Vec::new();
-        let mut stack = vec![tree.root_node()];
-        while let Some(node) = stack.pop() {
-            let (a, mut z) = (node.start_position().row, node.end_position().row);
-            // A node ending at column 0 really ends on the line before.
-            if node.end_position().column == 0 && z > a {
-                z -= 1;
-            }
-            if z > a && foldable(node.kind()) {
-                out.push((a, z));
-            }
-            let mut c = node.walk();
-            let kids: Vec<_> = node.children(&mut c).collect();
-            // Python: runs of import statements fold together.
-            if self.lang == Lang::Python {
-                let mut i = 0;
-                while i < kids.len() {
-                    let is_import = |k: &tree_sitter::Node| matches!(k.kind(), "import_statement" | "import_from_statement" | "future_import_statement");
-                    if is_import(&kids[i]) {
-                        let st = i;
-                        while i + 1 < kids.len() && is_import(&kids[i + 1]) {
-                            i += 1;
-                        }
-                        let (a, z) = (kids[st].start_position().row, kids[i].end_position().row);
-                        if z > a {
-                            out.push((a, z));
-                        }
-                    }
-                    i += 1;
-                }
-            }
-            if z > a || node.parent().is_none() {
-                stack.extend(kids.into_iter().filter(|k| k.end_position().row > k.start_position().row));
-            }
-        }
-        out.sort();
-        out.dedup_by_key(|r| r.0);
-        out
+        self.tree.as_ref().map(|t| fold_ranges_of(self.lang, t)).unwrap_or_default()
     }
 
     /// Top-level and nested classes/functions for the Structure tool window (Alt+7).
@@ -596,6 +539,71 @@ pub struct OutlineItem {
     pub line: usize,
     /// Last line of the whole definition (body included).
     pub end_line: usize,
+}
+
+/// Foldable regions of `tree` (see `SyntaxTree::fold_ranges`); usable on a background thread.
+pub fn fold_ranges_of(lang: Lang, tree: &Tree) -> Vec<(usize, usize)> {
+    let foldable = |k: &str| -> bool {
+        match lang {
+            Lang::Python => matches!(
+                k,
+                "class_definition" | "function_definition" | "if_statement" | "for_statement" | "while_statement"
+                    | "try_statement" | "with_statement" | "match_statement" | "elif_clause" | "else_clause"
+                    | "except_clause" | "finally_clause" | "case_clause" | "dictionary" | "list" | "tuple" | "set"
+                    | "argument_list" | "parameters" | "string" | "list_comprehension" | "dictionary_comprehension"
+                    | "parenthesized_expression"
+            ),
+            Lang::Markdown => matches!(k, "section" | "fenced_code_block" | "list"),
+            Lang::Yaml => matches!(k, "block_mapping_pair" | "block_sequence_item" | "flow_mapping" | "flow_sequence"),
+            Lang::Toml => matches!(k, "table" | "table_array_element" | "inline_table" | "array"),
+            Lang::Html => matches!(k, "element" | "script_element" | "style_element" | "comment"),
+            _ => matches!(
+                k,
+                "object" | "array" | "statement_block" | "class_body" | "block" | "rule_set" | "arguments"
+                    | "formal_parameters" | "object_type" | "interface_body" | "enum_body" | "switch_body"
+                    | "template_string" | "comment" | "jsx_element" | "compound_statement" | "do_group"
+                    | "declaration_list" | "keyframe_block_list" | "parenthesized_expression"
+            ),
+        }
+    };
+    let mut out = Vec::new();
+    let mut stack = vec![tree.root_node()];
+    while let Some(node) = stack.pop() {
+        let (a, mut z) = (node.start_position().row, node.end_position().row);
+        // A node ending at column 0 really ends on the line before.
+        if node.end_position().column == 0 && z > a {
+            z -= 1;
+        }
+        if z > a && foldable(node.kind()) {
+            out.push((a, z));
+        }
+        let mut c = node.walk();
+        let kids: Vec<_> = node.children(&mut c).collect();
+        // Python: runs of import statements fold together.
+        if lang == Lang::Python {
+            let mut i = 0;
+            while i < kids.len() {
+                let is_import = |k: &tree_sitter::Node| matches!(k.kind(), "import_statement" | "import_from_statement" | "future_import_statement");
+                if is_import(&kids[i]) {
+                    let st = i;
+                    while i + 1 < kids.len() && is_import(&kids[i + 1]) {
+                        i += 1;
+                    }
+                    let (a, z) = (kids[st].start_position().row, kids[i].end_position().row);
+                    if z > a {
+                        out.push((a, z));
+                    }
+                }
+                i += 1;
+            }
+        }
+        if z > a || node.parent().is_none() {
+            stack.extend(kids.into_iter().filter(|k| k.end_position().row > k.start_position().row));
+        }
+    }
+    out.sort();
+    out.dedup_by_key(|r| r.0);
+    out
 }
 
 #[cfg(test)]
@@ -820,7 +828,14 @@ mod incremental_tests {
             f.tree().unwrap().root_node().to_sexp()
         };
         let mut inc = SyntaxTree::new(Lang::Python);
-        inc.parse(&base);
+        // A first parse out of budget (a large file on opening): no tree yet, stale.
+        inc.parse_within(&base, Some(std::time::Duration::ZERO));
+        assert!(inc.is_stale() && inc.tree().is_none());
+        let (lang, job_text, tree) = inc.stale_job().unwrap();
+        assert!(tree.is_none());
+        inc.adopt(&job_text, parse_full(lang, &job_text, None).unwrap());
+        assert!(!inc.is_stale());
+        assert_eq!(inc.tree().unwrap().root_node().to_sexp(), full(&base));
         // An unclosed bracket near the top, with a zero budget: the parse gives up.
         let mut text = base.clone();
         text.insert_str(20, "(");
@@ -830,14 +845,14 @@ mod incremental_tests {
         text.insert_str(5000, "x = 1\n");
         inc.parse_within(&text, Some(std::time::Duration::ZERO));
         let (lang, job_text, tree) = inc.stale_job().unwrap();
-        let built = parse_full(lang, &job_text, Some(&tree)).unwrap();
+        let built = parse_full(lang, &job_text, tree.as_ref()).unwrap();
         // The text changed while it ran: adopted but still stale.
         text.insert_str(9000, "y = 2\n");
         inc.parse_within(&text, Some(std::time::Duration::ZERO));
         inc.adopt(&job_text, built);
         assert!(inc.is_stale());
         let (lang, job_text, tree) = inc.stale_job().unwrap();
-        inc.adopt(&job_text, parse_full(lang, &job_text, Some(&tree)).unwrap());
+        inc.adopt(&job_text, parse_full(lang, &job_text, tree.as_ref()).unwrap());
         assert!(!inc.is_stale());
         assert_eq!(inc.tree().unwrap().root_node().to_sexp(), full(&text));
         // And a normal parse afterwards is incremental and correct again.
