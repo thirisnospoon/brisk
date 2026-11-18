@@ -420,6 +420,7 @@ impl Workspace {
             return;
         };
         let start = ed.read(cx).word_start_before_caret();
+        let asked_at = ed.read(cx).buffer.primary().head;
         self.nav.completion_gen += 1;
         let my = self.nav.completion_gen;
         let fut = ty.completion_list(&path, p);
@@ -430,12 +431,21 @@ impl Workspace {
                     return;
                 }
                 match res {
-                    Ok((items, incomplete)) if !items.is_empty() => ed.update(cx, |e, cx| {
+                    Ok((items, incomplete)) if !items.is_empty() => {
                         // Still typing the same word?
-                        if e.word_start_before_caret() == start {
+                        let again = ed.update(cx, |e, cx| {
+                            if e.word_start_before_caret() != start {
+                                return false;
+                            }
                             e.show_completion_list(items, start, incomplete, cx);
+                            // Typed on while ty answered for a shorter prefix: its capped list
+                            // may lack the match (auto-import items), so ask for the new one.
+                            incomplete && e.buffer.primary().head != asked_at
+                        });
+                        if again {
+                            this.complete(ed, explicit, cx);
                         }
-                    }),
+                    }
                     Ok(_) if explicit => {
                         this.status = "No suggestions".into();
                         cx.notify();

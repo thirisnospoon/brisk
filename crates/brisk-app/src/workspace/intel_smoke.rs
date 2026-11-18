@@ -30,8 +30,10 @@ impl Workspace {
                 }
             };
             let text = |this: &Self, cx: &gpui::App| this.active_editor().map(|e| e.read(cx).text_string()).unwrap_or_default();
-            // ty's check of the new file.
-            wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| e.read(cx).diagnostics.iter().any(|d| d.code == "unresolved-reference"))).await;
+            // ty running and the file checked (ruff's F821 stands for ty's unresolved-reference).
+            wait(&this, cx, &|this, _| this.lsp.state != super::lsp_ui::TyState::Unknown && this.lsp.state != super::lsp_ui::TyState::Starting).await;
+            eprintln!("smoke-intel: ty ready after {:.1?}", t0.elapsed());
+            wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| e.read(cx).diagnostics.iter().any(|d| d.code == "F821" || d.code == "unresolved-reference"))).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 eprintln!("smoke-intel: ty {:?} after {:.1?}", this.lsp.state, t0.elapsed());
                 if let Some(ed) = this.active_editor().cloned() {
@@ -72,10 +74,20 @@ impl Workspace {
                     ed.update(cx, |e, cx| {
                         let end = e.buffer.len_chars();
                         e.buffer.set_caret(end, false);
-                        e.type_for_smoke("y = OrderedD", cx);
+                        e.type_for_smoke("y = ", cx);
+                        e.close_insight();
                     });
                 }
             });
+            // Key by key, as typing does: each keystroke is its own event for the workspace.
+            for ch in "OrderedD".chars() {
+                pause(40).await;
+                let _ = this.update(cx, |this, cx| {
+                    if let Some(ed) = this.active_editor().cloned() {
+                        ed.update(cx, |e, cx| e.type_for_smoke(&ch.to_string(), cx));
+                    }
+                });
+            }
             wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| e.read(cx).completion_open())).await;
             pause(200).await;
             let _ = this.update_in(cx, |this, _, cx| {
@@ -90,8 +102,17 @@ impl Workspace {
                 eprintln!("smoke-intel: one undo removes word and import: {}", text(this, cx) == before);
                 ed.update(cx, |e, _| e.buffer.redo());
                 // Documentation preview of the selected item.
-                ed.update(cx, |e, cx| e.type_for_smoke("\nos.pa", cx));
+                ed.update(cx, |e, cx| e.type_for_smoke("\nos.", cx));
             });
+            pause(300).await;
+            for ch in "pa".chars() {
+                let _ = this.update(cx, |this, cx| {
+                    if let Some(ed) = this.active_editor().cloned() {
+                        ed.update(cx, |e, cx| e.type_for_smoke(&ch.to_string(), cx));
+                    }
+                });
+                pause(40).await;
+            }
             wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| e.read(cx).completion_open())).await;
             pause(200).await;
             let _ = this.update(cx, |this, cx| {
