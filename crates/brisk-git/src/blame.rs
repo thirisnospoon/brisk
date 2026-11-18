@@ -78,6 +78,7 @@ impl Repo {
             c.stdin(Stdio::piped());
         }
         let mut child = c.spawn()?;
+        brisk_proc::adopt(&child);
         if let (Some(text), Some(mut stdin)) = (contents, child.stdin.take()) {
             // A separate thread: a big file may fill the pipe before git starts reading.
             let text = text.to_string();

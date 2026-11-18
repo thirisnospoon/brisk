@@ -392,7 +392,7 @@ impl Editor {
             if let Some(p) = self.point_of(caret) {
                 let rel = p - origin;
                 let mut hl = Vec::new();
-                if let Some(r) = sig.active.and_then(|a| sig.params.get(a)) {
+                if let Some(r) = sig.active.and_then(|a| sig.params.get(a)).filter(|r| r.start <= r.end) {
                     let b = |c: usize| sig.label.char_indices().nth(c).map(|(b, _)| b).unwrap_or(sig.label.len());
                     hl.push((b(r.start)..b(r.end), HighlightStyle { font_weight: Some(gpui::FontWeight::BOLD), color: Some(Theme::text()), ..Default::default() }));
                 }

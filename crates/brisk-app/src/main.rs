@@ -4,6 +4,7 @@
 
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
+mod crash;
 mod diff_view;
 mod grid_view;
 mod editor;
@@ -28,6 +29,7 @@ use std::path::PathBuf;
 use workspace::Workspace;
 
 fn main() {
+    crash::install();
     // Without an argument, reopen the last project like PyCharm; the current directory otherwise.
     let root = std::env::args()
         .nth(1)

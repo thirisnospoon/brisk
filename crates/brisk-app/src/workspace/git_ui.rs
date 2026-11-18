@@ -9,6 +9,14 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 const LOG_LIMIT: usize = 3000;
+/// Rows the Commit window draws per group. The list is not virtualized, so a repository with
+/// 24k unversioned files built 24k rows every frame (1.5 GB and a busy core). Check-box and
+/// commit still act on every file; only drawing stops here.
+const MAX_SHOWN_ROWS: usize = 1000;
+
+fn more_row(n: usize) -> gpui::Div {
+    div().h(px(24.)).flex().items_center().pl(px(28.)).text_size(px(12.)).text_color(Theme::text_dim()).child(format!("… {n} more file{} not shown", if n == 1 { "" } else { "s" }))
+}
 const LOG_ROW_H: f32 = 24.0;
 const LANE_W: f32 = 14.0;
 
@@ -904,17 +912,23 @@ impl Workspace {
         if !tracked.is_empty() {
             let items: Vec<FileChange> = tracked.iter().map(|(_, c)| c.clone()).collect();
             list = list.child(group("grp-changes", "Changes", tracked_state, items, cx));
-            for (i, c) in &tracked {
+            for (i, c) in tracked.iter().take(MAX_SHOWN_ROWS) {
                 let inc = g.included(c);
                 list = list.child(file_row(*i, c, inc, cx));
+            }
+            if tracked.len() > MAX_SHOWN_ROWS {
+                list = list.child(more_row(tracked.len() - MAX_SHOWN_ROWS));
             }
         }
         if !untracked.is_empty() {
             let items: Vec<FileChange> = untracked.iter().map(|(_, c)| c.clone()).collect();
             list = list.child(group("grp-unversioned", "Unversioned Files", untracked_state, items, cx));
-            for (i, c) in &untracked {
+            for (i, c) in untracked.iter().take(MAX_SHOWN_ROWS) {
                 let inc = g.included(c);
                 list = list.child(file_row(*i, c, inc, cx));
+            }
+            if untracked.len() > MAX_SHOWN_ROWS {
+                list = list.child(more_row(untracked.len() - MAX_SHOWN_ROWS));
             }
         }
 

@@ -66,54 +66,81 @@ fn folder_name(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string_lossy().into_owned())
 }
 
+#[derive(Clone)]
 pub(super) struct Sym {
-    pub name: String,
+    pub name: Arc<str>,
     pub kind: OutlineKind,
     /// Enclosing classes/functions, dotted.
-    pub container: String,
+    pub container: Arc<str>,
     pub file: usize,
     pub line: usize,
     pub col: usize,
 }
 
+/// Symbols of one file with the size and mtime they were read at.
+pub(super) struct FileSyms {
+    stamp: (u64, Option<std::time::SystemTime>),
+    syms: Vec<Sym>,
+}
+
+/// Per-file symbols of the last index by relative path. A rescan (after any change in an
+/// expanded folder, a save, a `__pycache__` write) re-parses only files whose size or mtime
+/// changed instead of the whole project, which took minutes of one core on a 24k-file tree.
+pub(super) type SymCache = std::collections::HashMap<String, Arc<FileSyms>>;
+
 #[derive(Default)]
 pub(super) struct Symbols {
     pub list: Option<Arc<Vec<Sym>>>,
     pub files: Option<Arc<FileList>>,
+    pub cache: Arc<SymCache>,
     pub building: bool,
     /// A file was saved since the index was built.
     pub stale: bool,
 }
 
-fn index(files: &FileList) -> Vec<Sym> {
+fn file_symbols(path: &Path) -> Vec<Sym> {
     let mut out = Vec::new();
+    let Some(text) = brisk_search::read_text(path) else { return out };
+    let mut tree = SyntaxTree::new(Lang::Python);
+    tree.parse(&text);
+    let mut stack: Vec<String> = Vec::new();
+    for o in tree.outline(&text) {
+        stack.truncate(o.depth);
+        let line_start = text[..o.byte].rfind('\n').map(|n| n + 1).unwrap_or(0);
+        out.push(Sym {
+            name: o.name.as_str().into(),
+            kind: o.kind,
+            container: stack.join(".").into(),
+            file: 0,
+            line: o.line,
+            col: text[line_start..o.byte].chars().count(),
+        });
+        stack.push(o.name);
+    }
+    out
+}
+
+fn index(files: &FileList, old: &SymCache) -> (Vec<Sym>, SymCache) {
+    let mut out = Vec::new();
+    let mut cache = SymCache::new();
     for (i, rel) in files.files.iter().enumerate() {
         if !(rel.ends_with(".py") || rel.ends_with(".pyi")) {
             continue;
         }
         let path = files.abs(i);
-        if std::fs::metadata(&path).map(|m| m.len() > MAX_INDEXED_FILE).unwrap_or(true) {
+        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        if meta.len() > MAX_INDEXED_FILE {
             continue;
         }
-        let Some(text) = brisk_search::read_text(&path) else { continue };
-        let mut tree = SyntaxTree::new(Lang::Python);
-        tree.parse(&text);
-        let mut stack: Vec<String> = Vec::new();
-        for o in tree.outline(&text) {
-            stack.truncate(o.depth);
-            let line_start = text[..o.byte].rfind('\n').map(|n| n + 1).unwrap_or(0);
-            out.push(Sym {
-                name: o.name.clone(),
-                kind: o.kind,
-                container: stack.join("."),
-                file: i,
-                line: o.line,
-                col: text[line_start..o.byte].chars().count(),
-            });
-            stack.push(o.name);
-        }
+        let stamp = (meta.len(), meta.modified().ok());
+        let entry = match old.get(rel) {
+            Some(e) if e.stamp == stamp && stamp.1.is_some() => e.clone(),
+            _ => Arc::new(FileSyms { stamp, syms: file_symbols(&path) }),
+        };
+        out.extend(entry.syms.iter().map(|s| Sym { file: i, ..s.clone() }));
+        cache.insert(rel.clone(), entry);
     }
-    out
+    (out, cache)
 }
 
 /// PyCharm-like name matching: exact, prefix, word/camel-hump starts (`gcw` → `get_current_window`),
@@ -158,13 +185,17 @@ impl Workspace {
         s.building = true;
         s.stale = false;
         let for_task = files.clone();
-        let task = cx.background_executor().spawn(async move { index(&for_task) });
+        let old = s.cache.clone();
+        let task = cx.background_executor().spawn(async move { index(&for_task, &old) });
         cx.spawn(async move |this, cx| {
-            let list = task.await;
+            let (list, cache) = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.symbols.building = false;
                 this.symbols.list = Some(Arc::new(list));
+                this.symbols.cache = Arc::new(cache);
                 this.symbols.files = Some(files);
+                // Saved while building: catch up (cheap, only changed files are parsed).
+                this.ensure_symbols(cx);
                 this.refresh_popup();
                 cx.notify();
             });
@@ -195,7 +226,7 @@ impl Workspace {
                 let rel = &files.files[s.file];
                 let detail = if s.container.is_empty() { format!("{rel}:{}", s.line + 1) } else { format!("{} · {rel}:{}", s.container, s.line + 1) };
                 PopupItem {
-                    label: s.name.clone(),
+                    label: s.name.to_string(),
                     detail,
                     hint: String::new(),
                     target: Target::Symbol(files.abs(s.file), s.line, s.col, s.kind),

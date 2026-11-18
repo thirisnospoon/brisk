@@ -194,6 +194,7 @@ fn command(ruff: &Path, root: &Path) -> Command {
 
 fn run(mut c: Command, stdin: Option<&str>) -> Result<String, String> {
     let mut child = c.spawn().map_err(|e| format!("cannot start ruff: {e}"))?;
+    brisk_proc::adopt(&child);
     if let Some(text) = stdin {
         let mut i = child.stdin.take().ok_or("no stdin")?;
         let text = text.to_string();
@@ -318,9 +319,17 @@ pub fn apply_edits(text: &str, edits: &[Edit]) -> String {
     let mut sorted: Vec<&Edit> = edits.iter().collect();
     sorted.sort_by_key(|e| std::cmp::Reverse(e.start));
     let mut s = text.to_string();
+    // Applied back to front: an edit reaching into one already applied (duplicates, or the
+    // same file listed twice in a workspace edit) would use stale offsets; skip it.
+    let mut limit = text.len();
     for e in sorted {
         let (a, b) = (byte_of(e.start), byte_of(e.end));
-        s.replace_range(a..b.max(a), &e.content);
+        let b = b.max(a);
+        if b > limit {
+            continue;
+        }
+        s.replace_range(a..b, &e.content);
+        limit = a;
     }
     s
 }

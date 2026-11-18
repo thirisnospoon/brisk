@@ -222,6 +222,10 @@ impl Session {
         let pty = tty::new(&pty_opts, ws, 0)?;
         #[cfg(windows)]
         let pid = pty.child_watcher().pid().map(|p| p.get());
+        #[cfg(windows)]
+        if let Some(pid) = pid {
+            brisk_proc::adopt_pid(pid);
+        }
         #[cfg(unix)]
         let pid = Some(pty.child().id());
         let event_loop = EventLoop::new(term.clone(), listener.clone(), pty, true, false)?;
@@ -348,6 +352,11 @@ impl Session {
         }
     }
 
+    /// Lines a Run console keeps above the screen. A line costs about 24 bytes per column
+    /// (2.7 KB at 110 columns), so 100k lines took ~275 MB per tab and five tabs over a GB;
+    /// 20k is ~55 MB, more than PyCharm's default 1 MB cycle buffer keeps.
+    pub const RUN_SCROLLBACK: usize = 20_000;
+
     /// Start a program with pipes instead of a PTY and render its output in an emulator.
     /// `header` is printed first (PyCharm shows the command line there).
     pub fn spawn_process(
@@ -359,7 +368,7 @@ impl Session {
     ) -> std::io::Result<Self> {
         let size = Size { cols: cols.max(2), rows: rows.max(1) };
         let listener = Listener { callback: Arc::new(on_event), sender: Arc::new(OnceLock::new()) };
-        let config = Config { scrolling_history: 100_000, ..Config::default() };
+        let config = Config { scrolling_history: Self::RUN_SCROLLBACK, ..Config::default() };
         let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
         let (io, pid) = pipe::PipeIo::spawn(cmd, header, term.clone(), listener.callback.clone())?;
         Ok(Self { term, io: Io::Pipe(io), size, pid: Some(pid) })

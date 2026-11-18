@@ -143,6 +143,9 @@ impl Workspace {
     }
 
     fn schedule_lint(&mut self, ed: Entity<Editor>, delay: Duration, cx: &mut Context<Self>) {
+        // Forget closed editors so the map does not grow with every tab ever opened.
+        let open: std::collections::HashSet<_> = self.editors().map(|e| e.entity_id()).collect();
+        self.problems.lint_gen.retain(|id, _| open.contains(id) || *id == ed.entity_id());
         let gen = self.problems.lint_gen.entry(ed.entity_id()).or_default();
         *gen += 1;
         let my = *gen;

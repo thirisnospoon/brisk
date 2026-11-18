@@ -149,7 +149,9 @@ fn match_line(m: &Match) -> gpui::Div {
     let trimmed = m.text.len() - m.text.trim_start().len();
     let cut = trimmed.min(m.hl.start);
     let t = &m.text[cut..];
-    let (s, e) = (m.hl.start - cut, m.hl.end - cut);
+    let e = m.hl.end.saturating_sub(cut).min(t.len());
+    let s = (m.hl.start - cut).min(e);
+    let (s, e) = if t.is_char_boundary(s) && t.is_char_boundary(e) { (s, e) } else { (0, 0) };
     div()
         .flex()
         .min_w_0()
@@ -305,6 +307,8 @@ impl Workspace {
     pub(super) fn show_usages(&mut self, title: String, mut usages: Vec<(PathBuf, usize, std::ops::Range<usize>)>, window: &mut Window, cx: &mut Context<Self>) -> usize {
         usages.sort_by(|a, b| (&a.0, a.1, a.2.start).cmp(&(&b.0, b.1, b.2.start)));
         usages.dedup();
+        let truncated = usages.len() > LIMIT;
+        usages.truncate(LIMIT);
         let mut files: Vec<String> = Vec::new();
         let mut matches = Vec::new();
         let mut groups = Vec::new();
@@ -340,7 +344,7 @@ impl Workspace {
             return 0;
         }
         let list = Arc::new(FileList { root: self.root.clone(), files });
-        let results = Results { matches, files_with_matches: n_files, files_searched: n_files, truncated: false };
+        let results = Results { matches, files_with_matches: n_files, files_searched: n_files, truncated };
         self.find.files = Some(list.clone());
         self.find.results = Arc::new(results);
         self.find.opts.query = String::new();

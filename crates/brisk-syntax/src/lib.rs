@@ -295,6 +295,9 @@ impl SyntaxTree {
         for (r, _, k) in raw {
             let s = r.start.max(lo);
             let e = r.end.min(hi);
+            if s >= e {
+                continue; // a capture of a match that only partly overlaps the range
+            }
             for p in &mut paint[s.saturating_sub(lo)..e.saturating_sub(lo)] {
                 *p = Some(k);
             }
