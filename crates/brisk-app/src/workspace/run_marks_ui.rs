@@ -243,6 +243,14 @@ impl Workspace {
             // `def test_add` (line 5) toggles a breakpoint there.
             let _ = this.update_in(cx, |this, window, cx| {
                 let Some(ed) = this.active_editor().cloned() else { return };
+                // Breakpoints are kept per project path (in %APPDATA%), so a scratch folder
+                // recreated at the same path brings the last run's one back: start clean,
+                // or the click removes it.
+                ed.update(cx, |e, cx| {
+                    if e.breakpoint_list().iter().any(|(l, _)| *l == 4) {
+                        e.toggle_breakpoint(4, cx);
+                    }
+                });
                 let Some((x, y)) = ed.read(cx).run_icon_point(4) else { return };
                 let scale = window.scale_factor();
                 super::win_input::click((x - 18.) * scale, y * scale);
