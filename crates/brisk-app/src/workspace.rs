@@ -180,6 +180,8 @@ enum Target {
     Cancel,
     RunConfig(Option<String>, bool),
     EditRunConfigs,
+    /// Make a temporary run configuration permanent.
+    SaveRunConfig(String),
     Interpreter(PathBuf),
     Intention(Box<problems_ui::Intent>),
     Rename(String),
@@ -338,6 +340,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNCFG").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_dialog_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_RUNWIN").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.run_window_smoke(window, cx));
         }
         if let Some(f) = std::env::var_os("BRISK_SMOKE_RUN") {
             let f = PathBuf::from(f);
@@ -1326,7 +1331,7 @@ impl Workspace {
                         self.run_pending(p, cx);
                     }
                     Some(Target::Cancel) => self.focus_editor(window, cx),
-                    Some(t @ (Target::RunConfig(..) | Target::EditRunConfigs | Target::Interpreter(_))) => self.run_popup_pick(t, window, cx),
+                    Some(t @ (Target::RunConfig(..) | Target::EditRunConfigs | Target::SaveRunConfig(_) | Target::Interpreter(_))) => self.run_popup_pick(t, window, cx),
                     Some(Target::Intention(i)) => self.apply_intent(*i, window, cx),
                     Some(Target::Rename(n)) => self.apply_rename(n, window, cx),
                     Some(Target::Project(c)) => {
@@ -1986,6 +1991,7 @@ impl Workspace {
                                         Target::RunConfig(None, _) => ("▤", Theme::text_muted()),
                                         Target::RunConfig(Some(_), _) => ("▶", gpui::rgb(0x5fb865).into()),
                                         Target::EditRunConfigs => ("✎", Theme::text_muted()),
+                                        Target::SaveRunConfig(_) => ("⎙", Theme::text_muted()),
                                         Target::Interpreter(_) => ("◆", gpui::rgb(0x4b8bbe).into()),
                                         Target::Intention(_) => ("✦", gpui::rgb(0xe0b84a).into()),
                                         Target::Rename(_) => ("✎", gpui::rgb(0x4b8bbe).into()),
@@ -2061,7 +2067,7 @@ fn file_icon(name: &str, is_dir: bool) -> (&'static str, gpui::Hsla) {
     (g, gpui::rgb(c).into())
 }
 
-struct Tip(SharedString);
+pub(crate) struct Tip(pub SharedString);
 
 impl Render for Tip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
