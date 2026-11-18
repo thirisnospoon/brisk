@@ -21,7 +21,10 @@ fn links() {
     let l = find_links("tests/test_x.py:7: AssertionError");
     assert_eq!((l[0].path.as_str(), l[0].line, l[0].cols.clone()), ("tests/test_x.py", 7, 0..17));
     let l = find_links(r"C:\a b\x.py:3:1: F401 unused");
-    assert_eq!((l[0].path.as_str(), l[0].line), ("b\\x.py", 3));
+    assert_eq!((l[0].path.as_str(), l[0].line, l[0].col), ("b\\x.py", 3, 1));
+    let l = find_links("app/models.py:12:5: error: Incompatible types");
+    assert_eq!((l[0].path.as_str(), l[0].line, l[0].col, l[0].cols.clone()), ("app/models.py", 12, 5, 0..18));
+    assert_eq!(find_links("tests/test_x.py:7: AssertionError")[0].col, 0);
     let l = find_links(r"warn at C:\p\x.py:3: UserWarning");
     assert_eq!(l[0].path, r"C:\p\x.py");
     // Cyrillic before the link: columns are characters.

@@ -152,6 +152,8 @@ pub struct CellView {
     pub underline: bool,
     pub wide: bool,
     pub selected: bool,
+    /// Part of an OSC 8 hyperlink (see [`Session::hyperlink_at`]).
+    pub link: bool,
 }
 
 /// A search match. Matching goes over logical lines (rows joined where the output was
@@ -529,6 +531,17 @@ impl Session {
         }
     }
 
+    /// The OSC 8 hyperlink (`ESC ]8;;uri ESC \\ text ESC ]8;; ESC \\`) under a screen cell.
+    pub fn hyperlink_at(&self, row: usize, col: usize) -> Option<String> {
+        let term = self.term.lock();
+        let grid = term.grid();
+        let line = Line(row as i32 - grid.display_offset() as i32);
+        if col >= term.columns() || row >= term.screen_lines() {
+            return None;
+        }
+        grid[Point::new(line, Column(col))].hyperlink().map(|h| h.uri().to_string())
+    }
+
     /// Copy the visible screen. Holds the lock only for the copy.
     pub fn snapshot(&self) -> Snapshot {
         let term = self.term.lock();
@@ -537,7 +550,7 @@ impl Session {
         let rows = term.screen_lines();
         let offset = content.display_offset as i32;
         let palette = Palette { overrides: content.colors };
-        let blank = CellView { c: ' ', fg: palette.named(NamedColor::Foreground), bg: None, bold: false, italic: false, underline: false, wide: false, selected: false };
+        let blank = CellView { c: ' ', fg: palette.named(NamedColor::Foreground), bg: None, bold: false, italic: false, underline: false, wide: false, selected: false, link: false };
         let mut cells = vec![blank; cols * rows];
         let sel = content.selection;
         for ind in content.display_iter {
@@ -579,6 +592,7 @@ impl Session {
                 underline: f.intersects(Flags::UNDERLINE | Flags::DOUBLE_UNDERLINE | Flags::UNDERCURL),
                 wide: f.contains(Flags::WIDE_CHAR),
                 selected,
+                link: cell.hyperlink().is_some(),
             };
         }
         let cur = content.cursor.point;

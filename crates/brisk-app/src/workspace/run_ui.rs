@@ -112,11 +112,19 @@ impl Workspace {
         let p = cx.new(|cx| TerminalPanel::new_run(root, cx));
         cx.subscribe_in(&p, window, |this: &mut Self, panel, ev: &RunEvent, window, cx| match ev {
             RunEvent::Open(path, line) => this.open_at(&path.clone(), *line, window, cx),
+            RunEvent::OpenAt(path, line, col) => {
+                this.open_file(&path.clone(), window, cx);
+                if let Some(ed) = this.active_editor().cloned() {
+                    let (l, c) = (line.saturating_sub(1), col.saturating_sub(1));
+                    ed.update(cx, |e, cx| e.select_on_line(l, c..c, cx));
+                }
+            }
             RunEvent::OpenUrl(url) => {
                 // A server bound to all interfaces is reached through localhost.
                 let url = url.replacen("://0.0.0.0", "://127.0.0.1", 1);
                 this.status = format!("Opening {url}");
-                if std::env::var_os("BRISK_SMOKE_WEB").is_none() {
+                // Smokes record the address instead of opening a browser.
+                if !std::env::vars_os().any(|(k, _)| k.to_string_lossy().starts_with("BRISK_SMOKE_")) {
                     cx.open_url(&url);
                 }
                 this.last_url = Some(url);
