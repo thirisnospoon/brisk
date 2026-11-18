@@ -86,6 +86,35 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.smoke_press("f3", window, cx);
                 show(this, cx, "needle, soft-wrap off, f3");
+                // Soft-wrap back on: a word broken at the right edge is still found.
+                if let Some(p) = this.runs.panel.clone() {
+                    p.update(cx, |p, _| p.toggle_soft_wrap());
+                }
+                cx.notify();
+            });
+            pause(400).await;
+            let cols = this.update(cx, |t, cx| t.runs.panel.as_ref().map(|p| p.read(cx).columns()).unwrap_or(80)).unwrap_or(80);
+            let _ = std::fs::write(root.join("split.py"), format!("print('.' * {} + 'SPLITME end')\n", cols.saturating_sub(3)));
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.run_config(brisk_run::RunConfig { name: "split".into(), target: "split.py".into(), ..Default::default() }, window, cx);
+            });
+            for _ in 0..100 {
+                pause(100).await;
+                if this.update(cx, |t, cx| t.runs.panel.as_ref().is_some_and(|p| p.read(cx).run_tabs().iter().all(|(_, r)| !r))).unwrap_or(false) {
+                    break;
+                }
+            }
+            pause(300).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if let Some(p) = this.runs.panel.clone() {
+                    let f = p.read(cx).focus_handle(cx);
+                    window.focus(&f);
+                }
+                this.smoke_press("ctrl-f ctrl-backspace", window, cx);
+                if let Some(p) = this.runs.panel.clone() {
+                    p.update(cx, |p, _| p.search_type("splitme"));
+                }
+                show(this, cx, &format!("splitme across the wrap at {cols} columns"));
                 this.smoke_press("escape", window, cx);
                 let focused = this.run_panel_focused(window, cx);
                 show(this, cx, &format!("escape (run panel still focused {focused})"));

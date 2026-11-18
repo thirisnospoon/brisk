@@ -119,7 +119,7 @@ impl TerminalPanel {
         let off = snap.as_ref().map_or(0, |s| s.display_offset as i32);
         let rows = snap.as_ref().map_or(0, |s| s.rows as i32);
         let visible = f.line + off >= 0 && f.line + off < rows;
-        format!("line {} cols {:?} visible {visible} h_scroll {} follow {} text {:?}", f.line, f.cols, self.h_scroll, self.scroll_to_end, f.text.chars().take(30).collect::<String>())
+        format!("line {} cols {:?} more {:?} visible {visible} h_scroll {} follow {} text {:?}", f.line, f.cols, f.more, self.h_scroll, self.scroll_to_end, f.text.chars().take(30).collect::<String>())
     }
 
     /// Type into the query (smoke tests use it as a user would).
@@ -133,12 +133,12 @@ impl TerminalPanel {
         self.refresh_search();
     }
 
-    /// The filtered view: one entry per matching row.
+    /// The filtered view: one entry per matching (logical) line, by its first row.
     pub fn filtered_lines(&self) -> Vec<(i32, String)> {
         let mut out: Vec<(i32, String)> = Vec::new();
         for f in &self.search.found {
-            if out.last().is_none_or(|(l, _)| *l != f.line) {
-                out.push((f.line, f.text.clone()));
+            if out.last().is_none_or(|(l, _)| *l != f.row) {
+                out.push((f.row, f.text.clone()));
             }
         }
         out
@@ -147,7 +147,7 @@ impl TerminalPanel {
     /// A row of the filtered view was clicked: back to the whole output, at that row.
     pub fn open_filtered(&mut self, line: i32) {
         self.search.filter = false;
-        if let Some(i) = self.search.found.iter().position(|f| f.line == line) {
+        if let Some(i) = self.search.found.iter().position(|f| f.row == line) {
             self.jump(i);
         }
     }

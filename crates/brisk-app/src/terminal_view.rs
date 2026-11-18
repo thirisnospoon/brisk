@@ -834,7 +834,8 @@ impl Element for TerminalElement {
             // After the resize: it re-wraps rows and moves lines into the history.
             p.refresh_search();
             if p.search.open {
-                marks = p.search.found.iter().enumerate().map(|(i, f)| (f.line, f.cols.clone(), i == p.search.current)).collect();
+                let current = p.search.current;
+                marks = p.search.found.iter().enumerate().flat_map(|(i, f)| f.parts().map(move |(l, c)| (l, c, i == current))).collect();
             }
             let tab = p.tabs.get(p.active)?;
             Some((tab.session.snapshot(), run_mode))
