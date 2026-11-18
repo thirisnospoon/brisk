@@ -58,6 +58,11 @@ pub fn merge_results(marks: &mut TestMarks, root: &Path, results: &[(Option<Path
         let key = scope.join("::");
         let s = entry.get(&key).map_or(*status, |old| worse(*old, *status));
         entry.insert(key, s);
+        // Parameter sets are kept too (`test_x[1-2]`): the icon's menu offers each one.
+        let full = parts[1..].join("::");
+        if full != scope.join("::") {
+            entry.insert(full, *status);
+        }
     }
     for (file, tests) in fresh {
         let m = marks.entry(file).or_default();
@@ -67,9 +72,10 @@ pub fn merge_results(marks: &mut TestMarks, root: &Path, results: &[(Option<Path
         // Recompute classes from all their known tests.
         let mut classes: HashMap<String, TestStatus> = HashMap::new();
         for (k, s) in m.iter() {
-            if let Some((cls, _)) = k.split_once("::") {
-                let c = classes.get(cls).map_or(*s, |old| worse(*old, *s));
-                classes.insert(cls.to_string(), c);
+            let parts = brisk_run::split_nodeid(k);
+            if parts.len() > 1 {
+                let c = classes.get(parts[0]).map_or(*s, |old| worse(*old, *s));
+                classes.insert(parts[0].to_string(), c);
             }
         }
         m.extend(classes);
@@ -81,13 +87,33 @@ impl Workspace {
     pub(super) fn run_mark_menu(&mut self, ed: Entity<Editor>, line: usize, at: Point<Pixels>, cx: &mut Context<Self>) {
         let (path, mark) = ed.update(cx, |e, _| (e.path.clone(), e.run_marks().into_iter().find(|m| m.line == line)));
         let (Some(path), Some(mark)) = (path, mark) else { return };
+        let kind = self.default_test_kind();
         let cfg = match &mark.target {
             RunTarget::Script => RunConfig::for_file(&self.root, &path),
-            RunTarget::Test(scope) => RunConfig::for_tests(&self.root, &path, scope),
+            RunTarget::Test(scope) => RunConfig::for_tests_with(&self.root, &path, scope, kind),
         };
         let run_cfg = cfg.clone();
         let debug_cfg = cfg.clone();
-        let entries = vec![
+        // The parameter sets of the last run of a parametrized test: ▶ on one of them.
+        let params: Vec<(String, TestStatus, RunConfig)> = match &mark.target {
+            RunTarget::Test(scope) if !scope.is_empty() => {
+                let key = scope.join("::");
+                let mut v: Vec<(String, TestStatus)> = self
+                    .test_marks
+                    .get(&norm(&path))
+                    .map(|m| m.iter().filter(|(k, _)| k.starts_with(&format!("{key}[")) && k.ends_with(']')).map(|(k, s)| (k.clone(), *s)).collect())
+                    .unwrap_or_default();
+                v.sort_by(|a, b| a.0.cmp(&b.0));
+                v.into_iter()
+                    .map(|(k, s)| {
+                        let scope: Vec<String> = brisk_run::split_nodeid(&k).into_iter().map(String::from).collect();
+                        (k.rsplit("::").next().unwrap_or(&k).to_string(), s, RunConfig::for_tests_with(&self.root, &path, &scope, kind))
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        let mut entries = vec![
             Entry::Item {
                 label: format!("Run '{}'", cfg.name),
                 shortcut: "Ctrl+Shift+F10".into(),
@@ -101,6 +127,20 @@ impl Workspace {
                 run: Rc::new(move |this: &mut Workspace, w: &mut Window, cx: &mut Context<Workspace>| this.start_debug(debug_cfg.clone(), w, cx)),
             },
         ];
+        for (label, status, c) in params {
+            let glyph = match status {
+                TestStatus::Passed => "✓ ",
+                TestStatus::Failed | TestStatus::Error => "✗ ",
+                TestStatus::Skipped => "⊘ ",
+                _ => "",
+            };
+            entries.push(Entry::Item {
+                label: format!("Run {glyph}{label}"),
+                shortcut: String::new(),
+                enabled: true,
+                run: Rc::new(move |this: &mut Workspace, w: &mut Window, cx: &mut Context<Workspace>| this.run_config(c.clone(), w, cx)),
+            });
+        }
         self.open_menu(at, entries, cx);
     }
 

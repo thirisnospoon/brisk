@@ -78,6 +78,8 @@ pub enum RunEvent {
     OpenInTerminal(brisk_run::Command),
     /// "Rerun Failed Tests": then [`TerminalPanel::rerun_failed`].
     RerunFailedRequested,
+    /// ▶ on a node of the test tree: run it as a temporary configuration of its own.
+    RunTests(Box<brisk_run::RunConfig>),
 }
 
 impl gpui::EventEmitter<RunEvent> for TerminalPanel {}
@@ -253,8 +255,8 @@ impl TerminalPanel {
         let tx = self.events.clone();
         let (cols, rows) = self.tabs.get(self.active).map(|t| t.session.size()).unwrap_or((120, 12));
         let mut spawn = cmd.clone();
-        let tests = if cfg.kind == brisk_run::RunKind::Pytest {
-            let events = brisk_run::pytest::attach(&mut spawn).map_err(|e| format!("Cannot prepare the test runner: {e}"))?;
+        let tests = if cfg.kind.is_tests() {
+            let events = brisk_run::pytest::attach_runner(&mut spawn, cfg.kind).map_err(|e| format!("Cannot prepare the test runner: {e}"))?;
             if self.failed_first {
                 let failed = brisk_run::pytest::history::last_failed(&self.root, &cfg.name);
                 let list = events.with_extension("first");

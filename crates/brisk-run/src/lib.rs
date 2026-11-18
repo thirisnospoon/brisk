@@ -9,7 +9,7 @@ pub mod envfile;
 pub mod web;
 pub mod django;
 
-pub use config::{compound_names, import_idea, load, save, BeforeStep, OnStart, RunConfig, RunFile, RunKind, CONFIG_FILE, MAX_TEMPORARY, TEMPLATE_KINDS};
+pub use config::{compound_names, idea_test_runner, import_idea, load, save, BeforeStep, OnStart, RunConfig, RunFile, RunKind, TestRunner, CONFIG_FILE, MAX_TEMPORARY, TEMPLATE_KINDS};
 pub use pytest::{is_test_file, split_nodeid, TestFeed, TestStatus, TestTree, TreeView};
 pub use interp::{discover_all, probe, project_venvs, venv_python, InterpKind, Interpreter};
 pub use links::{find_links, find_urls, Link};
@@ -154,7 +154,7 @@ pub fn build(root: &Path, cfg: &RunConfig, python: &Path) -> Command {
         args.extend(rest);
         return finish(root, cfg, python, args, cwd);
     }
-    if cfg.kind == RunKind::Pytest {
+    if cfg.kind.is_tests() {
         return build_pytest(root, cfg, python, args);
     }
     if cfg.python_console {
@@ -181,6 +181,8 @@ pub fn build(root: &Path, cfg: &RunConfig, python: &Path) -> Command {
 
 /// `python -m pytest <targets> [-k kw] <params>`; the reporting plugin is added per run by
 /// [`pytest::attach`]. Working directory: the target folder, or the test file's folder.
+/// unittest and doctest take the same targets: `python -m unittest pkg.test_x.TestA.test_b`
+/// (`discover` for a folder or nothing), `python -m doctest file.py`.
 fn build_pytest(root: &Path, cfg: &RunConfig, python: &Path, mut args: Vec<String>) -> Command {
     let targets: Vec<(PathBuf, String)> = split_args(&cfg.target)
         .into_iter()
@@ -199,6 +201,36 @@ fn build_pytest(root: &Path, cfg: &RunConfig, python: &Path, mut args: Vec<Strin
             None => root.to_path_buf(),
         }
     };
+    if cfg.kind == RunKind::Unittest {
+        args.extend(["-m".to_string(), "unittest".into()]);
+        let dirs = targets.iter().any(|(p, _)| p.is_dir());
+        if targets.is_empty() || dirs {
+            // A folder: discovery from it (the working directory is the top level).
+            args.push("discover".into());
+            if let Some((p, _)) = targets.iter().find(|(p, _)| p.is_dir() && *p != cwd) {
+                args.extend(["-s".to_string(), p.strip_prefix(&cwd).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_else(|_| p.display().to_string()), "-t".into(), ".".into()]);
+            }
+        } else {
+            for (p, rest) in &targets {
+                args.push(unittest_name(&cwd, p, rest));
+            }
+        }
+        if !cfg.keywords.trim().is_empty() {
+            args.push("-k".into());
+            args.push(cfg.keywords.trim().to_string());
+        }
+        args.extend(split_args(&cfg.parameters));
+        return finish(root, cfg, python, args, cwd);
+    }
+    if cfg.kind == RunKind::Doctest {
+        args.extend(["-m".to_string(), "doctest".into()]);
+        args.extend(split_args(&cfg.parameters));
+        for (p, rest) in &targets {
+            let shown = p.strip_prefix(&cwd).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_else(|_| p.display().to_string());
+            args.push(format!("{shown}{rest}"));
+        }
+        return finish(root, cfg, python, args, cwd);
+    }
     args.push("-m".into());
     args.push("pytest".into());
     for (p, rest) in targets {
@@ -215,6 +247,16 @@ fn build_pytest(root: &Path, cfg: &RunConfig, python: &Path, mut args: Vec<Strin
     }
     args.extend(split_args(&cfg.parameters));
     finish(root, cfg, python, args, cwd)
+}
+
+/// `tests/test_x.py` + `::TestA::test_b` as unittest's dotted name relative to `cwd`
+/// (`tests.test_x.TestA.test_b`); a file outside it stays a path.
+fn unittest_name(cwd: &Path, p: &Path, rest: &str) -> String {
+    let Ok(rel) = p.strip_prefix(cwd) else { return p.display().to_string() };
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    let module = rel.strip_suffix(".py").unwrap_or(&rel).replace('/', ".");
+    let tail: String = rest.split("::").filter(|s| !s.is_empty()).map(|s| format!(".{s}")).collect();
+    format!("{module}{tail}")
 }
 
 fn finish(root: &Path, cfg: &RunConfig, python: &Path, args: Vec<String>, cwd: PathBuf) -> Command {

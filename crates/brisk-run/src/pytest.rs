@@ -10,6 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const PLUGIN_MODULE: &str = "brisk_pytest";
 const PLUGIN_SRC: &str = include_str!("brisk_pytest.py");
+/// The unittest / doctest runner that reports the same events.
+const UNITTEST_MODULE: &str = "brisk_unittest";
+const UNITTEST_SRC: &str = include_str!("brisk_unittest.py");
 
 /// pytest's default discovery pattern: `test_*.py` or `*_test.py`.
 pub fn is_test_file(p: &Path) -> bool {
@@ -38,12 +41,31 @@ fn plugin_dir() -> std::io::Result<PathBuf> {
     }
     let dir = std::env::temp_dir().join("brisk-pytest");
     std::fs::create_dir_all(&dir)?;
-    let f = dir.join(format!("{PLUGIN_MODULE}.py"));
-    if std::fs::read_to_string(&f).ok().as_deref() != Some(PLUGIN_SRC) {
-        std::fs::write(&f, PLUGIN_SRC)?;
+    for (module, src) in [(PLUGIN_MODULE, PLUGIN_SRC), (UNITTEST_MODULE, UNITTEST_SRC)] {
+        let f = dir.join(format!("{module}.py"));
+        if std::fs::read_to_string(&f).ok().as_deref() != Some(src) {
+            std::fs::write(&f, src)?;
+        }
     }
     let _ = READY.set(dir.clone());
     Ok(dir)
+}
+
+/// [`attach`] for any test runner: unittest and doctest commands (`-m unittest`,
+/// `-m doctest`) run Brisk's runner module instead, which reports the same events.
+pub fn attach_runner(cmd: &mut Command, kind: crate::RunKind) -> std::io::Result<PathBuf> {
+    let events = attach(cmd)?;
+    let swap = match kind {
+        crate::RunKind::Unittest => Some(("unittest", vec![UNITTEST_MODULE.to_string()])),
+        crate::RunKind::Doctest => Some(("doctest", vec![UNITTEST_MODULE.to_string(), "--doctest".into()])),
+        _ => None,
+    };
+    if let Some((module, with)) = swap {
+        if let Some(i) = cmd.args.windows(2).position(|w| w[0] == "-m" && w[1] == module) {
+            cmd.args.splice(i + 1..i + 2, with);
+        }
+    }
+    Ok(events)
 }
 
 /// Load the reporting plugin into a pytest command for one run. Returns the events file the

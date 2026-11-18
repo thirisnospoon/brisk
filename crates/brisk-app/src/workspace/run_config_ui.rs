@@ -47,13 +47,17 @@ pub enum Kind {
     Flask,
     Django,
     DjangoTests,
+    Unittest,
+    Doctest,
 }
 
 impl Kind {
-    const ALL: [Kind; 8] = [Kind::Script, Kind::Module, Kind::Pytest, Kind::Compound, Kind::FastApi, Kind::Flask, Kind::Django, Kind::DjangoTests];
+    const ALL: [Kind; 10] = [Kind::Script, Kind::Module, Kind::Pytest, Kind::Unittest, Kind::Doctest, Kind::Compound, Kind::FastApi, Kind::Flask, Kind::Django, Kind::DjangoTests];
     fn of(c: &RunConfig) -> Kind {
         match (c.kind, c.module) {
             (RunKind::Pytest, _) => Kind::Pytest,
+            (RunKind::Unittest, _) => Kind::Unittest,
+            (RunKind::Doctest, _) => Kind::Doctest,
             (RunKind::Compound, _) => Kind::Compound,
             (RunKind::FastApi, _) => Kind::FastApi,
             (RunKind::Flask, _) => Kind::Flask,
@@ -68,6 +72,8 @@ impl Kind {
             Kind::Script => "Script path",
             Kind::Module => "Module name",
             Kind::Pytest => "pytest",
+            Kind::Unittest => "Unittests",
+            Kind::Doctest => "Doctests",
             Kind::Compound => "Compound",
             Kind::FastApi => "FastAPI",
             Kind::Flask => "Flask",
@@ -89,6 +95,8 @@ impl Kind {
             Kind::Script => "python script.py",
             Kind::Module => "python -m package.module",
             Kind::Pytest => "python -m pytest tests",
+            Kind::Unittest => "python -m unittest tests.test_x",
+            Kind::Doctest => "python -m doctest module.py",
             Kind::Compound => "several configurations together",
             Kind::FastApi => "uvicorn main:app",
             Kind::Flask => "flask --app app run",
@@ -108,6 +116,8 @@ impl Kind {
     fn apply(self, c: &mut RunConfig) {
         c.kind = match self {
             Kind::Pytest => RunKind::Pytest,
+            Kind::Unittest => RunKind::Unittest,
+            Kind::Doctest => RunKind::Doctest,
             Kind::Compound => RunKind::Compound,
             Kind::FastApi => RunKind::FastApi,
             Kind::Flask => RunKind::Flask,
@@ -163,6 +173,8 @@ pub struct RunDialog {
     /// not shown (configurations or templates) and its selection.
     pub(super) templates: bool,
     other: (Vec<Draft>, usize),
+    /// Default test runner (None: Autodetect), changed in the templates view.
+    pub(super) test_runner: Option<brisk_run::TestRunner>,
 }
 
 pub fn env_to_text(env: &BTreeMap<String, String>) -> String {
@@ -211,7 +223,7 @@ fn flag(c: &mut RunConfig, f: Field) -> Option<&mut bool> {
 fn template_fields(kind: Kind) -> Vec<Field> {
     use Field as F;
     let mut v = vec![F::InterpreterOptions, F::WorkingDirectory, F::Env, F::EnvFiles, F::Interpreter, F::OnStart, F::AllowMultiple];
-    if kind != Kind::Pytest {
+    if !matches!(kind, Kind::Pytest | Kind::Unittest | Kind::Doctest) {
         v.extend([F::PythonConsole, F::EmulateTerminal]);
     }
     v
@@ -225,7 +237,7 @@ fn fields(kind: Kind, temporary: bool) -> Vec<Field> {
         // Only the member list: each member runs with its own settings.
         return v;
     }
-    if kind == Kind::Pytest {
+    if matches!(kind, Kind::Pytest | Kind::Unittest) {
         v.push(F::Keywords);
     }
     v.extend([F::Parameters, F::InterpreterOptions, F::WorkingDirectory, F::Env, F::EnvFiles, F::Interpreter, F::BeforeRun, F::BeforeCommand, F::OnStart, F::AllowMultiple]);
@@ -245,7 +257,7 @@ fn label(f: Field, kind: Kind) -> &'static str {
         Field::Target => match kind {
             Kind::Script => "Script:",
             Kind::Module => "Module:",
-            Kind::Pytest => "Target:",
+            Kind::Pytest | Kind::Unittest | Kind::Doctest => "Target:",
             Kind::Compound => "Configurations:",
             Kind::FastApi | Kind::Flask => "Application:",
             Kind::Django | Kind::DjangoTests => "manage.py:",
@@ -450,6 +462,15 @@ impl RunDialog {
         }
     }
 
+    /// Default test runner: Autodetect → pytest → Unittests → Autodetect.
+    pub(super) fn cycle_test_runner(&mut self) {
+        self.test_runner = match self.test_runner {
+            None => Some(brisk_run::TestRunner::Pytest),
+            Some(brisk_run::TestRunner::Pytest) => Some(brisk_run::TestRunner::Unittest),
+            Some(brisk_run::TestRunner::Unittest) => None,
+        };
+    }
+
     fn add(&mut self, kind: Kind) {
         if self.templates {
             return;
@@ -457,6 +478,8 @@ impl RunDialog {
         let taken: Vec<&str> = self.drafts.iter().map(|d| d.cfg.name.as_str()).collect();
         let base = match kind {
             Kind::Pytest => "pytest",
+            Kind::Unittest => "Unittests",
+            Kind::Doctest => "Doctests",
             Kind::Compound => "Compound",
             Kind::FastApi => "FastAPI",
             Kind::Flask => "Flask",
@@ -571,7 +594,7 @@ impl Workspace {
             drafts[i].selected = true;
         }
         let templates = brisk_run::TEMPLATE_KINDS.iter().map(|(k, _)| Draft::new(f.template(*k))).collect();
-        let mut d = RunDialog { drafts, current: current.unwrap_or(0), field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None, django_settings: None, templates: false, other: (templates, 0) };
+        let mut d = RunDialog { drafts, current: current.unwrap_or(0), field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None, django_settings: None, templates: false, other: (templates, 0), test_runner: f.test_runner };
         d.apps = [RunKind::FastApi, RunKind::Flask].into_iter().filter_map(|k| brisk_run::web::find_app(&self.root, Some(k)).map(|(k, _, t)| (k, t))).collect();
         if let Some((m, settings)) = brisk_run::django::find_manage(&self.root) {
             d.django_settings = settings;
@@ -604,6 +627,7 @@ impl Workspace {
         // Templates are kept only when they set something.
         let templates = d.split().1.iter().map(Draft::commit).filter(|t| *t != RunConfig { name: t.name.clone(), kind: t.kind, ..Default::default() }).collect();
         self.runs.file.templates = templates;
+        self.runs.file.test_runner = d.test_runner;
         self.runs.file.configurations = cfgs;
         self.runs.file.selected = selected;
         d.error = None;
@@ -768,14 +792,38 @@ impl Workspace {
             .child(tool("rc-down", "↓", "Move down (Alt+Shift+↓)", cx, |d| d.move_by(false)))
             .child(div().flex_1())
             .child(tool("rc-tpl", "⚙", "Edit Configuration Templates", cx, |d| d.toggle_templates()));
+        let runner = match d.test_runner {
+            None => "Autodetect",
+            Some(brisk_run::TestRunner::Pytest) => "pytest",
+            Some(brisk_run::TestRunner::Unittest) => "Unittests",
+        };
         let templates_note = d.templates.then(|| {
             div()
                 .id("rc-tpl-note")
                 .px(px(6.))
                 .pb(px(4.))
+                .flex()
+                .flex_col()
+                .gap(px(4.))
                 .text_size(px(12.))
                 .text_color(Theme::text_dim())
                 .child("Templates: what new configurations start with")
+                .child(
+                    // PyCharm's Python Integrated Tools › Default test runner.
+                    div()
+                        .id("rc-test-runner")
+                        .flex()
+                        .gap(px(4.))
+                        .cursor_pointer()
+                        .child("Default test runner:")
+                        .child(div().text_color(Theme::accent()).child(format!("{runner} ▾")))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(d) = this.runs.dialog.as_mut() {
+                                d.cycle_test_runner();
+                            }
+                            cx.notify();
+                        })),
+                )
         });
         let back_link = div()
             .id("rc-tpl-link")
@@ -799,7 +847,7 @@ impl Workspace {
             .children(d.drafts.iter().enumerate().map(|(i, dr)| {
                 let on = i == d.current;
                 let glyph = match Kind::of(&dr.cfg) {
-                    Kind::Pytest => "⚗",
+                    Kind::Pytest | Kind::Unittest | Kind::Doctest => "⚗",
                     Kind::Compound => "◈",
                     Kind::FastApi | Kind::Flask | Kind::Django => "◎",
                     Kind::DjangoTests => "⚗",
@@ -1003,6 +1051,8 @@ impl Workspace {
                                 Kind::Script => "main.py (relative to the project)".to_string(),
                                 Kind::Module => "package.module".to_string(),
                                 Kind::Pytest => "tests, tests/test_x.py::test_y (empty: everything)".to_string(),
+                                Kind::Unittest => "tests, tests/test_x.py::TestA::test_b (empty: discover)".to_string(),
+                                Kind::Doctest => "module.py or docs.txt (module.py::module.func: one docstring)".to_string(),
                                 Kind::Compound => "server;client (names of other configurations)".to_string(),
                                 Kind::FastApi => "main:app (module:variable; no app found in the project)".to_string(),
                                 Kind::Flask => "app:app or app:create_app() (no app found in the project)".to_string(),
@@ -1371,6 +1421,10 @@ fn command_preview(root: &std::path::Path, c: &RunConfig, interp: &str) -> Strin
             }
             parts.extend(brisk_run::web::args(c));
             return format!("› {}", parts.join(" "));
+        }
+        (RunKind::Unittest | RunKind::Doctest, _) => {
+            let cmd = brisk_run::build(root, c, std::path::Path::new(&python));
+            return format!("› {} {}", python, cmd.args.join(" "));
         }
         (RunKind::Pytest, _) => {
             let mut s = format!("-m pytest {}", c.target);
