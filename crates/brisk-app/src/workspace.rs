@@ -874,6 +874,11 @@ impl Workspace {
             cx.stop_propagation();
             return;
         }
+        if self.debug.chooser.is_some() {
+            self.chooser_key(e, window, cx);
+            cx.stop_propagation();
+            return;
+        }
         if self.debug.bp_dialog.is_some() {
             self.bp_dialog_key(e, window, cx);
             cx.stop_propagation();
@@ -1117,7 +1122,7 @@ impl Workspace {
             A::PasteFromHistory if self.focused_editor(window, cx).is_some() => self.open_popup(PopupKind::PasteHistory),
             A::ShowLocalHistory => self.show_local_history(cx),
             A::ToggleBreakpoint | A::ViewBreakpoints | A::Debug | A::DebugContext | A::Resume | A::StepOver | A::StepInto | A::StepOut | A::RunToCursor | A::EvaluateExpression
-            | A::PauseProgram | A::RerunDebug | A::AddToWatches => {
+            | A::PauseProgram | A::RerunDebug | A::AddToWatches | A::MuteBreakpoints | A::SmartStepInto | A::AttachToProcess => {
                 self.debug_action(action, window, cx);
             }
             A::ToggleBookmark | A::ToggleBookmarkWithMnemonic | A::ShowBookmarks | A::FileStructurePopup => {
@@ -2412,6 +2417,7 @@ impl Render for Workspace {
             .children(self.render_ds_dialog(cx).map(|e| fade_in("ds-in", e, 110)))
             .children(self.render_settings(cx).map(|e| fade_in("settings-in", e, 110)))
             .children(self.render_bp_dialog(cx).map(|e| fade_in("bp-dialog-in", e, 110)))
+            .children(self.render_chooser(cx))
             .children(self.render_run_dialog(cx).map(|e| fade_in("run-dialog-in", e, 110)))
             .children(self.render_git_dialog(cx).map(|e| fade_in("git-dialog-in", e, 110)))
             .children(self.render_menu(viewport, cx).map(|e| fade_in("menu-in", e, 90)))

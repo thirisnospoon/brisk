@@ -34,6 +34,8 @@ impl StoredBp {
 /// View Breakpoints (Ctrl+Shift+F8).
 pub struct BpDialog {
     pub sel: usize,
+    /// Typing goes into the condition: Space is a space, Esc / Enter leave the field.
+    pub editing: bool,
 }
 
 /// A row of View Breakpoints.
@@ -75,6 +77,8 @@ pub struct Session {
     /// Run to Cursor: a breakpoint that is not the user's.
     temp: Option<(PathBuf, usize)>,
     pub exit_code: Option<i64>,
+    /// Attached to a running process: Stop detaches and leaves it running.
+    pub attached: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,6 +156,27 @@ pub struct Debug {
     pub exc_raised: bool,
     pub exc_uncaught: bool,
     pub bp_dialog: Option<BpDialog>,
+    /// Mute Breakpoints: none are sent (exception breakpoints neither); for this window only.
+    pub muted: bool,
+    /// The program's threads at a stop: (id, name). The chooser shows when there are several.
+    pub threads: Vec<(i64, String)>,
+    pub threads_open: bool,
+    /// Smart Step Into: the calls on the line (debugpy stepInTargets) to choose from.
+    pub chooser: Option<Chooser>,
+}
+
+pub enum ChooserKind {
+    /// Smart Step Into on this thread.
+    StepInto(i64),
+    /// Attach to Process: target ids are process ids.
+    Attach,
+}
+
+pub struct Chooser {
+    pub kind: ChooserKind,
+    /// (target id, label).
+    pub targets: Vec<(i64, String)>,
+    pub sel: usize,
 }
 
 impl Debug {
@@ -181,12 +206,19 @@ impl Debug {
             exc_raised: load_exc(root).0,
             exc_uncaught: load_exc(root).1,
             bp_dialog: None,
+            muted: false,
+            threads: Vec::new(),
+            threads_open: false,
+            chooser: None,
         }
     }
 
     /// debugpy's exception filters for setExceptionBreakpoints.
     pub fn exception_filters(&self) -> Vec<&'static str> {
         let mut v = Vec::new();
+        if self.muted {
+            return v;
+        }
         if self.exc_raised {
             v.push("raised");
         }
@@ -382,6 +414,58 @@ fn python_order(stack: &str) -> String {
     frames.concat().join("\n")
 }
 
+const KEYWORDS: &[&str] = &[
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for",
+    "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield",
+];
+
+/// The expression under the mouse for a value hover: the name at `col` with the dotted
+/// names before it (`obj.attr`), not inside a string or comment, not a keyword.
+fn hover_expression(line: &str, col: usize) -> Option<String> {
+    let c: Vec<char> = line.chars().collect();
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    if !c.get(col).copied().is_some_and(ident) {
+        return None;
+    }
+    // Inside a comment or a string: count quotes before the point.
+    let before: String = c[..col].iter().collect();
+    let (mut quote, mut i) = (None::<char>, 0);
+    let bc: Vec<char> = before.chars().collect();
+    while i < bc.len() {
+        match (quote, bc[i]) {
+            (None, '#') => return None,
+            (None, q @ ('"' | '\'')) => quote = Some(q),
+            (Some(_), '\\') => i += 1,
+            (Some(q), ch) if ch == q => quote = None,
+            _ => {}
+        }
+        i += 1;
+    }
+    if quote.is_some() {
+        return None;
+    }
+    let mut start = col;
+    while start > 0 && ident(c[start - 1]) {
+        start -= 1;
+    }
+    let mut end = col;
+    while end < c.len() && ident(c[end]) {
+        end += 1;
+    }
+    let word: String = c[start..end].iter().collect();
+    if KEYWORDS.contains(&word.as_str()) || word.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    while start >= 2 && c[start - 1] == '.' && ident(c[start - 2]) {
+        let mut s = start - 1;
+        while s > 0 && ident(c[s - 1]) {
+            s -= 1;
+        }
+        start = s;
+    }
+    Some(c[start..end].iter().collect())
+}
+
 /// Names used on a line of Python: identifiers outside strings and comments, not after a dot.
 fn line_names(line: &str) -> Vec<&str> {
     let b = line.as_bytes();
@@ -452,6 +536,53 @@ fn inline_values(lines: &[String], stop: usize, vars: &[Variable]) -> std::colle
         }
     }
     out
+}
+
+/// What a Python command line runs, short: `app.py` or `-m http.server` (the list's label).
+fn process_target(cmd: &str) -> String {
+    let rest = match cmd.strip_prefix('"') {
+        Some(q) => q.split_once('"').map_or("", |x| x.1),
+        None => cmd.split_once(char::is_whitespace).map_or("", |x| x.1),
+    };
+    let mut it = rest.split_whitespace();
+    while let Some(t) = it.next() {
+        if t == "-m" {
+            return format!("-m {}", it.next().unwrap_or(""));
+        }
+        if t == "-c" {
+            return "-c …".into();
+        }
+        if !t.starts_with('-') {
+            let t = t.trim_matches('"');
+            return t.rsplit(['/', '\\']).next().unwrap_or(t).to_string();
+        }
+    }
+    String::new()
+}
+
+/// `pid<TAB>command line` for every process (Windows: CIM; elsewhere: `ps`).
+fn process_lines() -> String {
+    #[cfg(windows)]
+    let mut c = {
+        use std::os::windows::process::CommandExt;
+        let mut c = std::process::Command::new("powershell");
+        c.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }",
+        ]);
+        c.creation_flags(0x0800_0000);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut c = {
+        let mut c = std::process::Command::new("ps");
+        c.args(["-eo", "pid=,args="]);
+        c
+    };
+    c.stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    c.output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
 }
 
 /// `python [opts] (-m module | script) args` → what debugpy launches.
@@ -545,10 +676,32 @@ impl Workspace {
             return;
         }
         self.debug.stored.retain(|b| b.path != p);
+        let muted = self.debug.muted;
         ed.update(cx, |e, cx| {
             e.set_breakpoints(&mine);
+            e.set_breakpoints_muted(muted);
             cx.notify();
         });
+    }
+
+    /// Mute Breakpoints: grey them in every editor and take them all out of a running session.
+    pub(super) fn toggle_mute_breakpoints(&mut self, cx: &mut Context<Self>) {
+        self.debug.muted = !self.debug.muted;
+        let muted = self.debug.muted;
+        for ed in self.editors().cloned().collect::<Vec<_>>() {
+            ed.update(cx, |e, cx| {
+                e.set_breakpoints_muted(muted);
+                cx.notify();
+            });
+        }
+        for (p, _) in self.all_breakpoints(cx) {
+            self.send_breakpoints(&p, cx);
+        }
+        if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) {
+            self.debug_request("setExceptionBreakpoints", json!({"filters": self.debug.exception_filters()}));
+        }
+        self.status = if muted { "Breakpoints muted".into() } else { "Breakpoints unmuted".into() };
+        cx.notify();
     }
 
     /// An editor closes: keep its breakpoints.
@@ -571,7 +724,7 @@ impl Workspace {
         let mut v: Vec<SourceBreakpoint> = self
             .all_breakpoints(cx)
             .into_iter()
-            .filter(|(p, _)| p == path)
+            .filter(|(p, _)| p == path && !self.debug.muted)
             .flat_map(|(_, l)| l.into_iter().filter(|(_, b)| b.enabled).map(|(line, b)| SourceBreakpoint { line, condition: b.condition }))
             .collect();
         if let Some((p, l)) = self.debug.session.as_ref().and_then(|s| s.temp.clone()) {
@@ -666,7 +819,7 @@ impl Workspace {
     pub(super) fn open_bp_dialog(&mut self, cx: &mut Context<Self>) {
         // The first line breakpoint is selected, as in PyCharm.
         let sel = if self.bp_rows(cx).len() > 2 { 2 } else { 0 };
-        self.debug.bp_dialog = Some(BpDialog { sel });
+        self.debug.bp_dialog = Some(BpDialog { sel, editing: false });
         cx.notify();
     }
 
@@ -768,12 +921,26 @@ impl Workspace {
             return;
         }
         match k.key.as_str() {
+            "escape" | "enter" if d.editing => d.editing = false,
             "escape" => self.debug.bp_dialog = None,
-            "up" => d.sel = sel.saturating_sub(1),
-            "down" => d.sel = (sel + 1).min(rows.len().saturating_sub(1)),
-            "space" => {
+            "up" => {
+                d.editing = false;
+                d.sel = sel.saturating_sub(1);
+            }
+            "down" => {
+                d.editing = false;
+                d.sel = (sel + 1).min(rows.len().saturating_sub(1));
+            }
+            "space" if !d.editing => {
                 if let Some(r) = row {
                     self.bp_toggle_row(&r, cx);
+                }
+            }
+            "space" => {
+                if let Some(BpRow::Line(p, l, b)) = row {
+                    let mut c = b.condition.unwrap_or_default();
+                    c.push(' ');
+                    self.bp_set_condition(&p, l, Some(c), cx);
                 }
             }
             "enter" | "f4" => {
@@ -796,6 +963,7 @@ impl Workspace {
             _ => {
                 // Typing edits the selected breakpoint's condition.
                 if let (Some(BpRow::Line(p, l, b)), Some(t)) = (row, k.key_char.as_deref().filter(|t| !t.chars().any(char::is_control))) {
+                    d.editing = true;
                     let mut c = b.condition.unwrap_or_default();
                     c.push_str(t);
                     self.bp_set_condition(&p, l, Some(c), cx);
@@ -807,6 +975,7 @@ impl Workspace {
 
     pub(super) fn render_bp_dialog(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let sel = self.debug.bp_dialog.as_ref()?.sel;
+        let editing = self.debug.bp_dialog.as_ref().is_some_and(|d| d.editing);
         let rows = self.bp_rows(cx);
         let sel = sel.min(rows.len().saturating_sub(1));
         let check = |on: bool| {
@@ -860,6 +1029,7 @@ impl Workspace {
                     .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, w, cx| {
                         if let Some(d) = this.debug.bp_dialog.as_mut() {
                             d.sel = i;
+                            d.editing = false;
                         }
                         if ev.click_count() >= 2 {
                             this.bp_go_to(&row2, w, cx);
@@ -903,17 +1073,25 @@ impl Workspace {
                     .child(div().text_color(Theme::text_muted()).child("Condition (type to edit):"))
                     .child(
                         div()
+                            .id("bp-condition")
                             .h(px(28.))
                             .px(px(8.))
                             .flex()
                             .items_center()
                             .rounded(px(5.))
                             .border_1()
-                            .border_color(Theme::accent())
+                            .border_color(if editing { Theme::accent() } else { Theme::divider() })
                             .bg(Theme::editor_bg())
                             .font_family(MONO_FONT)
+                            .cursor_text()
                             .child(cond)
-                            .child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret())),
+                            .when(editing, |x| x.child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret())))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(d) = this.debug.bp_dialog.as_mut() {
+                                    d.editing = true;
+                                }
+                                cx.notify();
+                            })),
                     )
                     .child(div().text_size(px(12.)).text_color(Theme::text_dim()).child("A Python expression: the debugger stops only when it is true. Empty: always."))
                     .into_any_element()
@@ -987,7 +1165,7 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                .child(div().flex_1().text_size(px(12.)).text_color(Theme::text_dim()).child("Space: enable/disable · Delete: remove · Enter: go to · Esc: close"))
+                                .child(div().flex_1().text_size(px(12.)).text_color(Theme::text_dim()).child("Space: enable/disable · type: condition · Delete: remove · Enter: go to · Esc: close"))
                                 .child(button("bp-remove", "Remove", false, is_line).on_click(cx.listener(move |this, _, _, cx| {
                                     if let Some(BpRow::Line(p, l, _)) = cur_rm.clone() {
                                         this.bp_remove(&p, l, cx);
@@ -1015,6 +1193,9 @@ impl Workspace {
         match action {
             A::ToggleBreakpoint => self.toggle_breakpoint_here(window, cx),
             A::ViewBreakpoints => self.open_bp_dialog(cx),
+            A::MuteBreakpoints => self.toggle_mute_breakpoints(cx),
+            A::SmartStepInto => self.smart_step_into(cx),
+            A::AttachToProcess => self.list_processes(cx),
             A::Debug => {
                 self.reload_runs();
                 let cfg = self.runs.file.selected_config().cloned().or_else(|| self.context_config(window, cx));
@@ -1130,6 +1311,8 @@ impl Workspace {
             }
         }
         self.debug.frames.clear();
+        self.debug.threads.clear();
+        self.debug.threads_open = false;
         self.debug.idle_watches();
         self.debug.exception = None;
         self.clear_exec_marks(cx);
@@ -1221,7 +1404,7 @@ impl Workspace {
                     this.debug.info(e.clone());
                     this.show_toast(e, true, cx);
                 }
-                    Ok((client, events)) => this.attach_session(client, events, name, launch, window, cx),
+                    Ok((client, events)) => this.attach_session(client, events, name, ("launch", brisk_dap::launch_args(&launch)), window, cx),
                 }
                 cx.notify();
             });
@@ -1230,7 +1413,8 @@ impl Workspace {
         cx.notify();
     }
 
-    fn attach_session(&mut self, client: Arc<Client>, mut events: futures::channel::mpsc::UnboundedReceiver<Event>, name: String, launch: Launch, window: &mut Window, cx: &mut Context<Self>) {
+    /// A started adapter becomes the session: initialize, then `req` (launch or attach).
+    fn attach_session(&mut self, client: Arc<Client>, mut events: futures::channel::mpsc::UnboundedReceiver<Event>, name: String, req: (&'static str, Value), window: &mut Window, cx: &mut Context<Self>) {
         let task = cx.spawn_in(window, async move |this, cx| {
             while let Some(ev) = events.next().await {
                 if this.update_in(cx, |this, window, cx| this.debug_event(ev, window, cx)).is_err() {
@@ -1238,7 +1422,8 @@ impl Workspace {
                 }
             }
         });
-        self.debug.session = Some(Session { client: client.clone(), name, state: State::Starting, _events: task, temp: None, exit_code: None });
+        let attached = req.0 == "attach";
+        self.debug.session = Some(Session { client: client.clone(), name, state: State::Starting, _events: task, temp: None, exit_code: None, attached });
         cx.spawn(async move |this, cx| {
             let init = client.request("initialize", brisk_dap::initialize_args()).await;
             let err = match init {
@@ -1253,10 +1438,11 @@ impl Workspace {
                 });
                 return;
             }
-            let res = client.request("launch", brisk_dap::launch_args(&launch)).await;
+            let (command, args) = req;
+            let res = client.request(command, args).await;
             if let Ok(Err(e)) = res {
                 let _ = this.update(cx, |this, cx| {
-                    this.debug.info(format!("Cannot launch: {e}"));
+                    this.debug.info(format!("Cannot {command}: {e}"));
                     this.end_session(cx);
                     cx.notify();
                 });
@@ -1269,7 +1455,7 @@ impl Workspace {
         self.debug.gen += 1;
         self.debug.pending = false;
         if let Some(s) = self.debug.session.as_ref().filter(|s| s.state != State::Ended) {
-            let rx = s.client.request("disconnect", json!({"terminateDebuggee": true}));
+            let rx = s.client.request("disconnect", json!({"terminateDebuggee": !s.attached}));
             let client = s.client.clone();
             cx.spawn(async move |_, cx| {
                 let _ = futures::future::select(rx, cx.background_executor().timer(std::time::Duration::from_secs(2))).await;
@@ -1277,7 +1463,8 @@ impl Workspace {
             })
             .detach();
         }
-        self.debug.info("Stopped");
+        let detached = self.debug.session.as_ref().is_some_and(|s| s.attached && s.state != State::Ended);
+        self.debug.info(if detached { "Detached: the process keeps running" } else { "Stopped" });
         self.end_session(cx);
     }
 
@@ -1286,6 +1473,8 @@ impl Workspace {
             s.state = State::Ended;
         }
         self.debug.frames.clear();
+        self.debug.threads.clear();
+        self.debug.threads_open = false;
         self.debug.idle_watches();
         self.debug.edit = None;
         self.debug.exception = None;
@@ -1349,6 +1538,7 @@ impl Workspace {
                 self.debug.tab = DebugTab::Debugger;
                 self.bottom = Some(BottomTool::Debug);
                 self.load_frames(thread, window, cx);
+                self.load_threads(cx);
             }
             "continued" => self.set_running(cx),
             "exited" => {
@@ -1416,6 +1606,295 @@ impl Workspace {
         }
         self.focus_editor(window, cx);
         cx.notify();
+    }
+
+    // --- Smart Step Into ----------------------------------------------------------------
+
+    /// Shift+F7: the calls on the stop line; one call steps into it right away.
+    fn smart_step_into(&mut self, cx: &mut Context<Self>) {
+        let (Some(thread), Some(frame)) = (self.debug.paused_thread(), self.debug.frames.get(self.debug.frame).map(|f| f.id)) else {
+            self.status = "The debugger is not paused".into();
+            return;
+        };
+        let Some(s) = &self.debug.session else { return };
+        let rx = s.client.request("stepInTargets", json!({"frameId": frame}));
+        cx.spawn(async move |this, cx| {
+            let res = rx.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.debug.paused_thread() != Some(thread) {
+                    return;
+                }
+                let targets: Vec<(i64, String)> = match &res {
+                    Ok(Ok(v)) => v
+                        .get("targets")
+                        .and_then(Value::as_array)
+                        .map(|a| a.iter().filter_map(|t| Some((t.get("id")?.as_i64()?, t.get("label").and_then(Value::as_str).unwrap_or("?").to_string()))).collect())
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                match targets.len() {
+                    // Nothing to choose (or no support): a plain Step Into.
+                    0 => {
+                        this.debug_request("stepIn", json!({"threadId": thread}));
+                        this.set_running(cx);
+                    }
+                    1 => {
+                        this.debug_request("stepIn", json!({"threadId": thread, "targetId": targets[0].0}));
+                        this.set_running(cx);
+                    }
+                    _ => this.debug.chooser = Some(Chooser { kind: ChooserKind::StepInto(thread), targets, sel: 0 }),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Step into the chosen call / attach to the chosen process.
+    pub(super) fn chooser_go(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(st) = self.debug.chooser.take() else { return };
+        if let Some((id, label)) = st.targets.get(i) {
+            match st.kind {
+                ChooserKind::StepInto(thread) => {
+                    if self.debug.paused_thread() == Some(thread) {
+                        self.debug_request("stepIn", json!({"threadId": thread, "targetId": id}));
+                        self.set_running(cx);
+                    }
+                }
+                ChooserKind::Attach => self.attach_to_process(*id as u32, label.clone(), window, cx),
+            }
+        }
+        cx.notify();
+    }
+
+    // --- Attach to Process ----------------------------------------------------------------
+
+    /// Ctrl+Alt+F5: running Python processes (not debugpy's own) to choose from.
+    fn list_processes(&mut self, cx: &mut Context<Self>) {
+        self.status = "Looking for Python processes…".into();
+        cx.spawn(async move |this, cx| {
+            let ps = cx.background_executor().spawn(async move { process_lines() }).await;
+            let _ = this.update(cx, |this, cx| {
+                let procs = brisk_dap::python_processes(&ps, std::process::id());
+                if procs.is_empty() {
+                    this.status = "No Python processes to attach to".into();
+                } else {
+                    this.status.clear();
+                    let targets = procs.into_iter().map(|(pid, cmd)| (pid as i64, format!("{pid}  {}    {cmd}", process_target(&cmd)))).collect();
+                    this.debug.chooser = Some(Chooser { kind: ChooserKind::Attach, targets, sel: 0 });
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// debugpy's adapter (with the project interpreter) injects itself into `pid`.
+    pub(super) fn attach_to_process(&mut self, pid: u32, label: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.debug.is_live() {
+            self.stop_debug(cx);
+        }
+        let Some(python) = self.runs.interpreter(&self.root).map(|i| i.path) else {
+            self.show_toast("No Python interpreter configured: create a .venv or install Python".into(), true, cx);
+            return;
+        };
+        let name = format!("pid {pid}");
+        self.debug.last = None;
+        self.debug.exception = None;
+        self.debug.console.clear();
+        self.debug.frames.clear();
+        self.debug.idle_watches();
+        self.debug.tab = DebugTab::Console;
+        self.debug.info(format!("Attaching to {label}"));
+        self.bottom = Some(BottomTool::Debug);
+        self.status = format!("Attaching to process {pid}");
+        let root = self.root.clone();
+        self.debug.gen += 1;
+        self.debug.pending = true;
+        let gen = self.debug.gen;
+        cx.spawn_in(window, async move |this, cx| {
+            let adapter = cx.background_executor().spawn(async move { brisk_dap::adapter_command(&python) }).await;
+            let started = adapter.and_then(|a| Client::start(&a.program, &a.args, &root, &[]).map_err(|e| format!("cannot start debugpy: {e}")));
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.debug.gen != gen {
+                    if let Ok((client, _)) = &started {
+                        client.kill();
+                    }
+                    return;
+                }
+                this.debug.pending = false;
+                match started {
+                    Err(e) => {
+                        this.debug.info(e.clone());
+                        this.show_toast(e, true, cx);
+                    }
+                    Ok((client, events)) => this.attach_session(client, events, name, ("attach", brisk_dap::attach_args(pid, true)), window, cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(super) fn chooser_key(&mut self, e: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(st) = self.debug.chooser.as_mut() else { return };
+        let n = st.targets.len();
+        match e.keystroke.key.as_str() {
+            "escape" => self.debug.chooser = None,
+            "up" => st.sel = (st.sel + n - 1) % n.max(1),
+            "down" | "tab" => st.sel = (st.sel + 1) % n.max(1),
+            "enter" | "f7" => {
+                let i = st.sel;
+                self.chooser_go(i, window, cx);
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+
+    pub(super) fn render_chooser(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let st = self.debug.chooser.as_ref()?;
+        let title = match st.kind {
+            ChooserKind::StepInto(_) => "Smart Step Into  (Enter: step into · Esc: cancel)",
+            ChooserKind::Attach => "Attach to Process  (Enter: attach · Esc: cancel)",
+        };
+        let rows = st.targets.iter().enumerate().map(|(i, (_, label))| {
+            let selected = i == st.sel;
+            div()
+                .id(("smart-step", i))
+                .h(px(24.))
+                .px(px(10.))
+                .flex()
+                .items_center()
+                .rounded(px(4.))
+                .cursor_pointer()
+                .font_family(MONO_FONT)
+                .when(selected, |x| x.bg(Theme::selection_row()))
+                .when(!selected, |x| x.hover(|s| s.bg(Theme::hover_row())))
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(label.clone())
+                .on_click(cx.listener(move |this, _, w, cx| this.chooser_go(i, w, cx)))
+        });
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .flex()
+                .justify_center()
+                .items_start()
+                .pt(px(120.))
+                .occlude()
+                .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
+                    this.debug.chooser = None;
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .id("smart-step-popup")
+                        .min_w(px(260.))
+                        .max_w(px(900.))
+                        .flex()
+                        .flex_col()
+                        .p(px(6.))
+                        .gap(px(2.))
+                        .bg(Theme::panel())
+                        .border_1()
+                        .border_color(Theme::divider())
+                        .rounded(px(8.))
+                        .shadow_lg()
+                        .text_size(px(13.))
+                        .text_color(Theme::text())
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(div().px(px(10.)).pb(px(4.)).text_size(px(12.)).text_color(Theme::text_dim()).child(title))
+                        .children(rows),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// The thread list for the chooser above Frames.
+    fn load_threads(&mut self, cx: &mut Context<Self>) {
+        let Some(s) = &self.debug.session else { return };
+        let rx = s.client.request("threads", json!({}));
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(v)) = rx.await else { return };
+            let threads: Vec<(i64, String)> = v
+                .get("threads")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(|t| Some((t.get("id")?.as_i64()?, t.get("name").and_then(Value::as_str).unwrap_or("").to_string()))).collect())
+                .unwrap_or_default();
+            let _ = this.update(cx, |this, cx| {
+                if this.debug.paused_thread().is_some() {
+                    this.debug.threads = threads;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Another thread in the chooser: its stack and variables; steps and Resume go to it.
+    pub(super) fn select_thread(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        self.debug.threads_open = false;
+        let Some(s) = self.debug.session.as_mut().filter(|s| matches!(s.state, State::Paused(_))) else { return };
+        s.state = State::Paused(id);
+        self.debug.frames.clear();
+        self.load_frames(id, window, cx);
+        cx.notify();
+    }
+
+    fn render_threads(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let d = &self.debug;
+        let cur = d.paused_thread()?;
+        if d.threads.len() < 2 {
+            return None;
+        }
+        let name = |id: i64| d.threads.iter().find(|t| t.0 == id).map(|t| t.1.clone()).unwrap_or_else(|| format!("Thread {id}"));
+        let head = div()
+            .id("dbg-thread")
+            .h(px(24.))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .cursor_pointer()
+            .border_b_1()
+            .border_color(Theme::divider())
+            .hover(|s| s.bg(Theme::hover_row()))
+            .child(div().text_color(Theme::text_dim()).child("Thread"))
+            .child(div().flex_1().child(name(cur)))
+            .child(div().text_color(Theme::text_dim()).child(if d.threads_open { "▴" } else { "▾" }))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.debug.threads_open = !this.debug.threads_open;
+                cx.notify();
+            }));
+        let list = d.threads.iter().map(|(id, n)| {
+            let id = *id;
+            div()
+                .id(("dbg-thread-row", id as u64))
+                .h(px(22.))
+                .pl(px(20.))
+                .flex()
+                .items_center()
+                .cursor_pointer()
+                .when(id == cur, |x| x.bg(Theme::selection_row()))
+                .when(id != cur, |x| x.hover(|s| s.bg(Theme::hover_row())))
+                .child(n.clone())
+                .on_click(cx.listener(move |this, _, w, cx| this.select_thread(id, w, cx)))
+        });
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .child(head)
+                .when(d.threads_open, |x| x.children(list).child(div().h(px(1.)).bg(Theme::divider())))
+                .into_any_element(),
+        )
     }
 
     fn load_frames(&mut self, thread: i64, window: &mut Window, cx: &mut Context<Self>) {
@@ -1527,6 +2006,52 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    // --- Value on hover ---------------------------------------------------------------
+
+    /// Mouse rest on a name while paused: `name = {type} value` and its first children, in
+    /// the editor's hover popup. False when the debugger is not paused here (docs instead).
+    pub(super) fn debug_hover(&mut self, ed: &Entity<Editor>, pos: usize, at: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) -> bool {
+        let frame = self.debug.frames.get(self.debug.frame).map(|f| f.id);
+        let live = self.debug.session.as_ref().filter(|s| matches!(s.state, State::Paused(_)));
+        let (Some(s), Some(frame)) = (live, frame) else { return false };
+        let e = ed.read(cx);
+        if !e.is_python() || pos >= e.buffer.len_chars() {
+            return false;
+        }
+        let (line, col) = e.buffer.pos_to_line_col(pos);
+        let Some(expr) = hover_expression(&e.buffer.line(line), col) else { return false };
+        let client = s.client.clone();
+        let ed = ed.clone();
+        cx.spawn(async move |this, cx| {
+            let res = client.request("evaluate", json!({"expression": expr, "frameId": frame, "context": "hover"})).await;
+            let Ok(Ok(v)) = res else {
+                // Not a value here (a module, an unknown name): the documentation.
+                let _ = this.update(cx, |this, cx| this.quick_doc(ed, Some((pos, at)), cx));
+                return;
+            };
+            let (value, reference) = brisk_dap::parse_evaluate(&v);
+            let ty = v.get("type").and_then(Value::as_str).unwrap_or("");
+            let mut text = if ty.is_empty() { format!("{expr} = {value}") } else { format!("{expr} = {{{ty}}} {value}") };
+            if reference > 0 {
+                if let Ok(Ok(kids)) = client.request("variables", json!({"variablesReference": reference})).await {
+                    // debugpy's "special variables" / "function variables" groups are left out.
+                    let kids: Vec<Variable> = brisk_dap::parse_variables(&kids).into_iter().filter(|k| !k.name.contains(' ')).collect();
+                    for k in kids.iter().take(30) {
+                        let v: String = k.value.chars().take(120).collect();
+                        text.push_str(&if k.type_name.is_empty() { format!("\n    {} = {v}", k.name) } else { format!("\n    {} = {{{}}} {v}", k.name, k.type_name) });
+                    }
+                    if kids.len() > 30 {
+                        text.push_str(&format!("\n    … {} more", kids.len() - 30));
+                    }
+                }
+            }
+            let md = format!("```\n{text}\n```");
+            let _ = ed.update(cx, |e, cx| e.show_doc(&md, crate::editor::Anchor::Mouse(pos, at), cx));
+        })
+        .detach();
+        true
     }
 
     // --- Watches, Set Value, Copy Value ---------------------------------------------------
@@ -1686,6 +2211,8 @@ impl Workspace {
                 "backspace" => {
                     ed.text.pop();
                 }
+                // gpui gives Space no key_char.
+                "space" if !ctrl => ed.text.push(' '),
                 "v" if ctrl => {
                     if let Some(t) = cx.read_from_clipboard().and_then(|c| c.text()) {
                         ed.text.push_str(t.lines().next().unwrap_or(""));
@@ -1808,6 +2335,7 @@ impl Workspace {
             "backspace" => {
                 self.debug.input.pop();
             }
+            "space" => self.debug.input.push(' '),
             "escape" => self.debug.input.clear(),
             "up" => {
                 if self.debug.history_pos > 0 {
@@ -1893,6 +2421,25 @@ impl Workspace {
             .child(tool("dbg-eval", "=", "Evaluate Expression  Alt+F8", paused, Theme::accent(), Action::EvaluateExpression, cx))
             .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(Theme::divider()))
             .child(tool("dbg-bps", "●", "View Breakpoints  Ctrl+Shift+F8", true, Theme::breakpoint(), Action::ViewBreakpoints, cx))
+            .child(
+                // Mute Breakpoints: a crossed-out dot, pressed while on.
+                div()
+                    .id("dbg-mute")
+                    .w(px(26.))
+                    .h(px(24.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(5.))
+                    .cursor_pointer()
+                    .when(d.muted, |x| x.bg(Theme::press()))
+                    .hover(|s| s.bg(Theme::hover_row()))
+                    .active(|s| s.bg(Theme::press()))
+                    .text_color(if d.muted { Theme::text_dim() } else { Theme::breakpoint() })
+                    .child(div().relative().child("●").child(div().absolute().top(px(8.)).left(px(-2.)).w(px(14.)).h(px(1.5)).bg(Theme::text_muted())))
+                    .tooltip(|_, cx| cx.new(|_| super::Tip("Mute Breakpoints".into())).into())
+                    .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::MuteBreakpoints, w, cx))),
+            )
             .child(div().pl(px(10.)).text_size(px(12.)).text_color(Theme::text_muted()).child(title));
         let tab = |id: &'static str, label: &'static str, t: DebugTab, cur: DebugTab, cx: &mut Context<Self>| {
             div()
@@ -1934,6 +2481,7 @@ impl Workspace {
     }
 
     fn render_debugger_tab(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let threads = self.render_threads(cx);
         let d = &self.debug;
         let frames = div()
             .id("dbg-frames")
@@ -1943,6 +2491,7 @@ impl Workspace {
             .overflow_y_scroll()
             .border_r_1()
             .border_color(Theme::divider())
+            .children(threads)
             .when(d.frames.is_empty(), |x| x.child(div().p(px(8.)).text_color(Theme::text_dim()).child(if d.paused_thread().is_some() { "Loading…" } else { "Frames appear when the program is paused" })))
             .children(d.frames.iter().enumerate().map(|(i, f)| {
                 let file = f.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -2272,10 +2821,12 @@ impl Workspace {
                             .map(|e| e.read(cx).breakpoint_list().into_iter().map(|(l, b)| format!("{}{}", l + 1, b.condition.map(|c| format!(" if {c}")).unwrap_or_default())).collect())
                             .unwrap_or_default();
                         format!(
-                            "state={:?} top={:?} bps={bps:?} popup={} tab={:?} sel={:?} edit={:?} watches={:?}",
+                            "state={:?} top={:?} bps={bps:?} muted={} popup={} bpdlg={} tab={:?} sel={:?} edit={:?} watches={:?}",
                             t.debug.state(),
                             t.debug.frames.first().map(|f| f.line + 1),
+                            t.debug.muted,
                             t.popup.is_some(),
+                            t.debug.bp_dialog.as_ref().map_or("closed".to_string(), |d| format!("open(sel {} editing {})", d.sel, d.editing)),
                             t.debug.tab,
                             t.debug.sel.and_then(|s| t.debug.vars.get(s)).map(|r| r.var.name.clone()),
                             t.debug.edit.as_ref().map(|e| e.target),
@@ -2571,7 +3122,131 @@ impl Workspace {
                     eprintln!("smoke-debug: pytest {what} result {summary:?}");
                 });
             }
+            let thr = dir.join("dbg_threads.py");
+            let _ = std::fs::write(&thr, "import threading\nev = threading.Event()\ndef work(n):\n    x = n * 2\n    ev.set()\n    return x\ndef main():\n    t = threading.Thread(target=work, args=(5,), name=\"Worker\")\n    t.start()\n    t.join()\nmain()\n");
+            let _ = this.update_in(cx, |t, w, cx| {
+                t.open_file(&thr, w, cx);
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.toggle_breakpoint(4, cx));
+                }
+                t.dispatch(Action::DebugContext, w, cx);
+            });
+            let s = settled!();
+            let mut threads = Vec::new();
+            for _ in 0..50 {
+                wait(100).await;
+                threads = this.update(cx, |t, _| t.debug.threads.clone()).unwrap_or_default();
+                if !threads.is_empty() {
+                    break;
+                }
+            }
+            let main_id = threads.iter().find(|t| t.1 == "MainThread").map(|t| t.0);
+            let _ = this.update_in(cx, |t, w, cx| {
+                let shown = t.render_threads(cx).is_some();
+                eprintln!(
+                    "smoke-debug: threads {s:?} at {:?} threads={:?} chooser={shown}",
+                    t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)),
+                    threads.iter().map(|t| t.1.as_str()).collect::<Vec<_>>()
+                );
+                if let Some(id) = main_id {
+                    t.select_thread(id, w, cx);
+                }
+            });
+            wait(1500).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                let frames: Vec<String> = t.debug.frames.iter().map(|f| format!("{}:{}", f.name, f.line + 1)).collect();
+                eprintln!("smoke-debug: main thread -> paused={:?} frames has main:10 {}", t.debug.paused_thread() == main_id, frames.iter().any(|f| f == "main:10"));
+                t.dispatch(Action::Resume, w, cx);
+            });
+            until!(|s: Option<State>| s == Some(State::Ended));
+            let _ = this.update_in(cx, |t, _, cx| {
+                eprintln!("smoke-debug: threads after end {:?} {:?}", t.debug.threads, t.debug.console.iter().rev().take(3).map(|l| l.0.trim().to_string()).collect::<Vec<_>>());
+                let _ = std::fs::remove_file(&thr);
+                let _ = cx;
+            });
+            let smart = dir.join("dbg_smart.py");
+            let _ = std::fs::write(&smart, "def a(x):\n    return x + 1\n\n\ndef b(x):\n    return x * 2\n\n\nr = a(b(3))\nprint(r)\n");
+            let _ = this.update_in(cx, |t, w, cx| {
+                t.open_file(&smart, w, cx);
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.toggle_breakpoint(8, cx));
+                }
+                t.dispatch(Action::DebugContext, w, cx);
+            });
+            let s = settled!();
+            wait(800).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                eprintln!("smoke-debug: smart step {s:?} at {:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                t.dispatch(Action::SmartStepInto, w, cx);
+            });
+            let mut labels = Vec::new();
+            for _ in 0..50 {
+                wait(100).await;
+                labels = this.update(cx, |t, _| t.debug.chooser.as_ref().map(|s| s.targets.iter().map(|t| t.1.clone()).collect::<Vec<_>>())).ok().flatten().unwrap_or_default();
+                if !labels.is_empty() {
+                    break;
+                }
+            }
+            let _ = this.update_in(cx, |t, w, cx| {
+                let i = labels.iter().position(|l| l.starts_with("a")).unwrap_or(0);
+                eprintln!("smoke-debug: smart step targets {labels:?} -> choose {:?}", labels.get(i));
+                t.chooser_go(i, w, cx);
+            });
+            let s = settled!();
+            wait(800).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                let x = t.debug.vars.iter().find(|r| r.var.name == "x").map(|r| r.var.value.clone());
+                eprintln!("smoke-debug: smart step into a -> {s:?} at {:?} x={x:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                t.dispatch(Action::Resume, w, cx);
+            });
+            until!(|s: Option<State>| s == Some(State::Ended));
+            let spin2 = dir.join("dbg_attach_target.py");
+            let _ = std::fs::write(&spin2, "import time\n\nn = 0\nwhile True:\n    n += 1\n    time.sleep(0.05)\n");
+            let python = this.update(cx, |t, _| t.runs.interpreter(&t.root).map(|i| i.path)).ok().flatten();
+            let child = python.and_then(|p| std::process::Command::new(p).arg(&spin2).spawn().ok());
+            wait(1500).await;
+            if let Some(mut child) = child {
+                let pid = child.id();
+                let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::AttachToProcess, w, cx));
+                let mut listed = Vec::new();
+                for _ in 0..100 {
+                    wait(100).await;
+                    listed = this.update(cx, |t, _| t.debug.chooser.as_ref().map(|c| c.targets.iter().map(|x| x.0).collect::<Vec<_>>())).ok().flatten().unwrap_or_default();
+                    if !listed.is_empty() {
+                        break;
+                    }
+                }
+                let _ = this.update_in(cx, |t, w, cx| {
+                    eprintln!("smoke-debug: attach list has target {} (of {})", listed.contains(&(pid as i64)), listed.len());
+                    t.open_file(&spin2, w, cx);
+                    if let Some(ed) = t.active_editor().cloned() {
+                        ed.update(cx, |e, cx| e.toggle_breakpoint(4, cx));
+                    }
+                    if let Some(i) = listed.iter().position(|x| *x == pid as i64) {
+                        t.chooser_go(i, w, cx);
+                    } else {
+                        t.debug.chooser = None;
+                    }
+                });
+                let s = settled!();
+                wait(800).await;
+                let _ = this.update_in(cx, |t, w, cx| {
+                    let n = t.debug.vars.iter().find(|r| r.var.name == "n").map(|r| r.var.value.clone());
+                    eprintln!("smoke-debug: attached -> {s:?} at {:?} n={n:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                    if let Some(ed) = t.active_editor().cloned() {
+                        ed.update(cx, |e, cx| e.toggle_breakpoint(4, cx));
+                    }
+                    t.dispatch(Action::Stop, w, cx);
+                });
+                wait(2500).await;
+                let alive = matches!(child.try_wait(), Ok(None));
+                let _ = this.update(cx, |t, _| eprintln!("smoke-debug: detach -> state={:?} process alive={alive} console {:?}", t.debug.state(), t.debug.console.last().map(|l| l.0.trim().to_string())));
+                let _ = child.kill();
+                let _ = child.wait();
+            }
             let _ = this.update_in(cx, |_, _, cx| {
+                let _ = std::fs::remove_file(&spin2);
+                let _ = std::fs::remove_file(&smart);
                 let _ = std::fs::remove_file(&raise);
                 let _ = std::fs::remove_file(&test);
                 let _ = std::fs::remove_file(&exc);
@@ -2601,6 +3276,26 @@ mod tests {
         assert_eq!(v.get(&3), None);
         assert_eq!(v.get(&4).map(String::as_str), Some("items: [5, 2]"));
         assert_eq!(v.get(&0), None);
+    }
+
+    #[test]
+    fn process_targets() {
+        assert_eq!(process_target(r#""C:\Py 3\python.exe" -u C:/x/app.py --port 1"#), "app.py");
+        assert_eq!(process_target("python -m http.server 8765"), "-m http.server");
+        assert_eq!(process_target("python"), "");
+    }
+
+    #[test]
+    fn hover_expressions() {
+        let l = "    total = obj.items[0] + add(x)  # items here";
+        let at = |s: &str| l.find(s).unwrap();
+        assert_eq!(hover_expression(l, at("total") + 2).as_deref(), Some("total"));
+        assert_eq!(hover_expression(l, at("items") + 1).as_deref(), Some("obj.items"));
+        assert_eq!(hover_expression(l, at("add")).as_deref(), Some("add"));
+        assert_eq!(hover_expression(l, at("here")), None);
+        assert_eq!(hover_expression("s = \"x y\" if a else b", 5), None);
+        assert_eq!(hover_expression("s = \"x y\" if a else b", 10), None);
+        assert_eq!(hover_expression("s = \"x y\" if a else b", 13).as_deref(), Some("a"));
     }
 
     #[test]

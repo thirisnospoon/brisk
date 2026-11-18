@@ -161,6 +161,8 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("ctrl-shift-f8", A::ViewBreakpoints, None);
     k.bind("f8", A::StepOver, None);
     k.bind("f7", A::StepInto, None);
+    k.bind("shift-f7", A::SmartStepInto, None);
+    k.bind("ctrl-alt-f5", A::AttachToProcess, None);
     k.bind("shift-f8", A::StepOut, None);
     k.bind("f9", A::Resume, None);
     k.bind("alt-f9", A::RunToCursor, None);

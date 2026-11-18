@@ -1552,7 +1552,9 @@ impl Element for EditorElement {
         if ed.show_gutter {
             for (line, bp) in ed.breakpoint_list() {
                 if let Ok(i) = rows.binary_search(&line) {
-                    breakpoint_marks.push((i, bp.condition.is_some(), bp.verified, bp.enabled));
+                    // Muted: grey like a disabled one, but filled.
+                    let verified = if ed.breakpoints_muted() { Some(true) } else { bp.verified };
+                    breakpoint_marks.push((i, bp.condition.is_some(), verified, bp.enabled && !ed.breakpoints_muted()));
                 }
             }
         }
@@ -1832,7 +1834,9 @@ impl Element for EditorElement {
                 let d = (lh - px(6.)).min(px(13.));
                 let x = bounds.left() + pp.gutter_w - px(30.) - pp.run_slot - d - px(1.);
                 let circle = Bounds::new(point(x, y + (lh - d) / 2.), size(d, d));
-                if !enabled {
+                if !enabled && verified == Some(true) {
+                    window.paint_quad(fill(circle, Theme::text_dim()).corner_radii(d / 2.));
+                } else if !enabled {
                     window.paint_quad(gpui::outline(circle, Theme::text_dim(), gpui::BorderStyle::Solid).corner_radii(d / 2.));
                 } else if verified == Some(false) {
                     window.paint_quad(gpui::outline(circle, Theme::breakpoint(), gpui::BorderStyle::Solid).corner_radii(d / 2.));
