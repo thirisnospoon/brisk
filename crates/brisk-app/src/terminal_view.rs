@@ -48,6 +48,19 @@ struct RunTab {
     ended: Option<std::time::Instant>,
     /// Pin Tab: a new run of the configuration opens its own tab instead of replacing this one.
     pinned: bool,
+    /// The user stopped it (■ / Ctrl+F2 / Services): on Windows a killed process exits with
+    /// code 1, so the exit code alone cannot tell.
+    stopped: bool,
+}
+
+impl Tab {
+    /// Stop the run's process at the user's request.
+    fn stop_run(&mut self) {
+        if let Some(r) = self.run.as_mut() {
+            r.stopped = true;
+        }
+        self.session.kill();
+    }
 }
 
 /// Events from the Run window.
@@ -161,8 +174,14 @@ impl TerminalPanel {
                                     if let Some(r) = t.run.as_mut() {
                                         r.running = false;
                                         r.ended = Some(std::time::Instant::now());
-                                        let code = r.code.map(|c| c.to_string()).unwrap_or_else(|| "-1".into());
-                                        t.session.inject(format!("\r\n\x1b[0mProcess finished with exit code {code}\r\n\x1b[?25l").as_bytes());
+                                        if r.stopped {
+                                            r.code = None;
+                                        }
+                                        let end = match r.code {
+                                            Some(c) => format!("Process finished with exit code {c}"),
+                                            None => "Process terminated".to_string(),
+                                        };
+                                        t.session.inject(format!("\r\n\x1b[0m{end}\r\n\x1b[?25l").as_bytes());
                                         let tests = r.tests.as_mut().map(|t| t.finish());
                                         cx.emit(RunEvent::Finished { name: r.name.clone(), code: r.code, tests });
                                     }
@@ -232,7 +251,7 @@ impl TerminalPanel {
         })
         .map_err(|e| format!("Cannot run {}: {e}", cmd.program.display()))?;
         let name = cfg.name.clone();
-        let tab = Tab { id, session, title: String::new(), number: 0, run: Some(RunTab { name: name.clone(), cfg, cmd, running: true, code: None, tests, started: std::time::Instant::now(), ended: None, pinned: false }) };
+        let tab = Tab { id, session, title: String::new(), number: 0, run: Some(RunTab { name: name.clone(), cfg, cmd, running: true, code: None, tests, started: std::time::Instant::now(), ended: None, pinned: false, stopped: false }) };
         let reuse = into
             .and_then(|id| self.tabs.iter().position(|t| t.id == id && t.run.is_some()))
             .or_else(|| self.tabs.iter().position(|t| t.run.as_ref().is_some_and(|r| r.name == name && !r.pinned)));
@@ -324,18 +343,18 @@ impl TerminalPanel {
 
     /// Stop every running process (smoke tests).
     pub fn stop_all(&mut self) {
-        for t in self.tabs.iter().filter(|t| t.run.as_ref().is_some_and(|r| r.running)) {
-            t.session.kill();
+        for t in self.tabs.iter_mut().filter(|t| t.run.as_ref().is_some_and(|r| r.running)) {
+            t.stop_run();
         }
     }
 
     /// Ctrl+F2: stop the active tab's process (or any running one).
     pub fn stop(&mut self) -> bool {
-        let running = |t: &&Tab| t.run.as_ref().is_some_and(|r| r.running);
-        let pick = self.tabs.get(self.active).filter(running).or_else(|| self.tabs.iter().find(running));
+        let running = |t: &Tab| t.run.as_ref().is_some_and(|r| r.running);
+        let pick = self.tabs.get(self.active).filter(|t| running(t)).map(|_| self.active).or_else(|| self.tabs.iter().position(running));
         match pick {
-            Some(t) => {
-                t.session.kill();
+            Some(i) => {
+                self.tabs[i].stop_run();
                 true
             }
             None => false,
@@ -631,6 +650,7 @@ impl TerminalPanel {
                 let state = t.run.as_ref().map(|r| match (r.running, r.code) {
                     (true, _) => ("▶", rgb(0x5fb865)),
                     (false, Some(0)) => ("✓", rgb(0x8c8f96)),
+                    (false, None) => ("■", rgb(0x8c8f96)),
                     (false, _) => ("✗", rgb(0xf05d5d)),
                 });
                 let id = t.id;

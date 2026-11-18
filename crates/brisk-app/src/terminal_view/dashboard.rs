@@ -52,9 +52,9 @@ impl TerminalPanel {
 
     /// Stop one tab's process.
     pub fn stop_run(&mut self, id: u64) -> bool {
-        match self.tabs.iter().find(|t| t.id == id && t.run.as_ref().is_some_and(|r| r.running)) {
+        match self.tabs.iter_mut().find(|t| t.id == id && t.run.as_ref().is_some_and(|r| r.running)) {
             Some(t) => {
-                t.session.kill();
+                t.stop_run();
                 true
             }
             None => false,
