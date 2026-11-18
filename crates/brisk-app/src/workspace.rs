@@ -3,6 +3,8 @@
 
 mod bookmarks_ui;
 mod console_ui;
+mod packages_ui;
+mod todo_ui;
 mod db_ui;
 mod debug_ui;
 mod disk_ui;
@@ -68,6 +70,8 @@ pub enum BottomTool {
     Services,
     Find,
     PythonConsole,
+    Packages,
+    Todo,
 }
 
 impl BottomTool {
@@ -81,6 +85,8 @@ impl BottomTool {
             BottomTool::Services => "Services",
             BottomTool::Find => "Find",
             BottomTool::PythonConsole => "Python Console",
+            BottomTool::Packages => "Python Packages",
+            BottomTool::Todo => "TODO",
         }
     }
     fn stage(self) -> &'static str {
@@ -92,7 +98,7 @@ impl BottomTool {
             BottomTool::Git => "",
             BottomTool::Services => "Stage 5: Docker and databases.",
             BottomTool::Find => "",
-            BottomTool::PythonConsole => "",
+            BottomTool::PythonConsole | BottomTool::Packages | BottomTool::Todo => "",
         }
     }
 }
@@ -274,6 +280,10 @@ pub struct Workspace {
     debug: debug_ui::Debug,
     /// Created on first open of the Python Console.
     pyc: Option<console_ui::PyConsole>,
+    /// Created on first open of Python Packages.
+    packages: Option<packages_ui::Packages>,
+    /// Created on first open of the TODO window; then kept current on save.
+    todo: Option<todo_ui::Todo>,
     /// The breakpoint whose condition the popup edits.
     debug_edit: Option<(Entity<Editor>, usize)>,
     settings_dialog: Option<settings_ui::SettingsDialog>,
@@ -372,6 +382,12 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_PYCONSOLE").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.python_console_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_PACKAGES").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.python_packages_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_TODO").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.todo_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_GITX").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.gitx_smoke(window, cx));
@@ -505,6 +521,8 @@ impl Workspace {
             db,
             debug,
             pyc: None,
+            packages: None,
+            todo: None,
             debug_edit: None,
             recent: Vec::new(),
             bookmarks: saved_bookmarks,
@@ -560,17 +578,22 @@ impl Workspace {
         }
         let git_fields = self.git.as_ref().map(|g| [g.message.clone(), g.filter.field.clone()]).into_iter().flatten();
         let console = self.pyc.as_ref().map(|p| p.input.clone());
-        git_fields.chain(console).find(|m| m.read(cx).focus_handle(cx).is_focused(window))
+        let packages = self.packages.as_ref().map(|p| p.fields()).into_iter().flatten();
+        git_fields.chain(console).chain(packages).find(|m| m.read(cx).focus_handle(cx).is_focused(window))
     }
 
     fn save_all(&mut self, cx: &mut Context<Self>) {
         let mut saved = 0;
+        let mut saved_paths = Vec::new();
         let mut problem = None;
         let eds: Vec<_> = self.editors().cloned().collect();
         for t in eds {
             t.update(cx, |e, cx| {
                 match e.save() {
-                    Ok(true) => saved += 1,
+                    Ok(true) => {
+                        saved += 1;
+                        saved_paths.extend(e.path.clone());
+                    }
                     Ok(false) => {}
                     Err(err) => problem = Some(format!("Cannot save {}: {err}", e.title())),
                 }
@@ -586,6 +609,7 @@ impl Workspace {
             self.status = p.clone();
             self.show_toast(p, true, cx);
         }
+        self.todo_files_saved(saved_paths, cx);
         if saved > 0 {
             self.persist_bookmarks(cx);
             self.symbols.stale = true;
@@ -868,7 +892,7 @@ impl Workspace {
             cx.stop_propagation();
             return;
         }
-        if self.python_console_key(e, window, cx) {
+        if self.python_console_key(e, window, cx) || self.packages_key(e, window, cx) || self.todo_key(e, window, cx) {
             cx.stop_propagation();
             return;
         }
@@ -935,7 +959,7 @@ impl Workspace {
             A::ToggleGitWindow, A::ToggleCommitWindow, A::ToggleTerminalWindow, A::HideAllToolWindows,
             A::HideActiveToolWindow, A::FindAction, A::Settings, A::Run, A::Debug, A::RunContext,
             A::DebugContext, A::Stop, A::FindInFiles, A::SaveAll, A::ToggleDatabaseWindow, A::Rerun,
-            A::SelectRunConfiguration, A::TogglePythonConsole,
+            A::SelectRunConfiguration, A::TogglePythonConsole, A::TogglePythonPackages, A::ToggleTodoWindow,
         ];
         let Some(term) = term else { return };
         let k = &e.keystroke;
@@ -1023,6 +1047,9 @@ impl Workspace {
                 }
             }
             A::TogglePythonConsole => self.toggle_python_console(window, cx),
+            A::TogglePythonPackages => self.toggle_python_packages(window, cx),
+            A::ToggleTodoWindow => self.toggle_todo_window(window, cx),
+            A::RefreshPythonPackages | A::InstallPythonPackage | A::UninstallPythonPackage => self.python_packages_action(action, window, cx),
             A::RerunPythonConsole | A::StopPythonConsole | A::ClearPythonConsole => self.python_console_action(action, window, cx),
             A::ToggleServicesWindow => {
                 self.toggle_bottom(BottomTool::Services, window, cx);
@@ -1550,9 +1577,11 @@ impl Workspace {
             .child(self.stripe_button("st-bookmarks", "☆", "Bookmarks", self.left == Some(LeftTool::Bookmarks), Action::ToggleBookmarksWindow, cx))
             .child(div().flex_1())
             .child(self.stripe_button("st-pyconsole", "≫", "Python Console", self.bottom == Some(BottomTool::PythonConsole), Action::TogglePythonConsole, cx))
+            .child(self.stripe_button("st-packages", "⬡", "Python Packages", self.bottom == Some(BottomTool::Packages), Action::TogglePythonPackages, cx))
             .child(self.stripe_button("st-services", "⚙", "Services", self.bottom == Some(BottomTool::Services), Action::ToggleServicesWindow, cx))
             .child(self.stripe_button("st-run", "▶", "Run", self.bottom == Some(BottomTool::Run), Action::ToggleRunWindow, cx))
             .child(self.stripe_button("st-terminal", "›_", "Terminal", self.bottom == Some(BottomTool::Terminal), Action::ToggleTerminalWindow, cx))
+            .child(self.stripe_button("st-todo", "☑", "TODO", self.bottom == Some(BottomTool::Todo), Action::ToggleTodoWindow, cx))
             .child(self.stripe_button("st-problems", "⚠", "Problems", self.bottom == Some(BottomTool::Problems), Action::ToggleProblemsWindow, cx))
             .child(self.stripe_button("st-git", "⎇", "Git", self.bottom == Some(BottomTool::Git), Action::ToggleGitWindow, cx))
     }
@@ -2201,6 +2230,8 @@ impl Render for Workspace {
             (BottomTool::Debug, _) => self.render_debug(window, cx),
             (BottomTool::Services, _) => self.render_services(cx),
             (BottomTool::PythonConsole, _) => self.render_python_console(window, cx),
+            (BottomTool::Packages, _) => self.render_python_packages(window, cx),
+            (BottomTool::Todo, _) => self.render_todo(cx),
             _ => Self::render_placeholder(b.title(), b.stage()),
         });
         let center = self.render_editor_area(cx);

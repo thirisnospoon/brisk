@@ -11,6 +11,8 @@ mod editorconfig;
 mod keys;
 mod local_history;
 mod py_console;
+mod py_packages;
+mod todo_scan;
 mod terminal_view;
 mod settings;
 mod theme;
