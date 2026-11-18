@@ -54,6 +54,44 @@ pub struct RunConfig {
     /// Created by Ctrl+Shift+F10 from a file; replaced after [`MAX_TEMPORARY`].
     #[serde(default, skip_serializing_if = "is_false")]
     pub temporary: bool,
+    /// What the IDE shows when the configuration starts.
+    #[serde(default, skip_serializing_if = "OnStart::is_default")]
+    pub on_start: OnStart,
+    /// PyCharm's "Allow multiple instances": a new run starts next to a running one instead
+    /// of asking to stop it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_multiple: bool,
+}
+
+/// When a configuration starts: PyCharm's "Activate tool window" / "Focus tool window",
+/// or its run shown in Services.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OnStart {
+    /// Show the Run window, the caret stays in the editor.
+    #[default]
+    Show,
+    /// Show the Run window and focus its console.
+    Focus,
+    /// Show the run in Services (Alt+8).
+    Services,
+    /// Leave the tool windows as they are.
+    Nothing,
+}
+
+impl OnStart {
+    pub const ALL: [OnStart; 4] = [OnStart::Show, OnStart::Focus, OnStart::Services, OnStart::Nothing];
+    fn is_default(&self) -> bool {
+        *self == OnStart::Show
+    }
+    pub fn title(self) -> &'static str {
+        match self {
+            OnStart::Show => "Show Run window",
+            OnStart::Focus => "Focus Run window",
+            OnStart::Services => "Show in Services",
+            OnStart::Nothing => "Don't show",
+        }
+    }
 }
 
 fn is_false(b: &bool) -> bool {
@@ -294,6 +332,14 @@ fn parse_configuration(root: &Path, node: roxmltree::Node) -> Option<RunConfig> 
     // FastAPI / Flask / Django options, read after the loop.
     let mut web: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
     let mut c = RunConfig { name: node.attribute("name")?.to_string(), kind, temporary: node.attribute("temporary") == Some("true"), ..Default::default() };
+    // <configuration activateToolWindowBeforeRun="false" focusToolWindowBeforeRun="true"
+    // allowRunningInParallel="true"> (older PyCharm: singleton="false").
+    c.on_start = match (node.attribute("activateToolWindowBeforeRun"), node.attribute("focusToolWindowBeforeRun")) {
+        (Some("false"), _) => OnStart::Nothing,
+        (_, Some("true")) => OnStart::Focus,
+        _ => OnStart::Show,
+    };
+    c.allow_multiple = node.attribute("allowRunningInParallel") == Some("true") || node.attribute("singleton") == Some("false");
     let (mut test_target, mut target_type) = (String::new(), String::from("PATH"));
     let mut extra = Vec::new();
     let mut script = String::new();

@@ -461,7 +461,7 @@ fn imports_pycharm_server_configurations() {
     std::fs::write(
         root.join(".run/api.run.xml"),
         r#"<component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="api" type="Python.FastAPI" singleton="false">
+  <configuration default="false" name="api" type="Python.FastAPI" singleton="false" focusToolWindowBeforeRun="true">
     <option name="additionalOptions" value="--port 8001  --reload" />
     <option name="file" value="$PROJECT_DIR$/api/main.py" />
     <option name="ENV_FILES" value="" />
@@ -532,5 +532,8 @@ fn imports_pycharm_server_configurations() {
     assert_eq!(f.get("runserver").unwrap().env.get("DJANGO_SETTINGS_MODULE").map(String::as_str), Some("site.settings"));
     assert!(f.get("tests").unwrap().env.is_empty());
     assert_eq!(f.selected.as_deref(), Some("runserver"));
+    let api = f.get("api").unwrap();
+    assert_eq!((api.on_start, api.allow_multiple), (OnStart::Focus, true));
+    assert_eq!((f.get("tests").unwrap().on_start, f.get("tests").unwrap().allow_multiple), (OnStart::Show, false));
     let _ = std::fs::remove_dir_all(&root);
 }

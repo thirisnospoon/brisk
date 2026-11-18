@@ -8,6 +8,7 @@ mod todo_ui;
 mod db_ui;
 mod services_ui;
 mod pin_smoke;
+mod multi_smoke;
 mod debug_ui;
 mod disk_ui;
 mod edit2_smoke;
@@ -226,6 +227,8 @@ enum Target {
     Confirm(git_ui::Pending),
     Cancel,
     RunConfig(Option<String>, bool),
+    /// The configuration is still running: stop it and run it again.
+    StopAndRerun(Box<brisk_run::RunConfig>),
     EditRunConfigs,
     /// Make a temporary run configuration permanent.
     SaveRunConfig(String),
@@ -435,6 +438,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_MULTI").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.multi_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_PIN").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.pin_smoke(window, cx));
@@ -1542,6 +1548,7 @@ impl Workspace {
                         self.run_pending(p, cx);
                     }
                     Some(Target::Cancel) => self.focus_editor(window, cx),
+                    Some(Target::StopAndRerun(c)) => self.stop_and_rerun(*c, window, cx),
                     Some(t @ (Target::RunConfig(..) | Target::EditRunConfigs | Target::SaveRunConfig(_) | Target::Interpreter(_))) => self.run_popup_pick(t, window, cx),
                     Some(Target::AddInterpreter) => {
                         self.open_popup(PopupKind::AddInterpreter);
@@ -2318,7 +2325,7 @@ impl Workspace {
                                         Target::Confirm(_) => ("✓", Theme::file_added()),
                                         Target::Cancel => ("×", Theme::text_muted()),
                                         Target::RunConfig(None, _) => ("▤", Theme::text_muted()),
-                                        Target::RunConfig(Some(_), _) => ("▶", gpui::rgb(0x5fb865).into()),
+                                        Target::RunConfig(Some(_), _) | Target::StopAndRerun(_) => ("▶", gpui::rgb(0x5fb865).into()),
                                         Target::EditRunConfigs => ("✎", Theme::text_muted()),
                                         Target::SaveRunConfig(_) => ("⎙", Theme::text_muted()),
                                         Target::Interpreter(_) => ("◆", gpui::rgb(0x4b8bbe).into()),

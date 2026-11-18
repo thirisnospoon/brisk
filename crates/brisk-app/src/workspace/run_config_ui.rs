@@ -23,12 +23,14 @@ pub enum Field {
     Interpreter,
     BeforeRun,
     BeforeCommand,
+    OnStart,
+    AllowMultiple,
     Temporary,
 }
 
 impl Field {
     fn is_text(self) -> bool {
-        !matches!(self, Field::Kind | Field::Temporary)
+        !matches!(self, Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple)
     }
 }
 
@@ -200,7 +202,7 @@ fn fields(kind: Kind, temporary: bool) -> Vec<Field> {
     if kind == Kind::Pytest {
         v.push(F::Keywords);
     }
-    v.extend([F::Parameters, F::InterpreterOptions, F::WorkingDirectory, F::Env, F::EnvFiles, F::Interpreter, F::BeforeRun, F::BeforeCommand]);
+    v.extend([F::Parameters, F::InterpreterOptions, F::WorkingDirectory, F::Env, F::EnvFiles, F::Interpreter, F::BeforeRun, F::BeforeCommand, F::OnStart, F::AllowMultiple]);
     if temporary {
         v.push(F::Temporary);
     }
@@ -228,6 +230,8 @@ fn label(f: Field, kind: Kind) -> &'static str {
         Field::Interpreter => "Interpreter:",
         Field::BeforeRun => "Before launch, run:",
         Field::BeforeCommand => "Before launch, command:",
+        Field::OnStart => "When started:",
+        Field::AllowMultiple => "Multiple instances:",
         Field::Temporary => "Temporary:",
     }
 }
@@ -273,7 +277,7 @@ impl RunDialog {
             Field::BeforeRun => &mut d.cfg.before_run,
             Field::BeforeCommand => &mut d.cfg.before_command,
             Field::Interpreter => d.cfg.interpreter.get_or_insert_with(String::new),
-            Field::Kind | Field::Temporary => return None,
+            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple => return None,
         })
     }
 
@@ -291,7 +295,7 @@ impl RunDialog {
             Field::BeforeRun => &d.cfg.before_run,
             Field::BeforeCommand => &d.cfg.before_command,
             Field::Interpreter => return d.cfg.interpreter.as_deref().map_or(0, |s| s.chars().count()),
-            Field::Kind | Field::Temporary => return 0,
+            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple => return 0,
         };
         s.chars().count()
     }
@@ -361,6 +365,12 @@ impl RunDialog {
                 self.set_kind(k);
             }
             Field::Temporary => d.cfg.temporary = !d.cfg.temporary,
+            Field::AllowMultiple => d.cfg.allow_multiple = !d.cfg.allow_multiple,
+            Field::OnStart => {
+                let all = brisk_run::OnStart::ALL;
+                let i = all.iter().position(|x| *x == d.cfg.on_start).unwrap_or(0);
+                d.cfg.on_start = all[if back { (i + all.len() - 1) % all.len() } else { (i + 1) % all.len() }];
+            }
             _ => {}
         }
     }
@@ -782,6 +792,51 @@ impl Workspace {
                                     }
                                     cx.notify();
                                 }))
+                        }))
+                        .into_any_element(),
+                    Field::OnStart => div()
+                        .flex()
+                        .gap(px(2.))
+                        .children(brisk_run::OnStart::ALL.iter().enumerate().map(|(i, &o)| {
+                            let on = o == dr.cfg.on_start;
+                            div()
+                                .id(("rc-onstart", i))
+                                .px(px(5.))
+                                .rounded(px(4.))
+                                .cursor_pointer()
+                                .active(|s| s.bg(Theme::press()))
+                                .when(on, |x| x.bg(Theme::selection_row()))
+                                .when(!on, |x| x.hover(|s| s.bg(Theme::hover_row())))
+                                .text_color(if on { Theme::text() } else { Theme::text_muted() })
+                                .child(o.title())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(d) = this.runs.dialog.as_mut() {
+                                        d.field = Field::OnStart;
+                                        if let Some(dr) = d.draft() {
+                                            dr.cfg.on_start = o;
+                                        }
+                                    }
+                                    cx.notify();
+                                }))
+                        }))
+                        .into_any_element(),
+                    Field::AllowMultiple => div()
+                        .id("rc-multiple")
+                        .flex()
+                        .gap(px(6.))
+                        .cursor_pointer()
+                        .child(div().text_color(if dr.cfg.allow_multiple { Theme::accent() } else { Theme::text_muted() }).child(if dr.cfg.allow_multiple { "☑" } else { "☐" }))
+                        .child(div().text_color(Theme::text_muted()).child(if dr.cfg.allow_multiple { "allowed: a new run starts next to a running one" } else { "a new run asks to stop the running one" }))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            if let Some(d) = this.runs.dialog.as_mut() {
+                                d.field = Field::AllowMultiple;
+                                if let Some(dr) = d.draft() {
+                                    dr.cfg.allow_multiple = !dr.cfg.allow_multiple;
+                                }
+                            }
+                            cx.notify();
                         }))
                         .into_any_element(),
                     Field::Temporary => div()

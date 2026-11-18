@@ -251,10 +251,12 @@ impl TerminalPanel {
         })
         .map_err(|e| format!("Cannot run {}: {e}", cmd.program.display()))?;
         let name = cfg.name.clone();
+        // "Allow multiple instances": a running tab of the configuration stays.
+        let multiple = cfg.allow_multiple;
         let tab = Tab { id, session, title: String::new(), number: 0, run: Some(RunTab { name: name.clone(), cfg, cmd, running: true, code: None, tests, started: std::time::Instant::now(), ended: None, pinned: false, stopped: false }) };
         let reuse = into
             .and_then(|id| self.tabs.iter().position(|t| t.id == id && t.run.is_some()))
-            .or_else(|| self.tabs.iter().position(|t| t.run.as_ref().is_some_and(|r| r.name == name && !r.pinned)));
+            .or_else(|| self.tabs.iter().position(|t| t.run.as_ref().is_some_and(|r| r.name == name && !r.pinned && !(multiple && r.running))));
         if let Some(i) = reuse {
             // PyCharm reuses the configuration's tab (stopping a run still in progress).
             self.tabs[i].session.kill();

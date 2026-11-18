@@ -50,6 +50,18 @@ impl TerminalPanel {
         }
     }
 
+    /// A run of configuration `name` is still running.
+    pub fn running_named(&self, name: &str) -> bool {
+        self.tabs.iter().any(|t| t.run.as_ref().is_some_and(|r| r.running && r.name == name))
+    }
+
+    /// Stop every running run of configuration `name` ("Stop and Rerun").
+    pub fn stop_named(&mut self, name: &str) {
+        for t in self.tabs.iter_mut().filter(|t| t.run.as_ref().is_some_and(|r| r.running && r.name == name)) {
+            t.stop_run();
+        }
+    }
+
     /// Stop one tab's process.
     pub fn stop_run(&mut self, id: u64) -> bool {
         match self.tabs.iter_mut().find(|t| t.id == id && t.run.as_ref().is_some_and(|r| r.running)) {
