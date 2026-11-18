@@ -152,6 +152,11 @@ pub struct VarRow {
 }
 
 impl VarRow {
+    /// A return value debugpy shows after Step Over / Step Out ("(return) f"): "↩ f()".
+    fn return_label(&self) -> Option<String> {
+        (self.depth == 1).then(|| return_label(&self.var.name)).flatten()
+    }
+
     fn var(depth: usize, var: Variable, parent: i64) -> Self {
         Self { depth, var, expanded: false, kind: RowKind::Var, parent }
     }
@@ -667,6 +672,11 @@ fn targets_on_statement(stmt: &str, targets: Vec<(i64, String)>) -> Vec<(i64, St
     };
     let kept: Vec<(i64, String)> = targets.iter().filter(|t| on(&t.1)).cloned().collect();
     if kept.is_empty() { targets } else { kept }
+}
+
+/// debugpy (showReturnValue) names the value a call just returned "(return) f".
+fn return_label(name: &str) -> Option<String> {
+    name.strip_prefix("(return) ").map(|f| format!("↩ {f}()"))
 }
 
 /// `pid<TAB>command line` for every process (Windows: CIM; elsewhere: `ps`).
@@ -2277,10 +2287,14 @@ impl Workspace {
             let Ok(Ok(v)) = rx.await else { return };
             let scopes = brisk_dap::parse_scopes(&v);
             // The first scope (locals) opens right away, like PyCharm's flat list.
-            let first = match scopes.first() {
+            let mut first = match scopes.first() {
                 Some(s) => client.request("variables", json!({"variablesReference": s.reference})).await.ok().and_then(Result::ok).map(|v| brisk_dap::parse_variables(&v)),
                 None => None,
             };
+            // Values just returned by calls first.
+            if let Some(v) = first.as_mut() {
+                v.sort_by_key(|v| return_label(&v.name).is_none());
+            }
             let _ = this.update(cx, |this, cx| {
                 let mut rows = Vec::new();
                 for (k, s) in scopes.into_iter().enumerate() {
@@ -2881,7 +2895,16 @@ impl Workspace {
             let editing_name = matches!((r.kind, edit.as_ref().map(|e| e.target)), (RowKind::Watch(w), Some(EditTarget::Watch(x))) if w == x);
             let editing_value = edit.as_ref().is_some_and(|e| e.target == EditTarget::Value(i));
             let error = r.var.value.starts_with("<error: ") && watch;
-            let name_color = if header { Theme::text_muted() } else if watch { Theme::accent() } else { Theme::syntax(brisk_syntax::Highlight::Property) };
+            let returned = r.return_label();
+            let name_color = if header {
+                Theme::text_muted()
+            } else if watch {
+                Theme::accent()
+            } else if returned.is_some() {
+                Theme::syntax(brisk_syntax::Highlight::Function)
+            } else {
+                Theme::syntax(brisk_syntax::Highlight::Property)
+            };
             let value: gpui::AnyElement = if editing_value {
                 input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
             } else if watch && r.var.value.is_empty() && !paused {
@@ -2907,7 +2930,7 @@ impl Workspace {
                     .child(if editing_name {
                         input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
                     } else {
-                        div().text_color(name_color).child(r.var.name.clone()).into_any_element()
+                        div().text_color(name_color).child(returned.clone().unwrap_or_else(|| r.var.name.clone())).into_any_element()
                     })
                     .when(!header, |x| {
                         x.child(div().text_color(Theme::text_dim()).child("="))
@@ -3247,6 +3270,13 @@ impl Workspace {
                 wait(500).await;
                 if let Ok(s) = this.update(cx, |t, _| t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1))) {
                     seen.push(s.unwrap_or_default());
+                }
+                if a == Action::StepOut {
+                    let _ = this.update(cx, |t, _| {
+                        let r: Vec<String> = t.debug.vars.iter().filter_map(|r| r.return_label().map(|l| format!("{l} = {}", r.var.value))).collect();
+                        let top = t.debug.vars.iter().find(|r| r.depth == 1).map(|r| r.var.name.clone());
+                        eprintln!("smoke-debug: return values after shift-f8 -> {r:?} first local {top:?}");
+                    });
                 }
             }
             eprintln!("smoke-debug: f7, shift-f8, f8 -> {seen:?} (return line {})", ret_line + 1);
@@ -3786,6 +3816,12 @@ mod tests {
         // Nothing for all exceptions: only the classes.
         let v = exception_args(false, false, false, &[ExcClass { enabled: false, ..c("A", true) }, c("B", true)]);
         assert_eq!(v["exceptionOptions"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn return_value_labels() {
+        assert_eq!(return_label("(return) add").as_deref(), Some("↩ add()"));
+        assert_eq!(return_label("total"), None);
     }
 
     #[test]
