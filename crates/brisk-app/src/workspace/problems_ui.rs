@@ -498,15 +498,19 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             use futures::FutureExt;
             let mut actions: Vec<brisk_lsp::CodeAction> = Vec::new();
-            for attempt in 0..2 {
-                // Right after startup ty may still be indexing the environment and know no
-                // import for the name yet: ask once more a moment later.
-                if attempt == 1 {
-                    if !unresolved || actions.iter().any(|a| !a.title.starts_with("Ignore '")) {
+            let mut retry_until: Option<std::time::Instant> = None;
+            loop {
+                // Right after startup ty may still be indexing the environment and answer an
+                // unknown name with nothing but "Ignore": keep asking for a few seconds, so
+                // the list does not open with only Suppress while the import is on its way.
+                if let Some(until) = retry_until {
+                    let found = actions.iter().any(|a| !a.title.starts_with("Ignore '"));
+                    if !unresolved || found || std::time::Instant::now() >= until {
                         break;
                     }
-                    bg.timer(Duration::from_millis(700)).await;
+                    bg.timer(Duration::from_millis(400)).await;
                 }
+                retry_until.get_or_insert_with(|| std::time::Instant::now() + Duration::from_secs(3));
                 // Usually milliseconds, but the first import search after startup walks the whole
                 // environment (seconds with big site-packages); never hang on a stuck server.
                 let fut = ty.code_actions(&path, start, end, &ty_diags);
