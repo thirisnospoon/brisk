@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/brisk-proc",
     "crates/brisk-keymap",
     "crates/brisk-text",
     "crates/brisk-project",
@@ -22,6 +23,7 @@ edition = "2021"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+brisk-proc = { path = "crates/brisk-proc" }
 brisk-keymap = { path = "crates/brisk-keymap" }
 brisk-text = { path = "crates/brisk-text" }
 brisk-project = { path = "crates/brisk-project" }

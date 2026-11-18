@@ -67,6 +67,7 @@ impl Client {
             c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
         let mut child = c.spawn()?;
+        brisk_proc::adopt(&child);
         let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("no stdout"))?;
         let stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("no stdin"))?;
         let client = Arc::new(Client { stdin: Mutex::new(stdin), pending: Arc::default(), next: AtomicI64::new(1), child: Mutex::new(child), alive: Arc::new(AtomicBool::new(true)) });
@@ -172,7 +173,7 @@ pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&rest[i + 1..i + 3], 16) {
+            if let Some(b) = std::str::from_utf8(&bytes[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
                 v.push(b);
                 i += 3;
                 continue;

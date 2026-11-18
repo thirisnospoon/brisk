@@ -97,7 +97,11 @@ impl Query {
             let full = text[ls..le].trim_end_matches('\r');
             let c0 = text[ls..m.start()].chars().count();
             let c1 = c0 + text[m.start()..le_match].chars().count();
-            let (shown, hl) = window(full, m.start() - ls, le_match.min(ls + full.len()) - ls);
+            // A match starting on the CR or LF itself (regex `\n` on a CRLF file) lies past
+            // the trimmed line: clamp so the highlight is never reversed.
+            let s = (m.start() - ls).min(full.len());
+            let e = (le_match.min(ls + full.len()) - ls).max(s);
+            let (shown, hl) = window(full, s, e);
             out.push(Match { file, line, col: c0..c1, text: shown, hl });
             if out.len() >= limit {
                 return;
@@ -297,6 +301,18 @@ mod tests {
         assert!(v[0].text.len() <= MAX_LINE_SHOWN + 10);
         assert_eq!(&v[0].text[v[0].hl.clone()], "needle");
         assert_eq!(v[0].col.start, 500);
+    }
+
+    #[test]
+    fn regex_newline_on_crlf_text() {
+        let text = "a = 1\r\n\r\nb = 2\r\n";
+        for q in [r"\n", r"\r", r"\n\s*\n", r"1\r\n"] {
+            let mut v = Vec::new();
+            Query::new(&Options { regex: true, ..opts(q) }).unwrap().find_in(0, text, &mut v, 10);
+            for m in &v {
+                assert!(m.hl.start <= m.hl.end && m.hl.end <= m.text.len(), "{q}: {m:?}");
+            }
+        }
     }
 
     #[test]

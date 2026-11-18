@@ -77,6 +77,7 @@ impl Client {
             c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
         let mut child = c.spawn()?;
+        brisk_proc::adopt(&child);
         let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("no stdout"))?;
         let stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("no stdin"))?;
         let client = Arc::new(Client { stdin: Mutex::new(stdin), pending: Arc::default(), next: AtomicI64::new(1), child: Mutex::new(child), alive: Arc::new(AtomicBool::new(true)) });

@@ -216,3 +216,39 @@ fn replace_ranges_is_one_undo_step() {
     b.undo();
     assert_eq!(b.text(), "import os\nx == None\n");
 }
+
+#[test]
+fn close_carets_with_overlapping_deletes_do_not_panic() {
+    // Ctrl+Delete with carets at 1 and 3: edits 1..4 and 3..4 overlap.
+    let mut b = Buffer::new("abcd");
+    b.set_caret(1, false);
+    b.add_caret(3);
+    b.delete_word(true);
+    assert_eq!(b.text(), "a");
+    // Ctrl+Backspace with carets at 2 and 4 inside one word.
+    let mut b = Buffer::new("abcd");
+    b.set_caret(2, false);
+    b.add_caret(4);
+    b.delete_word(false);
+    assert_eq!(b.text(), "");
+    // Backspace in `()` with carets on both sides of `)`.
+    let mut b = Buffer::new("()");
+    b.set_caret(1, false);
+    b.add_caret(2);
+    b.backspace();
+    assert!(b.text().len() <= 1);
+}
+
+#[test]
+fn undo_history_is_capped() {
+    let mut b = Buffer::new("");
+    for i in 0..(UNDO_LIMIT + 50) {
+        b.insert(&format!("{i}\n"));
+        b.break_undo_group();
+    }
+    let mut n = 0;
+    while b.undo() {
+        n += 1;
+    }
+    assert_eq!(n, UNDO_LIMIT);
+}

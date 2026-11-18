@@ -69,6 +69,8 @@ pub struct PyConsole {
 }
 
 const MAX_LINES: usize = 5000;
+/// Inputs kept for ↑ / ↓ in the Python Console.
+const MAX_HISTORY: usize = 1000;
 
 impl PyConsole {
     fn new(cx: &mut Context<Workspace>) -> Self {
@@ -132,6 +134,9 @@ impl PyConsole {
 
     fn info(&mut self, text: impl Into<String>) {
         self.lines.push((format!("{}\n", text.into()), Kind::Info));
+        if self.lines.len() > MAX_LINES {
+            self.lines.drain(..self.lines.len() - MAX_LINES);
+        }
         self.scroll.scroll_to_bottom();
     }
 }
@@ -252,6 +257,9 @@ impl Workspace {
         p.scroll.scroll_to_bottom();
         if p.history.last() != Some(&code) {
             p.history.push(code.clone());
+            if p.history.len() > MAX_HISTORY {
+                p.history.drain(..p.history.len() - MAX_HISTORY);
+            }
         }
         p.hist_pos = None;
         p.draft.clear();

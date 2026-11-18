@@ -64,6 +64,7 @@ impl PipeIo {
         let parser = Arc::new(Mutex::new(Processor::new()));
         feed(&term, &parser, format!("{header}\r\n").as_bytes());
         let mut child = cmd.spawn()?;
+        brisk_proc::adopt(&child);
         let pid = child.id();
         // Readers only read; one writer thread orders output by whole lines, so a stderr line
         // never lands in the middle of a stdout line that `print()` wrote in pieces.

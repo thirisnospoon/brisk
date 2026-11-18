@@ -1347,7 +1347,8 @@ impl EntityInputHandler for Editor {
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
         let rope = self.buffer.rope();
-        self.marked.as_ref().map(|m| rope.char_to_utf16_cu(m.start)..rope.char_to_utf16_cu(m.end))
+        let len = rope.len_chars();
+        self.marked.as_ref().map(|m| rope.char_to_utf16_cu(m.start.min(len))..rope.char_to_utf16_cu(m.end.min(len)))
     }
 
     fn unmark_text(&mut self, _: &mut Window, _: &mut Context<Self>) {
@@ -1359,7 +1360,9 @@ impl EntityInputHandler for Editor {
             return;
         }
         if let Some(m) = self.marked.take() {
-            self.buffer.selections = vec![Selection { anchor: m.start, head: m.end, goal_col: None }];
+            // The buffer may have shrunk under an open composition (reload, undo): clamp.
+            let len = self.buffer.len_chars();
+            self.buffer.selections = vec![Selection { anchor: m.start.min(len), head: m.end.min(len), goal_col: None }];
         }
         // Ctrl+<letter> combos without a binding produce control chars on Windows — ignore them.
         if text.is_empty() || text.chars().any(|c| c.is_control() && c != '\t') {
@@ -1387,7 +1390,9 @@ impl EntityInputHandler for Editor {
 
     fn replace_and_mark_text_in_range(&mut self, _range: Option<Range<usize>>, text: &str, _sel: Option<Range<usize>>, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(m) = self.marked.take() {
-            self.buffer.selections = vec![Selection { anchor: m.start, head: m.end, goal_col: None }];
+            // The buffer may have shrunk under an open composition (reload, undo): clamp.
+            let len = self.buffer.len_chars();
+            self.buffer.selections = vec![Selection { anchor: m.start.min(len), head: m.end.min(len), goal_col: None }];
         }
         let start = self.buffer.primary().range().start;
         self.buffer.insert(text);

@@ -82,6 +82,11 @@ pub enum Movement {
     PageDown(usize),
 }
 
+/// Undo steps kept per buffer (typing is grouped, so a step is usually a word or more).
+/// Each step holds the removed and inserted text, so an endless session of large pastes or
+/// reformats would otherwise grow without bound.
+pub const UNDO_LIMIT: usize = 1000;
+
 pub struct Buffer {
     rope: Rope,
     pub line_ending: LineEnding,
@@ -228,7 +233,26 @@ impl Buffer {
         kind: EditKind,
         after: impl FnOnce(&dyn Fn(usize, bool) -> usize, &Self) -> Vec<Selection>,
     ) {
+        // Clamp to the text and merge overlaps: carets close together (Ctrl+Delete with carets
+        // at 1 and 3 in `abcd`, Backspace in `()` with carets on both sides) produce
+        // overlapping ranges, and removing those from the rope one by one panics.
+        let len = self.len_chars();
+        for (r, _) in edits.iter_mut() {
+            r.end = r.end.min(len);
+            r.start = r.start.min(r.end);
+        }
         edits.sort_by_key(|(r, _)| r.start);
+        let mut merged: Vec<(Range<usize>, String)> = Vec::with_capacity(edits.len());
+        for (r, s) in edits {
+            match merged.last_mut() {
+                Some((pr, ps)) if r.start < pr.end => {
+                    pr.end = pr.end.max(r.end);
+                    ps.push_str(&s);
+                }
+                _ => merged.push((r, s)),
+            }
+        }
+        let mut edits = merged;
         edits.retain(|(r, s)| !(r.is_empty() && s.is_empty()));
         if edits.is_empty() {
             return;
@@ -284,6 +308,9 @@ impl Buffer {
             }
         }
         self.undo.push(Transaction { edits: records, before, after: self.selections.clone(), kind, at: now });
+        if self.undo.len() > UNDO_LIMIT {
+            self.undo.drain(..self.undo.len() - UNDO_LIMIT);
+        }
     }
 
     /// Break typing grouping (e.g. after caret movement).

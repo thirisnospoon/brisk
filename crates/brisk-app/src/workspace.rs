@@ -51,6 +51,7 @@ mod profile_ui;
 mod before_launch_ui;
 mod web_smoke;
 mod console_find_smoke;
+mod membudget_smoke;
 mod templates_ui;
 mod win_input;
 
@@ -530,6 +531,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNWIN").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_window_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_MEMBUDGET").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.membudget_smoke(window, cx));
         }
         if let Some(f) = std::env::var_os("BRISK_SMOKE_RUN") {
             let f = PathBuf::from(f);

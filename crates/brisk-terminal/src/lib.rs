@@ -127,11 +127,13 @@ enum Io {
     Pipe(pipe::PipeIo),
 }
 
-/// One terminal tab or one running process.
 /// How many lines of a Run console's output are kept: beyond it the oldest lines are dropped
 /// (the buffer is a ring), so a chatty process cannot grow memory without bound.
-pub const RUN_HISTORY_LINES: usize = 100_000;
+/// Lines a Run console keeps above the screen. A line costs about 24 bytes per column
+/// (2.7 KB at 110 columns), so 100k lines took ~275 MB per tab; 20k is ~55 MB.
+pub const RUN_HISTORY_LINES: usize = 20_000;
 
+/// One terminal tab or one running process.
 pub struct Session {
     term: Arc<FairMutex<Term<Listener>>>,
     io: Io,
@@ -293,6 +295,10 @@ impl Session {
         let pty = tty::new(&pty_opts, ws, 0)?;
         #[cfg(windows)]
         let pid = pty.child_watcher().pid().map(|p| p.get());
+        #[cfg(windows)]
+        if let Some(pid) = pid {
+            brisk_proc::adopt_pid(pid);
+        }
         #[cfg(unix)]
         let pid = Some(pty.child().id());
         let event_loop = EventLoop::new(term.clone(), listener.clone(), pty, true, false)?;

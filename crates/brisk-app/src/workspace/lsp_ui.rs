@@ -698,7 +698,7 @@ impl Workspace {
                 match res {
                     Ok(files) if files.is_empty() => this.status = "Nothing to rename".into(),
                     Ok(files) => {
-                        let (count, failed) = this.apply_file_edits(files, cx);
+                        let (count, failed) = this.apply_file_edits(brisk_lsp::merge_file_edits(files), cx);
                         this.status = format!("Renamed '{old}' to '{new_name}': {count} occurrence(s)");
                         if !failed.is_empty() {
                             this.show_toast(format!("Rename could not write: {}", failed.join("; ")), true, cx);

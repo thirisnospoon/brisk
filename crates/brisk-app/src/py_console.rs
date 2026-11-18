@@ -54,6 +54,7 @@ impl Console {
             cmd.creation_flags(0x0800_0000);
         }
         let mut child = cmd.spawn()?;
+        brisk_proc::adopt(&child);
         let stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
