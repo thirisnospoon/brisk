@@ -5,6 +5,7 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
 mod crash;
+mod stall;
 mod diff_view;
 mod grid_view;
 mod icons;
@@ -74,6 +75,7 @@ fn main() {
         )
         .expect("failed to open window");
         cx.activate(true);
+        stall::start(cx);
     });
 }
 

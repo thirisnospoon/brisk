@@ -9,14 +9,6 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 const LOG_LIMIT: usize = 3000;
-/// Rows the Commit window draws per group. The list is not virtualized, so a repository with
-/// 24k unversioned files built 24k rows every frame (1.5 GB and a busy core). Check-box and
-/// commit still act on every file; only drawing stops here.
-const MAX_SHOWN_ROWS: usize = 1000;
-
-fn more_row(n: usize) -> gpui::Div {
-    div().h(px(24.)).flex().items_center().pl(px(28.)).text_size(px(12.)).text_color(Theme::text_dim()).child(format!("… {n} more file{} not shown", if n == 1 { "" } else { "s" }))
-}
 const LOG_ROW_H: f32 = 24.0;
 const LANE_W: f32 = 14.0;
 
@@ -51,10 +43,15 @@ pub struct Git {
     excluded: HashSet<String>,
     included_untracked: HashSet<String>,
     commit_sel: Option<usize>,
+    /// Indices into `status.changes`: tracked changes first, then unversioned files (the
+    /// Commit window order), and how many are tracked. Built once per status, not per frame.
+    order: Vec<usize>,
+    n_tracked: usize,
+    commit_scroll: UniformListScrollHandle,
     pub message: Entity<Editor>,
     amend: bool,
     head_seen: Option<String>,
-    loaded: bool,
+    pub(super) loaded: bool,
     /// Conflicts, Merge Revisions, Stash dialogs.
     pub dialog: Option<super::git_merge_ui::GitDialog>,
     /// Conflicted files at the last refresh: the Conflicts dialog opens when they appear.
@@ -82,6 +79,9 @@ impl Git {
             excluded: HashSet::new(),
             included_untracked: HashSet::new(),
             commit_sel: None,
+            order: Vec::new(),
+            n_tracked: 0,
+            commit_scroll: UniformListScrollHandle::new(),
             message: cx.new(|cx| Editor::scratch("", cx)),
             amend: false,
             head_seen: None,
@@ -94,7 +94,57 @@ impl Git {
 
     /// Rows of the commit window: tracked changes, then unversioned files.
     fn rows(&self) -> Vec<FileChange> {
-        self.status.tracked().chain(self.status.untracked()).cloned().collect()
+        self.order.iter().map(|&j| self.status.changes[j].clone()).collect()
+    }
+
+    fn row(&self, i: usize) -> Option<&FileChange> {
+        self.order.get(i).and_then(|&j| self.status.changes.get(j))
+    }
+
+    fn set_status(&mut self, st: Status) {
+        let ch = &st.changes;
+        let mut order: Vec<usize> = (0..ch.len()).filter(|&j| ch[j].status != FileStatus::Untracked).collect();
+        self.n_tracked = order.len();
+        order.extend((0..ch.len()).filter(|&j| ch[j].status == FileStatus::Untracked));
+        self.order = order;
+        self.status = st;
+    }
+
+    /// Included files per group, from the flag sets: O(1), no walk over 50k rows per frame.
+    /// (`excluded` only ever holds tracked paths, `included_untracked` only unversioned ones,
+    /// and both are pruned to the current status on refresh.)
+    fn included_counts(&self) -> (usize, usize) {
+        (self.n_tracked.saturating_sub(self.excluded.len()), self.included_untracked.len())
+    }
+
+    /// The list row (group headers included) showing change `i`.
+    fn list_row(&self, i: usize) -> usize {
+        if i < self.n_tracked {
+            i + 1
+        } else {
+            i + 1 + usize::from(self.n_tracked > 0)
+        }
+    }
+
+    /// What list row `r` shows: `Err(untracked)` for a group header, `Ok(i)` for change `i`.
+    fn list_item(&self, r: usize) -> Result<usize, bool> {
+        let n_t = self.n_tracked;
+        if n_t > 0 {
+            if r == 0 {
+                return Err(false);
+            }
+            if r <= n_t {
+                return Ok(r - 1);
+            }
+            if r == n_t + 1 {
+                return Err(true);
+            }
+            Ok(r - 2)
+        } else if r == 0 {
+            Err(true)
+        } else {
+            Ok(r - 1)
+        }
     }
 
     fn included(&self, c: &FileChange) -> bool {
@@ -214,6 +264,36 @@ impl Workspace {
         g.by_path.get(&g.repo.rel(path)?).copied()
     }
 
+    /// VCS → Create Git Repository: `git init` off the UI thread, then the first status (on a
+    /// big tree that lists every file as unversioned) also in the background.
+    pub(super) fn create_git_repo(&mut self, cx: &mut Context<Self>) {
+        if self.git_init_running {
+            return;
+        }
+        self.git_init_running = true;
+        self.status = "Creating Git repository…".into();
+        let root = self.root.clone();
+        let task = cx.background_executor().spawn(async move { brisk_git::Repo::init(&root) });
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.git_init_running = false;
+                match res {
+                    Ok(repo) => {
+                        this.git = Some(Git::new(repo, cx));
+                        this.status = "Created Git repository; reading status…".into();
+                        this.show_toast("Created Git repository".into(), false, cx);
+                        this.refresh_git(cx);
+                    }
+                    Err(e) => this.show_toast(format!("git init failed: {e}"), true, cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     pub(super) fn refresh_git(&mut self, cx: &mut Context<Self>) {
         let Some(g) = &self.git else { return };
         let repo = g.repo.clone();
@@ -237,6 +317,7 @@ impl Workspace {
     }
 
     fn apply_git(&mut self, st: brisk_git::Result<Status>, br: Vec<Branch>, log: Option<Vec<Commit>>, cx: &mut Context<Self>) {
+        crate::stall::note("apply git status");
         let Some(g) = self.git.as_mut() else { return };
         let mut head_changed = false;
         match st {
@@ -247,9 +328,9 @@ impl Workspace {
                 // Forget inclusion flags of files that are no longer changed.
                 g.excluded.retain(|p| g.by_path.contains_key(p));
                 g.included_untracked.retain(|p| g.by_path.get(p) == Some(&FileStatus::Untracked));
-                g.status = st;
+                g.set_status(st);
                 g.loaded = true;
-                let n = g.rows().len();
+                let n = g.order.len();
                 g.commit_sel = g.commit_sel.filter(|&i| i < n).or((n > 0).then_some(0));
             }
             Err(e) => self.status = format!("git: {e}"),
@@ -473,7 +554,7 @@ impl Workspace {
 
     fn selected_change(&self) -> Option<FileChange> {
         let g = self.git.as_ref()?;
-        g.rows().get(g.commit_sel?).cloned()
+        g.row(g.commit_sel?).cloned()
     }
 
     /// The active editor's file as a change (Modified if git reports nothing: diff shows "identical").
@@ -717,19 +798,21 @@ impl Workspace {
 
     pub(super) fn commit_key(&mut self, k: &gpui::Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(g) = self.git.as_mut() else { return false };
-        let rows = g.rows();
-        let n = rows.len();
+        let n = g.order.len();
         let cur = g.commit_sel.unwrap_or(0);
         match k.key.as_str() {
-            "up" => g.commit_sel = Some(cur.saturating_sub(1)),
-            "down" => g.commit_sel = Some((cur + 1).min(n.saturating_sub(1))),
+            "up" | "down" => {
+                let to = if k.key == "up" { cur.saturating_sub(1) } else { (cur + 1).min(n.saturating_sub(1)) };
+                g.commit_sel = Some(to);
+                g.commit_scroll.scroll_to_item(g.list_row(to), gpui::ScrollStrategy::Top);
+            }
             "space" => {
-                if let Some(c) = rows.get(cur) {
-                    g.toggle(c);
+                if let Some(c) = g.row(cur).cloned() {
+                    g.toggle(&c);
                 }
             }
             "enter" | "f4" => {
-                if let Some(c) = rows.get(cur) {
+                if let Some(c) = g.row(cur).cloned() {
                     let p = g.repo.abs(&c.path);
                     if c.status != FileStatus::Deleted {
                         self.open_file(&p, window, cx);
@@ -790,6 +873,67 @@ impl Workspace {
         )
     }
 
+    fn commit_file_row(i: usize, c: &FileChange, included: bool, selected: bool, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let c2 = c.clone();
+        let c3 = c.clone();
+        let (icon, icon_color) = file_icon(file_name(&c.path), false);
+        div()
+            .id(("chg", i))
+            .h(px(24.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .pl(px(28.))
+            .text_size(px(13.))
+            .when(selected, |d| d.bg(Theme::selection_row()))
+            .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
+            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+                if let Some(g) = this.git.as_mut() {
+                    g.commit_sel = Some(i);
+                }
+                window.focus(&this.commit_focus);
+                if e.click_count() >= 2 {
+                    this.show_change_diff(&c2, window, cx);
+                }
+                cx.notify();
+            }))
+            .child(div().id(("chk", i)).child(checkbox(Some(included))).on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                if let Some(g) = this.git.as_mut() {
+                    g.toggle(&c3);
+                }
+                cx.notify();
+            })))
+            .child(div().w(px(14.)).text_color(icon_color).child(icon))
+            .child(div().text_color(status_color(c.status)).whitespace_nowrap().child(file_name(&c.path).to_string()))
+            .child(div().text_color(Theme::text_dim()).text_size(px(12.)).whitespace_nowrap().child(dir_name(&c.path).to_string()))
+    }
+
+    fn commit_group_row(id: &'static str, title: &'static str, state: Option<bool>, n: usize, untracked: bool, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(id)
+            .h(px(24.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .pl(px(10.))
+            .text_size(px(13.))
+            .child(div().w(px(10.)).text_color(Theme::text_muted()).child("▾"))
+            .child(div().id((id, 1usize)).child(checkbox(state)).on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(g) = this.git.as_mut() {
+                    let on = state != Some(true);
+                    // The group's files are read at click time, not captured per frame.
+                    let items: Vec<FileChange> = g.status.changes.iter().filter(|c| (c.status == FileStatus::Untracked) == untracked).cloned().collect();
+                    for c in &items {
+                        g.set_included(c, on);
+                    }
+                }
+                cx.notify();
+            })))
+            .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(title))
+            .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(format!("{n} file{}", if n == 1 { "" } else { "s" })))
+    }
+
     pub(super) fn render_commit(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let Some(g) = &self.git else {
             return div()
@@ -809,98 +953,20 @@ impl Workspace {
                         .text_size(px(13.))
                         .cursor_pointer()
                         .child("Create Git Repository…")
-                        .on_click(cx.listener(|this, _, _, cx| match brisk_git::Repo::init(&this.root) {
-                            Ok(repo) => {
-                                this.git = Some(Git::new(repo, cx));
-                                this.show_toast("Created Git repository".into(), false, cx);
-                                this.refresh_git(cx);
-                            }
-                            Err(e) => this.show_toast(format!("git init failed: {e}"), true, cx),
-                        })),
+                        .on_click(cx.listener(|this, _, _, cx| this.create_git_repo(cx))),
                 )
                 .into_any_element();
         };
-        let rows = g.rows();
-        let tracked: Vec<(usize, FileChange)> = rows.iter().cloned().enumerate().filter(|(_, c)| c.status != FileStatus::Untracked).collect();
-        let untracked: Vec<(usize, FileChange)> = rows.iter().cloned().enumerate().filter(|(_, c)| c.status == FileStatus::Untracked).collect();
         let focused_list = self.commit_focus.clone();
-        let sel = g.commit_sel;
         let amend = g.amend;
         let message = g.message.clone();
-        let included_n = rows.iter().filter(|c| g.included(c)).count();
+        let (inc_t, inc_u) = g.included_counts();
+        let included_n = inc_t + inc_u;
         let busy = g.busy;
-
-        let group_state = |items: &[(usize, FileChange)]| -> Option<bool> {
-            let on = items.iter().filter(|(_, c)| g.included(c)).count();
-            if on == 0 {
-                Some(false)
-            } else if on == items.len() {
-                Some(true)
-            } else {
-                None
-            }
-        };
-        let tracked_state = group_state(&tracked);
-        let untracked_state = group_state(&untracked);
-
-        let file_row = |i: usize, c: &FileChange, included: bool, cx: &mut Context<Self>| {
-            let c2 = c.clone();
-            let c3 = c.clone();
-            let (icon, icon_color) = file_icon(file_name(&c.path), false);
-            div()
-                .id(("chg", i))
-                .h(px(24.))
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .pl(px(28.))
-                .text_size(px(13.))
-                .when(sel == Some(i), |d| d.bg(Theme::selection_row()))
-                .when(!(sel == Some(i)), |d| d.hover(|s| s.bg(Theme::hover_row())))
-                .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
-                    if let Some(g) = this.git.as_mut() {
-                        g.commit_sel = Some(i);
-                    }
-                    window.focus(&this.commit_focus);
-                    if e.click_count() >= 2 {
-                        this.show_change_diff(&c2, window, cx);
-                    }
-                    cx.notify();
-                }))
-                .child(div().id(("chk", i)).child(checkbox(Some(included))).on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    if let Some(g) = this.git.as_mut() {
-                        g.toggle(&c3);
-                    }
-                    cx.notify();
-                })))
-                .child(div().w(px(14.)).text_color(icon_color).child(icon))
-                .child(div().text_color(status_color(c.status)).whitespace_nowrap().child(file_name(&c.path).to_string()))
-                .child(div().text_color(Theme::text_dim()).text_size(px(12.)).whitespace_nowrap().child(dir_name(&c.path).to_string()))
-        };
-        let group = |id: &'static str, title: &'static str, state: Option<bool>, items: Vec<FileChange>, cx: &mut Context<Self>| {
-            let n = items.len();
-            div()
-                .id(id)
-                .h(px(24.))
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .pl(px(10.))
-                .text_size(px(13.))
-                .child(div().w(px(10.)).text_color(Theme::text_muted()).child("▾"))
-                .child(div().id((id, 1usize)).child(checkbox(state)).on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(g) = this.git.as_mut() {
-                        let on = state != Some(true);
-                        for c in &items {
-                            g.set_included(c, on);
-                        }
-                    }
-                    cx.notify();
-                })))
-                .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(title))
-                .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(format!("{n} file{}", if n == 1 { "" } else { "s" })))
-        };
+        let n_t = g.n_tracked;
+        let n_u = g.order.len() - n_t;
+        // [Changes header, tracked…, Unversioned Files header, unversioned…]; empty groups left out.
+        let n_rows = if n_t > 0 { n_t + 1 } else { 0 } + if n_u > 0 { n_u + 1 } else { 0 };
 
         let mut list = div()
             .id("commit-list")
@@ -909,32 +975,38 @@ impl Workspace {
             .flex()
             .flex_col()
             .flex_1()
-            .min_h_0()
-            .overflow_y_scroll();
-        if rows.is_empty() {
+            .min_h_0();
+        if n_rows == 0 {
             list = list.child(div().px(px(12.)).py(px(8.)).text_size(px(13.)).text_color(Theme::text_muted()).child(if g.loaded { "No changes" } else { "Loading…" }));
-        }
-        if !tracked.is_empty() {
-            let items: Vec<FileChange> = tracked.iter().map(|(_, c)| c.clone()).collect();
-            list = list.child(group("grp-changes", "Changes", tracked_state, items, cx));
-            for (i, c) in tracked.iter().take(MAX_SHOWN_ROWS) {
-                let inc = g.included(c);
-                list = list.child(file_row(*i, c, inc, cx));
-            }
-            if tracked.len() > MAX_SHOWN_ROWS {
-                list = list.child(more_row(tracked.len() - MAX_SHOWN_ROWS));
-            }
-        }
-        if !untracked.is_empty() {
-            let items: Vec<FileChange> = untracked.iter().map(|(_, c)| c.clone()).collect();
-            list = list.child(group("grp-unversioned", "Unversioned Files", untracked_state, items, cx));
-            for (i, c) in untracked.iter().take(MAX_SHOWN_ROWS) {
-                let inc = g.included(c);
-                list = list.child(file_row(*i, c, inc, cx));
-            }
-            if untracked.len() > MAX_SHOWN_ROWS {
-                list = list.child(more_row(untracked.len() - MAX_SHOWN_ROWS));
-            }
+        } else {
+            // Only the visible rows are built: 50k unversioned files cost the same as 50.
+            list = list.child(
+                uniform_list(
+                    "commit-rows",
+                    n_rows,
+                    cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                        let Some(g) = this.git.as_ref() else { return Vec::new() };
+                        let (inc_t, inc_u) = g.included_counts();
+                        let state = |on: usize, n: usize| if on == 0 { Some(false) } else if on >= n { Some(true) } else { None };
+                        let sel = g.commit_sel;
+                        let rows: Vec<Result<(usize, FileChange, bool), bool>> = range
+                            .map(|r| match g.list_item(r) {
+                                Ok(i) => g.row(i).map(|c| (i, c.clone(), g.included(c))).ok_or(true),
+                                Err(u) => Err(u),
+                            })
+                            .collect();
+                        rows.into_iter()
+                            .map(|r| match r {
+                                Ok((i, c, inc)) => Self::commit_file_row(i, &c, inc, sel == Some(i), cx).into_any_element(),
+                                Err(false) => Self::commit_group_row("grp-changes", "Changes", state(inc_t, n_t), n_t, false, cx).into_any_element(),
+                                Err(true) => Self::commit_group_row("grp-unversioned", "Unversioned Files", state(inc_u, n_u), n_u, true, cx).into_any_element(),
+                            })
+                            .collect()
+                    }),
+                )
+                .track_scroll(g.commit_scroll.clone())
+                .flex_1(),
+            );
         }
 
         let tool = |id: &'static str, glyph: &'static str, tip: &'static str| {

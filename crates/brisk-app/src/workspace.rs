@@ -59,6 +59,7 @@ mod before_launch_ui;
 mod web_smoke;
 mod console_find_smoke;
 mod membudget_smoke;
+mod hang_smoke;
 mod templates_ui;
 mod win_input;
 
@@ -304,6 +305,7 @@ pub struct Workspace {
     tree: ProjectTree,
     tree_selected: Option<NodeId>,
     tree_scroll: UniformListScrollHandle,
+    popup_scroll: UniformListScrollHandle,
     files: Option<Arc<FileList>>,
     tabs: Vec<Tab>,
     active: Option<usize>,
@@ -312,6 +314,7 @@ pub struct Workspace {
     tab_scroll: [gpui::ScrollHandle; 2],
     tab_seen: [std::cell::Cell<(Option<usize>, usize)>; 2],
     git: Option<git_ui::Git>,
+    git_init_running: bool,
     /// Commit window state exists even without a repo (it offers "Create Git Repository").
     commit_focus: FocusHandle,
     toast: Option<(String, bool)>,
@@ -554,6 +557,9 @@ impl Workspace {
         if std::env::var_os("BRISK_SMOKE_RUNWIN").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_window_smoke(window, cx));
         }
+        if std::env::var_os("BRISK_SMOKE_HANG").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.hang_smoke(window, cx));
+        }
         if std::env::var_os("BRISK_SMOKE_MEMBUDGET").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.membudget_smoke(window, cx));
         }
@@ -670,12 +676,14 @@ impl Workspace {
             tree,
             tree_selected: Some(0),
             tree_scroll: UniformListScrollHandle::new(),
+            popup_scroll: UniformListScrollHandle::new(),
             files: None,
             tabs: Vec::new(),
             tab_scroll: [gpui::ScrollHandle::new(), gpui::ScrollHandle::new()],
             tab_seen: Default::default(),
             active: None,
             git,
+            git_init_running: false,
             commit_focus: cx.focus_handle(),
             toast: None,
             toast_gen: 0,
@@ -1197,6 +1205,9 @@ impl Workspace {
 
     fn dispatch(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         use Action as A;
+        if crate::stall::enabled() {
+            crate::stall::note(format!("action {action:?}"));
+        }
         if self.lsp_action(action, window, cx) {
             cx.notify();
             return;
@@ -1574,8 +1585,14 @@ impl Workspace {
                 self.popup = None;
                 self.focus_editor(window, cx);
             }
-            "up" => p.selected = p.selected.saturating_sub(1),
-            "down" => p.selected = (p.selected + 1).min(p.items.len().saturating_sub(1)),
+            "up" => {
+                p.selected = p.selected.saturating_sub(1);
+                self.popup_scroll.scroll_to_item(p.selected, gpui::ScrollStrategy::Top);
+            }
+            "down" => {
+                p.selected = (p.selected + 1).min(p.items.len().saturating_sub(1));
+                self.popup_scroll.scroll_to_item(p.selected, gpui::ScrollStrategy::Top);
+            }
             // Branches popup: → shows the actions of the selected branch.
             "right" if p.kind == PopupKind::Branches => {
                 if let Some(Target::Branch(b)) = p.items.get(p.selected).map(|i| i.target.clone()) {
@@ -2295,7 +2312,6 @@ impl Workspace {
             PopupKind::SearchEverywhere(t) => Some(t),
             _ => None,
         };
-        let selected = p.selected;
         let indexing = match p.kind {
             PopupKind::SearchEverywhere(SeTab::Classes | SeTab::Symbols) => self.symbols_indexing(),
             PopupKind::SearchEverywhere(_) => self.files.is_none(),
@@ -2396,97 +2412,114 @@ impl Workspace {
                                     p.items.is_empty() && !indexing && p.query.is_empty() && matches!(p.kind, PopupKind::SearchEverywhere(SeTab::Classes | SeTab::Symbols)),
                                     |d| d.child(div().px(px(14.)).py(px(6.)).text_color(Theme::text_dim()).child("Type a name: a prefix, or word starts like gcw for get_current_window")),
                                 )
-                                .children(p.items.iter().enumerate().map(|(i, it)| {
-                                    let (icon, color) = match &it.target {
-                                        Target::File(_) => file_icon(&it.label, false),
-                                        Target::Action(_) => ("⚡", gpui::rgb(0xb3ae60).into()),
-                                        Target::Line(_) => ("↧", Theme::text_muted()),
-                                        Target::Branch(b) if b.current => ("★", gpui::rgb(0xe0a85a).into()),
-                                        Target::Branch(b) if b.remote => ("☁", Theme::text_muted()),
-                                        Target::Branch(_) => ("⎇", Theme::text_muted()),
-                                        Target::NewBranch => ("+", Theme::text_muted()),
-                                        Target::Confirm(_) => ("✓", Theme::file_added()),
-                                        Target::Cancel => ("×", Theme::text_muted()),
-                                        Target::RunConfig(None, _) => ("▤", Theme::text_muted()),
-                                        Target::RunConfig(Some(_), _) | Target::StopAndRerun(_) => ("▶", gpui::rgb(0x5fb865).into()),
-                                        Target::EditRunConfigs => ("✎", Theme::text_muted()),
-                                        Target::SaveRunConfig(_) => ("⎙", Theme::text_muted()),
-                                        Target::Interpreter(_) => ("◆", gpui::rgb(0x4b8bbe).into()),
-                                        Target::AddInterpreter | Target::CreateVenv(_) => ("+", gpui::rgb(0x4b8bbe).into()),
-                                        Target::RunAnything(_) => ("▶", gpui::rgb(0x5fb865).into()),
-                                        Target::Intention(_) => ("✦", gpui::rgb(0xe0b84a).into()),
-                                        Target::Rename(_) => ("✎", gpui::rgb(0x4b8bbe).into()),
-                                        Target::Project(project_ui::ProjectCmd::New) => ("+", Theme::text_muted()),
-                                        Target::Project(project_ui::ProjectCmd::Open) => ("▰", gpui::rgb(0x8c8f96).into()),
-                                        Target::Project(_) => ("▣", gpui::rgb(0x4b8bbe).into()),
-                                        Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Class) => ("C", gpui::rgb(0x4b8bbe).into()),
-                                        Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Method) => ("m", gpui::rgb(0xe0a85a).into()),
-                                        Target::Symbol(..) => ("ƒ", gpui::rgb(0xb07fd5).into()),
-                                        Target::FileDo(_) => ("✓", Theme::file_added()),
-                                        Target::Bookmark(..) | Target::Mnemonic(_) => ("▮", Theme::bookmark()),
-                                        Target::Clip(_) => ("¶", Theme::text_muted()),
-                                        Target::History(..) => ("◷", Theme::text_muted()),
-                                        Target::BpCondition(_) | Target::BpRemove => ("●", Theme::breakpoint()),
-                                    };
-                                    let branch = matches!(it.target, Target::Branch(_));
-                                    // A branch row has no room to spare: "tracks …" is shown only
-                                    // when it fits whole next to the name (otherwise in the tooltip).
-                                    let room = 680. - 12. - 16. - 16. - 84. - 3. * 8.;
-                                    let show_detail = !branch || text_width(cx, &it.label, 13.) + text_width(cx, &it.detail, 12.) <= room;
-                                    let label = if branch { fit_text(cx, &it.label, 13., room) } else { it.label.clone() };
-                                    let tip: Option<SharedString> = branch.then(|| if it.detail.is_empty() { it.label.clone() } else { format!("{}
-{}", it.label, it.detail) }.into());
-                                    div()
-                                        .id(("item", i))
-                                        .h(px(28.))
-                                        .flex_shrink_0()
-                                        .mx(px(6.))
-                                        .px(px(8.))
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(8.))
-                                        .whitespace_nowrap()
-                                        .overflow_hidden()
-                                        .rounded(px(5.))
-                                        .when_some(tip, |d, t| d.tooltip(move |_, cx| cx.new(|_| Tip(t.clone())).into()))
-                                        .when(i == selected, |d| d.bg(Theme::selection_row()))
-                                        .when(!(i == selected), |d| d.hover(|s| s.bg(Theme::hover_row())))
-                                        .cursor_pointer()
-                                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                                            if let Some(p) = this.popup.as_mut() {
-                                                if p.selected != i {
-                                                    p.selected = i;
-                                                    cx.notify();
-                                                }
-                                            }
-                                        }))
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            if let Some(p) = this.popup.as_mut() {
-                                                p.selected = i;
-                                            }
-                                            let ev = KeyDownEvent { keystroke: gpui::Keystroke::parse("enter").unwrap(), is_held: false };
-                                            this.popup_key(&ev, window, cx);
-                                        }))
-                                        // Fixed slots: the icon and the hint keep their size, the label
-                                        // shrinks with an ellipsis, and the detail only takes what is
-                                        // left (it goes first when the label is long).
-                                        .child(div().w(px(16.)).flex_shrink_0().text_color(color).child(icon))
-                                        .child(div().min_w_0().flex_shrink().overflow_hidden().text_ellipsis().child(label))
-                                        .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().text_color(Theme::text_dim()).text_size(px(12.)).when(show_detail, |d| d.child(it.detail.clone())))
-                                        .child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .flex()
-                                                .justify_end()
-                                                .text_color(Theme::text_muted())
-                                                .text_size(px(12.))
-                                                .when(branch, |d| d.w(px(84.)).font_family(crate::theme::mono_font()))
-                                                .child(it.hint.clone()),
-                                        )
-                                })),
+                                .child(
+                                    uniform_list(
+                                        "popup-items",
+                                        p.items.len(),
+                                        cx.processor(|this, range: std::ops::Range<usize>, _window, cx| {
+                                            let Some(p) = this.popup.as_ref() else { return Vec::new() };
+                                            let selected = p.selected;
+                                            let items: Vec<(usize, PopupItem)> = range.filter_map(|i| p.items.get(i).map(|it| (i, it.clone()))).collect();
+                                            items.into_iter().map(|(i, it)| Self::popup_row(i, &it, selected, cx)).collect()
+                                        }),
+                                    )
+                                    .track_scroll(self.popup_scroll.clone())
+                                    // Rows are drawn only where visible: hundreds of branches or
+                                    // packages no longer rebuild every row on each frame.
+                                    .h(px(POPUP_ROW_H * p.items.len().min(POPUP_ROWS_SHOWN) as f32)),
+                                ),
                         ),
                 ),
         )
+    }
+
+    fn popup_row(i: usize, it: &PopupItem, selected: usize, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let (icon, color) = match &it.target {
+            Target::File(_) => file_icon(&it.label, false),
+            Target::Action(_) => ("⚡", gpui::rgb(0xb3ae60).into()),
+            Target::Line(_) => ("↧", Theme::text_muted()),
+            Target::Branch(b) if b.current => ("★", gpui::rgb(0xe0a85a).into()),
+            Target::Branch(b) if b.remote => ("☁", Theme::text_muted()),
+            Target::Branch(_) => ("⎇", Theme::text_muted()),
+            Target::NewBranch => ("+", Theme::text_muted()),
+            Target::Confirm(_) => ("✓", Theme::file_added()),
+            Target::Cancel => ("×", Theme::text_muted()),
+            Target::RunConfig(None, _) => ("▤", Theme::text_muted()),
+            Target::RunConfig(Some(_), _) | Target::StopAndRerun(_) => ("▶", gpui::rgb(0x5fb865).into()),
+            Target::EditRunConfigs => ("✎", Theme::text_muted()),
+            Target::SaveRunConfig(_) => ("⎙", Theme::text_muted()),
+            Target::Interpreter(_) => ("◆", gpui::rgb(0x4b8bbe).into()),
+            Target::AddInterpreter | Target::CreateVenv(_) => ("+", gpui::rgb(0x4b8bbe).into()),
+            Target::RunAnything(_) => ("▶", gpui::rgb(0x5fb865).into()),
+            Target::Intention(_) => ("✦", gpui::rgb(0xe0b84a).into()),
+            Target::Rename(_) => ("✎", gpui::rgb(0x4b8bbe).into()),
+            Target::Project(project_ui::ProjectCmd::New) => ("+", Theme::text_muted()),
+            Target::Project(project_ui::ProjectCmd::Open) => ("▰", gpui::rgb(0x8c8f96).into()),
+            Target::Project(_) => ("▣", gpui::rgb(0x4b8bbe).into()),
+            Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Class) => ("C", gpui::rgb(0x4b8bbe).into()),
+            Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Method) => ("m", gpui::rgb(0xe0a85a).into()),
+            Target::Symbol(..) => ("ƒ", gpui::rgb(0xb07fd5).into()),
+            Target::FileDo(_) => ("✓", Theme::file_added()),
+            Target::Bookmark(..) | Target::Mnemonic(_) => ("▮", Theme::bookmark()),
+            Target::Clip(_) => ("¶", Theme::text_muted()),
+            Target::History(..) => ("◷", Theme::text_muted()),
+            Target::BpCondition(_) | Target::BpRemove => ("●", Theme::breakpoint()),
+        };
+        let branch = matches!(it.target, Target::Branch(_));
+        // A branch row has no room to spare: "tracks …" is shown only
+        // when it fits whole next to the name (otherwise in the tooltip).
+        let room = 680. - 12. - 16. - 16. - 84. - 3. * 8.;
+        let show_detail = !branch || text_width(cx, &it.label, 13.) + text_width(cx, &it.detail, 12.) <= room;
+        let label = if branch { fit_text(cx, &it.label, 13., room) } else { it.label.to_string() };
+        let tip: Option<SharedString> = branch.then(|| if it.detail.is_empty() { it.label.to_string() } else { format!("{}
+{}", it.label, it.detail) }.into());
+        div()
+            .id(("item", i))
+            .h(px(28.))
+            .flex_shrink_0()
+            .mx(px(6.))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .whitespace_nowrap()
+            .overflow_hidden()
+            .rounded(px(5.))
+            .when_some(tip, |d, t| d.tooltip(move |_, cx| cx.new(|_| Tip(t.clone())).into()))
+            .when(i == selected, |d| d.bg(Theme::selection_row()))
+            .when(!(i == selected), |d| d.hover(|s| s.bg(Theme::hover_row())))
+            .cursor_pointer()
+            .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                if let Some(p) = this.popup.as_mut() {
+                    if p.selected != i {
+                        p.selected = i;
+                        cx.notify();
+                    }
+                }
+            }))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if let Some(p) = this.popup.as_mut() {
+                    p.selected = i;
+                }
+                let ev = KeyDownEvent { keystroke: gpui::Keystroke::parse("enter").unwrap(), is_held: false };
+                this.popup_key(&ev, window, cx);
+            }))
+            // Fixed slots: the icon and the hint keep their size, the label
+            // shrinks with an ellipsis, and the detail only takes what is
+            // left (it goes first when the label is long).
+            .child(div().w(px(16.)).flex_shrink_0().text_color(color).child(icon))
+            .child(div().min_w_0().flex_shrink().overflow_hidden().text_ellipsis().child(label))
+            .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().text_color(Theme::text_dim()).text_size(px(12.)).when(show_detail, |d| d.child(it.detail.clone())))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .justify_end()
+                    .text_color(Theme::text_muted())
+                    .text_size(px(12.))
+                    .when(branch, |d| d.w(px(84.)).font_family(crate::theme::mono_font()))
+                    .child(it.hint.clone()),
+            )
     }
 }
 
@@ -2515,6 +2548,10 @@ fn fit_text(cx: &App, text: &str, size: f32, room: f32) -> String {
     out.push('…');
     out
 }
+
+const POPUP_ROW_H: f32 = 28.;
+/// Rows the popup shows before it scrolls.
+const POPUP_ROWS_SHOWN: usize = 14;
 
 /// Text glyph icons (our own, not JetBrains artwork).
 fn file_icon(name: &str, is_dir: bool) -> (&'static str, gpui::Hsla) {
@@ -2562,6 +2599,7 @@ impl Focusable for Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::stall::note("Workspace render, layout or paint");
         let viewport = window.viewport_size();
         let left: Option<gpui::AnyElement> = match self.left {
             Some(LeftTool::Project) => Some(self.render_project(cx).into_any_element()),

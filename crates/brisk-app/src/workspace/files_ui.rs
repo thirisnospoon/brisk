@@ -377,6 +377,7 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let list = task.await;
             let _ = this.update(cx, |this, cx| {
+                crate::stall::note("reindex: apply file list");
                 this.ty_files_rescanned(this.files.clone(), &list);
                 this.files = Some(Arc::new(list));
                 this.symbols.stale = true;

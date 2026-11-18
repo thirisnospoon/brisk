@@ -115,9 +115,8 @@ impl Workspace {
                 if ok { "OK" } else { "FAIL" }
             );
             if !hold {
-                let _ = this.update(cx, |_, cx| cx.quit());
-                // Quit returns to the OS normally; make the verdict the exit code.
-                wait(300).await;
+                // Exit right away with the verdict: quitting first ends the process with 0.
+                // Children die with the Job Object.
                 std::process::exit(if ok { 0 } else { 1 });
             }
         })

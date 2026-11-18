@@ -33,6 +33,7 @@ impl Workspace {
     }
 
     pub(super) fn poll_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::stall::note("disk poll");
         // Open files.
         let mut gone = Vec::new();
         let mut reloaded = false;
