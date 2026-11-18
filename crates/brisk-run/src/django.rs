@@ -15,6 +15,8 @@ pub fn settings_in_manage(src: &str) -> Option<String> {
     Some(body[..body.find(q)?].to_string())
 }
 
+pub const SETTINGS_VAR: &str = "DJANGO_SETTINGS_MODULE";
+
 /// Folders never searched for `manage.py`.
 const SKIP: &[&str] = &["venv", "env", "node_modules", "site-packages", "__pycache__", "build", "dist"];
 
@@ -46,10 +48,16 @@ pub fn find_manage(root: &Path) -> Option<(PathBuf, Option<String>)> {
 }
 
 impl RunConfig {
-    /// A Django Server / Django tests configuration for a `manage.py`.
+    /// A Django Server / Django tests configuration for a `manage.py`, with
+    /// `DJANGO_SETTINGS_MODULE` set to the settings module it names (as PyCharm's Django
+    /// support does).
     pub fn for_django(root: &Path, kind: RunKind, manage: &Path, temporary: bool) -> Self {
         let name = if kind == RunKind::DjangoTests { "Django tests" } else { "Django server" };
-        RunConfig { name: name.into(), kind, target: relativize(root, manage), temporary, ..Default::default() }
+        let mut cfg = RunConfig { name: name.into(), kind, target: relativize(root, manage), temporary, ..Default::default() };
+        if let Some(s) = std::fs::read_to_string(manage).ok().and_then(|src| settings_in_manage(&src)) {
+            cfg.env.insert(SETTINGS_VAR.into(), s);
+        }
+        cfg
     }
 }
 
@@ -84,6 +92,7 @@ mod tests {
         assert_eq!((m, settings.as_deref()), (root.join("backend/manage.py"), Some("mysite.settings")));
         let cfg = RunConfig { parameters: "127.0.0.1:8001 --noreload".into(), ..RunConfig::for_django(&root, RunKind::Django, &root.join("backend/manage.py"), false) };
         assert_eq!(cfg.target, "backend/manage.py");
+        assert_eq!(cfg.env.get(SETTINGS_VAR).map(String::as_str), Some("mysite.settings"));
         let (args, cwd) = command(&root, &cfg);
         assert_eq!(args[1..], ["runserver", "127.0.0.1:8001", "--noreload"]);
         assert_eq!(cwd, root.join("backend"));

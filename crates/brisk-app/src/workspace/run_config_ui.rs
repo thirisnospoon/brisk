@@ -153,6 +153,8 @@ pub struct RunDialog {
     apps: Vec<(RunKind, String)>,
     /// "Add New Configuration" (+ / Alt+Insert): the template list, with its selection.
     adding: Option<usize>,
+    /// The detected Django settings module, put into a Django configuration's environment.
+    django_settings: Option<String>,
 }
 
 pub fn env_to_text(env: &BTreeMap<String, String>) -> String {
@@ -367,7 +369,12 @@ impl RunDialog {
     /// unless its target already looks like `module:app`.
     fn set_kind(&mut self, k: Kind) {
         let app = k.web().and_then(|w| self.apps.iter().find(|(a, _)| *a == w)).map(|(_, t)| t.clone());
+        let settings = self.django_settings.clone().filter(|_| matches!(k, Kind::Django | Kind::DjangoTests));
         let Some(d) = self.draft() else { return };
+        if let Some(s) = settings.filter(|_| !d.env.contains(brisk_run::django::SETTINGS_VAR)) {
+            let var = format!("{}={s}", brisk_run::django::SETTINGS_VAR);
+            d.env = if d.env.trim().is_empty() { var } else { format!("{};{var}", d.env.trim_end_matches(';')) };
+        }
         k.apply(&mut d.cfg);
         // Servers: `module:app`; Django: a `manage.py` path.
         let fits = if matches!(k, Kind::Django | Kind::DjangoTests) { d.cfg.target.trim_end().ends_with("manage.py") } else { d.cfg.target.contains(':') };
@@ -478,9 +485,10 @@ impl Workspace {
         if let Some(i) = current {
             drafts[i].selected = true;
         }
-        let mut d = RunDialog { drafts, current: current.unwrap_or(0), field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None };
+        let mut d = RunDialog { drafts, current: current.unwrap_or(0), field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None, django_settings: None };
         d.apps = [RunKind::FastApi, RunKind::Flask].into_iter().filter_map(|k| brisk_run::web::find_app(&self.root, Some(k)).map(|(k, _, t)| (k, t))).collect();
-        if let Some((m, _)) = brisk_run::django::find_manage(&self.root) {
+        if let Some((m, settings)) = brisk_run::django::find_manage(&self.root) {
+            d.django_settings = settings;
             let rel = brisk_run::relativize(&self.root, &m);
             d.apps.extend([(RunKind::Django, rel.clone()), (RunKind::DjangoTests, rel)]);
         }
@@ -1231,7 +1239,7 @@ mod tests {
 
     #[test]
     fn dialog_editing() {
-        let mut d = RunDialog { drafts: Vec::new(), current: 0, field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None };
+        let mut d = RunDialog { drafts: Vec::new(), current: 0, field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None, django_settings: None };
         d.add(Kind::Script);
         assert_eq!(d.drafts[0].cfg.name, "Unnamed");
         assert!(d.select_all);
