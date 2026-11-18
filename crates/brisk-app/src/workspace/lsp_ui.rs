@@ -476,7 +476,6 @@ impl Workspace {
                 match res {
                     Ok(locs) if locs.is_empty() => this.status = format!("No usages of '{name}' found"),
                     Ok(locs) => {
-                        let n = locs.len();
                         let usages: Vec<(PathBuf, usize, std::ops::Range<usize>)> = locs
                             .into_iter()
                             .map(|l| {
@@ -484,8 +483,8 @@ impl Workspace {
                                 (l.path, l.start.line, l.start.col..end)
                             })
                             .collect();
-                        this.show_usages(format!("Usages of '{name}'"), usages, window, cx);
-                        this.status = format!("{n} usage(s) of '{name}'");
+                        let n = this.show_usages(format!("Usages of '{name}'"), usages, window, cx);
+                        this.status = if n == 0 { format!("No usages of '{name}' found") } else { format!("{n} usage(s) of '{name}'") };
                     }
                     Err(e) => this.status = format!("ty: {e}"),
                 }
