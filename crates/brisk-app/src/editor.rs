@@ -21,6 +21,8 @@ pub mod breakpoints;
 pub mod run_marks;
 pub mod coverage;
 mod select;
+mod scope;
+pub use scope::siblings as scope_siblings;
 pub use select::{clipboard_history, remember_clip};
 mod disk;
 mod find;
@@ -161,6 +163,8 @@ pub struct Editor {
     run_cache: (u64, Vec<run_marks::RunMark>),
     /// pytest results of this file by node key, for the run icons.
     test_results: std::collections::HashMap<String, brisk_run::TestStatus>,
+    /// The outline and the symbols around the caret, for the breadcrumbs.
+    scope_cache: scope::ScopeCache,
 }
 
 /// Events for the workspace.
@@ -322,6 +326,7 @@ impl Editor {
             disk_conflict: None,
             run_cache: (u64::MAX, Vec::new()),
             test_results: Default::default(),
+            scope_cache: Default::default(),
         };
         ed.reparse();
         ed
@@ -390,6 +395,7 @@ impl Editor {
             disk_conflict: None,
             run_cache: (u64::MAX, Vec::new()),
             test_results: Default::default(),
+            scope_cache: Default::default(),
         }
     }
 
