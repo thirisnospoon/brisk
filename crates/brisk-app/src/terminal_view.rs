@@ -80,6 +80,8 @@ pub struct TerminalPanel {
     grid: Option<GridGeom>,
     selecting: bool,
     pub error: Option<String>,
+    /// The project interpreter's environment for new shells.
+    activation: Option<crate::terminal_env::Activation>,
     /// Run tool window (process output) instead of Terminal (shells).
     run_mode: bool,
     /// Run window toggles: wrap long lines at the window edge / follow new output.
@@ -106,8 +108,11 @@ fn hsla(c: [u8; 3]) -> Hsla {
 }
 
 impl TerminalPanel {
-    pub fn new(root: PathBuf, cx: &mut Context<Self>) -> Self {
+    /// The Terminal tool window; shells start with `activation` (the project interpreter's
+    /// environment) when it is known, else with the project's `.venv` on PATH.
+    pub fn new(root: PathBuf, activation: Option<crate::terminal_env::Activation>, cx: &mut Context<Self>) -> Self {
         let mut panel = Self::with_mode(root, false, cx);
+        panel.activation = activation;
         panel.new_tab();
         panel
     }
@@ -179,6 +184,7 @@ impl TerminalPanel {
             selecting: false,
             error: None,
             run_mode,
+            activation: None,
             soft_wrap: true,
             scroll_to_end: true,
             h_scroll: 0,
@@ -286,6 +292,18 @@ impl TerminalPanel {
         self.tabs.iter().any(|t| t.run.as_ref().is_some_and(|r| r.running))
     }
 
+    /// The environment for shells opened from now on.
+    pub fn set_activation(&mut self, a: Option<crate::terminal_env::Activation>) {
+        self.activation = a;
+    }
+
+    /// Type a line into the active shell and press Enter (smoke tests).
+    pub fn type_line(&self, line: &str) {
+        if let Some(s) = self.session() {
+            s.write(format!("{line}\r").into_bytes());
+        }
+    }
+
     /// Names of the run tabs, in order (smoke tests).
     pub fn run_tab_names(&self) -> Vec<String> {
         self.tabs.iter().filter_map(|t| t.run.as_ref().map(|r| r.name.clone())).collect()
@@ -328,7 +346,17 @@ impl TerminalPanel {
         self.next_id += 1;
         let tx = self.events.clone();
         let (cols, rows) = self.tabs.get(self.active).map(|t| t.session.size()).unwrap_or((120, 12));
-        match Session::spawn(SpawnOptions::for_project(&self.root), cols, rows, 8, CELL_H as u16, move |e| {
+        let mut opts = SpawnOptions::for_project(&self.root);
+        if let Some(a) = &self.activation {
+            // The project interpreter decides, not whatever .venv sits in the root.
+            opts.env.remove("PATH");
+            opts.env.remove("VIRTUAL_ENV");
+            opts.env.extend(a.env.clone());
+            if let (true, Some(p)) = (cfg!(windows), &a.prompt) {
+                opts.shell = Some(("powershell.exe".into(), crate::terminal_env::powershell_args(p)));
+            }
+        }
+        match Session::spawn(opts, cols, rows, 8, CELL_H as u16, move |e| {
             let _ = tx.unbounded_send((id, e));
         }) {
             Ok(session) => {

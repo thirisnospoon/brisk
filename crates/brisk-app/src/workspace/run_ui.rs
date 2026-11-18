@@ -391,6 +391,7 @@ impl Workspace {
                 self.save_runs();
                 self.status = format!("Interpreter: {}", self.interpreter_label());
                 self.restart_ty(cx);
+                self.sync_terminal_env(cx);
                 self.focus_editor(window, cx);
             }
             _ => {}

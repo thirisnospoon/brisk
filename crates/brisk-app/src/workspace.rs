@@ -37,6 +37,7 @@ mod settings_ui;
 mod tabs_ui;
 mod venv_ui;
 mod run_anything_ui;
+mod terminal_env_ui;
 mod templates_ui;
 mod win_input;
 
@@ -406,6 +407,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_TERMVENV").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.terminal_env_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_RUNANYTHING").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_anything_smoke(window, cx));
@@ -779,7 +783,8 @@ impl Workspace {
         let term = match &self.terminal {
             Some(t) if !t.read(cx).is_empty() => t.clone(),
             _ => {
-                let t = cx.new(|cx| TerminalPanel::new(root, cx));
+                let activation = self.terminal_activation();
+                let t = cx.new(|cx| TerminalPanel::new(root, activation, cx));
                 // Hide the tool window when the last shell exits.
                 cx.observe(&t, |this: &mut Self, t, cx| {
                     if t.read(cx).is_empty() && this.bottom == Some(BottomTool::Terminal) {
