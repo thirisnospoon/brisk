@@ -62,7 +62,7 @@ impl Workspace {
         .detach();
     }
 
-    fn config_python(&self, cfg: &RunConfig) -> Option<PathBuf> {
+    pub(super) fn config_python(&self, cfg: &RunConfig) -> Option<PathBuf> {
         match &cfg.interpreter {
             Some(p) => Some(brisk_run::resolve(&self.root, p)),
             None => self.runs.interpreter(&self.root).map(|i| i.path),

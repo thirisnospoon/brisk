@@ -39,6 +39,7 @@ mod venv_ui;
 mod run_anything_ui;
 mod terminal_env_ui;
 mod coverage_ui;
+mod profile_ui;
 mod templates_ui;
 mod win_input;
 
@@ -80,6 +81,7 @@ pub enum BottomTool {
     Packages,
     Todo,
     Coverage,
+    Profiler,
 }
 
 impl BottomTool {
@@ -96,6 +98,7 @@ impl BottomTool {
             BottomTool::Packages => "Python Packages",
             BottomTool::Todo => "TODO",
             BottomTool::Coverage => "Coverage",
+            BottomTool::Profiler => "Profiler",
         }
     }
     fn stage(self) -> &'static str {
@@ -107,7 +110,7 @@ impl BottomTool {
             BottomTool::Git => "",
             BottomTool::Services => "Stage 5: Docker and databases.",
             BottomTool::Find => "",
-            BottomTool::PythonConsole | BottomTool::Packages | BottomTool::Todo | BottomTool::Coverage => "",
+            BottomTool::PythonConsole | BottomTool::Packages | BottomTool::Todo | BottomTool::Coverage | BottomTool::Profiler => "",
         }
     }
 }
@@ -309,6 +312,10 @@ pub struct Workspace {
     cov_pending: Option<coverage_ui::Pending>,
     /// Offer to install coverage.py for this configuration.
     cov_offer: Option<brisk_run::RunConfig>,
+    /// The last profile (Run › Profile).
+    profile: Option<profile_ui::ProfileView>,
+    /// A profiled run whose stats come when its tab finishes.
+    prof_pending: Option<profile_ui::Pending>,
     /// pytest results per file for the run icons in the gutter.
     test_marks: run_marks_ui::TestMarks,
     /// Created on first open of Python Packages.
@@ -416,6 +423,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_PROFILE").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.profile_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_COVERAGE").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.coverage_smoke(window, cx));
@@ -582,6 +592,8 @@ impl Workspace {
             coverage: None,
             cov_pending: None,
             cov_offer: None,
+            profile: None,
+            prof_pending: None,
             test_marks: Default::default(),
             packages: None,
             todo: None,
@@ -1134,6 +1146,8 @@ impl Workspace {
             A::ToggleTodoWindow => self.toggle_todo_window(window, cx),
             A::ToggleCoverageWindow => self.toggle_coverage_window(window, cx),
             A::RunWithCoverage => self.run_with_coverage(window, cx),
+            A::Profile => self.profile_run(window, cx),
+            A::ToggleProfilerWindow => self.toggle_profiler_window(window, cx),
             A::RefreshPythonPackages | A::InstallPythonPackage | A::UninstallPythonPackage => self.python_packages_action(action, window, cx),
             A::RerunPythonConsole | A::StopPythonConsole | A::ClearPythonConsole => self.python_console_action(action, window, cx),
             A::ToggleServicesWindow => {
@@ -1749,6 +1763,7 @@ impl Workspace {
             .child(self.stripe_button("st-terminal", "›_", "Terminal", self.bottom == Some(BottomTool::Terminal), Action::ToggleTerminalWindow, cx))
             .child(self.stripe_button("st-todo", "☑", "TODO", self.bottom == Some(BottomTool::Todo), Action::ToggleTodoWindow, cx))
             .when(self.coverage.is_some(), |d| d.child(self.stripe_button("st-coverage", "◔", "Coverage", self.bottom == Some(BottomTool::Coverage), Action::ToggleCoverageWindow, cx)))
+            .when(self.profile.is_some(), |d| d.child(self.stripe_button("st-profiler", "⏱", "Profiler", self.bottom == Some(BottomTool::Profiler), Action::ToggleProfilerWindow, cx)))
             .child(self.stripe_button("st-problems", "⚠", "Problems", self.bottom == Some(BottomTool::Problems), Action::ToggleProblemsWindow, cx))
             .child(self.stripe_button("st-git", "⎇", "Git", self.bottom == Some(BottomTool::Git), Action::ToggleGitWindow, cx))
     }
@@ -2408,6 +2423,7 @@ impl Render for Workspace {
             (BottomTool::Packages, _) => self.render_python_packages(window, cx),
             (BottomTool::Todo, _) => self.render_todo(cx),
             (BottomTool::Coverage, _) => self.render_coverage(cx),
+            (BottomTool::Profiler, _) => self.render_profiler(cx),
             _ => Self::render_placeholder(b.title(), b.stage()),
         });
         let center = self.render_editor_area(cx);
