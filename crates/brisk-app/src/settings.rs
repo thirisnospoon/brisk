@@ -1,4 +1,5 @@
-//! User settings (Settings dialog, Ctrl+Alt+S): theme, editor font, size and line spacing.
+//! User settings (Settings dialog, Ctrl+Alt+S): theme, editor font, size, line spacing and
+//! inlay hints.
 //! Stored in `<config dir>/settings.json`; read by painting code through cheap globals.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -16,15 +17,18 @@ pub struct Settings {
     pub editor_font: String,
     pub font_size: f32,
     pub line_spacing: f32,
+    /// Inlay hints (inferred types, parameter names) in the editor.
+    pub inlay_hints: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { light: false, editor_font: crate::theme::MONO_FONT.to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0 }
+        Self { light: false, editor_font: crate::theme::MONO_FONT.to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true }
     }
 }
 
 static LIGHT: AtomicBool = AtomicBool::new(false);
+static INLAY_HINTS: AtomicBool = AtomicBool::new(true);
 /// The font size in use (the setting, or a zoomed size: Alt+Shift+. / Ctrl+wheel).
 static FONT_SIZE: AtomicU32 = AtomicU32::new(0);
 static SPACING: AtomicU32 = AtomicU32::new(0);
@@ -55,6 +59,9 @@ pub fn load() -> Settings {
             if let Some(n) = v.get("line_spacing").and_then(|t| t.as_f64()) {
                 s.line_spacing = (n as f32).clamp(0.8, 2.0);
             }
+            if let Some(b) = v.get("inlay_hints").and_then(|t| t.as_bool()) {
+                s.inlay_hints = b;
+            }
         }
     }
     apply(&s);
@@ -64,6 +71,7 @@ pub fn load() -> Settings {
 /// Make `s` current (painting picks it up on the next frame).
 pub fn apply(s: &Settings) {
     LIGHT.store(s.light, Ordering::Relaxed);
+    INLAY_HINTS.store(s.inlay_hints, Ordering::Relaxed);
     FONT_SIZE.store(s.font_size.to_bits(), Ordering::Relaxed);
     SPACING.store(s.line_spacing.to_bits(), Ordering::Relaxed);
     if let Ok(mut c) = CURRENT.write() {
@@ -77,6 +85,7 @@ pub fn save(s: &Settings) -> std::io::Result<()> {
         "editor_font": s.editor_font,
         "font_size": (s.font_size as f64 * 10.0).round() / 10.0,
         "line_spacing": (s.line_spacing as f64 * 10.0).round() / 10.0,
+        "inlay_hints": s.inlay_hints,
     });
     let p = path();
     if let Some(d) = p.parent() {
@@ -87,6 +96,10 @@ pub fn save(s: &Settings) -> std::io::Result<()> {
 
 pub fn is_light() -> bool {
     LIGHT.load(Ordering::Relaxed)
+}
+
+pub fn inlay_hints() -> bool {
+    INLAY_HINTS.load(Ordering::Relaxed)
 }
 
 pub fn font_size() -> f32 {
