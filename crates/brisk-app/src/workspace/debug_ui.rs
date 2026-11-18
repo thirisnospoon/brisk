@@ -1363,7 +1363,7 @@ impl Workspace {
                             .border_1()
                             .border_color(if editing { Theme::accent() } else { Theme::divider() })
                             .bg(Theme::editor_bg())
-                            .font_family(MONO_FONT)
+                            .font_family(mono_font())
                             .cursor_text()
                             .child(c.name.clone())
                             .when(editing, |x| x.child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret())))
@@ -3261,7 +3261,7 @@ impl Workspace {
                 .border_color(Theme::divider())
                 .rounded(px(4.))
                 .shadow_md()
-                .font_family(MONO_FONT)
+                .font_family(mono_font())
                 .text_size(px(12.5))
                 .occlude()
                 .children(shown.into_iter().enumerate().skip(first).take(8).map(|(j, (label, kind))| {
