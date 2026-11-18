@@ -485,19 +485,37 @@ impl Workspace {
             false => self.ty_at_caret(&ed, cx).map(|(ty, path, _)| {
                 let start = ty_diags.iter().map(|d| d.start).min().unwrap_or_default();
                 let end = ty_diags.iter().map(|d| d.end).max().unwrap_or_default();
-                ty.code_actions(&path, start, end, &ty_diags)
+                (ty, path, start, end)
             }),
         };
-        let Some(fut) = request else { return self.open_intentions(&probs, Vec::new()) };
-        // ty answers in milliseconds; never leave Alt+Enter hanging on a stuck server.
-        let timeout = cx.background_executor().timer(Duration::from_millis(1500));
+        let Some((ty, path, start, end)) = request else { return self.open_intentions(&probs, Vec::new()) };
+        let unresolved = ty_diags.iter().any(|d| d.code == "unresolved-reference");
+        if unresolved {
+            self.status = "Looking for imports…".into();
+            cx.notify();
+        }
+        let bg = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             use futures::FutureExt;
-            let actions = futures::future::select(fut.boxed(), timeout.boxed()).await;
-            let actions = match actions {
-                futures::future::Either::Left((Ok(a), _)) => a,
-                _ => Vec::new(),
-            };
+            let mut actions: Vec<brisk_lsp::CodeAction> = Vec::new();
+            for attempt in 0..2 {
+                // Right after startup ty may still be indexing the environment and know no
+                // import for the name yet: ask once more a moment later.
+                if attempt == 1 {
+                    if !unresolved || actions.iter().any(|a| !a.title.starts_with("Ignore '")) {
+                        break;
+                    }
+                    bg.timer(Duration::from_millis(700)).await;
+                }
+                // Usually milliseconds, but the first import search after startup walks the whole
+                // environment (seconds with big site-packages); never hang on a stuck server.
+                let fut = ty.code_actions(&path, start, end, &ty_diags);
+                let timeout = bg.timer(Duration::from_secs(5));
+                actions = match futures::future::select(fut.boxed(), timeout.boxed()).await {
+                    futures::future::Either::Left((Ok(a), _)) => a,
+                    _ => Vec::new(),
+                };
+            }
             let _ = this.update(cx, |this, cx| {
                 this.open_intentions(&probs, actions);
                 cx.notify();

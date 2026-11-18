@@ -28,11 +28,13 @@ pub(super) struct Lsp {
     synced: HashMap<PathBuf, u64>,
     /// Bumped on restart so late replies from an old server are dropped.
     epoch: u64,
+    /// Import updates ty gave for the file move in progress.
+    pub moved: Option<Vec<brisk_lsp::FileEdits>>,
 }
 
 impl Lsp {
     pub fn new() -> Self {
-        Lsp { ty: None, state: TyState::Unknown, synced: HashMap::new(), epoch: 0 }
+        Lsp { ty: None, state: TyState::Unknown, synced: HashMap::new(), epoch: 0, moved: None }
     }
 }
 
@@ -586,6 +588,87 @@ impl Workspace {
             ty.files_changed(&on_disk);
         }
         (count, failed)
+    }
+}
+
+// --- Moving modules ----------------------------------------------------------------------
+
+impl Workspace {
+    /// The project file list was rescanned: tell ty which Python files appeared or went away.
+    pub(super) fn ty_files_rescanned(&mut self, old: Option<Arc<brisk_project::FileList>>, new: &brisk_project::FileList) {
+        let (Some(old), Some(ty)) = (old, self.lsp.ty.as_ref()) else { return };
+        let py = |f: &&String| f.ends_with(".py") || f.ends_with(".pyi");
+        let before: std::collections::HashSet<&String> = old.files.iter().filter(py).collect();
+        let after: std::collections::HashSet<&String> = new.files.iter().filter(py).collect();
+        let abs = |f: &&String| new.root.join(f.as_str());
+        let created: Vec<PathBuf> = after.difference(&before).map(abs).collect();
+        let deleted: Vec<PathBuf> = before.difference(&after).map(abs).collect();
+        ty.files_created_deleted(&created, &deleted);
+    }
+
+    /// Rename / Move of a Python file or a folder in the Project tree: ask ty for the import
+    /// updates (`workspace/willRenameFiles`), then run the move again. False when there is
+    /// nothing to ask (not Python, no ty, or the answer is already here).
+    pub(super) fn will_move_python(&mut self, src: &Path, target: &Path, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.lsp.moved.is_some() {
+            return false;
+        }
+        let python = src.is_dir() || matches!(src.extension().and_then(|e| e.to_str()), Some("py" | "pyi"));
+        let Some(ty) = self.lsp.ty.clone().filter(|_| python && self.lsp.state == TyState::Ready) else { return false };
+        // ty should see the unsaved text of open files, which the move saves anyway.
+        let open: Vec<(PathBuf, u64, String)> = self
+            .editors()
+            .filter_map(|e| {
+                let e = e.read(cx);
+                Some((e.path.clone()?, e.buffer.version(), e.text_string())).filter(|_| e.is_python())
+            })
+            .collect();
+        for (p, v, t) in open {
+            self.ty_sync(&p, v, &t);
+        }
+        let fut = ty.will_rename_files(&[(src.to_path_buf(), target.to_path_buf())]);
+        let timeout = cx.background_executor().timer(std::time::Duration::from_secs(3));
+        let target = target.to_path_buf();
+        cx.spawn_in(window, async move |this, cx| {
+            use futures::FutureExt;
+            let edits = match futures::future::select(fut.boxed(), timeout.boxed()).await {
+                futures::future::Either::Left((Ok(e), _)) => e,
+                _ => Vec::new(),
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.lsp.moved = Some(edits);
+                this.run_file_op(target, window, cx);
+            });
+        })
+        .detach();
+        true
+    }
+
+    /// After the move: apply ty's import updates (files that moved along are at their new
+    /// place now) and tell ty about the rename.
+    pub(super) fn after_python_move(&mut self, src: &Path, target: &Path, cx: &mut Context<Self>) {
+        let Some(edits) = self.lsp.moved.take() else { return };
+        let edits: Vec<brisk_lsp::FileEdits> = edits
+            .into_iter()
+            .filter(|(_, e)| !e.is_empty())
+            .map(|(p, e)| match p.strip_prefix(src) {
+                Ok(rest) if rest.as_os_str().is_empty() => (target.to_path_buf(), e),
+                Ok(rest) => (target.join(rest), e),
+                Err(_) => (p, e),
+            })
+            .collect();
+        if let Some(ty) = &self.lsp.ty {
+            ty.did_rename_files(&[(src.to_path_buf(), target.to_path_buf())]);
+        }
+        if edits.is_empty() {
+            return;
+        }
+        let files = edits.len();
+        let (count, failed) = self.apply_file_edits(edits, cx);
+        self.status = format!("{}; updated {count} import reference(s) in {files} file(s)", self.status);
+        if !failed.is_empty() {
+            self.show_toast(format!("Could not update imports: {}", failed.join("; ")), true, cx);
+        }
     }
 }
 

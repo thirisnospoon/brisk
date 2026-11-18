@@ -577,7 +577,21 @@ impl Ty {
 
     /// Files changed on disk behind ty's back (a rename edited closed files).
     pub fn files_changed(&self, paths: &[PathBuf]) {
-        let changes: Vec<Value> = paths.iter().map(|p| json!({"uri": path_to_uri(p), "type": 2})).collect();
+        self.watched(paths, 2);
+    }
+
+    /// Files that appeared or disappeared on disk. ty does not watch the disk itself: without
+    /// this it never sees new modules (imports of them stay unresolved, moves miss them).
+    pub fn files_created_deleted(&self, created: &[PathBuf], deleted: &[PathBuf]) {
+        self.watched(created, 1);
+        self.watched(deleted, 3);
+    }
+
+    fn watched(&self, paths: &[PathBuf], kind: u8) {
+        if paths.is_empty() {
+            return;
+        }
+        let changes: Vec<Value> = paths.iter().map(|p| json!({"uri": path_to_uri(p), "type": kind})).collect();
         self.client.notify("workspace/didChangeWatchedFiles", json!({"changes": changes}));
     }
 

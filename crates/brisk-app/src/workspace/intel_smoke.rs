@@ -125,6 +125,30 @@ impl Workspace {
                 eprintln!("smoke-intel: holding");
                 return;
             }
+            // Rename a module in the Project tree: its importers follow.
+            let _ = this.update_in(cx, |this, window, cx| {
+                let pkg = this.root.join("smokepkg");
+                let _ = std::fs::create_dir_all(&pkg);
+                let _ = std::fs::write(pkg.join("__init__.py"), "");
+                let _ = std::fs::write(pkg.join("util.py"), "def add(a, b):\n    return a + b\n");
+                let _ = std::fs::write(this.root.join("uses_util.py"), "from smokepkg.util import add\nimport smokepkg.util\n\nprint(add(1, 2), smokepkg.util.add)\n");
+                // As the disk poll does when files appear: rescan, which tells ty.
+                this.reindex_files(cx);
+                let _ = window;
+            });
+            wait(&this, cx, &|this, _| this.files.as_ref().is_some_and(|f| f.files.iter().any(|f| f == "uses_util.py"))).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let pkg = this.root.join("smokepkg");
+                this.file_op = Some(super::files_ui::FileOp::Rename(pkg.join("util.py")));
+                this.run_file_op(pkg.join("helpers.py"), window, cx);
+            });
+            wait(&this, cx, &|this, _| this.lsp.moved.is_none() && this.root.join("smokepkg").join("helpers.py").exists()).await;
+            pause(200).await;
+            let _ = this.update(cx, |this, _| {
+                eprintln!("smoke-intel: rename module -> {:?}", this.status);
+                let t = std::fs::read_to_string(this.root.join("uses_util.py")).unwrap_or_default();
+                eprintln!("smoke-intel: uses_util.py now {:?}", t.lines().take(2).collect::<Vec<_>>());
+            });
             let _ = this.update(cx, |this, cx| {
                 if let Some(ed) = this.active_editor().cloned() {
                     ed.update(cx, |e, _| e.close_insight());
