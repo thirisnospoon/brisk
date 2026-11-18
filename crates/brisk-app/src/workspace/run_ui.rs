@@ -113,6 +113,7 @@ impl Workspace {
                 if let Some(t) = tests {
                     this.take_test_results(&t.results, cx);
                 }
+                this.coverage_finished(name, cx);
                 this.status = match (tests, code) {
                     (Some(t), _) => t.summary.clone(),
                     (None, Some(c)) => format!("'{name}' finished with exit code {c}"),

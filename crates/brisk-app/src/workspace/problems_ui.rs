@@ -115,6 +115,7 @@ impl Workspace {
     /// Watch a newly opened editor: check it now and again after each pause in typing.
     pub(super) fn watch_editor(&mut self, ed: &Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
         self.push_test_results(ed, cx);
+        self.push_coverage(ed, cx);
         cx.observe(ed, |this: &mut Self, ed, cx| {
             let v = ed.read(cx).buffer.version();
             if ed.read(cx).lint_sent != v && ed.read(cx).is_python() {

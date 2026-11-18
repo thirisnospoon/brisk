@@ -50,6 +50,9 @@ impl Theme {
     pub fn vcs_added() -> Hsla { pick(0x549159, 0x9fd09c) }
     pub fn vcs_modified() -> Hsla { pick(0x375fad, 0x8caee0) }
     pub fn vcs_deleted() -> Hsla { pick(0x868a91, 0xb4b8bf) }
+    /// Run with Coverage gutter bars: executed and missed lines.
+    pub fn coverage_hit() -> Hsla { pick(0x4f9a52, 0x86c98a) }
+    pub fn coverage_miss() -> Hsla { pick(0xb5473f, 0xe3867f) }
     /// File name colors in the project tree, tabs and the commit window.
     pub fn file_added() -> Hsla { pick(0x73bd79, 0x2f7d36) }
     pub fn file_modified() -> Hsla { pick(0x6c9be8, 0x0a50a1) }

@@ -15,6 +15,7 @@ mod py_packages;
 mod py_venv;
 mod run_anything;
 mod terminal_env;
+mod coverage;
 mod todo_scan;
 mod terminal_view;
 mod settings;

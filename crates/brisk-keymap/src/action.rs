@@ -201,6 +201,7 @@ actions! {
     Stop => "Stop", "Run";
     Rerun => "Rerun", "Run";
     RunAnything => "Run Anything", "Run";
+    RunWithCoverage => "Run with Coverage", "Run";
     SelectRunConfiguration => "Run...", "Run";
     EditRunConfigurations => "Edit Configurations", "Run";
     ToggleBreakpoint => "Toggle Line Breakpoint", "Run";
@@ -268,6 +269,7 @@ actions! {
     ToggleCommitWindow => "Commit", "Tool Windows";
     ToggleTerminalWindow => "Terminal", "Tool Windows";
     ToggleTodoWindow => "TODO", "Tool Windows";
+    ToggleCoverageWindow => "Coverage", "Tool Windows";
     HideAllToolWindows => "Hide All Tool Windows", "Tool Windows";
     HideActiveToolWindow => "Hide Active Tool Window", "Tool Windows";
     FocusEditor => "Focus Editor", "Tool Windows";

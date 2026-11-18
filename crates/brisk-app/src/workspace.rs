@@ -38,6 +38,7 @@ mod tabs_ui;
 mod venv_ui;
 mod run_anything_ui;
 mod terminal_env_ui;
+mod coverage_ui;
 mod templates_ui;
 mod win_input;
 
@@ -78,6 +79,7 @@ pub enum BottomTool {
     PythonConsole,
     Packages,
     Todo,
+    Coverage,
 }
 
 impl BottomTool {
@@ -93,6 +95,7 @@ impl BottomTool {
             BottomTool::PythonConsole => "Python Console",
             BottomTool::Packages => "Python Packages",
             BottomTool::Todo => "TODO",
+            BottomTool::Coverage => "Coverage",
         }
     }
     fn stage(self) -> &'static str {
@@ -104,7 +107,7 @@ impl BottomTool {
             BottomTool::Git => "",
             BottomTool::Services => "Stage 5: Docker and databases.",
             BottomTool::Find => "",
-            BottomTool::PythonConsole | BottomTool::Packages | BottomTool::Todo => "",
+            BottomTool::PythonConsole | BottomTool::Packages | BottomTool::Todo | BottomTool::Coverage => "",
         }
     }
 }
@@ -300,6 +303,12 @@ pub struct Workspace {
     venv_offer: Option<venv_ui::VenvOffer>,
     /// Run Anything history, newest first.
     ra_history: Vec<String>,
+    /// The last coverage report (Run with Coverage).
+    coverage: Option<coverage_ui::CoverageView>,
+    /// A coverage run whose report comes when its tab finishes.
+    cov_pending: Option<coverage_ui::Pending>,
+    /// Offer to install coverage.py for this configuration.
+    cov_offer: Option<brisk_run::RunConfig>,
     /// pytest results per file for the run icons in the gutter.
     test_marks: run_marks_ui::TestMarks,
     /// Created on first open of Python Packages.
@@ -407,6 +416,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_COVERAGE").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.coverage_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_COMPOUND").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.compound_smoke(window, cx));
@@ -567,6 +579,9 @@ impl Workspace {
             venv_busy: false,
             venv_offer: None,
             ra_history: Vec::new(),
+            coverage: None,
+            cov_pending: None,
+            cov_offer: None,
             test_marks: Default::default(),
             packages: None,
             todo: None,
@@ -1117,6 +1132,8 @@ impl Workspace {
             A::TogglePythonConsole => self.toggle_python_console(window, cx),
             A::TogglePythonPackages => self.toggle_python_packages(window, cx),
             A::ToggleTodoWindow => self.toggle_todo_window(window, cx),
+            A::ToggleCoverageWindow => self.toggle_coverage_window(window, cx),
+            A::RunWithCoverage => self.run_with_coverage(window, cx),
             A::RefreshPythonPackages | A::InstallPythonPackage | A::UninstallPythonPackage => self.python_packages_action(action, window, cx),
             A::RerunPythonConsole | A::StopPythonConsole | A::ClearPythonConsole => self.python_console_action(action, window, cx),
             A::ToggleServicesWindow => {
@@ -1731,6 +1748,7 @@ impl Workspace {
             .child(self.stripe_button("st-run", "▶", "Run", self.bottom == Some(BottomTool::Run), Action::ToggleRunWindow, cx))
             .child(self.stripe_button("st-terminal", "›_", "Terminal", self.bottom == Some(BottomTool::Terminal), Action::ToggleTerminalWindow, cx))
             .child(self.stripe_button("st-todo", "☑", "TODO", self.bottom == Some(BottomTool::Todo), Action::ToggleTodoWindow, cx))
+            .when(self.coverage.is_some(), |d| d.child(self.stripe_button("st-coverage", "◔", "Coverage", self.bottom == Some(BottomTool::Coverage), Action::ToggleCoverageWindow, cx)))
             .child(self.stripe_button("st-problems", "⚠", "Problems", self.bottom == Some(BottomTool::Problems), Action::ToggleProblemsWindow, cx))
             .child(self.stripe_button("st-git", "⎇", "Git", self.bottom == Some(BottomTool::Git), Action::ToggleGitWindow, cx))
     }
@@ -2389,6 +2407,7 @@ impl Render for Workspace {
             (BottomTool::PythonConsole, _) => self.render_python_console(window, cx),
             (BottomTool::Packages, _) => self.render_python_packages(window, cx),
             (BottomTool::Todo, _) => self.render_todo(cx),
+            (BottomTool::Coverage, _) => self.render_coverage(cx),
             _ => Self::render_placeholder(b.title(), b.stage()),
         });
         let center = self.render_editor_area(cx);
@@ -2446,6 +2465,7 @@ impl Render for Workspace {
             .child(self.render_status(cx))
             .children(self.render_toast().map(|e| fade_in("toast-in", e, 160)))
             .children(self.render_venv_offer(cx).map(|e| fade_in("venv-offer-in", e, 160)))
+            .children(self.render_cov_offer(cx).map(|e| fade_in("cov-offer-in", e, 160)))
             .children(self.render_popup(cx).map(|e| fade_in("popup-in", e, 110)))
             .children(self.render_find_popup(cx).map(|e| fade_in("find-in", e, 110)))
             .children(self.render_ds_dialog(cx).map(|e| fade_in("ds-in", e, 110)))

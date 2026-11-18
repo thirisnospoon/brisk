@@ -19,6 +19,7 @@ pub mod annotate;
 mod bookmarks;
 pub mod breakpoints;
 pub mod run_marks;
+pub mod coverage;
 mod select;
 pub use select::{clipboard_history, remember_clip};
 mod disk;
@@ -91,6 +92,8 @@ pub struct Editor {
     /// File contents at HEAD (None: not in git / untracked). Drives the gutter change markers.
     vcs_base: Option<String>,
     vcs_changes: Vec<brisk_git::LineChange>,
+    /// Run with Coverage marks.
+    coverage: Option<coverage::CoverageMarks>,
     vcs_version: u64,
     /// False for small text fields (commit message): no line numbers.
     pub show_gutter: bool,
@@ -268,6 +271,7 @@ impl Editor {
             read_error: err,
             vcs_base: None,
             vcs_changes: Vec::new(),
+            coverage: None,
             vcs_version: u64::MAX,
             show_gutter: true,
             diagnostics: Vec::new(),
@@ -330,6 +334,7 @@ impl Editor {
             read_error: None,
             vcs_base: None,
             vcs_changes: Vec::new(),
+            coverage: None,
             vcs_version: u64::MAX,
             show_gutter: false,
             diagnostics: Vec::new(),
@@ -1712,6 +1717,15 @@ impl Element for EditorElement {
                     if l >= first && l <= last {
                         markers.push(fill(Bounds::new(point(mx - px(2.), y_of(l) - px(1.5)), size(px(7.), px(3.))), Theme::vcs_deleted()));
                     }
+                }
+            }
+        }
+        // Coverage: a bar between the change markers and the fold markers.
+        if ed.coverage.is_some() {
+            for &l in rows.iter() {
+                if let Some(hit) = ed.coverage_at(l) {
+                    let color = if hit { Theme::coverage_hit() } else { Theme::coverage_miss() };
+                    markers.push(fill(Bounds::new(point(mx + px(4.), y_of(l)), size(px(3.), lh)), color));
                 }
             }
         }
