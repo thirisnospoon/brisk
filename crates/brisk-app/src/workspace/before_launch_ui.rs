@@ -16,7 +16,8 @@ pub enum Then {
     Coverage(PathBuf),
     Profile,
     /// Rerun: the tab's own command (coverage / profile wrapping included).
-    Rerun(brisk_run::Command),
+    /// A Rerun of Run tab `.1`.
+    Rerun(brisk_run::Command, u64),
 }
 
 pub struct Chain {
@@ -71,7 +72,7 @@ impl Workspace {
                 Then::Debug => self.start_debug(cfg, window, cx),
                 Then::Coverage(python) => self.start_coverage_run(cfg, python, window, cx),
                 Then::Profile => self.profile_config(cfg, window, cx),
-                Then::Rerun(cmd) => self.run_command(cfg, cmd, window, cx),
+                Then::Rerun(cmd, tab) => self.run_command_in(cfg, cmd, Some(tab), window, cx),
             }
             // A launch refused before it got to `before_launch` must not skip the next one.
             self.before_passed = None;

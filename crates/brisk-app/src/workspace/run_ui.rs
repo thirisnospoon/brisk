@@ -235,12 +235,12 @@ impl Workspace {
 
     /// Rerun (Ctrl+F5 / ↻): the active tab's command again, after its Before launch steps.
     pub(super) fn rerun_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((cfg, cmd)) = self.runs.panel.as_ref().and_then(|p| p.read(cx).active_run()) else { return };
+        let Some((cfg, cmd, tab)) = self.runs.panel.as_ref().and_then(|p| p.read(cx).active_run()) else { return };
         self.save_all(cx);
-        if self.before_launch(&cfg, before_launch_ui::Then::Rerun(cmd.clone()), window, cx) {
+        if self.before_launch(&cfg, before_launch_ui::Then::Rerun(cmd.clone(), tab), window, cx) {
             return;
         }
-        self.run_command(cfg, cmd, window, cx);
+        self.run_command_in(cfg, cmd, Some(tab), window, cx);
     }
 
     /// A Compound: every member starts in its own Run tab.
@@ -276,11 +276,16 @@ impl Workspace {
 
     /// Start a prepared process in the Run window (a tab named after `cfg`).
     pub(super) fn run_command(&mut self, cfg: RunConfig, cmd: brisk_run::Command, window: &mut Window, cx: &mut Context<Self>) {
+        self.run_command_in(cfg, cmd, None, window, cx);
+    }
+
+    /// [`Self::run_command`] into Run tab `tab` (a Rerun keeps its tab, pinned or not).
+    pub(super) fn run_command_in(&mut self, cfg: RunConfig, cmd: brisk_run::Command, tab: Option<u64>, window: &mut Window, cx: &mut Context<Self>) {
         let panel = self.ensure_run_panel(window, cx);
         let name = cfg.name.clone();
         let res = panel.update(cx, |p, cx| {
             cx.notify();
-            p.run(cfg, cmd)
+            p.run_in(cfg, cmd, tab)
         });
         match res {
             Ok(()) => {

@@ -128,6 +128,10 @@ enum Io {
 }
 
 /// One terminal tab or one running process.
+/// How many lines of a Run console's output are kept: beyond it the oldest lines are dropped
+/// (the buffer is a ring), so a chatty process cannot grow memory without bound.
+pub const RUN_HISTORY_LINES: usize = 100_000;
+
 pub struct Session {
     term: Arc<FairMutex<Term<Listener>>>,
     io: Io,
@@ -402,7 +406,7 @@ impl Session {
     ) -> std::io::Result<Self> {
         let size = Size { cols: cols.max(2), rows: rows.max(1) };
         let listener = Listener { callback: Arc::new(on_event), sender: Arc::new(OnceLock::new()) };
-        let config = Config { scrolling_history: 100_000, ..Config::default() };
+        let config = Config { scrolling_history: RUN_HISTORY_LINES, ..Config::default() };
         let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
         let (io, pid) = pipe::PipeIo::spawn(cmd, header, term.clone(), listener.callback.clone())?;
         Ok(Self { term, io: Io::Pipe(io), size, pid: Some(pid) })
@@ -415,6 +419,11 @@ impl Session {
         let mut p: alacritty_terminal::vte::ansi::Processor = alacritty_terminal::vte::ansi::Processor::new();
         p.advance(&mut *term, bytes);
         term.scroll_display(Scroll::Bottom);
+    }
+
+    /// Lines kept above the screen; at [`RUN_HISTORY_LINES`] the oldest output is being dropped.
+    pub fn history_lines(&self) -> usize {
+        self.term.lock().grid().history_size()
     }
 
     /// Plain text of the whole buffer (history and screen), trailing blanks trimmed.

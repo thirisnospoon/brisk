@@ -7,6 +7,7 @@ mod packages_ui;
 mod todo_ui;
 mod db_ui;
 mod services_ui;
+mod pin_smoke;
 mod debug_ui;
 mod disk_ui;
 mod edit2_smoke;
@@ -434,6 +435,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_PIN").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.pin_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_SERVICES").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.services_smoke(window, cx));
