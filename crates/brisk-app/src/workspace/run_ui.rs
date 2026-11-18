@@ -16,6 +16,8 @@ pub(super) struct Runs {
     /// Everything found on the machine; `None` while discovery runs in the background.
     pub all: Option<Vec<Interpreter>>,
     pub panel: Option<Entity<TerminalPanel>>,
+    /// Edit Configurations dialog, when open.
+    pub dialog: Option<super::run_config_ui::RunDialog>,
 }
 
 impl Runs {
@@ -25,7 +27,7 @@ impl Runs {
         if imported > 0 {
             let _ = brisk_run::save(root, &file);
         }
-        (Runs { file, venvs: brisk_run::project_venvs(root), all: None, panel: None }, imported)
+        (Runs { file, venvs: brisk_run::project_venvs(root), all: None, panel: None, dialog: None }, imported)
     }
 
     fn known(&self) -> impl Iterator<Item = &Interpreter> {
@@ -288,13 +290,10 @@ impl Workspace {
         }
     }
 
-    /// No dialog yet: open `.brisk/run.json` in the editor (it is re-read before every run).
-    fn edit_run_configurations(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let path = self.root.join(brisk_run::CONFIG_FILE);
-        if !path.exists() {
-            self.save_runs();
-        }
-        self.open_file(&path, window, cx);
+    /// The Run/Debug Configurations dialog (`run_config_ui`).
+    fn edit_run_configurations(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.popup = None;
+        self.open_run_dialog(cx);
     }
 
     pub(super) fn run_popup_items(&self, kind: PopupKind, q: &str) -> Vec<PopupItem> {

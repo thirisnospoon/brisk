@@ -15,6 +15,7 @@ mod lsp_ui;
 mod menu_ui;
 mod problems_ui;
 pub(crate) mod project_ui;
+mod run_config_ui;
 mod run_ui;
 mod settings_ui;
 mod tabs_ui;
@@ -322,6 +323,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_UI").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.ui_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_RUNCFG").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.run_dialog_smoke(window, cx));
         }
         if let Some(f) = std::env::var_os("BRISK_SMOKE_RUN") {
             let f = PathBuf::from(f);
@@ -749,6 +753,11 @@ impl Workspace {
         }
         if self.db.dialog.is_some() {
             self.db_dialog_key(e, window, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if self.runs.dialog.is_some() {
+            self.run_dialog_key(e, window, cx);
             cx.stop_propagation();
             return;
         }
@@ -2101,6 +2110,7 @@ impl Render for Workspace {
             .children(self.render_find_popup(cx).map(|e| fade_in("find-in", e, 110)))
             .children(self.render_ds_dialog(cx).map(|e| fade_in("ds-in", e, 110)))
             .children(self.render_settings(cx).map(|e| fade_in("settings-in", e, 110)))
+            .children(self.render_run_dialog(cx).map(|e| fade_in("run-dialog-in", e, 110)))
             .children(self.render_menu(viewport, cx).map(|e| fade_in("menu-in", e, 90)))
     }
 }
