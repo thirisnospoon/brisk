@@ -17,7 +17,7 @@ cargo run --release -p brisk-app -- examples/demo_project
 powershell -ExecutionPolicy Bypass -File scripts\package-portable.ps1   # -NoBuild — упаковать уже собранный exe
 ```
 
-Получается `dist\Brisk-<версия>-windows-x64.zip` (~13 МБ): `brisk.exe`, `README.md`, отладчик `libdebugpy` и файл-метка `portable`. Распаковать куда угодно (флешка, папка без прав администратора) и запускать `brisk.exe`; установка не нужна. Пока рядом с exe лежит `portable`, настройки, консоли БД и сохранённые пароли хранятся в папке `data` рядом с exe, а не в `%APPDATA%\Brisk`. Пароли зашифрованы DPAPI под пользователя Windows, поэтому на другом компьютере их придётся ввести заново.
+Получается `dist\Brisk-<версия>-windows-x64.zip` (~13 МБ): `brisk.exe`, `README.md`, отладчик `lib\debugpy` и файл-метка `portable`. Распаковать куда угодно (флешка, папка без прав администратора) и запускать `brisk.exe`; установка не нужна. Пока рядом с exe лежит `portable`, настройки, консоли БД и сохранённые пароли хранятся в папке `data` рядом с exe, а не в `%APPDATA%\Brisk`. Пароли зашифрованы DPAPI под пользователя Windows, поэтому на другом компьютере их придётся ввести заново.
 
 Иконка (`assets/brisk.ico`, рисуется скриптом `assets/make_icon.py`, нужен Pillow) встраивается в exe при сборке через `crates/brisk-app/brisk.rc`. Там же сведения о версии. GPUI берёт её как иконку окна и панели задач.
 
