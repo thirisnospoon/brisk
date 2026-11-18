@@ -236,6 +236,10 @@ pub struct Workspace {
     files: Option<Arc<FileList>>,
     tabs: Vec<Tab>,
     active: Option<usize>,
+    /// The tab strips of the two editor groups (index: `second`), and the (active tab, tab
+    /// count) each last scrolled to, so a newly active tab is brought into view once.
+    tab_scroll: [gpui::ScrollHandle; 2],
+    tab_seen: [std::cell::Cell<(Option<usize>, usize)>; 2],
     git: Option<git_ui::Git>,
     /// Commit window state exists even without a repo (it offers "Create Git Repository").
     commit_focus: FocusHandle,
@@ -304,10 +308,14 @@ impl Workspace {
         if std::env::var_os("BRISK_SMOKE_EDIT2").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.edit2_smoke(window, cx));
         }
-        // Screenshot helpers: open a file and/or the Settings dialog at start.
+        // Screenshot helpers: open files (a `;`-separated list) and/or the Settings dialog at start.
         if let Some(f) = std::env::var_os("BRISK_OPEN_FILE") {
-            let f = PathBuf::from(f);
-            cx.defer_in(window, move |this: &mut Self, window, cx| this.open_file(&f, window, cx));
+            let files: Vec<PathBuf> = std::env::split_paths(&f).collect();
+            cx.defer_in(window, move |this: &mut Self, window, cx| {
+                for f in &files {
+                    this.open_file(f, window, cx);
+                }
+            });
         }
         if std::env::var_os("BRISK_OPEN_SETTINGS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| {
@@ -446,6 +454,8 @@ impl Workspace {
             tree_scroll: UniformListScrollHandle::new(),
             files: None,
             tabs: Vec::new(),
+            tab_scroll: [gpui::ScrollHandle::new(), gpui::ScrollHandle::new()],
+            tab_seen: Default::default(),
             active: None,
             git,
             commit_focus: cx.focus_handle(),
@@ -1635,12 +1645,42 @@ impl Workspace {
     }
 
     fn render_tabs(&self, tabs: &[Tab], current: Option<usize>, focused: bool, second: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let scroll = self.tab_scroll[second as usize].clone();
+        // A tab that became active (opened, picked by Ctrl+E, Ctrl+Tab...) scrolls into view;
+        // otherwise the strip stays where the user scrolled it.
+        let seen = (current, tabs.len());
+        if self.tab_seen[second as usize].get() != seen {
+            if let Some(i) = current {
+                scroll.scroll_to_item(i);
+            }
+            // Before the strip's first layout GPUI cannot scroll it yet: try again next frame.
+            if scroll.bounds().size.width > px(0.) {
+                self.tab_seen[second as usize].set(seen);
+            } else {
+                cx.notify();
+            }
+        }
+        let wheel = scroll.clone();
         div()
             .id(("tabs", second as usize))
             .h(px(36.))
+            .flex_shrink_0()
             .flex()
             .items_end()
             .overflow_x_scroll()
+            .track_scroll(&scroll)
+            // A plain mouse wheel scrolls the strip sideways, as in PyCharm.
+            .on_scroll_wheel(move |e, window, cx| {
+                let d = e.delta.pixel_delta(px(20.));
+                if d.x == px(0.) && d.y != px(0.) {
+                    let max = wheel.max_offset().width;
+                    let mut o = wheel.offset();
+                    o.x = (o.x + d.y).clamp(-max, px(0.));
+                    wheel.set_offset(o);
+                    window.refresh();
+                    cx.stop_propagation();
+                }
+            })
             .bg(Theme::panel_alt())
             .border_b_1()
             .border_color(Theme::divider())
@@ -1662,6 +1702,8 @@ impl Workspace {
                 div()
                     .id(("tab", i))
                     .h(px(36.))
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
                     .flex()
                     .items_center()
                     .gap(px(6.))
