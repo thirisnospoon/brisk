@@ -15,7 +15,7 @@ macro_rules! icons {
 icons![
     "arrow-down", "arrow-down-to-line", "arrow-left-right", "arrow-right-to-line", "arrow-up", "bookmark", "breakpoints", "bug", "calculator", "chart-pie", "check",
     "check-bold", "chevron-down", "chevron-right", "chevron-up", "circle", "circle-alert", "circle-check", "circle-slash", "circle-x", "clipboard",
-    "cloud", "copy", "database", "diamond", "dot", "dot-hole", "eraser", "external-link", "file", "file-text", "folder", "git-branch", "git-commit",
+    "cloud", "copy", "database", "diamond", "dot", "dot-hole", "eraser", "external-link", "file", "file-text", "folder", "git-branch", "git-commit", "island-bl", "island-br", "island-tl", "island-tr",
     "history", "lightbulb", "list", "list-todo", "list-tree", "minus", "power", "undo-2", "loader-circle", "menu", "mute-breakpoints", "package", "pause", "pencil", "pin",
     "play", "play-solid", "plus", "rerun-failed", "ring", "rotate-cw", "save", "search", "server", "settings-2", "sort-failed", "square-terminal",
     "star", "step-into", "step-out", "step-over", "stop-solid", "terminal", "timer", "trash", "triangle-alert", "wrap-text", "x", "zap",

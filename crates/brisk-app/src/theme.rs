@@ -15,6 +15,12 @@ fn pick(dark: u32, light: u32) -> Hsla {
 impl Theme {
     pub fn is_light() -> bool { crate::settings::is_light() }
     pub fn bg() -> Hsla { ui("bg", 0x1e1f22, 0xf7f8fa) }
+    /// The window frame around the islands: a little darker than everything on it.
+    pub fn frame() -> Hsla {
+        let mut c = Self::bg();
+        c.l = if crate::settings::is_light() { (c.l - 0.06).max(0.) } else { c.l * 0.66 };
+        c
+    }
     pub fn panel() -> Hsla { ui("panel", 0x2b2d30, 0xf7f8fa) }
     pub fn panel_alt() -> Hsla { ui("panel_alt", 0x252629, 0xffffff) }
     pub fn border() -> Hsla { ui("border", 0x1e1f22, 0xdfe1e5) }
@@ -128,12 +134,26 @@ impl Theme {
 /// to compare looks; 0 is the default PyCharm-like palette.
 fn design() -> u8 {
     static D: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-    *D.get_or_init(|| match std::env::var("BRISK_DESIGN").unwrap_or_default().as_str() {
-        "graphite" => 1,
-        "midnight" => 2,
-        "mocha" => 3,
-        _ => 0,
+    // "islands" is a layout, not a palette: it combines with one ("islands,graphite").
+    *D.get_or_init(|| {
+        let v = std::env::var("BRISK_DESIGN").unwrap_or_default();
+        v.split(',')
+            .map(|p| match p.trim() {
+                "graphite" => 1,
+                "midnight" => 2,
+                "mocha" => 3,
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0)
     })
+}
+
+/// The "Islands" layout (`BRISK_DESIGN=islands`): tool windows and the editor are rounded
+/// panels with gaps between them on a darker frame, and editor tabs are pills.
+pub fn islands() -> bool {
+    static I: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *I.get_or_init(|| std::env::var("BRISK_DESIGN").unwrap_or_default().split(',').any(|p| p.trim() == "islands"))
 }
 
 /// A UI color: the design variant's, else the theme's.

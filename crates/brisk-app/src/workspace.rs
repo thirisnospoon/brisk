@@ -1803,9 +1803,8 @@ impl Workspace {
             .items_center()
             .px(px(10.))
             .gap(px(6.))
-            .bg(Theme::panel())
-            .border_b_1()
-            .border_color(Theme::border())
+            .bg(if crate::theme::islands() { Theme::frame() } else { Theme::panel() })
+            .when(!crate::theme::islands(), |d| d.border_b_1().border_color(Theme::border()))
             .text_size(px(13.))
             .text_color(Theme::text())
             // The main menu, as in PyCharm's new UI.
@@ -1873,9 +1872,8 @@ impl Workspace {
             .items_center()
             .py(px(6.))
             .gap(px(4.))
-            .bg(Theme::panel())
-            .border_r_1()
-            .border_color(Theme::border())
+            .bg(if crate::theme::islands() { Theme::frame() } else { Theme::panel() })
+            .when(!crate::theme::islands(), |d| d.border_r_1().border_color(Theme::border()))
             .child(self.stripe_button("st-project", "folder", "Project", self.left == Some(LeftTool::Project), Action::ToggleProjectWindow, cx))
             .child(self.stripe_button("st-commit", "git-commit", "Commit", self.left == Some(LeftTool::Commit), Action::ToggleCommitWindow, cx))
             .child(self.stripe_button("st-structure", "list-tree", "Structure", self.left == Some(LeftTool::Structure), Action::ToggleStructureWindow, cx))
@@ -1902,9 +1900,8 @@ impl Workspace {
             .items_center()
             .py(px(6.))
             .gap(px(4.))
-            .bg(Theme::panel())
-            .border_l_1()
-            .border_color(Theme::border())
+            .bg(if crate::theme::islands() { Theme::frame() } else { Theme::panel() })
+            .when(!crate::theme::islands(), |d| d.border_l_1().border_color(Theme::border()))
             .child(self.stripe_button("st-database", "database", "Database", self.db.open, Action::ToggleDatabaseWindow, cx))
     }
 
@@ -2060,6 +2057,7 @@ impl Workspace {
             }
         }
         let wheel = scroll.clone();
+        let islands = crate::theme::islands();
         div()
             .id(("tabs", second as usize))
             .h(px(36.))
@@ -2080,9 +2078,9 @@ impl Workspace {
                     cx.stop_propagation();
                 }
             })
-            .bg(Theme::panel_alt())
-            .border_b_1()
-            .border_color(Theme::divider())
+            .when(!islands, |d| d.bg(Theme::panel_alt()).border_b_1().border_color(Theme::divider()))
+            // Islands: pills on the editor's own background.
+            .when(islands, |d| d.bg(Theme::editor_bg()).items_center().px(px(6.)).gap(px(2.)))
             .children(tabs.iter().enumerate().map(|(i, t)| {
                 let active = current == Some(i);
                 let (title, icon, color, name_color, dirty) = match t {
@@ -2101,7 +2099,8 @@ impl Workspace {
                 let pinned = self.pinned.contains(&t.entity_id());
                 div()
                     .id(("tab", i))
-                    .h(px(36.))
+                    .h(px(if islands { 26. } else { 36. }))
+                    .when(islands, |d| d.rounded(px(6.)))
                     .flex_shrink_0()
                     // Long names are cut with an ellipsis, as in PyCharm, so one tab cannot
                     // take the whole strip.
@@ -2113,7 +2112,8 @@ impl Workspace {
                     .px(px(12.))
                     .text_size(px(13.))
                     .text_color(if active { Theme::text() } else { Theme::text_muted() })
-                    .when(active, |d| d.border_b_2().border_color(if focused { Theme::accent() } else { Theme::text_dim() }).bg(Theme::editor_bg()))
+                    .when(active && !islands, |d| d.border_b_2().border_color(if focused { Theme::accent() } else { Theme::text_dim() }).bg(Theme::editor_bg()))
+                    .when(active && islands, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
                     .when(!active, |d| d.hover(|s| s.bg(Theme::hover_row())))
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
@@ -2255,9 +2255,8 @@ impl Workspace {
             .flex()
             .items_center()
             .px(px(8.))
-            .bg(Theme::panel())
-            .border_t_1()
-            .border_color(Theme::border())
+            .bg(if crate::theme::islands() { Theme::frame() } else { Theme::panel() })
+            .when(!crate::theme::islands(), |d| d.border_t_1().border_color(Theme::border()))
             .text_size(px(12.))
             .text_color(Theme::text_muted())
             .child(div().child(crumbs))
@@ -2642,6 +2641,7 @@ impl Render for Workspace {
             _ => Self::render_placeholder(b.title(), b.stage()),
         });
         let center = self.render_editor_area(cx);
+        let islands = crate::theme::islands();
 
         div()
             .id("workspace")
@@ -2652,7 +2652,7 @@ impl Render for Workspace {
             .size_full()
             .flex()
             .flex_col()
-            .bg(Theme::bg())
+            .bg(if islands { Theme::frame() } else { Theme::bg() })
             .text_color(Theme::text())
             .font_family(ui_font())
             .child(self.render_toolbar(cx))
@@ -2661,13 +2661,14 @@ impl Render for Workspace {
                     .flex_1()
                     .flex()
                     .min_h_0()
+                    .when(islands, |d| d.gap(px(crate::ui_kit::ISLAND_GAP)).pb(px(crate::ui_kit::ISLAND_GAP)))
                     .child(self.render_left_stripe(cx))
                     .when_some(left, |d, panel| {
-                        d.child(
-                            div().w(px(300.)).h_full().flex_shrink_0().flex().bg(Theme::panel()).border_r_1().border_color(Theme::border())
-                                .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-left-in", panel)))
-                                .child(self.hide_column(ToolSide::Left, cx)),
-                        )
+                        let p = div().w(px(300.)).h_full().flex_shrink_0().flex().bg(Theme::panel())
+                            .when(!islands, |d| d.border_r_1().border_color(Theme::border()))
+                            .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-left-in", panel)))
+                            .child(self.hide_column(ToolSide::Left, cx));
+                        d.child(if islands { crate::ui_kit::island(p) } else { p })
                     })
                     .child(
                         div()
@@ -2675,21 +2676,26 @@ impl Render for Workspace {
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .child(center)
+                            .when(islands, |d| d.gap(px(crate::ui_kit::ISLAND_GAP)))
+                            .map(|d| if islands {
+                                d.child(crate::ui_kit::island(div().flex_1().min_h_0().flex().flex_col().bg(Theme::editor_bg()).child(center)))
+                            } else {
+                                d.child(center)
+                            })
                             .when_some(bottom, |d, panel| {
-                                d.child(
-                                    div().h(px(bottom_h)).flex_shrink_0().flex().bg(Theme::panel()).border_t_1().border_color(Theme::divider())
-                                        .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-bottom-in", panel)))
-                                        .child(self.hide_column(ToolSide::Bottom, cx)),
-                                )
+                                let p = div().h(px(bottom_h)).flex_shrink_0().flex().bg(Theme::panel())
+                                    .when(!islands, |d| d.border_t_1().border_color(Theme::divider()))
+                                    .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-bottom-in", panel)))
+                                    .child(self.hide_column(ToolSide::Bottom, cx));
+                                d.child(if islands { crate::ui_kit::island(p) } else { p })
                             }),
                     )
                     .when_some(right, |d, panel| {
-                        d.child(
-                            div().w(px(320.)).h_full().flex_shrink_0().flex().bg(Theme::panel()).border_l_1().border_color(Theme::border())
-                                .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-right-in", panel)))
-                                .child(self.hide_column(ToolSide::Right, cx)),
-                        )
+                        let p = div().w(px(320.)).h_full().flex_shrink_0().flex().bg(Theme::panel())
+                            .when(!islands, |d| d.border_l_1().border_color(Theme::border()))
+                            .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-right-in", panel)))
+                            .child(self.hide_column(ToolSide::Right, cx));
+                        d.child(if islands { crate::ui_kit::island(p) } else { p })
                     })
                     .child(self.render_right_stripe(cx)),
             )

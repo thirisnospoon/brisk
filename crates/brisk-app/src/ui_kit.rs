@@ -66,6 +66,24 @@ pub fn editor_field(e: &Entity<Editor>, placeholder: &'static str, focused: bool
     input_frame(focused, bad, h).child(editor_slot(e, placeholder, empty && !focused, h - 2.))
 }
 
+/// Islands: the corner radius of a panel and the gap between panels.
+pub const ISLAND_R: f32 = 8.;
+pub const ISLAND_GAP: f32 = 6.;
+
+/// Islands: makes `d` a rounded panel. GPUI clips children to a rectangle, so caps in the
+/// frame color over the four corners round whatever the panel's content paints there; call
+/// it after the content children (the caps must paint last).
+pub fn island(d: Div) -> Div {
+    let cap = |name: &'static str| crate::icons::icon(name, ISLAND_R, Theme::frame());
+    d.relative()
+        .rounded(px(ISLAND_R))
+        .overflow_hidden()
+        .child(div().absolute().top_0().left_0().child(cap("island-tl")))
+        .child(div().absolute().top_0().right_0().child(cap("island-tr")))
+        .child(div().absolute().bottom_0().left_0().child(cap("island-bl")))
+        .child(div().absolute().bottom_0().right_0().child(cap("island-br")))
+}
+
 /// A text button of the same height as the inputs; `primary` is filled with the accent.
 pub fn button(id: &'static str, label: &'static str, enabled: bool, primary: bool) -> Stateful<Div> {
     div()
