@@ -239,6 +239,16 @@ actions! {
     RefreshDatabase => "Refresh Database", "Database";
     Disconnect => "Disconnect", "Database";
 
+    // Python tools
+    TogglePythonConsole => "Python Console", "Tools";
+    RerunPythonConsole => "Rerun Python Console", "Python Console";
+    StopPythonConsole => "Stop Python Console", "Python Console";
+    ClearPythonConsole => "Clear Python Console", "Python Console";
+    TogglePythonPackages => "Python Packages", "Tools";
+    RefreshPythonPackages => "Reload Python Packages", "Python Packages";
+    InstallPythonPackage => "Install Package…", "Python Packages";
+    UninstallPythonPackage => "Uninstall Package", "Python Packages";
+
     // Tool windows
     ToggleDatabaseWindow => "Database", "Tool Windows";
     ToggleProjectWindow => "Project", "Tool Windows";
@@ -252,6 +262,7 @@ actions! {
     ToggleGitWindow => "Git", "Tool Windows";
     ToggleCommitWindow => "Commit", "Tool Windows";
     ToggleTerminalWindow => "Terminal", "Tool Windows";
+    ToggleTodoWindow => "TODO", "Tool Windows";
     HideAllToolWindows => "Hide All Tool Windows", "Tool Windows";
     HideActiveToolWindow => "Hide Active Tool Window", "Tool Windows";
     FocusEditor => "Focus Editor", "Tool Windows";
