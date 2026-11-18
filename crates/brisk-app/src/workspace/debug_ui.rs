@@ -80,6 +80,12 @@ pub struct Debug {
     console_scroll: ScrollHandle,
     /// Lines with exec marks, to clear them.
     marked: Vec<PathBuf>,
+    /// The configuration of the last session (Rerun).
+    pub last: Option<RunConfig>,
+    /// The adapter is being started; no session yet.
+    pub pending: bool,
+    /// Bumped by every start and stop: a start that finishes late is dropped.
+    gen: u64,
 }
 
 impl Debug {
@@ -98,7 +104,15 @@ impl Debug {
             focus: cx.focus_handle(),
             console_scroll: ScrollHandle::new(),
             marked: Vec::new(),
+            last: None,
+            pending: false,
+            gen: 0,
         }
+    }
+
+    /// A session is starting, running or paused (Stop applies).
+    pub fn is_live(&self) -> bool {
+        self.pending || self.session.as_ref().is_some_and(|s| s.state != State::Ended)
     }
 
     pub fn state(&self) -> Option<State> {
@@ -437,7 +451,18 @@ impl Workspace {
                 self.debug_request(command, json!({"threadId": thread}));
                 self.set_running(cx);
             }
-            A::Stop if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) => self.stop_debug(cx),
+            A::Stop if self.debug.is_live() => self.stop_debug(cx),
+            A::PauseProgram => {
+                if self.debug.state() != Some(State::Running) {
+                    self.status = "Pause: the program is not running".into();
+                    return true;
+                }
+                self.pause_debug(cx);
+            }
+            A::RerunDebug => match self.debug.last.clone() {
+                Some(cfg) => self.start_debug(cfg, window, cx),
+                None => self.status = "Rerun: nothing has been debugged yet".into(),
+            },
             A::EvaluateExpression => {
                 if self.debug.paused_thread().is_none() {
                     self.status = "Evaluate: the debugger is not paused".into();
@@ -494,11 +519,35 @@ impl Workspace {
         }
     }
 
+    /// Pause Program: debugpy pauses all threads; the main one is asked.
+    fn pause_debug(&mut self, cx: &mut Context<Self>) {
+        let Some(s) = &self.debug.session else { return };
+        let client = s.client.clone();
+        let threads = client.request("threads", json!({}));
+        cx.spawn(async move |this, cx| {
+            let list = match threads.await {
+                Ok(Ok(v)) => v.get("threads").and_then(Value::as_array).cloned().unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let main = list.iter().find(|t| t.get("name").and_then(Value::as_str) == Some("MainThread")).or(list.first());
+            let id = main.and_then(|t| t.get("id")).and_then(Value::as_i64).unwrap_or(0);
+            if let Ok(Err(e)) = client.request("pause", json!({"threadId": id})).await {
+                let _ = this.update(cx, |this, cx| {
+                    this.debug.info(format!("Cannot pause: {e}"));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+        self.status = "Pausing…".into();
+    }
+
     fn start_debug(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
         self.save_all(cx);
-        if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) {
+        if self.debug.is_live() {
             self.stop_debug(cx);
         }
+        self.debug.last = Some(cfg.clone());
         let python = match &cfg.interpreter {
             Some(p) => Some(brisk_run::resolve(&self.root, p)),
             None => self.runs.interpreter(&self.root).map(|i| i.path),
@@ -522,15 +571,29 @@ impl Workspace {
         self.bottom = Some(BottomTool::Debug);
         self.status = format!("Debugging '{name}'");
         let root = self.root.clone();
+        self.debug.gen += 1;
+        self.debug.pending = true;
+        let gen = self.debug.gen;
         cx.spawn_in(window, async move |this, cx| {
             let adapter = cx.background_executor().spawn(async move { brisk_dap::adapter_command(&python) }).await;
             let started = adapter.and_then(|a| Client::start(&a.program, &a.args, &root, &[]).map_err(|e| format!("cannot start debugpy: {e}")));
-            let _ = this.update_in(cx, |this, window, cx| match started {
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.debug.gen != gen {
+                    // Stopped (or started again) while debugpy was starting.
+                    if let Ok((client, _)) = &started {
+                        client.kill();
+                    }
+                    return;
+                }
+                this.debug.pending = false;
+                match started {
                 Err(e) => {
                     this.debug.info(e.clone());
                     this.show_toast(e, true, cx);
                 }
-                Ok((client, events)) => this.attach_session(client, events, name, launch, window, cx),
+                    Ok((client, events)) => this.attach_session(client, events, name, launch, window, cx),
+                }
+                cx.notify();
             });
         })
         .detach();
@@ -573,7 +636,9 @@ impl Workspace {
     }
 
     fn stop_debug(&mut self, cx: &mut Context<Self>) {
-        if let Some(s) = &self.debug.session {
+        self.debug.gen += 1;
+        self.debug.pending = false;
+        if let Some(s) = self.debug.session.as_ref().filter(|s| s.state != State::Ended) {
             let rx = s.client.request("disconnect", json!({"terminateDebuggee": true}));
             let client = s.client.clone();
             cx.spawn(async move |_, cx| {
@@ -852,8 +917,11 @@ impl Workspace {
         let d = &self.debug;
         let state = d.state();
         let paused = matches!(state, Some(State::Paused(_)));
-        let live = matches!(state, Some(State::Starting | State::Running | State::Paused(_)));
+        let live = d.is_live();
+        let running = state == Some(State::Running) && !d.pending;
+        let can_rerun = d.last.is_some();
         let title = match (&d.session, state) {
+            _ if d.pending => format!("{} — starting debugpy…", d.last.as_ref().map(|c| c.name.as_str()).unwrap_or("")),
             (Some(s), Some(State::Paused(_))) => {
                 let at = d.frames.get(d.frame).map(|f| format!(" at {}:{}", f.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), f.line + 1)).unwrap_or_default();
                 format!("{} — paused{at}", s.name)
@@ -891,7 +959,9 @@ impl Workspace {
             .h(px(30.))
             .border_b_1()
             .border_color(Theme::divider())
-            .child(tool("dbg-resume", "▶", "Resume Program  F9", paused, green, Action::Resume, cx))
+            .child(tool("dbg-rerun", "↻", "Rerun Debug Session", can_rerun, green, Action::RerunDebug, cx))
+            .child(tool("dbg-resume", "▶", "Resume Program  F9", paused && !d.pending, green, Action::Resume, cx))
+            .child(tool("dbg-pause", "‖", "Pause Program", running, Theme::accent(), Action::PauseProgram, cx))
             .child(tool("dbg-stop", "■", "Stop  Ctrl+F2", live, Theme::error(), Action::Stop, cx))
             .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(Theme::divider()))
             .child(tool("dbg-over", "↷", "Step Over  F8", paused, Theme::accent(), Action::StepOver, cx))
@@ -1068,6 +1138,7 @@ impl Workspace {
         let ret_line = line_of("return a + b", cx);
         let loop_line = line_of("acc +=", cx);
         let print_line = line_of("print(\"total\"", cx);
+        let dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
         cx.spawn_in(window, async move |this, cx| {
             let bg = cx.background_executor().clone();
             let wait = |ms| bg.timer(std::time::Duration::from_millis(ms));
@@ -1185,6 +1256,42 @@ impl Workspace {
                 let exec = t.active_editor().and_then(|e| e.read(cx).exec_line);
                 eprintln!("smoke-debug: finished={ended} exec_line={exec:?} console tail {:?}", out.iter().rev().take(3).collect::<Vec<_>>());
                 eprintln!("smoke-debug: stored -> {}", std::fs::read_to_string(store_path()).map(|s| s.contains("dbg_main.py")).unwrap_or(false));
+            });
+            // Pause a busy program, rerun it, stop it while it runs.
+            let spin = dir.join("dbg_spin.py");
+            let _ = std::fs::write(&spin, "import time\n\nn = 0\nwhile True:\n    n += 1\n    time.sleep(0.01)\n");
+            let _ = this.update_in(cx, |t, w, cx| {
+                t.open_file(&spin, w, cx);
+                t.dispatch(Action::DebugContext, w, cx);
+            });
+            let running = until!(|s: Option<State>| s == Some(State::Running));
+            wait(1500).await;
+            let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::PauseProgram, w, cx));
+            let p = until!(paused);
+            wait(500).await;
+            let _ = this.update_in(cx, |t, _, _| {
+                let n = t.debug.vars.iter().find(|r| r.var.name == "n").map(|r| r.var.value.clone());
+                eprintln!("smoke-debug: pause running={running} paused={p} at {:?} n={n:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+            });
+            let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::RerunDebug, w, cx));
+            let rerun = until!(|s: Option<State>| s == Some(State::Running));
+            wait(800).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                eprintln!("smoke-debug: rerun -> running={rerun} name={:?}", t.debug.session.as_ref().map(|s| s.name.clone()));
+                t.dispatch(Action::Stop, w, cx);
+            });
+            let stopped = until!(|s: Option<State>| s == Some(State::Ended));
+            // Stop while debugpy is still starting: no session may appear afterwards.
+            let _ = this.update_in(cx, |t, w, cx| {
+                t.dispatch(Action::RerunDebug, w, cx);
+                let pending = t.debug.pending;
+                t.dispatch(Action::Stop, w, cx);
+                eprintln!("smoke-debug: stop -> {stopped}; stop while starting: pending={pending} after={}", t.debug.pending);
+            });
+            wait(3000).await;
+            let _ = this.update_in(cx, |t, _, cx| {
+                eprintln!("smoke-debug: late start dropped -> state={:?}", t.debug.state());
+                let _ = std::fs::remove_file(&spin);
                 eprintln!("smoke-debug: done");
                 cx.quit();
             });

@@ -962,7 +962,7 @@ impl Workspace {
                 }
                 self.status = "Cancelling the running statement…".into();
             }
-            A::Stop if self.debug.session.as_ref().is_some_and(|s| s.state != debug_ui::State::Ended) => {
+            A::Stop if self.debug.is_live() => {
                 self.debug_action(action, window, cx);
             }
             A::Stop => self.run_action(action, window, cx),
@@ -974,7 +974,8 @@ impl Workspace {
             A::ToggleFindWindow => self.toggle_find_window(window, cx),
             A::PasteFromHistory if self.focused_editor(window, cx).is_some() => self.open_popup(PopupKind::PasteHistory),
             A::ShowLocalHistory => self.show_local_history(cx),
-            A::ToggleBreakpoint | A::ViewBreakpoints | A::Debug | A::DebugContext | A::Resume | A::StepOver | A::StepInto | A::StepOut | A::RunToCursor | A::EvaluateExpression => {
+            A::ToggleBreakpoint | A::ViewBreakpoints | A::Debug | A::DebugContext | A::Resume | A::StepOver | A::StepInto | A::StepOut | A::RunToCursor | A::EvaluateExpression
+            | A::PauseProgram | A::RerunDebug => {
                 self.debug_action(action, window, cx);
             }
             A::ToggleBookmark | A::ToggleBookmarkWithMnemonic | A::ShowBookmarks | A::FileStructurePopup => {
