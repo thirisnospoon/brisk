@@ -135,6 +135,7 @@ impl Workspace {
             EditorEvent::ContextMenu(at) => this.open_editor_menu(ed.clone(), *at, cx),
             EditorEvent::BreakpointsChanged => this.breakpoints_changed(ed.clone(), cx),
             EditorEvent::EditBreakpoint(line) => this.edit_breakpoint(ed.clone(), *line, cx),
+            EditorEvent::SetNextStatement(line) => this.set_next_statement(ed.clone(), *line, cx),
             EditorEvent::GutterMenu(at) => this.open_gutter_menu(ed.clone(), *at, cx),
             EditorEvent::RunMark(line, at) => this.run_mark_menu(ed.clone(), *line, *at, cx),
             EditorEvent::ShowCommit(hash) => this.show_annotation_commit(ed.clone(), hash.clone(), window, cx),

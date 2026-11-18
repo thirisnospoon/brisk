@@ -1,6 +1,6 @@
 param([string]$Exe, [string]$Project, [string]$File, [string]$AppData, [string]$OutDir, [string]$Steps)
 # Starts brisk paused at the first breakpoint (BRISK_SMOKE_DEBUG_HOLD), then runs $Steps against
-# its own window with posted mouse messages: "shot:name; click:x,y; dbl:x,y; rclick:x,y; key:vk; skey:vk (with Shift); mkey:SCA,vk (modifiers); char:text; move:x,y; wait:ms".
+# its own window with posted mouse messages: "shot:name; click:x,y; dbl:x,y; rclick:x,y; key:vk; skey:vk (with Shift); mkey:SCA,vk (modifiers); char:text; move:x,y; drag:x1,y1,x2,y2; wait:ms".
 # Coordinates are client pixels of brisk's window. stderr goes to $OutDir\log.txt.
 # Example (1750x1125 client, 100% scale; find positions on a "shot:" first): add a breakpoint on
 # line 10 by its number, right click the one on line 7, Esc, Step Over, Stop:
@@ -72,6 +72,15 @@ foreach ($s in ($Steps -split ';')) {
     'click' { $x, $y = $v -split ','; Click ([int]$x) ([int]$y) }
     'dbl' { $x, $y = $v -split ','; Click ([int]$x) ([int]$y); Start-Sleep -Milliseconds 30; Click ([int]$x) ([int]$y) }
     'rclick' { $x, $y = $v -split ','; RClick ([int]$x) ([int]$y) }
+    'drag' {
+      # Press at the first point, move with the button held in 6 steps, release at the second.
+      $x1, $y1, $x2, $y2 = ($v -split ',') | ForEach-Object { [int]$_ }
+      MMove $x1 $y1; Start-Sleep -Milliseconds 60
+      [void][W]::PostMessage($h, 0x201, [IntPtr]1, (L $x1 $y1)); Start-Sleep -Milliseconds 80
+      for ($i = 1; $i -le 6; $i++) { $x = $x1 + [int](($x2 - $x1) * $i / 6); $y = $y1 + [int](($y2 - $y1) * $i / 6); [void][W]::PostMessage($h, 0x200, [IntPtr]1, (L $x $y)); Start-Sleep -Milliseconds 60 }
+      Start-Sleep -Milliseconds 200
+      [void][W]::PostMessage($h, 0x202, [IntPtr]0, (L $x2 $y2))
+    }
     'move' { $x, $y = $v -split ','; MMove ([int]$x) ([int]$y) }
     'char' { foreach ($ch in $v.ToCharArray()) { [void][W]::PostMessage($h, 0x102, [IntPtr][int]$ch, [IntPtr]1); Start-Sleep -Milliseconds 40 } }
     { $_ -in 'skey', 'mkey' } {

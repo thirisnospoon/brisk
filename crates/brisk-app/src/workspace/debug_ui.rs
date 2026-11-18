@@ -43,7 +43,58 @@ pub struct BpDialog {
 pub enum BpRow {
     Raised,
     Uncaught,
+    /// An exception breakpoint for one class (index into `exc_classes`).
+    Class(usize, ExcClass),
     Line(PathBuf, usize, Breakpoint),
+}
+
+/// A Python exception breakpoint for a class: `ValueError`, `mypkg.MyError`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExcClass {
+    pub name: String,
+    /// Stop where it is raised, even if handled.
+    pub raised: bool,
+    /// Stop when nothing handles it.
+    pub uncaught: bool,
+    pub enabled: bool,
+}
+
+impl ExcClass {
+    fn new() -> Self {
+        Self { name: String::new(), raised: true, uncaught: true, enabled: true }
+    }
+}
+
+/// setExceptionBreakpoints arguments. With class breakpoints everything goes as
+/// exceptionOptions (debugpy then ignores `filters`); "Python Exceptions" alone means all.
+fn exception_args(muted: bool, raised: bool, uncaught: bool, classes: &[ExcClass]) -> Value {
+    if muted {
+        return json!({"filters": []});
+    }
+    let mut filters = Vec::new();
+    if raised {
+        filters.push("raised");
+    }
+    if uncaught {
+        filters.push("uncaught");
+    }
+    let classes: Vec<&ExcClass> = classes.iter().filter(|c| c.enabled && !c.name.trim().is_empty() && (c.raised || c.uncaught)).collect();
+    if classes.is_empty() {
+        return json!({"filters": filters});
+    }
+    let all = json!({"names": ["Python Exceptions"]});
+    let mut opts = Vec::new();
+    // Raised covers uncaught: the raise happens first.
+    if raised {
+        opts.push(json!({"path": [all], "breakMode": "always"}));
+    } else if uncaught {
+        opts.push(json!({"path": [all], "breakMode": "unhandled"}));
+    }
+    for c in classes {
+        let mode = if c.raised { "always" } else { "unhandled" };
+        opts.push(json!({"path": [all, {"names": [c.name.trim()]}], "breakMode": mode}));
+    }
+    json!({"filters": filters, "exceptionOptions": opts})
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +152,11 @@ pub struct VarRow {
 }
 
 impl VarRow {
+    /// A return value debugpy shows after Step Over / Step Out ("(return) f"): "↩ f()".
+    fn return_label(&self) -> Option<String> {
+        (self.depth == 1).then(|| return_label(&self.var.name)).flatten()
+    }
+
     fn var(depth: usize, var: Variable, parent: i64) -> Self {
         Self { depth, var, expanded: false, kind: RowKind::Var, parent }
     }
@@ -129,6 +185,8 @@ pub struct Debug {
     pub input: String,
     history: Vec<String>,
     history_pos: usize,
+    /// Tab in the console: debugpy's completions for the input's last name.
+    pub completion: Option<ConsoleCompletion>,
     pub frames: Vec<Frame>,
     pub frame: usize,
     pub vars: Vec<VarRow>,
@@ -155,6 +213,7 @@ pub struct Debug {
     /// Python Exception Breakpoint: stop on raised (even handled) / uncaught exceptions.
     pub exc_raised: bool,
     pub exc_uncaught: bool,
+    pub exc_classes: Vec<ExcClass>,
     pub bp_dialog: Option<BpDialog>,
     /// Mute Breakpoints: none are sent (exception breakpoints neither); for this window only.
     pub muted: bool,
@@ -163,6 +222,8 @@ pub struct Debug {
     pub threads_open: bool,
     /// Smart Step Into: the calls on the line (debugpy stepInTargets) to choose from.
     pub chooser: Option<Chooser>,
+    /// The process of the last Attach (Rerun attaches again while it lives): (pid, label).
+    pub last_attach: Option<(u32, String)>,
 }
 
 pub enum ChooserKind {
@@ -186,8 +247,9 @@ impl Debug {
             stored: load(root),
             console: Vec::new(),
             input: String::new(),
-            history: Vec::new(),
-            history_pos: 0,
+            history: load_history(),
+            history_pos: usize::MAX,
+            completion: None,
             frames: Vec::new(),
             frame: 0,
             vars: Vec::new(),
@@ -205,27 +267,19 @@ impl Debug {
             gen: 0,
             exc_raised: load_exc(root).0,
             exc_uncaught: load_exc(root).1,
+            exc_classes: load_exc_classes(root),
             bp_dialog: None,
             muted: false,
             threads: Vec::new(),
             threads_open: false,
             chooser: None,
+            last_attach: None,
         }
     }
 
-    /// debugpy's exception filters for setExceptionBreakpoints.
-    pub fn exception_filters(&self) -> Vec<&'static str> {
-        let mut v = Vec::new();
-        if self.muted {
-            return v;
-        }
-        if self.exc_raised {
-            v.push("raised");
-        }
-        if self.exc_uncaught {
-            v.push("uncaught");
-        }
-        v
+    /// setExceptionBreakpoints arguments for the current settings.
+    pub fn exception_args(&self) -> Value {
+        exception_args(self.muted, self.exc_raised, self.exc_uncaught, &self.exc_classes)
     }
 
     /// A session is starting, running or paused (Stop applies).
@@ -351,17 +405,80 @@ fn load_exc(root: &Path) -> (bool, bool) {
     (get("raised", false), get("uncaught", true))
 }
 
-fn save_exc(root: &Path, raised: bool, uncaught: bool) {
+fn load_exc_classes(root: &Path) -> Vec<ExcClass> {
+    let v = std::fs::read_to_string(exc_path()).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    let list = v.as_ref().and_then(|v| v.get(root.to_string_lossy().to_lowercase())).and_then(|p| p.get("classes")).and_then(Value::as_array).cloned().unwrap_or_default();
+    list.iter()
+        .filter_map(|c| {
+            let b = |k: &str, d: bool| c.get(k).and_then(Value::as_bool).unwrap_or(d);
+            Some(ExcClass { name: c.get("name")?.as_str()?.to_string(), raised: b("raised", true), uncaught: b("uncaught", true), enabled: b("enabled", true) })
+        })
+        .filter(|c| !c.name.is_empty())
+        .collect()
+}
+
+fn save_exc(root: &Path, raised: bool, uncaught: bool, classes: &[ExcClass]) {
     let path = exc_path();
     let mut all: serde_json::Map<String, Value> =
         std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default();
-    all.insert(root.to_string_lossy().to_lowercase(), json!({"raised": raised, "uncaught": uncaught}));
+    let classes: Vec<Value> = classes
+        .iter()
+        .filter(|c| !c.name.trim().is_empty())
+        .map(|c| json!({"name": c.name.trim(), "raised": c.raised, "uncaught": c.uncaught, "enabled": c.enabled}))
+        .collect();
+    all.insert(root.to_string_lossy().to_lowercase(), json!({"raised": raised, "uncaught": uncaught, "classes": classes}));
     if let Some(d) = path.parent() {
         let _ = std::fs::create_dir_all(d);
     }
     if let Ok(s) = serde_json::to_string_pretty(&Value::Object(all)) {
         let _ = std::fs::write(path, s);
     }
+}
+
+/// The completion list under the console's input line.
+pub struct ConsoleCompletion {
+    /// (label, type) from debugpy, for the name that began at byte `start` of the input.
+    pub items: Vec<(String, String)>,
+    pub start: usize,
+    pub sel: usize,
+}
+
+impl ConsoleCompletion {
+    /// The items that still match what is typed after `start`.
+    fn shown<'a>(&'a self, input: &str) -> Vec<&'a (String, String)> {
+        let q = input.get(self.start..).unwrap_or("").to_lowercase();
+        self.items.iter().filter(|(l, _)| l.to_lowercase().starts_with(&q)).collect()
+    }
+}
+
+/// Where the name being typed at the end of the console input begins (byte index).
+fn completion_start(input: &str) -> usize {
+    input.char_indices().rev().take_while(|(_, c)| c.is_alphanumeric() || *c == '_').last().map(|(i, _)| i).unwrap_or(input.len())
+}
+
+/// The longest prefix every label shares (case-sensitive).
+fn common_prefix<'a>(labels: impl IntoIterator<Item = &'a str>) -> String {
+    let mut it = labels.into_iter();
+    let Some(first) = it.next() else { return String::new() };
+    let mut p: &str = first;
+    for l in it {
+        let n = p.chars().zip(l.chars()).take_while(|(a, b)| a == b).map(|(a, _)| a.len_utf8()).sum();
+        p = &p[..n];
+    }
+    p.to_string()
+}
+
+/// Public names first (dunder and _private last), keeping debugpy's order otherwise.
+fn order_completions(items: &mut [(String, String)]) {
+    items.sort_by_key(|(l, _)| (l.starts_with("__"), l.starts_with('_')));
+}
+
+fn history_path() -> PathBuf {
+    brisk_db::config_dir().join("debug_console_history.json")
+}
+
+fn load_history() -> Vec<String> {
+    std::fs::read_to_string(history_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
 }
 
 fn watches_path() -> PathBuf {
@@ -560,6 +677,57 @@ fn process_target(cmd: &str) -> String {
     String::new()
 }
 
+/// The statement starting at `line`: following lines join while brackets are open or
+/// the line ends with a backslash (at most 30 lines).
+fn statement_text(lines: &[String], line: usize) -> String {
+    let mut out = String::new();
+    let mut depth = 0i32;
+    for l in lines.iter().skip(line).take(30) {
+        let code = l.split('#').next().unwrap_or("");
+        out.push_str(code);
+        out.push('\n');
+        depth += code.chars().map(|c| match c {
+            '(' | '[' | '{' => 1,
+            ')' | ']' | '}' => -1,
+            _ => 0,
+        }).sum::<i32>();
+        if depth <= 0 && !code.trim_end().ends_with('\\') {
+            break;
+        }
+    }
+    out
+}
+
+/// Smart Step Into targets of this statement: debugpy lists every call of the frame's code
+/// not run yet (later lines too), as `a(b(3))` or `f (call 2)`. A target stays when its
+/// callee is called in `stmt`; when none would, all stay.
+fn targets_on_statement(stmt: &str, targets: Vec<(i64, String)>) -> Vec<(i64, String)> {
+    let squeezed: String = stmt.chars().filter(|c| !c.is_whitespace()).collect();
+    let callee = |label: &str| -> String {
+        let l = label.split(" (call ").next().unwrap_or(label);
+        l.split('(').next().unwrap_or(l).chars().filter(|c| !c.is_whitespace()).collect()
+    };
+    let on = |label: &str| {
+        let c = callee(label);
+        if c.is_empty() {
+            return true;
+        }
+        let pat = format!("{c}(");
+        // The callee must not be the tail of a longer name (`xa(` is not `a(`).
+        squeezed.match_indices(&pat).any(|(i, _)| {
+            let before = squeezed[..i].chars().next_back();
+            !before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || (ch == '.' && !c.contains('.')))
+        })
+    };
+    let kept: Vec<(i64, String)> = targets.iter().filter(|t| on(&t.1)).cloned().collect();
+    if kept.is_empty() { targets } else { kept }
+}
+
+/// debugpy (showReturnValue) names the value a call just returned "(return) f".
+fn return_label(name: &str) -> Option<String> {
+    name.strip_prefix("(return) ").map(|f| format!("↩ {f}()"))
+}
+
 /// `pid<TAB>command line` for every process (Windows: CIM; elsewhere: `ps`).
 fn process_lines() -> String {
     #[cfg(windows)]
@@ -698,7 +866,7 @@ impl Workspace {
             self.send_breakpoints(&p, cx);
         }
         if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) {
-            self.debug_request("setExceptionBreakpoints", json!({"filters": self.debug.exception_filters()}));
+            self.debug_request("setExceptionBreakpoints", self.debug.exception_args());
         }
         self.status = if muted { "Breakpoints muted".into() } else { "Breakpoints unmuted".into() };
         cx.notify();
@@ -810,6 +978,7 @@ impl Workspace {
 
     pub(super) fn bp_rows(&self, cx: &gpui::App) -> Vec<BpRow> {
         let mut v = vec![BpRow::Raised, BpRow::Uncaught];
+        v.extend(self.debug.exc_classes.iter().cloned().enumerate().map(|(i, c)| BpRow::Class(i, c)));
         for (p, bps) in self.all_breakpoints(cx) {
             v.extend(bps.into_iter().map(|(l, b)| BpRow::Line(p.clone(), l, b)));
         }
@@ -818,7 +987,7 @@ impl Workspace {
 
     pub(super) fn open_bp_dialog(&mut self, cx: &mut Context<Self>) {
         // The first line breakpoint is selected, as in PyCharm.
-        let sel = if self.bp_rows(cx).len() > 2 { 2 } else { 0 };
+        let sel = self.bp_rows(cx).iter().position(|r| matches!(r, BpRow::Line(..))).unwrap_or(0);
         self.debug.bp_dialog = Some(BpDialog { sel, editing: false });
         cx.notify();
     }
@@ -877,11 +1046,50 @@ impl Workspace {
     pub(super) fn set_exception_breakpoints(&mut self, raised: bool, uncaught: bool, cx: &mut Context<Self>) {
         self.debug.exc_raised = raised;
         self.debug.exc_uncaught = uncaught;
-        save_exc(&self.root, raised, uncaught);
+        save_exc(&self.root, raised, uncaught, &self.debug.exc_classes);
         if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) {
-            self.debug_request("setExceptionBreakpoints", json!({"filters": self.debug.exception_filters()}));
+            self.debug_request("setExceptionBreakpoints", self.debug.exception_args());
         }
         cx.notify();
+    }
+
+    /// A class exception breakpoint changed: save and tell a running debugger.
+    pub(super) fn bp_update_class(&mut self, i: usize, f: impl FnOnce(&mut ExcClass), cx: &mut Context<Self>) {
+        if let Some(c) = self.debug.exc_classes.get_mut(i) {
+            f(c);
+        }
+        let (r, u) = (self.debug.exc_raised, self.debug.exc_uncaught);
+        self.set_exception_breakpoints(r, u, cx);
+    }
+
+    /// "+ Exception": a new class row, its name field ready for typing.
+    pub(super) fn bp_add_class(&mut self, cx: &mut Context<Self>) {
+        self.bp_drop_empty_classes(cx);
+        self.debug.exc_classes.push(ExcClass::new());
+        let i = self.debug.exc_classes.len() - 1;
+        let sel = self.bp_rows(cx).iter().position(|r| matches!(r, BpRow::Class(j, _) if *j == i)).unwrap_or(0);
+        if let Some(d) = self.debug.bp_dialog.as_mut() {
+            d.sel = sel;
+            d.editing = true;
+        }
+        cx.notify();
+    }
+
+    pub(super) fn bp_remove_class(&mut self, i: usize, cx: &mut Context<Self>) {
+        if i < self.debug.exc_classes.len() {
+            self.debug.exc_classes.remove(i);
+        }
+        let (r, u) = (self.debug.exc_raised, self.debug.exc_uncaught);
+        self.set_exception_breakpoints(r, u, cx);
+    }
+
+    /// A class row left without a name goes away.
+    fn bp_drop_empty_classes(&mut self, cx: &mut Context<Self>) {
+        if self.debug.exc_classes.iter().any(|c| c.name.trim().is_empty()) {
+            self.debug.exc_classes.retain(|c| !c.name.trim().is_empty());
+            let (r, u) = (self.debug.exc_raised, self.debug.exc_uncaught);
+            self.set_exception_breakpoints(r, u, cx);
+        }
     }
 
     /// Space / a click on the checkbox.
@@ -890,6 +1098,10 @@ impl Workspace {
         match row {
             BpRow::Raised => self.set_exception_breakpoints(!r, u, cx),
             BpRow::Uncaught => self.set_exception_breakpoints(r, !u, cx),
+            BpRow::Class(i, c) => {
+                let on = !c.enabled;
+                self.bp_update_class(*i, |c| c.enabled = on, cx);
+            }
             BpRow::Line(p, l, b) => self.bp_set_enabled(p, *l, !b.enabled, cx),
         }
     }
@@ -920,6 +1132,7 @@ impl Workspace {
             cx.notify();
             return;
         }
+        let was_editing = d.editing;
         match k.key.as_str() {
             "escape" | "enter" if d.editing => d.editing = false,
             "escape" => self.debug.bp_dialog = None,
@@ -931,11 +1144,13 @@ impl Workspace {
                 d.editing = false;
                 d.sel = (sel + 1).min(rows.len().saturating_sub(1));
             }
+            "insert" | "+" if !d.editing => self.bp_add_class(cx),
             "space" if !d.editing => {
                 if let Some(r) = row {
                     self.bp_toggle_row(&r, cx);
                 }
             }
+            "space" if matches!(row, Some(BpRow::Class(..))) => {}
             "space" => {
                 if let Some(BpRow::Line(p, l, b)) = row {
                     let mut c = b.condition.unwrap_or_default();
@@ -948,9 +1163,17 @@ impl Workspace {
                     self.bp_go_to(&r, window, cx);
                 }
             }
-            "delete" => {
-                if let Some(BpRow::Line(p, l, _)) = row {
-                    self.bp_remove(&p, l, cx);
+            "delete" => match row {
+                Some(BpRow::Line(p, l, _)) => self.bp_remove(&p, l, cx),
+                Some(BpRow::Class(i, _)) => self.bp_remove_class(i, cx),
+                _ => {}
+            },
+            "backspace" if matches!(row, Some(BpRow::Class(..))) => {
+                if let Some(BpRow::Class(i, _)) = row {
+                    d.editing = true;
+                    self.bp_update_class(i, |c| {
+                        c.name.pop();
+                    }, cx);
                 }
             }
             "backspace" => {
@@ -961,6 +1184,14 @@ impl Workspace {
                 }
             }
             _ => {
+                // Typing edits a class name (letters, digits, _ and .).
+                if let (Some(BpRow::Class(i, _)), Some(t)) = (&row, k.key_char.as_deref().filter(|t| t.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.'))) {
+                    d.editing = true;
+                    let t = t.to_string();
+                    self.bp_update_class(*i, |c| c.name.push_str(&t), cx);
+                    cx.notify();
+                    return;
+                }
                 // Typing edits the selected breakpoint's condition.
                 if let (Some(BpRow::Line(p, l, b)), Some(t)) = (row, k.key_char.as_deref().filter(|t| !t.chars().any(char::is_control))) {
                     d.editing = true;
@@ -969,6 +1200,10 @@ impl Workspace {
                     self.bp_set_condition(&p, l, Some(c), cx);
                 }
             }
+        }
+        // Leaving a class name field: an empty one is dropped.
+        if was_editing && !self.debug.bp_dialog.as_ref().is_some_and(|d| d.editing) {
+            self.bp_drop_empty_classes(cx);
         }
         cx.notify();
     }
@@ -992,13 +1227,23 @@ impl Workspace {
         };
         let group = |label: &'static str| div().px(px(8.)).pt(px(6.)).pb(px(2.)).text_size(px(11.)).text_color(Theme::text_dim()).child(label);
         let mut list: Vec<gpui::AnyElement> = vec![group("PYTHON EXCEPTION BREAKPOINTS").into_any_element()];
+        let first_line = rows.iter().position(|r| matches!(r, BpRow::Line(..)));
         for (i, r) in rows.iter().enumerate() {
-            if i == 2 {
+            if Some(i) == first_line {
                 list.push(group("PYTHON LINE BREAKPOINTS").into_any_element());
             }
             let (on, label, detail) = match r {
                 BpRow::Raised => (self.debug.exc_raised, "On raised exceptions".to_string(), "even when handled".to_string()),
                 BpRow::Uncaught => (self.debug.exc_uncaught, "On uncaught exceptions".to_string(), String::new()),
+                BpRow::Class(_, c) => (
+                    c.enabled,
+                    if c.name.is_empty() { "<class name>".to_string() } else { c.name.clone() },
+                    match (c.raised, c.uncaught) {
+                        (true, _) => "on raise".to_string(),
+                        (false, true) => "on termination".to_string(),
+                        _ => "never".to_string(),
+                    },
+                ),
                 BpRow::Line(p, l, b) => {
                     let rel = p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/");
                     (b.enabled, format!("{rel}:{}", l + 1), b.condition.clone().map(|c| format!("if {c}")).unwrap_or_default())
@@ -1031,6 +1276,7 @@ impl Workspace {
                             d.sel = i;
                             d.editing = false;
                         }
+                        this.bp_drop_empty_classes(cx);
                         if ev.click_count() >= 2 {
                             this.bp_go_to(&row2, w, cx);
                         }
@@ -1096,6 +1342,44 @@ impl Workspace {
                     .child(div().text_size(px(12.)).text_color(Theme::text_dim()).child("A Python expression: the debugger stops only when it is true. Empty: always."))
                     .into_any_element()
             }
+            Some(BpRow::Class(i, c)) => {
+                let i = *i;
+                let flag = |id: &'static str, on: bool, label: &'static str, f: fn(&mut ExcClass)| {
+                    div().id(id).flex().items_center().gap(px(8.)).cursor_pointer().child(check(on)).child(label).on_click(cx.listener(move |this, _, _, cx| this.bp_update_class(i, f, cx)))
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("Python exception class"))
+                    .child(
+                        div()
+                            .id("bp-class-name")
+                            .h(px(28.))
+                            .px(px(8.))
+                            .flex()
+                            .items_center()
+                            .rounded(px(5.))
+                            .border_1()
+                            .border_color(if editing { Theme::accent() } else { Theme::divider() })
+                            .bg(Theme::editor_bg())
+                            .font_family(mono_font())
+                            .cursor_text()
+                            .child(c.name.clone())
+                            .when(editing, |x| x.child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret())))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(d) = this.debug.bp_dialog.as_mut() {
+                                    d.editing = true;
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(flag("bp-class-enabled", c.enabled, "Enabled", |c| c.enabled = !c.enabled))
+                    .child(flag("bp-class-raise", c.raised, "On raise (even when handled)", |c| c.raised = !c.raised))
+                    .child(flag("bp-class-uncaught", c.uncaught, "On termination (uncaught)", |c| c.uncaught = !c.uncaught))
+                    .child(div().text_size(px(12.)).text_color(Theme::text_dim()).child("A built-in name (ValueError) or the full name of an importable class (mypkg.errors.MyError); its subclasses stop too. A class defined in the script being run cannot be found by debugpy."))
+                    .into_any_element()
+            }
             Some(BpRow::Raised) => div()
                 .flex()
                 .flex_col()
@@ -1113,6 +1397,7 @@ impl Workspace {
             None => div().into_any_element(),
         };
         let is_line = matches!(cur, Some(BpRow::Line(..)));
+        let removable = is_line || matches!(cur, Some(BpRow::Class(..)));
         let (cur_rm, cur_go) = (cur.clone(), cur.clone());
         Some(
             div()
@@ -1165,11 +1450,12 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                .child(div().flex_1().text_size(px(12.)).text_color(Theme::text_dim()).child("Space: enable/disable · type: condition · Delete: remove · Enter: go to · Esc: close"))
-                                .child(button("bp-remove", "Remove", false, is_line).on_click(cx.listener(move |this, _, _, cx| {
-                                    if let Some(BpRow::Line(p, l, _)) = cur_rm.clone() {
-                                        this.bp_remove(&p, l, cx);
-                                    }
+                                .child(div().flex_1().min_w_0().text_size(px(12.)).text_color(Theme::text_dim()).child("Space: on/off · type: edit · Insert: + exception · Delete: remove · Enter: go to · Esc: close"))
+                                .child(button("bp-add-class", "+ Exception", false, true).on_click(cx.listener(|this, _, _, cx| this.bp_add_class(cx))))
+                                .child(button("bp-remove", "Remove", false, removable).on_click(cx.listener(move |this, _, _, cx| match cur_rm.clone() {
+                                    Some(BpRow::Line(p, l, _)) => this.bp_remove(&p, l, cx),
+                                    Some(BpRow::Class(i, _)) => this.bp_remove_class(i, cx),
+                                    _ => {}
                                 })))
                                 .child(button("bp-goto", "Go to", false, is_line).on_click(cx.listener(move |this, _, w, cx| {
                                     if let Some(r) = cur_go.clone() {
@@ -1178,6 +1464,7 @@ impl Workspace {
                                 })))
                                 .child(button("bp-done", "Done", true, true).on_click(cx.listener(|this, _, _, cx| {
                                     this.debug.bp_dialog = None;
+                                    this.bp_drop_empty_classes(cx);
                                     cx.notify();
                                 }))),
                         ),
@@ -1196,6 +1483,11 @@ impl Workspace {
             A::MuteBreakpoints => self.toggle_mute_breakpoints(cx),
             A::SmartStepInto => self.smart_step_into(cx),
             A::AttachToProcess => self.list_processes(cx),
+            A::SetNextStatement => {
+                let Some(ed) = self.focused_editor(window, cx).or_else(|| self.active_editor().cloned()) else { return true };
+                let line = ed.read(cx).caret_line_col().0;
+                self.set_next_statement(ed, line, cx);
+            }
             A::Debug => {
                 self.reload_runs();
                 let cfg = self.runs.file.selected_config().cloned().or_else(|| self.context_config(window, cx));
@@ -1267,9 +1559,10 @@ impl Workspace {
                 }
                 window.focus(&self.debug.focus.clone());
             }
-            A::RerunDebug => match self.debug.last.clone() {
-                Some(cfg) => self.start_debug(cfg, window, cx),
-                None => self.status = "Rerun: nothing has been debugged yet".into(),
+            A::RerunDebug => match (self.debug.last.clone(), self.debug.last_attach.clone()) {
+                (Some(cfg), _) => self.start_debug(cfg, window, cx),
+                (None, Some((pid, label))) => self.reattach(pid, label, window, cx),
+                (None, None) => self.status = "Rerun: nothing has been debugged yet".into(),
             },
             A::EvaluateExpression => {
                 if self.debug.paused_thread().is_none() {
@@ -1369,6 +1662,7 @@ impl Workspace {
             self.stop_debug(cx);
         }
         self.debug.last = Some(cfg.clone());
+        self.debug.last_attach = None;
         let python = match &cfg.interpreter {
             Some(p) => Some(brisk_run::resolve(&self.root, p)),
             None => self.runs.interpreter(&self.root).map(|i| i.path),
@@ -1516,7 +1810,7 @@ impl Workspace {
                 for (p, _) in self.all_breakpoints(cx) {
                     self.send_breakpoints(&p, cx);
                 }
-                self.debug_request("setExceptionBreakpoints", json!({"filters": self.debug.exception_filters()}));
+                self.debug_request("setExceptionBreakpoints", self.debug.exception_args());
                 self.debug_request("configurationDone", json!({}));
                 if let Some(s) = self.debug.session.as_mut() {
                     s.state = State::Running;
@@ -1629,6 +1923,18 @@ impl Workspace {
         };
         let Some(s) = &self.debug.session else { return };
         let rx = s.client.request("stepInTargets", json!({"frameId": frame}));
+        // The stop's statement, from its editor (or the file on disk).
+        let stmt = self.debug.frames.get(self.debug.frame).and_then(|f| {
+            let p = f.path.clone()?;
+            let lines: Vec<String> = match self.editors().find(|e| e.read(cx).path.as_ref() == Some(&p)) {
+                Some(ed) => {
+                    let b = &ed.read(cx).buffer;
+                    (f.line..(f.line + 30).min(b.len_lines())).map(|l| b.line(l)).collect()
+                }
+                None => std::fs::read_to_string(&p).ok()?.lines().skip(f.line).take(30).map(String::from).collect(),
+            };
+            Some(statement_text(&lines, 0))
+        });
         cx.spawn(async move |this, cx| {
             let res = rx.await;
             let _ = this.update(cx, |this, cx| {
@@ -1642,6 +1948,10 @@ impl Workspace {
                         .map(|a| a.iter().filter_map(|t| Some((t.get("id")?.as_i64()?, t.get("label").and_then(Value::as_str).unwrap_or("?").to_string()))).collect())
                         .unwrap_or_default(),
                     _ => Vec::new(),
+                };
+                let targets = match &stmt {
+                    Some(s) => targets_on_statement(s, targets),
+                    None => targets,
                 };
                 match targets.len() {
                     // Nothing to choose (or no support): a plain Step Into.
@@ -1678,6 +1988,60 @@ impl Workspace {
         cx.notify();
     }
 
+    // --- Set Next Statement -----------------------------------------------------------------
+
+    /// Jump to Cursor / a dragged execution arrow: the paused thread continues from `line`
+    /// of this editor's file without running the lines between (debugpy gotoTargets + goto).
+    pub(super) fn set_next_statement(&mut self, ed: Entity<Editor>, line: usize, cx: &mut Context<Self>) {
+        let Some(thread) = self.debug.paused_thread() else {
+            self.status = "Jump to Cursor: the debugger is not paused".into();
+            return;
+        };
+        let Some(path) = ed.read(cx).path.clone() else { return };
+        let Some(s) = &self.debug.session else { return };
+        let client = s.client.clone();
+        // debugpy moves the innermost frame, whatever file the target names: another file
+        // would mean that line number in the paused one. Other limits (into a loop, out of the
+        // function) debugpy reports itself, and the program stays paused where it was.
+        if self.debug.frames.first().and_then(|f| f.path.as_ref()) != Some(&path) {
+            let msg = format!("Cannot jump to line {}: only in the file where the program is paused", line + 1);
+            self.debug.info(msg.clone());
+            self.show_toast(msg, true, cx);
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let targets = client.request("gotoTargets", json!({"source": {"path": path.to_string_lossy()}, "line": line + 1})).await;
+            let target = match &targets {
+                Ok(Ok(v)) => v.pointer("/targets/0/id").and_then(Value::as_i64),
+                _ => None,
+            };
+            let res = match target {
+                Some(id) => match client.request("goto", json!({"threadId": thread, "targetId": id})).await {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(e)) => Err(e),
+                    Err(_) => Err("no reply".into()),
+                },
+                None => Err(match targets {
+                    Ok(Err(e)) => e,
+                    _ => "no target on this line".into(),
+                }),
+            };
+            let _ = this.update(cx, |this, cx| {
+                match res {
+                    // The thread stops again on the new line ("stopped", reason "goto").
+                    Ok(()) => this.status = format!("Next statement: line {}", line + 1),
+                    Err(e) => {
+                        let msg = format!("Cannot jump to line {}: {e}", line + 1);
+                        this.debug.info(msg.clone());
+                        this.show_toast(msg, true, cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     // --- Attach to Process ----------------------------------------------------------------
 
     /// Ctrl+Alt+F5: running Python processes (not debugpy's own) to choose from.
@@ -1700,6 +2064,25 @@ impl Workspace {
         .detach();
     }
 
+    /// Rerun after an Attach: the same process again if it still runs.
+    fn reattach(&mut self, pid: u32, label: String, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            let ps = cx.background_executor().spawn(async move { process_lines() }).await;
+            let alive = brisk_dap::python_processes(&ps, std::process::id()).iter().any(|p| p.0 == pid);
+            let _ = this.update_in(cx, |this, window, cx| {
+                if alive {
+                    this.attach_to_process(pid, label, window, cx);
+                } else {
+                    let msg = format!("Process {pid} has exited: use Attach to Process (Ctrl+Alt+F5) to choose another");
+                    this.debug.info(msg.clone());
+                    this.show_toast(msg, false, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// debugpy's adapter (with the project interpreter) injects itself into `pid`.
     pub(super) fn attach_to_process(&mut self, pid: u32, label: String, window: &mut Window, cx: &mut Context<Self>) {
         if self.debug.is_live() {
@@ -1711,6 +2094,7 @@ impl Workspace {
         };
         let name = format!("pid {pid}");
         self.debug.last = None;
+        self.debug.last_attach = Some((pid, label.clone()));
         self.debug.exception = None;
         self.debug.console.clear();
         self.debug.frames.clear();
@@ -1952,10 +2336,14 @@ impl Workspace {
             let Ok(Ok(v)) = rx.await else { return };
             let scopes = brisk_dap::parse_scopes(&v);
             // The first scope (locals) opens right away, like PyCharm's flat list.
-            let first = match scopes.first() {
+            let mut first = match scopes.first() {
                 Some(s) => client.request("variables", json!({"variablesReference": s.reference})).await.ok().and_then(Result::ok).map(|v| brisk_dap::parse_variables(&v)),
                 None => None,
             };
+            // Values just returned by calls first.
+            if let Some(v) = first.as_mut() {
+                v.sort_by_key(|v| return_label(&v.name).is_none());
+            }
             let _ = this.update(cx, |this, cx| {
                 let mut rows = Vec::new();
                 for (k, s) in scopes.into_iter().enumerate() {
@@ -2296,9 +2684,14 @@ impl Workspace {
         if expr.trim().is_empty() {
             return;
         }
+        self.debug.completion = None;
         self.debug.history.retain(|h| *h != expr);
         self.debug.history.push(expr.clone());
-        self.debug.history_pos = self.debug.history.len();
+        let n = self.debug.history.len().saturating_sub(100);
+        self.debug.history.drain(..n);
+        self.debug.history_pos = usize::MAX;
+        let _ = std::fs::create_dir_all(brisk_db::config_dir());
+        let _ = std::fs::write(history_path(), serde_json::to_string(&self.debug.history).unwrap_or_default());
         self.debug.print(&format!(">>> {expr}\n"), Line::Input);
         let frame = self.debug.frames.get(self.debug.frame).map(|f| f.id);
         let Some(s) = self.debug.session.as_ref().filter(|s| s.state != State::Ended) else {
@@ -2329,6 +2722,89 @@ impl Workspace {
         .detach();
     }
 
+    /// Tab in the console: ask debugpy what the name at the end of the input can be.
+    fn complete_input(&mut self, cx: &mut Context<Self>) {
+        let Some(frame) = self.debug.frames.get(self.debug.frame).map(|f| f.id) else {
+            self.status = "Completion works while the program is paused".into();
+            return;
+        };
+        let Some(s) = self.debug.session.as_ref().filter(|s| s.state != State::Ended) else { return };
+        let text = self.debug.input.clone();
+        let rx = s.client.request("completions", json!({"text": text, "column": text.chars().count() + 1, "frameId": frame}));
+        cx.spawn(async move |this, cx| {
+            let res = rx.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.debug.input != text {
+                    return;
+                }
+                let mut items: Vec<(String, String)> = match res {
+                    Ok(Ok(v)) => v
+                        .get("targets")
+                        .and_then(Value::as_array)
+                        .map(|a| a.iter().filter_map(|t| Some((t.get("label")?.as_str()?.to_string(), t.get("type").and_then(Value::as_str).unwrap_or("").to_string()))).collect())
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                order_completions(&mut items);
+                let start = completion_start(&text);
+                match items.len() {
+                    0 => this.status = "No completions".into(),
+                    1 => {
+                        this.debug.input.truncate(start);
+                        this.debug.input.push_str(&items[0].0);
+                    }
+                    _ => {
+                        let typed = &text[start..];
+                        let p = common_prefix(items.iter().map(|i| i.0.as_str()));
+                        if p.len() > typed.len() && p.starts_with(typed) {
+                            this.debug.input.truncate(start);
+                            this.debug.input.push_str(&p);
+                        }
+                        this.debug.completion = Some(ConsoleCompletion { items, start, sel: 0 });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Keys while the completion list is open; false lets the input line have the key.
+    fn completion_key(&mut self, key: &str) -> bool {
+        let Some(c) = self.debug.completion.as_mut() else { return false };
+        let n = c.shown(&self.debug.input).len();
+        match key {
+            "up" => c.sel = c.sel.checked_sub(1).unwrap_or(n.saturating_sub(1)),
+            "down" => c.sel = if c.sel + 1 < n { c.sel + 1 } else { 0 },
+            "pageup" => c.sel = c.sel.saturating_sub(8),
+            "pagedown" => c.sel = (c.sel + 8).min(n.saturating_sub(1)),
+            "escape" => self.debug.completion = None,
+            "enter" | "tab" => {
+                let start = c.start;
+                if let Some(l) = c.shown(&self.debug.input).get(c.sel).map(|i| i.0.clone()) {
+                    self.debug.input.truncate(start);
+                    self.debug.input.push_str(&l);
+                }
+                self.debug.completion = None;
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// After the input changed: the list follows what is typed, or closes.
+    fn refilter_completion(&mut self) {
+        let Some(c) = self.debug.completion.as_mut() else { return };
+        let input = &self.debug.input;
+        let start_ok = input.len() >= c.start && input.get(c.start..).is_some_and(|t| t.chars().all(|ch| ch.is_alphanumeric() || ch == '_'));
+        let n = if start_ok { c.shown(input).len() } else { 0 };
+        if n == 0 {
+            self.debug.completion = None;
+        } else {
+            c.sel = c.sel.min(n - 1);
+        }
+    }
+
     /// Keys while the Debug window has focus: the console's input line.
     pub(super) fn debug_key(&mut self, e: &gpui::KeyDownEvent, window: &Window, cx: &mut Context<Self>) -> bool {
         if !self.debug.focus.is_focused(window) {
@@ -2341,7 +2817,12 @@ impl Workspace {
         if k.modifiers.control || k.modifiers.alt || k.modifiers.platform {
             return false;
         }
+        if self.completion_key(k.key.as_str()) {
+            cx.notify();
+            return true;
+        }
         match k.key.as_str() {
+            "tab" if !k.modifiers.shift => self.complete_input(cx),
             "enter" => self.evaluate_input(cx),
             "backspace" => {
                 self.debug.input.pop();
@@ -2349,13 +2830,14 @@ impl Workspace {
             "space" => self.debug.input.push(' '),
             "escape" => self.debug.input.clear(),
             "up" => {
-                if self.debug.history_pos > 0 {
-                    self.debug.history_pos -= 1;
-                    self.debug.input = self.debug.history[self.debug.history_pos].clone();
+                let pos = self.debug.history_pos.min(self.debug.history.len());
+                if pos > 0 {
+                    self.debug.history_pos = pos - 1;
+                    self.debug.input = self.debug.history[pos - 1].clone();
                 }
             }
             "down" => {
-                if self.debug.history_pos + 1 < self.debug.history.len() {
+                if self.debug.history_pos.saturating_add(1) < self.debug.history.len() {
                     self.debug.history_pos += 1;
                     self.debug.input = self.debug.history[self.debug.history_pos].clone();
                 } else {
@@ -2368,6 +2850,7 @@ impl Workspace {
                 _ => return false,
             },
         }
+        self.refilter_completion();
         cx.notify();
         true
     }
@@ -2380,7 +2863,7 @@ impl Workspace {
         let paused = matches!(state, Some(State::Paused(_)));
         let live = d.is_live();
         let running = state == Some(State::Running) && !d.pending;
-        let can_rerun = d.last.is_some();
+        let can_rerun = d.last.is_some() || d.last_attach.is_some();
         let title = match (&d.session, state) {
             _ if d.pending => format!("{} — starting debugpy…", d.last.as_ref().map(|c| c.name.as_str()).unwrap_or("")),
             (Some(s), Some(State::Paused(_))) => {
@@ -2556,7 +3039,16 @@ impl Workspace {
             let editing_name = matches!((r.kind, edit.as_ref().map(|e| e.target)), (RowKind::Watch(w), Some(EditTarget::Watch(x))) if w == x);
             let editing_value = edit.as_ref().is_some_and(|e| e.target == EditTarget::Value(i));
             let error = r.var.value.starts_with("<error: ") && watch;
-            let name_color = if header { Theme::text_muted() } else if watch { Theme::accent() } else { Theme::syntax(brisk_syntax::Highlight::Property) };
+            let returned = r.return_label();
+            let name_color = if header {
+                Theme::text_muted()
+            } else if watch {
+                Theme::accent()
+            } else if returned.is_some() {
+                Theme::syntax(brisk_syntax::Highlight::Function)
+            } else {
+                Theme::syntax(brisk_syntax::Highlight::Property)
+            };
             let value: gpui::AnyElement = if editing_value {
                 input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
             } else if watch && r.var.value.is_empty() && !paused {
@@ -2582,7 +3074,7 @@ impl Workspace {
                     .child(if editing_name {
                         input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
                     } else {
-                        div().text_color(name_color).child(r.var.name.clone()).into_any_element()
+                        div().text_color(name_color).child(returned.clone().unwrap_or_else(|| r.var.name.clone())).into_any_element()
                     })
                     .when(!header, |x| {
                         x.child(div().text_color(Theme::text_dim()).child("="))
@@ -2753,7 +3245,38 @@ impl Workspace {
             } else {
                 div().flex().items_center().child(d.input.clone()).when(focused, |x| x.child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret()))).into_any_element()
             });
-        div().size_full().flex().flex_col().child(lines).child(input).into_any_element()
+        let popup = d.completion.as_ref().map(|c| {
+            let shown = c.shown(&d.input);
+            let first = c.sel.saturating_sub(7);
+            let left = 8. + 30. + 7.5 * d.input[..c.start.min(d.input.len())].chars().count() as f32;
+            div()
+                .absolute()
+                .bottom(px(28.))
+                .left(px(left))
+                .min_w(px(220.))
+                .max_w(px(480.))
+                .py(px(2.))
+                .bg(Theme::panel())
+                .border_1()
+                .border_color(Theme::divider())
+                .rounded(px(4.))
+                .shadow_md()
+                .font_family(mono_font())
+                .text_size(px(12.5))
+                .occlude()
+                .children(shown.into_iter().enumerate().skip(first).take(8).map(|(j, (label, kind))| {
+                    div()
+                        .h(px(20.))
+                        .px(px(8.))
+                        .flex()
+                        .items_center()
+                        .gap(px(12.))
+                        .when(j == c.sel, |x| x.bg(Theme::selection_row()))
+                        .child(div().flex_1().whitespace_nowrap().child(label.clone()))
+                        .child(div().text_color(Theme::text_dim()).text_size(px(11.)).child(kind.clone()))
+                }))
+        });
+        div().size_full().relative().flex().flex_col().child(lines).child(input).children(popup).into_any_element()
     }
 
     // --- Smoke --------------------------------------------------------------------------
@@ -2910,9 +3433,34 @@ impl Workspace {
                 t.evaluate_input(cx);
             });
             wait(800).await;
-            let _ = this.update_in(cx, |t, _, _| {
+            let _ = this.update_in(cx, |t, _, cx| {
                 let tail: Vec<String> = t.debug.console.iter().rev().take(2).map(|(l, _)| l.trim_end().to_string()).collect();
                 eprintln!("smoke-debug: evaluate -> {tail:?}");
+                // Tab completion: one match is inserted, several open the list.
+                t.debug.input = "ite".into();
+                t.complete_input(cx);
+            });
+            wait(800).await;
+            let _ = this.update(cx, |t, cx| {
+                eprintln!("smoke-debug: tab after 'ite' -> {:?} list {:?}", t.debug.input, t.debug.completion.as_ref().map(|c| c.shown(&t.debug.input).iter().map(|i| i.0.clone()).collect::<Vec<_>>()));
+                t.debug.completion = None;
+                t.debug.input = "items.".into();
+                t.complete_input(cx);
+            });
+            wait(800).await;
+            let _ = this.update(cx, |t, cx| {
+                let shown: Vec<String> = t.debug.completion.as_ref().map(|c| c.shown(&t.debug.input).iter().take(4).map(|i| i.0.clone()).collect()).unwrap_or_default();
+                eprintln!("smoke-debug: tab after 'items.' -> list {shown:?}");
+                for ch in ["c", "o"] {
+                    t.debug.input.push_str(ch);
+                    t.refilter_completion();
+                }
+                let shown: Vec<String> = t.debug.completion.as_ref().map(|c| c.shown(&t.debug.input).iter().map(|i| i.0.clone()).collect()).unwrap_or_default();
+                t.completion_key("down");
+                t.completion_key("enter");
+                eprintln!("smoke-debug: typed 'co' -> {shown:?}, down+enter -> {:?}; history file has {}", t.debug.input, load_history().iter().any(|h| h == "sum(items) * 10"));
+                t.debug.input.clear();
+                cx.notify();
             });
             // F7 into add(), Shift+F8 out, F8 over.
             let mut seen = Vec::new();
@@ -2922,6 +3470,13 @@ impl Workspace {
                 wait(500).await;
                 if let Ok(s) = this.update(cx, |t, _| t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1))) {
                     seen.push(s.unwrap_or_default());
+                }
+                if a == Action::StepOut {
+                    let _ = this.update(cx, |t, _| {
+                        let r: Vec<String> = t.debug.vars.iter().filter_map(|r| r.return_label().map(|l| format!("{l} = {}", r.var.value))).collect();
+                        let top = t.debug.vars.iter().find(|r| r.depth == 1).map(|r| r.var.name.clone());
+                        eprintln!("smoke-debug: return values after shift-f8 -> {r:?} first local {top:?}");
+                    });
                 }
             }
             eprintln!("smoke-debug: f7, shift-f8, f8 -> {seen:?} (return line {})", ret_line + 1);
@@ -3063,6 +3618,7 @@ impl Workspace {
                     .map(|r| match r {
                         BpRow::Raised => format!("raised={}", t.debug.exc_raised),
                         BpRow::Uncaught => format!("uncaught={}", t.debug.exc_uncaught),
+                        BpRow::Class(_, c) => format!("class {}", c.name),
                         BpRow::Line(p, l, b) => format!("{}:{} enabled={}", p.file_name().unwrap_or_default().to_string_lossy(), l + 1, b.enabled),
                     })
                     .collect();
@@ -3211,6 +3767,110 @@ impl Workspace {
                 t.dispatch(Action::Resume, w, cx);
             });
             until!(|s: Option<State>| s == Some(State::Ended));
+            // Exception breakpoint for one class: a handled KeyError passes, a handled ValueError stops.
+            let excf = dir.join("dbg_exc_class.py");
+            let _ = std::fs::write(&excf, "def f():\n    try:\n        raise KeyError(\"k\")\n    except KeyError:\n        pass\n    try:\n        raise ValueError(\"v\")\n    except ValueError:\n        pass\n    return 1\n\n\nf()\n");
+            let _ = this.update_in(cx, |t, w, cx| {
+                t.open_file(&excf, w, cx);
+                t.dispatch(Action::ViewBreakpoints, w, cx);
+                t.bp_add_class(cx);
+                for ch in ["V", "a", "l", "u", "e", "E", "r", "r", "o", "r"] {
+                    let ks = gpui::Keystroke { modifiers: gpui::Modifiers::default(), key: ch.to_lowercase(), key_char: Some(ch.into()) };
+                    t.bp_dialog_key(&gpui::KeyDownEvent { keystroke: ks, is_held: false }, w, cx);
+                }
+                let ks = gpui::Keystroke { modifiers: gpui::Modifiers::default(), key: "enter".into(), key_char: None };
+                t.bp_dialog_key(&gpui::KeyDownEvent { keystroke: ks, is_held: false }, w, cx);
+                let saved = std::fs::read_to_string(exc_path()).unwrap_or_default().replace(char::is_whitespace, "");
+                eprintln!(
+                    "smoke-debug: exception class {:?} args {} saved={}",
+                    t.debug.exc_classes.iter().map(|c| (c.name.clone(), c.raised, c.uncaught)).collect::<Vec<_>>(),
+                    t.debug.exception_args(),
+                    saved.contains("\"name\":\"ValueError\"")
+                );
+                t.debug.bp_dialog = None;
+                t.dispatch(Action::DebugContext, w, cx);
+            });
+            let s = settled!();
+            wait(800).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                eprintln!("smoke-debug: class ValueError -> {s:?} at {:?} header={:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)), t.debug.exception);
+                if let Some(i) = t.debug.exc_classes.iter().position(|c| c.name == "ValueError") {
+                    t.bp_remove_class(i, cx);
+                }
+                t.dispatch(Action::Resume, w, cx);
+            });
+            until!(|s: Option<State>| s == Some(State::Ended));
+            let _ = std::fs::remove_file(&excf);
+            // Jump to Cursor: back to `x = 1` (x stays 2 until stepped), then into another frame (refused).
+            let jump = dir.join("dbg_jump.py");
+            let _ = std::fs::write(&jump, "def f():\n    x = 1\n    x = 2\n    x = 3\n    return x\n\n\nr = f()\nprint(\"r\", r)\n");
+            let _ = this.update_in(cx, |t, w, cx| {
+                t.open_file(&jump, w, cx);
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.toggle_breakpoint(3, cx));
+                }
+                t.dispatch(Action::DebugContext, w, cx);
+            });
+            let s = settled!();
+            wait(800).await;
+            let var = |t: &Workspace, n: &str| t.debug.vars.iter().find(|r| r.var.name == n).map(|r| r.var.value.clone());
+            let top = |t: &Workspace| t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1));
+            let _ = this.update_in(cx, |t, w, cx| {
+                eprintln!("smoke-debug: jump {s:?} at {:?} x={:?}", top(t), var(t, "x"));
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.go_to_line(1, cx));
+                }
+                t.dispatch(Action::SetNextStatement, w, cx);
+            });
+            let mut at = None;
+            for _ in 0..50 {
+                wait(100).await;
+                at = this.update(cx, |t, _| top(t)).ok().flatten();
+                if at.as_deref() == Some("f:2") {
+                    break;
+                }
+            }
+            wait(600).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                eprintln!("smoke-debug: jumped -> {at:?} x={:?}", var(t, "x"));
+                t.dispatch(Action::StepOver, w, cx);
+            });
+            let s = settled!();
+            wait(800).await;
+            let _ = this.update_in(cx, |t, _, cx| {
+                eprintln!("smoke-debug: after step {s:?} at {:?} x={:?}", top(t), var(t, "x"));
+                if let Some(ed) = t.active_editor().cloned() {
+                    t.set_next_statement(ed, 8, cx);
+                }
+            });
+            wait(2000).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                eprintln!("smoke-debug: jump out of f -> at {:?} console {:?}", top(t), t.debug.console.last().map(|l| l.0.trim().to_string()));
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.toggle_breakpoint(3, cx));
+                }
+                let _ = w;
+            });
+            // The removed breakpoint reaches debugpy first.
+            wait(500).await;
+            let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::Resume, w, cx));
+            let mut states = Vec::new();
+            for _ in 0..60 {
+                wait(100).await;
+                let st = this.update(cx, |t, _| t.debug.state()).ok().flatten();
+                if states.last() != Some(&st) {
+                    states.push(st);
+                }
+                if st == Some(State::Ended) {
+                    break;
+                }
+            }
+            wait(1000).await;
+            let _ = this.update(cx, |t, cx| {
+                let _ = cx;
+                eprintln!("smoke-debug: jump states {states:?} output {:?}", t.debug.console.iter().rev().map(|l| l.0.trim()).find(|l| l.starts_with("r ")));
+            });
+            let _ = std::fs::remove_file(&jump);
             let spin2 = dir.join("dbg_attach_target.py");
             let _ = std::fs::write(&spin2, "import time\n\nn = 0\nwhile True:\n    n += 1\n    time.sleep(0.05)\n");
             let python = this.update(cx, |t, _| t.runs.interpreter(&t.root).map(|i| i.path)).ok().flatten();
@@ -3252,8 +3912,37 @@ impl Workspace {
                 wait(2500).await;
                 let alive = matches!(child.try_wait(), Ok(None));
                 let _ = this.update(cx, |t, _| eprintln!("smoke-debug: detach -> state={:?} process alive={alive} console {:?}", t.debug.state(), t.debug.console.last().map(|l| l.0.trim().to_string())));
+                // Rerun attaches to the same process; once it has exited, a message.
+                let _ = this.update_in(cx, |t, w, cx| {
+                    if let Some(ed) = t.active_editor().cloned() {
+                        ed.update(cx, |e, cx| e.toggle_breakpoint(4, cx));
+                    }
+                    t.dispatch(Action::RerunDebug, w, cx);
+                });
+                let mut again = None;
+                for _ in 0..150 {
+                    wait(100).await;
+                    again = this.update(cx, |t, _| t.debug.session.as_ref().filter(|s| s.attached && matches!(s.state, State::Paused(_))).map(|s| s.name.clone())).ok().flatten();
+                    if again.is_some() {
+                        break;
+                    }
+                }
+                let _ = this.update_in(cx, |t, w, cx| {
+                    eprintln!("smoke-debug: rerun after attach -> {again:?} (pid {pid}) at {:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                    if let Some(ed) = t.active_editor().cloned() {
+                        ed.update(cx, |e, cx| e.toggle_breakpoint(4, cx));
+                    }
+                    t.dispatch(Action::Stop, w, cx);
+                });
+                wait(1500).await;
                 let _ = child.kill();
                 let _ = child.wait();
+                wait(500).await;
+                let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::RerunDebug, w, cx));
+                wait(4000).await;
+                let _ = this.update(cx, |t, _| {
+                    eprintln!("smoke-debug: rerun after exit -> live={} console {:?}", t.debug.is_live(), t.debug.console.last().map(|l| l.0.trim().to_string()));
+                });
             }
             let _ = this.update_in(cx, |_, _, cx| {
                 let _ = std::fs::remove_file(&spin2);
@@ -3294,6 +3983,60 @@ mod tests {
         assert_eq!(process_target(r#""C:\Py 3\python.exe" -u C:/x/app.py --port 1"#), "app.py");
         assert_eq!(process_target("python -m http.server 8765"), "-m http.server");
         assert_eq!(process_target("python"), "");
+    }
+
+    #[test]
+    fn smart_step_targets_of_the_line() {
+        let t = |v: &[&str]| v.iter().enumerate().map(|(i, s)| (i as i64, s.to_string())).collect::<Vec<_>>();
+        let names = |v: Vec<(i64, String)>| v.into_iter().map(|x| x.1).collect::<Vec<_>>();
+        let lines: Vec<String> = ["r = a(b(3))", "print(r)"].map(String::from).to_vec();
+        let st = statement_text(&lines, 0);
+        assert_eq!(names(targets_on_statement(&st, t(&["b(3)", "a(b(3))", "print(r)"]))), ["b(3)", "a(b(3))"]);
+        // A call spread over lines; `(call 2)`; a method; a longer name is not a match.
+        let lines: Vec<String> = ["x = f(", "    g(1),", "    f(2))  # h(3)", "h(4)"].map(String::from).to_vec();
+        let st = statement_text(&lines, 0);
+        assert_eq!(names(targets_on_statement(&st, t(&["g(1)", "f(2)", "f (call 2)", "h(4)"]))), ["g(1)", "f(2)", "f (call 2)"]);
+        let st = statement_text(&["y = obj.run(xa(1))".to_string()], 0);
+        assert_eq!(names(targets_on_statement(&st, t(&["obj.run(xa(1))", "a(2)", "xa(1)"]))), ["obj.run(xa(1))", "xa(1)"]);
+        // Nothing matches (labels debugpy shortened): keep all.
+        assert_eq!(targets_on_statement("z = 1\n", t(&["q()"])).len(), 1);
+    }
+
+    #[test]
+    fn exception_breakpoint_args() {
+        let c = |n: &str, raised: bool| ExcClass { name: n.into(), raised, uncaught: true, enabled: true };
+        assert_eq!(exception_args(false, false, true, &[]), json!({"filters": ["uncaught"]}));
+        assert_eq!(exception_args(true, true, true, &[c("ValueError", true)]), json!({"filters": []}));
+        let v = exception_args(false, false, true, &[c("ValueError", true), c("KeyError", false), c("", true)]);
+        let opts = v["exceptionOptions"].as_array().unwrap();
+        assert_eq!(opts.len(), 3);
+        assert_eq!(opts[0], json!({"path": [{"names": ["Python Exceptions"]}], "breakMode": "unhandled"}));
+        assert_eq!(opts[1], json!({"path": [{"names": ["Python Exceptions"]}, {"names": ["ValueError"]}], "breakMode": "always"}));
+        assert_eq!(opts[2]["breakMode"], "unhandled");
+        // Nothing for all exceptions: only the classes.
+        let v = exception_args(false, false, false, &[ExcClass { enabled: false, ..c("A", true) }, c("B", true)]);
+        assert_eq!(v["exceptionOptions"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn console_completion() {
+        assert_eq!(completion_start("items.ap"), 6);
+        assert_eq!(completion_start("len(ite"), 4);
+        assert_eq!(completion_start("x + "), 4);
+        assert_eq!(common_prefix(["append", "apply"]), "app");
+        assert_eq!(common_prefix(["a"]), "a");
+        let mut v = vec![("__len__".to_string(), String::new()), ("_x".into(), String::new()), ("append".into(), String::new())];
+        order_completions(&mut v);
+        assert_eq!(v.iter().map(|i| i.0.as_str()).collect::<Vec<_>>(), ["append", "_x", "__len__"]);
+        let c = ConsoleCompletion { items: v, start: 6, sel: 0 };
+        assert_eq!(c.shown("items.ap").len(), 1);
+        assert_eq!(c.shown("items.").len(), 3);
+    }
+
+    #[test]
+    fn return_value_labels() {
+        assert_eq!(return_label("(return) add").as_deref(), Some("↩ add()"));
+        assert_eq!(return_label("total"), None);
     }
 
     #[test]

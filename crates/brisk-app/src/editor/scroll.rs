@@ -198,6 +198,11 @@ impl Editor {
     /// Mouse moves anywhere in the window while the left button is down: scrollbar drags and
     /// selection drags keep working outside the editor.
     pub(super) fn global_drag(&mut self, e: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.exec_dragging() {
+            self.exec_drag_to(e.position);
+            cx.notify();
+            return;
+        }
         if self.drag.is_some() {
             self.drag_scrollbar(e.position);
             cx.notify();

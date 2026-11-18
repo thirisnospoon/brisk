@@ -214,6 +214,7 @@ actions! {
     AttachToProcess => "Attach to Process...", "Run";
     StepOut => "Step Out", "Run";
     Resume => "Resume Program", "Run";
+    SetNextStatement => "Jump to Cursor (Set Next Statement)", "Run";
     RunToCursor => "Run to Cursor", "Run";
     EvaluateExpression => "Evaluate Expression", "Run";
     PauseProgram => "Pause Program", "Run";
