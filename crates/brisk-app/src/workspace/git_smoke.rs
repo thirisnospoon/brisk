@@ -44,6 +44,11 @@ pub(super) fn commit_as(dir: &Path, who: &str, date: &str, msg: &str) {
     let _ = c.output();
 }
 
+/// `BRISK_SMOKE_GITX_HOLD=<phase>`: stop at that phase and keep the window open.
+fn hold(phase: &str) -> bool {
+    std::env::var("BRISK_SMOKE_GITX_HOLD").is_ok_and(|v| v == phase)
+}
+
 async fn pause(bg: &gpui::BackgroundExecutor, ms: u64) {
     bg.timer(Duration::from_millis(ms)).await;
 }
@@ -72,6 +77,9 @@ impl Workspace {
         let bg = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             Self::smoke_annotate(&this, cx, &bg, &root).await;
+            if !hold("annotate") {
+                Self::smoke_conflicts(&this, cx, &bg, &root).await;
+            }
             let _ = this.update(cx, |_, cx| {
                 eprintln!("smoke-gitx: done");
                 if std::env::var_os("BRISK_SMOKE_GITX_HOLD").is_none() {
@@ -121,12 +129,70 @@ impl Workspace {
         pause(bg, 2000).await;
         let _ = this.update_in(cx, |this, window, cx| {
             eprintln!("smoke-gitx: after edit + save -> {}", show(this, cx));
-            if std::env::var_os("BRISK_SMOKE_GITX_HOLD").is_some() {
+            if hold("annotate") {
                 return;
             }
             this.dispatch(Action::Annotate, window, cx);
             eprintln!("smoke-gitx: annotate again (close) -> shown={:?}", this.active_editor().map(|e| e.read(cx).annotation_shown()));
         });
+    }
+
+    async fn smoke_conflicts(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
+        // Two files changed on both branches: merge.py (one conflict plus changes on one side
+        // only) and other.py (resolved with Accept Theirs).
+        let _ = this.update_in(cx, |this, window, cx| {
+            // Close the editors of the annotate phase so nothing unsaved stays around.
+            this.dispatch(Action::SaveAll, window, cx);
+        });
+        let _ = std::fs::write(root.join("merge.py"), "import os\nx = 1\ny = 2\nz = 3\n");
+        let _ = std::fs::write(root.join("other.py"), "v = 'base'\n");
+        commit_as(root, "Alice", "2025-07-01T10:00:00", "Add merge.py");
+        sh(root, &["switch", "-q", "-c", "feature"]);
+        let _ = std::fs::write(root.join("merge.py"), "import os\nx = 1\ny = 'theirs'\nz = 3\nw = 4\n");
+        let _ = std::fs::write(root.join("other.py"), "v = 'theirs'\n");
+        commit_as(root, "Bob", "2025-07-02T10:00:00", "Feature change");
+        sh(root, &["switch", "-q", "main"]);
+        let _ = std::fs::write(root.join("merge.py"), "import sys\nx = 1\ny = 'ours'\nz = 3\n");
+        let _ = std::fs::write(root.join("other.py"), "v = 'ours'\n");
+        commit_as(root, "Alice", "2025-07-03T10:00:00", "Main change");
+        // Like Git > Merge: it stops with conflicts.
+        sh(root, &["merge", "--no-edit", "feature"]);
+        let _ = this.update(cx, |this, cx| this.refresh_git(cx));
+        pause(bg, 1500).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            let files = match this.git.as_ref().and_then(|g| g.dialog.as_ref()) {
+                Some(super::git_merge_ui::GitDialog::Conflicts(d)) => d.files.clone(),
+                _ => Vec::new(),
+            };
+            eprintln!("smoke-gitx: conflicts dialog opened by itself -> {files:?}");
+            // Enter: Merge… on merge.py.
+            this.smoke_press("enter", window, cx);
+            if let Some(super::git_merge_ui::GitDialog::Merge(d)) = this.git.as_ref().and_then(|g| g.dialog.as_ref()) {
+                eprintln!("smoke-gitx: merge dialog {} -> {} chunk(s), {} unresolved, result now {:?}", d.rel, d.chunks.len(), d.unresolved(), d.result_text());
+            }
+            if hold("merge") {
+                return;
+            }
+            // Ctrl+Enter refuses while a conflict is left; Alt+→ takes ours, Alt+← appends theirs.
+            this.smoke_press("ctrl-enter", window, cx);
+            eprintln!("smoke-gitx: apply with a conflict left -> toast {:?}", this.toast.as_ref().map(|t| t.0.clone()));
+            this.smoke_press("alt-right alt-left", window, cx);
+            if let Some(super::git_merge_ui::GitDialog::Merge(d)) = this.git.as_ref().and_then(|g| g.dialog.as_ref()) {
+                eprintln!("smoke-gitx: >> then << -> {:?}", d.result_text());
+            }
+            this.smoke_press("ctrl-enter", window, cx);
+            eprintln!("smoke-gitx: merge.py on disk -> {:?}", std::fs::read_to_string(this.root.join("merge.py")).unwrap_or_default());
+            let left = match this.git.as_ref().and_then(|g| g.dialog.as_ref()) {
+                Some(super::git_merge_ui::GitDialog::Conflicts(d)) => d.files.clone(),
+                _ => Vec::new(),
+            };
+            eprintln!("smoke-gitx: back in the list -> {left:?}");
+            this.conflicts_accept(false, cx);
+            eprintln!("smoke-gitx: accept theirs -> other.py {:?}, dialog open {}", std::fs::read_to_string(this.root.join("other.py")).unwrap_or_default(), this.git_dialog_open());
+        });
+        eprintln!("smoke-gitx: git status -> {:?}", sh(root, &["status", "--porcelain"]));
+        sh(root, &["commit", "-q", "--no-edit"]);
+        pause(bg, 500).await;
     }
 
     /// Labels of the open context menu (smoke tests).

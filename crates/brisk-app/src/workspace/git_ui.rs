@@ -46,6 +46,10 @@ pub struct Git {
     amend: bool,
     head_seen: Option<String>,
     loaded: bool,
+    /// Conflicts, Merge Revisions, Stash dialogs.
+    pub dialog: Option<super::git_merge_ui::GitDialog>,
+    /// Conflicted files at the last refresh: the Conflicts dialog opens when they appear.
+    conflicts_seen: usize,
 }
 
 impl Git {
@@ -71,6 +75,8 @@ impl Git {
             amend: false,
             head_seen: None,
             loaded: false,
+            dialog: None,
+            conflicts_seen: 0,
         }
     }
 
@@ -247,6 +253,15 @@ impl Workspace {
             }
         }
         self.refresh_annotations(head_changed, cx);
+        // New conflicts (a merge, pull or rebase stopped): show them, like PyCharm.
+        if let Some(g) = self.git.as_mut() {
+            let n = g.status.changes.iter().filter(|c| c.status == FileStatus::Conflict).count();
+            let appeared = n > 0 && g.conflicts_seen == 0;
+            g.conflicts_seen = n;
+            if appeared && g.dialog.is_none() {
+                self.open_conflicts(cx);
+            }
+        }
         if self.git.as_ref().is_some_and(|g| g.log_selected.is_none() && !g.log.is_empty()) {
             self.select_log(0, cx);
         }
@@ -409,6 +424,8 @@ impl Workspace {
                     self.show_change_diff(&c, window, cx);
                 }
             }
+            A::ResolveConflicts => self.open_conflicts(cx),
+            A::StashChanges | A::UnstashChanges | A::ShowFileHistory => self.git_more_action(action, window, cx),
             A::Annotate => match self.active_editor().cloned() {
                 Some(ed) => self.toggle_annotate(ed, cx),
                 None => self.status = "Annotate: open a file first".into(),
@@ -602,7 +619,7 @@ impl Workspace {
             }
             PopupKind::VcsOperations => {
                 use Action as A;
-                [A::Commit, A::Push, A::UpdateProject, A::Branches, A::ShowDiff, A::RollbackChanges, A::ToggleGitWindow, A::ToggleCommitWindow]
+                [A::Commit, A::Push, A::UpdateProject, A::Branches, A::ShowDiff, A::RollbackChanges, A::Annotate, A::ShowFileHistory, A::ResolveConflicts, A::StashChanges, A::UnstashChanges, A::ToggleGitWindow, A::ToggleCommitWindow]
                     .into_iter()
                     .filter(|a| a.info().title.to_lowercase().contains(&ql))
                     .map(|a| PopupItem {
