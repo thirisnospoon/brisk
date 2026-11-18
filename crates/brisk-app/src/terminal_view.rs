@@ -304,11 +304,6 @@ impl TerminalPanel {
         }
     }
 
-    /// Names of the run tabs, in order (smoke tests).
-    pub fn run_tab_names(&self) -> Vec<String> {
-        self.tabs.iter().filter_map(|t| t.run.as_ref().map(|r| r.name.clone())).collect()
-    }
-
     /// Text of the active tab (smoke tests).
     pub fn active_text(&self) -> Option<String> {
         self.session().map(|s| s.text())

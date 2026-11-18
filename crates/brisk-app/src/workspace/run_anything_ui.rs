@@ -139,7 +139,7 @@ impl Workspace {
             }
             let hold = std::env::var("BRISK_SMOKE_RUNANYTHING").as_deref() == Ok("hold");
             let _ = this.update_in(cx, |this, window, cx| {
-                let tabs = this.runs.panel.as_ref().map(|p| p.read(cx).run_tab_names()).unwrap_or_default();
+                let tabs = this.runs.panel.as_ref().map(|p| p.read(cx).run_tabs().into_iter().map(|t| t.0).collect::<Vec<_>>()).unwrap_or_default();
                 eprintln!("smoke-runanything: run tabs {tabs:?}");
                 eprintln!("smoke-runanything: history file {:?}", run_anything::load_history(&this.root));
                 // Ctrl, then Ctrl held with ↑ (clone caret): not Run Anything.

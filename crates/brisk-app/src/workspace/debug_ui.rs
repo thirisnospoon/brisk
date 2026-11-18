@@ -1356,6 +1356,11 @@ impl Workspace {
 
     /// Debug a configuration (also pytest ones: a file, a folder or `file::test`).
     pub(super) fn start_debug(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
+        if cfg.kind == brisk_run::RunKind::Compound {
+            // One debug session at a time: debug the members one by one.
+            self.show_toast(format!("'{}' is a Compound: run it, or debug its configurations one at a time", cfg.name), true, cx);
+            return;
+        }
         self.save_all(cx);
         if self.debug.is_live() {
             self.stop_debug(cx);

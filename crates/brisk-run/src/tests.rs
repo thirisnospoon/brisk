@@ -378,3 +378,39 @@ fn pytest_real_run() {
     drop(feed2);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn compound_members_expand_nested_and_skip_cycles() {
+    let c = |name: &str, kind: RunKind, target: &str| RunConfig { name: name.into(), kind, target: target.into(), ..Default::default() };
+    let f = RunFile {
+        configurations: vec![
+            c("server", RunKind::Python, "server.py"),
+            c("client", RunKind::Python, "client.py"),
+            c("tests", RunKind::Pytest, ""),
+            c("both", RunKind::Compound, "server; client"),
+            c("all", RunKind::Compound, "both;tests;server;all"),
+            c("broken", RunKind::Compound, "server;nope"),
+        ],
+        ..Default::default()
+    };
+    let names = |n: &str| f.compound_members(f.get(n).unwrap()).map(|v| v.into_iter().map(|c| c.name).collect::<Vec<_>>());
+    assert_eq!(names("both").unwrap(), vec!["server", "client"]);
+    assert_eq!(names("all").unwrap(), vec!["server", "client", "tests"]);
+    assert!(names("broken").unwrap_err().contains("'nope'"));
+    let json = serde_json::to_string(f.get("both").unwrap()).unwrap();
+    assert!(json.contains("\"type\":\"compound\""), "{json}");
+}
+
+#[test]
+fn imports_pycharm_compound() {
+    let xml = r#"<project><component name="RunManager">
+  <configuration name="Both" type="CompoundRunConfigurationType">
+    <toRun name="server" type="PythonConfigurationType" />
+    <toRun name="client" type="PythonConfigurationType" />
+    <method v="2" />
+  </configuration>
+</component></project>"#;
+    let (cfgs, _) = super::config::configurations_in(Path::new("/p"), xml, "RunManager");
+    assert_eq!(cfgs.len(), 1);
+    assert_eq!((cfgs[0].kind, cfgs[0].target.as_str()), (RunKind::Compound, "server;client"));
+}

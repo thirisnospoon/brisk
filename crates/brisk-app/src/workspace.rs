@@ -408,6 +408,9 @@ impl Workspace {
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
         }
+        if std::env::var_os("BRISK_SMOKE_COMPOUND").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.compound_smoke(window, cx));
+        }
         if std::env::var_os("BRISK_SMOKE_ENVFILE").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.envfile_smoke(window, cx));
         }

@@ -7,7 +7,7 @@ mod links;
 pub mod pytest;
 pub mod envfile;
 
-pub use config::{import_idea, load, save, RunConfig, RunFile, RunKind, CONFIG_FILE, MAX_TEMPORARY};
+pub use config::{compound_names, import_idea, load, save, RunConfig, RunFile, RunKind, CONFIG_FILE, MAX_TEMPORARY};
 pub use pytest::{is_test_file, split_nodeid, TestFeed, TestStatus, TestTree};
 pub use interp::{discover_all, probe, project_venvs, venv_python, InterpKind, Interpreter};
 pub use links::{find_links, Link};

@@ -58,6 +58,9 @@ pub enum RunKind {
     #[default]
     Python,
     Pytest,
+    /// PyCharm's Compound: `target` lists other configurations (`;`-separated names), all
+    /// started together, each in its own Run tab.
+    Compound,
 }
 
 impl RunKind {
@@ -115,6 +118,29 @@ impl RunFile {
         self.configurations.iter().find(|c| c.name == name)
     }
 
+    /// The configurations a compound starts, nested compounds expanded (each once, cycles
+    /// skipped). An error names a configuration that does not exist.
+    pub fn compound_members(&self, cfg: &RunConfig) -> Result<Vec<RunConfig>, String> {
+        fn walk(f: &RunFile, cfg: &RunConfig, seen: &mut Vec<String>, out: &mut Vec<RunConfig>) -> Result<(), String> {
+            for name in compound_names(&cfg.target) {
+                if seen.contains(&name) {
+                    continue;
+                }
+                seen.push(name.clone());
+                let c = f.get(&name).ok_or_else(|| format!("'{}' includes '{name}', which does not exist", cfg.name))?;
+                if c.kind == RunKind::Compound {
+                    walk(f, c, seen, out)?;
+                } else {
+                    out.push(c.clone());
+                }
+            }
+            Ok(())
+        }
+        let mut out = Vec::new();
+        walk(self, cfg, &mut vec![cfg.name.clone()], &mut out)?;
+        Ok(out)
+    }
+
     pub fn selected_config(&self) -> Option<&RunConfig> {
         self.selected.as_deref().and_then(|n| self.get(n))
     }
@@ -145,6 +171,11 @@ impl RunFile {
 
 /// Load `.brisk/run.json`, or import from `.idea` when it does not exist yet.
 /// Returns the file and the number of imported configurations.
+/// The member names of a compound's `target`.
+pub fn compound_names(target: &str) -> Vec<String> {
+    target.split(';').map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).collect()
+}
+
 pub fn load(root: &Path) -> (RunFile, usize) {
     if let Ok(s) = std::fs::read_to_string(root.join(CONFIG_FILE)) {
         if let Ok(f) = serde_json::from_str::<RunFile>(&s) {
@@ -201,6 +232,10 @@ fn parse_configuration(root: &Path, node: roxmltree::Node) -> Option<RunConfig> 
         return None;
     }
     let kind = match (node.attribute("type"), node.attribute("factoryName")) {
+        (Some("CompoundRunConfigurationType"), _) => {
+            let members: Vec<&str> = node.children().filter(|n| n.has_tag_name("toRun")).filter_map(|n| n.attribute("name")).collect();
+            return Some(RunConfig { name: node.attribute("name")?.to_string(), kind: RunKind::Compound, target: members.join(";"), ..Default::default() });
+        }
         (Some("PythonConfigurationType"), _) => RunKind::Python,
         (Some("tests"), Some("py.test")) => RunKind::Pytest,
         _ => return None,
@@ -272,7 +307,7 @@ fn parse_configuration(root: &Path, node: roxmltree::Node) -> Option<RunConfig> 
     Some(c)
 }
 
-fn configurations_in(root: &Path, xml: &str, component: &str) -> (Vec<RunConfig>, Option<String>) {
+pub(crate) fn configurations_in(root: &Path, xml: &str, component: &str) -> (Vec<RunConfig>, Option<String>) {
     let Ok(doc) = roxmltree::Document::parse(xml) else { return (Vec::new(), None) };
     let mut out = Vec::new();
     let mut selected = None;

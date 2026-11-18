@@ -36,13 +36,15 @@ pub enum Kind {
     Script,
     Module,
     Pytest,
+    Compound,
 }
 
 impl Kind {
-    const ALL: [Kind; 3] = [Kind::Script, Kind::Module, Kind::Pytest];
+    const ALL: [Kind; 4] = [Kind::Script, Kind::Module, Kind::Pytest, Kind::Compound];
     fn of(c: &RunConfig) -> Kind {
         match (c.kind, c.module) {
             (RunKind::Pytest, _) => Kind::Pytest,
+            (RunKind::Compound, _) => Kind::Compound,
             (_, true) => Kind::Module,
             _ => Kind::Script,
         }
@@ -52,10 +54,15 @@ impl Kind {
             Kind::Script => "Script path",
             Kind::Module => "Module name",
             Kind::Pytest => "pytest",
+            Kind::Compound => "Compound",
         }
     }
     fn apply(self, c: &mut RunConfig) {
-        c.kind = if self == Kind::Pytest { RunKind::Pytest } else { RunKind::Python };
+        c.kind = match self {
+            Kind::Pytest => RunKind::Pytest,
+            Kind::Compound => RunKind::Compound,
+            _ => RunKind::Python,
+        };
         c.module = self == Kind::Module;
     }
 }
@@ -131,6 +138,10 @@ pub fn env_from_text(s: &str) -> BTreeMap<String, String> {
 fn fields(kind: Kind, temporary: bool) -> Vec<Field> {
     use Field as F;
     let mut v = vec![F::Name, F::Kind, F::Target];
+    if kind == Kind::Compound {
+        // Only the member list: each member runs with its own settings.
+        return v;
+    }
     if kind == Kind::Pytest {
         v.push(F::Keywords);
     }
@@ -149,6 +160,7 @@ fn label(f: Field, kind: Kind) -> &'static str {
             Kind::Script => "Script:",
             Kind::Module => "Module:",
             Kind::Pytest => "Target:",
+            Kind::Compound => "Configurations:",
         },
         Field::Keywords => "Keywords (-k):",
         Field::Parameters => "Parameters:",
@@ -293,6 +305,7 @@ impl RunDialog {
         let taken: Vec<&str> = self.drafts.iter().map(|d| d.cfg.name.as_str()).collect();
         let base = match kind {
             Kind::Pytest => "pytest",
+            Kind::Compound => "Compound",
             _ => "Unnamed",
         };
         let mut cfg = RunConfig { name: unique_name(base, &taken), ..Default::default() };
@@ -341,6 +354,16 @@ impl RunDialog {
             }
             if cfgs[..i].iter().any(|o| o.name == c.name) {
                 return Err((i, Field::Name, format!("Two configurations are named '{}'", c.name)));
+            }
+            if c.kind == RunKind::Compound {
+                let names = brisk_run::compound_names(&c.target);
+                if names.is_empty() {
+                    return Err((i, Field::Target, format!("'{}': no configurations to run", c.name)));
+                }
+                if let Some(n) = names.iter().find(|n| **n == c.name || !cfgs.iter().any(|o| o.name == **n)) {
+                    let why = if *n == c.name { "itself" } else { "a configuration that does not exist" };
+                    return Err((i, Field::Target, format!("'{}': '{n}' is {why}", c.name)));
+                }
             }
             if c.kind == RunKind::Python && c.target.trim().is_empty() {
                 let what = if c.module { "Module name" } else { "Script path" };
@@ -526,6 +549,7 @@ impl Workspace {
             .child(tool("rc-add-py", "+ Py", "Add Python script configuration (Alt+Insert)", cx, |d| d.add(Kind::Script)))
             .child(tool("rc-add-mod", "+ -m", "Add Python module configuration", cx, |d| d.add(Kind::Module)))
             .child(tool("rc-add-pt", "+ pytest", "Add pytest configuration", cx, |d| d.add(Kind::Pytest)))
+            .child(tool("rc-add-comp", "+ Compound", "Add Compound configuration (runs several together)", cx, |d| d.add(Kind::Compound)))
             .child(tool("rc-copy", "⧉", "Copy configuration (Ctrl+D)", cx, |d| d.copy()))
             .child(tool("rc-remove", "−", "Remove configuration (Alt+Delete)", cx, |d| d.remove()))
             .child(tool("rc-up", "↑", "Move up (Alt+Shift+↑)", cx, |d| d.move_by(true)))
@@ -538,6 +562,7 @@ impl Workspace {
                 let on = i == d.current;
                 let glyph = match Kind::of(&dr.cfg) {
                     Kind::Pytest => "⚗",
+                    Kind::Compound => "◈",
                     _ => "▶",
                 };
                 let name = if dr.cfg.name.trim().is_empty() { "<unnamed>".to_string() } else { dr.cfg.name.clone() };
@@ -641,6 +666,7 @@ impl Workspace {
                                 Kind::Script => "main.py (relative to the project)".to_string(),
                                 Kind::Module => "package.module".to_string(),
                                 Kind::Pytest => "tests, tests/test_x.py::test_y (empty: everything)".to_string(),
+                                Kind::Compound => "server;client (names of other configurations)".to_string(),
                             },
                             Field::WorkingDirectory => if kind == Kind::Script { "the script's folder".into() } else { "the project root".into() },
                             Field::Env => "KEY=VALUE;KEY2=VALUE2 (wins over .env files)".into(),
@@ -829,12 +855,81 @@ impl Workspace {
                 if !out.contains(expect) {
                     eprintln!("smoke-envfile: output was {:?}", out.chars().take(500).collect::<String>());
                 }
-                let tabs = this.runs.panel.as_ref().map(|p| p.read(cx).run_tab_names().len()).unwrap_or(0);
+                let tabs = this.runs.panel.as_ref().map(|p| p.read(cx).run_tabs().into_iter().map(|t| t.0).collect::<Vec<_>>().len()).unwrap_or(0);
                 let missing = RunConfig { name: "missing".into(), env_files: "missing.env".into(), ..cfg.clone() };
                 this.toast = None;
                 this.run_config(missing, window, cx);
-                let after = this.runs.panel.as_ref().map(|p| p.read(cx).run_tab_names().len()).unwrap_or(0);
+                let after = this.runs.panel.as_ref().map(|p| p.read(cx).run_tabs().into_iter().map(|t| t.0).collect::<Vec<_>>().len()).unwrap_or(0);
                 eprintln!("smoke-envfile: missing .env -> toast {:?}, run tabs {tabs} -> {after}", this.toast.as_ref().map(|t| t.0.clone()));
+                cx.quit();
+            });
+        })
+        .detach();
+    }
+
+    /// BRISK_SMOKE_COMPOUND=1 on an empty folder: writes `server.py`, `client.py` and their
+    /// configurations, makes a Compound in the dialog (Alt+Insert, Run: → Compound), checks
+    /// that an unknown member is refused, selects and runs it (two Run tabs), and that Debug
+    /// refuses it with a message.
+    pub(super) fn compound_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let root = self.root.clone();
+        let _ = std::fs::write(root.join("server.py"), "import time\nprint('server up', flush=True)\ntime.sleep(1)\nprint('server down')\n");
+        let _ = std::fs::write(root.join("client.py"), "print('client done')\n");
+        let _ = std::fs::create_dir_all(root.join(".brisk"));
+        let _ = std::fs::write(
+            root.join(brisk_run::CONFIG_FILE),
+            "{\n  \"configurations\": [{\"name\": \"server\", \"target\": \"server.py\"}, {\"name\": \"client\", \"target\": \"client.py\"}]\n}\n",
+        );
+        self.dispatch(brisk_keymap::Action::EditRunConfigurations, window, cx);
+        self.smoke_press("alt-insert", window, cx);
+        self.rc_type("Both", window, cx);
+        self.smoke_press("tab right right right", window, cx); // Run: Script -> Compound
+        let fields_shown = self.runs.dialog.as_ref().and_then(|d| d.drafts.get(d.current)).map(|dr| fields(Kind::of(&dr.cfg), false));
+        self.smoke_press("tab", window, cx);
+        self.rc_type("server;nope", window, cx);
+        self.smoke_press("enter", window, cx);
+        let err = self.runs.dialog.as_ref().and_then(|d| d.error.clone());
+        eprintln!("smoke-compound: fields {fields_shown:?}, unknown member + enter -> {err:?}");
+        self.smoke_press("backspace backspace backspace backspace", window, cx);
+        self.rc_type("client", window, cx);
+        self.smoke_press("enter", window, cx);
+        let both = brisk_run::load(&root).0.get("Both").cloned();
+        eprintln!("smoke-compound: saved -> open {} {:?}", self.runs.dialog.is_some(), both.as_ref().map(|c| (c.kind, c.target.clone())));
+        self.open_popup(super::PopupKind::RunConfigs(true));
+        let detail = self.popup.as_ref().and_then(|p| p.items.iter().find(|i| i.label == "Both")).map(|i| i.detail.clone());
+        eprintln!("smoke-compound: Run popup detail {detail:?}");
+        self.popup = None;
+        let Some(both) = both else {
+            cx.quit();
+            return;
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let bg = cx.background_executor().clone();
+            let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
+            for _ in 0..100 {
+                pause(100).await;
+                if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
+                    break;
+                }
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.runs.file.selected = Some("Both".into());
+                this.save_runs();
+                this.dispatch(brisk_keymap::Action::Run, window, cx);
+                eprintln!("smoke-compound: run -> status {:?}", this.status);
+            });
+            let tabs = |t: &Workspace, cx: &gpui::App| t.runs.panel.as_ref().map(|p| p.read(cx).run_tabs()).unwrap_or_default();
+            for _ in 0..200 {
+                pause(100).await;
+                if this.update(cx, |t, cx| tabs(t, cx).len() == 2 && tabs(t, cx).iter().all(|(_, running)| !running)).unwrap_or(false) {
+                    break;
+                }
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                eprintln!("smoke-compound: run tabs {:?}", tabs(this, cx));
+                this.toast = None;
+                this.start_debug(both.clone(), window, cx);
+                eprintln!("smoke-compound: debug -> toast {:?}", this.toast.as_ref().map(|t| t.0.clone()));
                 cx.quit();
             });
         })
@@ -905,6 +1000,9 @@ impl Workspace {
 
 /// What the configuration runs, as a one-line hint under the form.
 fn command_preview(root: &std::path::Path, c: &RunConfig, interp: &str) -> String {
+    if c.kind == RunKind::Compound {
+        return format!("› runs together, each in its own tab: {}", brisk_run::compound_names(&c.target).join(", "));
+    }
     let python = c.interpreter.clone().unwrap_or_else(|| interp.to_string());
     let target = match (c.kind, c.module) {
         (RunKind::Pytest, _) => {

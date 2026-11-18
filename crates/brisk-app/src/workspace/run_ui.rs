@@ -192,6 +192,10 @@ impl Workspace {
     }
 
     pub(super) fn run_config(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
+        if cfg.kind == RunKind::Compound {
+            self.run_compound(&cfg, window, cx);
+            return;
+        }
         self.save_all(cx);
         let python = match &cfg.interpreter {
             Some(p) => Some(brisk_run::resolve(&self.root, p)),
@@ -212,6 +216,26 @@ impl Workspace {
         }
         let cmd = brisk_run::build(&self.root, &cfg, &python);
         self.run_command(cfg, cmd, window, cx);
+    }
+
+    /// A Compound: every member starts in its own Run tab.
+    fn run_compound(&mut self, cfg: &RunConfig, window: &mut Window, cx: &mut Context<Self>) {
+        let members = match self.runs.file.compound_members(cfg) {
+            Ok(m) if m.is_empty() => {
+                self.show_toast(format!("'{}' has no configurations to run", cfg.name), true, cx);
+                return;
+            }
+            Ok(m) => m,
+            Err(e) => {
+                self.show_toast(e, true, cx);
+                return;
+            }
+        };
+        let n = members.len();
+        for m in members {
+            self.run_config(m, window, cx);
+        }
+        self.status = format!("Running '{}': {n} configurations", cfg.name);
     }
 
     /// A configuration's `.env` files must be readable (PyCharm refuses to start otherwise).
@@ -331,6 +355,7 @@ impl Workspace {
                 for c in self.runs.file.configurations.iter().filter(|c| c.name.to_lowercase().contains(&ql)) {
                     let mut detail = match (c.kind, c.module) {
                         (RunKind::Pytest, _) => format!("pytest {}", c.target),
+                        (RunKind::Compound, _) => format!("compound: {}", brisk_run::compound_names(&c.target).join(", ")),
                         (_, true) => format!("-m {}", c.target),
                         _ => c.target.clone(),
                     };
