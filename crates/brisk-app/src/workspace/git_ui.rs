@@ -144,7 +144,7 @@ pub(super) fn dir_name(rel: &str) -> &str {
 }
 
 /// "5 minutes ago" for recent commits, otherwise a UTC date (no tz database needed).
-pub(super) fn fmt_time(t: i64) -> String {
+pub(crate) fn fmt_time(t: i64) -> String {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let d = now - t;
     if (0..60).contains(&d) {

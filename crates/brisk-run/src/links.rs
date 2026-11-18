@@ -1,5 +1,6 @@
 //! Clickable file locations in console output: Python tracebacks
-//! (`File "C:\x\app.py", line 12, in f`) and `path.py:12` (pytest, ruff, warnings).
+//! (`File "C:\x\app.py", line 12, in f`) and `path.py:12` / `path.py:12:5` (pytest, ruff,
+//! mypy, warnings).
 
 use std::ops::Range;
 
@@ -10,6 +11,8 @@ pub struct Link {
     pub path: String,
     /// 1-based.
     pub line: usize,
+    /// 1-based column of `path.py:12:5`; 0 when the link has none.
+    pub col: usize,
 }
 
 fn char_col(s: &str, byte: usize) -> usize {
@@ -35,7 +38,7 @@ pub fn find_links(line: &str) -> Vec<Link> {
             let (n, len) = digits(r);
             if n > 0 && !line[s..e].starts_with('<') {
                 let end = e + 1 + ", line ".len() + len;
-                out.push(Link { cols: char_col(line, s - 1)..char_col(line, end), path: line[s..e].to_string(), line: n });
+                out.push(Link { cols: char_col(line, s - 1)..char_col(line, end), path: line[s..e].to_string(), line: n, col: 0 });
             }
         }
         from = e + 1;
@@ -55,8 +58,17 @@ pub fn find_links(line: &str) -> Vec<Link> {
                 let path = &line[start..i];
                 if path.len() > ext.len() {
                     let (n, len) = digits(&line[i + 1..]);
-                    out.push(Link { cols: char_col(line, start)..char_col(line, i + 1 + len), path: path.to_string(), line: n.max(1) });
-                    i += 1 + len;
+                    let mut end = i + 1 + len;
+                    // `:12:5`: a column too.
+                    let (col, clen) = match line[end..].strip_prefix(':') {
+                        Some(r) => digits(r),
+                        None => (0, 0),
+                    };
+                    if clen > 0 {
+                        end += 1 + clen;
+                    }
+                    out.push(Link { cols: char_col(line, start)..char_col(line, end), path: path.to_string(), line: n.max(1), col });
+                    i = end;
                     continue;
                 }
             }

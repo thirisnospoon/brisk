@@ -125,6 +125,8 @@ enum Io {
     /// Plain pipes (PyCharm's Run console without "Emulate terminal"): exact output, stderr
     /// in red, line-buffered input echoed locally.
     Pipe(pipe::PipeIo),
+    /// No process: a saved run shown again (input goes nowhere).
+    None,
 }
 
 /// How many lines of a Run console's output are kept: beyond it the oldest lines are dropped
@@ -152,6 +154,8 @@ pub struct CellView {
     pub underline: bool,
     pub wide: bool,
     pub selected: bool,
+    /// Part of an OSC 8 hyperlink (see [`Session::hyperlink_at`]).
+    pub link: bool,
 }
 
 /// A search match. Matching goes over logical lines (rows joined where the output was
@@ -320,6 +324,7 @@ impl Session {
                 let _ = tx.send(Msg::Input(bytes));
             }
             Io::Pipe(p) => p.input(&self.term, &bytes),
+            Io::None => {}
         }
     }
 
@@ -442,6 +447,17 @@ impl Session {
         Ok(Self { term, io: Io::Pipe(io), size, pid: Some(pid) })
     }
 
+    /// A console with `text` and no process behind it (a run from the Test History).
+    pub fn offline(text: &str, cols: usize, rows: usize) -> Self {
+        let size = Size { cols: cols.max(2), rows: rows.max(1) };
+        let listener = Listener { callback: Arc::new(|_| {}), sender: Arc::new(OnceLock::new()) };
+        let config = Config { scrolling_history: RUN_HISTORY_LINES, ..Config::default() };
+        let term = Arc::new(FairMutex::new(Term::new(config, &size, listener)));
+        let s = Self { term, io: Io::None, size, pid: None };
+        s.inject(format!("{}\x1b[?25l", text.replace('\n', "\r\n")).as_bytes());
+        s
+    }
+
     /// Feed bytes to the emulator as if the program printed them (IDE messages such as
     /// "Process finished with exit code 0"). Use only after the child has exited.
     pub fn inject(&self, bytes: &[u8]) {
@@ -517,7 +533,19 @@ impl Session {
                 let _ = tx.send(Msg::Shutdown);
             }
             Io::Pipe(_) => self.kill(),
+            Io::None => {}
         }
+    }
+
+    /// The OSC 8 hyperlink (`ESC ]8;;uri ESC \\ text ESC ]8;; ESC \\`) under a screen cell.
+    pub fn hyperlink_at(&self, row: usize, col: usize) -> Option<String> {
+        let term = self.term.lock();
+        let grid = term.grid();
+        let line = Line(row as i32 - grid.display_offset() as i32);
+        if col >= term.columns() || row >= term.screen_lines() {
+            return None;
+        }
+        grid[Point::new(line, Column(col))].hyperlink().map(|h| h.uri().to_string())
     }
 
     /// Copy the visible screen. Holds the lock only for the copy.
@@ -528,7 +556,7 @@ impl Session {
         let rows = term.screen_lines();
         let offset = content.display_offset as i32;
         let palette = Palette { overrides: content.colors };
-        let blank = CellView { c: ' ', fg: palette.named(NamedColor::Foreground), bg: None, bold: false, italic: false, underline: false, wide: false, selected: false };
+        let blank = CellView { c: ' ', fg: palette.named(NamedColor::Foreground), bg: None, bold: false, italic: false, underline: false, wide: false, selected: false, link: false };
         let mut cells = vec![blank; cols * rows];
         let sel = content.selection;
         for ind in content.display_iter {
@@ -570,6 +598,7 @@ impl Session {
                 underline: f.intersects(Flags::UNDERLINE | Flags::DOUBLE_UNDERLINE | Flags::UNDERCURL),
                 wide: f.contains(Flags::WIDE_CHAR),
                 selected,
+                link: cell.hyperlink().is_some(),
             };
         }
         let cur = content.cursor.point;

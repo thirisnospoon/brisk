@@ -67,6 +67,8 @@ impl Tab {
 pub enum RunEvent {
     /// A traceback / `file.py:12` link was clicked.
     Open(PathBuf, usize),
+    /// A `file.py:12:5` link: line and column (1-based).
+    OpenAt(PathBuf, usize, usize),
     /// An `http(s)://` link was clicked (a server's address).
     OpenUrl(String),
     Finished { name: String, code: Option<i32>, tests: Option<TestsOutcome> },
@@ -116,6 +118,10 @@ pub struct TerminalPanel {
     h_scroll: usize,
     /// Ctrl+F in the Run console.
     search: console_find::ConsoleSearch,
+    /// "Rerun Failed Tests First": pytest runs start with the last run's failures.
+    pub failed_first: bool,
+    /// The Test History list is open.
+    pub history_open: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -185,6 +191,9 @@ impl TerminalPanel {
                                         };
                                         t.session.inject(format!("\r\n\x1b[0m{end}\r\n\x1b[?25l").as_bytes());
                                         let tests = r.tests.as_mut().map(|t| t.finish());
+                                        if let Some(t) = r.tests.as_ref() {
+                                            TerminalPanel::save_test_history(&this.root, &r.name, t);
+                                        }
                                         cx.emit(RunEvent::Finished { name: r.name.clone(), code: r.code, tests });
                                     }
                                 }
@@ -226,6 +235,8 @@ impl TerminalPanel {
             scroll_to_end: true,
             h_scroll: 0,
             search: Default::default(),
+            failed_first: false,
+            history_open: false,
         }
     }
 
@@ -244,6 +255,13 @@ impl TerminalPanel {
         let mut spawn = cmd.clone();
         let tests = if cfg.kind == brisk_run::RunKind::Pytest {
             let events = brisk_run::pytest::attach(&mut spawn).map_err(|e| format!("Cannot prepare the test runner: {e}"))?;
+            if self.failed_first {
+                let failed = brisk_run::pytest::history::last_failed(&self.root, &cfg.name);
+                let list = events.with_extension("first");
+                if !failed.is_empty() && std::fs::write(&list, failed.join("\n")).is_ok() {
+                    spawn.env.insert("BRISK_TESTS_FIRST".into(), list.display().to_string());
+                }
+            }
             Some(tests_view::TestsView::start(events, id, self.events.clone()))
         } else {
             None
@@ -451,12 +469,83 @@ sys.exit(r)";
     }
 
     /// The link under a grid cell, if any.
-    fn link_at(&self, row: usize, col: usize) -> Option<(PathBuf, usize)> {
+    fn link_at(&self, row: usize, col: usize) -> Option<(PathBuf, usize, usize)> {
         let snap = self.session()?.snapshot();
         let cells = snap.cells.get(row * snap.cols..(row + 1) * snap.cols)?;
         let (text, idx) = row_text(cells);
         let ch = idx.iter().position(|&c| c >= col)?;
-        brisk_run::find_links(&text).into_iter().find(|l| l.cols.contains(&ch)).and_then(|l| self.link_target(&l.path, l.line))
+        let l = brisk_run::find_links(&text).into_iter().find(|l| l.cols.contains(&ch))?;
+        self.link_target(&l.path, l.line).map(|(p, line)| (p, line, l.col))
+    }
+
+    /// What an OSC 8 hyperlink opens: a `file://` URI (with `#L12` or `:12` for a line) in
+    /// the editor, anything else in the browser.
+    fn hyperlink_event(uri: &str) -> RunEvent {
+        if let Some(rest) = uri.strip_prefix("file://") {
+            // file:///C:/x.py, file://host/path: the host part is ignored.
+            let path = rest.find('/').map(|i| &rest[i..]).unwrap_or(rest);
+            let (path, line) = match path.rsplit_once("#L").or_else(|| path.rsplit_once('#')) {
+                Some((p, l)) if l.parse::<usize>().is_ok() => (p, l.parse().unwrap_or(1)),
+                _ => (path, 1),
+            };
+            let path = percent_decode(path);
+            let path = if cfg!(windows) && path.as_bytes().get(2) == Some(&b':') { path[1..].to_string() } else { path };
+            return RunEvent::Open(PathBuf::from(path), line);
+        }
+        RunEvent::OpenUrl(uri.to_string())
+    }
+
+    /// Foreground color of the first on-screen cell of `needle` (smoke tests).
+    pub fn fg_of(&self, needle: &str) -> Option<[u8; 3]> {
+        let snap = self.session()?.snapshot();
+        for r in 0..snap.rows {
+            let row = &snap.cells[r * snap.cols..(r + 1) * snap.cols];
+            let (text, idx) = row_text(row);
+            if let Some(b) = text.find(needle) {
+                return Some(row[idx[text[..b].chars().count()]].fg);
+            }
+        }
+        None
+    }
+
+    /// OSC 8 hyperlinks in the active tab's screen: their URIs (smoke tests).
+    pub fn hyperlinks(&self) -> Vec<String> {
+        let Some(s) = self.session() else { return Vec::new() };
+        let snap = s.snapshot();
+        let mut v: Vec<String> = Vec::new();
+        for (i, c) in snap.cells.iter().enumerate() {
+            if c.link {
+                if let Some(u) = s.hyperlink_at(i / snap.cols, i % snap.cols) {
+                    if !v.contains(&u) {
+                        v.push(u);
+                    }
+                }
+            }
+        }
+        v
+    }
+
+    /// Click the first OSC 8 hyperlink whose URI starts with `osc8` (or, with `None`, the
+    /// first file link) on screen as the mouse would (smoke tests).
+    pub fn click_first(&mut self, osc8: Option<&str>, cx: &mut Context<Self>) -> bool {
+        let Some(s) = self.session() else { return false };
+        let snap = s.snapshot();
+        for r in 0..snap.rows {
+            for c in 0..snap.cols {
+                if let Some(prefix) = osc8 {
+                    if let Some(u) = snap.cells[r * snap.cols + c].link.then(|| s.hyperlink_at(r, c)).flatten().filter(|u| u.starts_with(prefix)) {
+                        cx.emit(Self::hyperlink_event(&u));
+                        return true;
+                    }
+                } else {
+                    if let Some((p, l, col)) = self.link_at(r, c) {
+                        cx.emit(if col > 0 { RunEvent::OpenAt(p, l, col) } else { RunEvent::Open(p, l) });
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     pub fn is_empty(&self) -> bool {
@@ -596,8 +685,12 @@ sys.exit(r)";
         self.search.focused = false;
         let Some((row, col, _)) = self.cell_at(e.position) else { return };
         if self.run_mode && e.click_count == 1 {
-            if let Some((path, line)) = self.link_at(row, col) {
-                cx.emit(RunEvent::Open(path, line));
+            if let Some(uri) = self.session().and_then(|s| s.hyperlink_at(row, col)) {
+                cx.emit(Self::hyperlink_event(&uri));
+                return;
+            }
+            if let Some((path, line, c)) = self.link_at(row, col) {
+                cx.emit(if c > 0 { RunEvent::OpenAt(path, line, c) } else { RunEvent::Open(path, line) });
                 return;
             }
             if let Some(url) = self.url_at(row, col) {
@@ -944,6 +1037,9 @@ impl Element for TerminalElement {
             // Traceback and `file.py:12` links: blue and underlined, like PyCharm.
             for r in 0..snap.rows {
                 let row = &mut snap.cells[r * snap.cols..(r + 1) * snap.cols];
+                for cell in row.iter_mut().filter(|c| c.link) {
+                    cell.underline = true;
+                }
                 let (text, idx) = row_text(row);
                 let urls = brisk_run::find_urls(&text).into_iter().map(|(r, _)| r);
                 for cols in brisk_run::find_links(&text).into_iter().map(|l| l.cols).chain(urls) {
@@ -1072,4 +1168,23 @@ fn pin_track() -> impl IntoElement {
 /// Center of the Pin Tab button in window pixels (smoke tests).
 pub fn pin_button_center() -> Option<(f32, f32)> {
     PIN_BUTTON.with(|c| c.get()).map(|b| (f32::from(b.center().x), f32::from(b.center().y)))
+}
+
+/// `%20` and friends in a `file://` URI.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }

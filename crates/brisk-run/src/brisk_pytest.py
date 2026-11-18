@@ -44,6 +44,19 @@ def pytest_collection_finish(session):
     _emit(event="collected", tests=tests)
 
 
+def pytest_collection_modifyitems(session, config, items):
+    # "Rerun Failed Tests First": the IDE lists the last run's failures in this file.
+    path = os.environ.get("BRISK_TESTS_FIRST")
+    if not path:
+        return
+    try:
+        with open(path, encoding="utf-8") as f:
+            first = set(l for l in f.read().split("\n") if l)
+    except OSError:
+        return
+    items[:] = [i for i in items if i.nodeid in first] + [i for i in items if i.nodeid not in first]
+
+
 def pytest_collectreport(report):
     if report.failed:
         _emit(event="collecterror", id=report.nodeid, message=report.longreprtext)
