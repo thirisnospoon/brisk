@@ -1,4 +1,4 @@
-//! Settings dialog (Ctrl+Alt+S): theme, editor font, font size, line spacing; font zoom
+//! Settings dialog (Ctrl+Alt+S): theme, editor font, font size, line spacing, inlay hints; font zoom
 //! (Alt+Shift+. / Alt+Shift+, / Ctrl+wheel) and the quick theme switch.
 
 use super::Workspace;
@@ -151,6 +151,31 @@ impl Workspace {
             .into_any_element();
         let size = stepper("set-size", format!("{}", s.font_size), 1.0, true, cx);
         let spacing = stepper("set-spacing", format!("{:.1}", s.line_spacing), 0.1, false, cx);
+        let on = s.inlay_hints;
+        let inlay = div()
+            .id("set-inlay")
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .cursor_pointer()
+            .child(
+                div()
+                    .size(px(16.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(3.))
+                    .border_1()
+                    .border_color(if on { Theme::accent() } else { Theme::divider() })
+                    .when(on, |x| x.bg(Theme::accent()).text_color(gpui::white()).text_size(px(11.)).child("✓")),
+            )
+            .child("Show inlay hints")
+            .child(div().text_color(Theme::text_dim()).child("(inferred types, parameter names)"))
+            .on_click(cx.listener(|this, _, w, cx| {
+                this.settings_edit(|s| s.inlay_hints = !s.inlay_hints, w);
+                cx.notify();
+            }))
+            .into_any_element();
         let preview = div()
             .mt(px(6.))
             .p(px(10.))
@@ -210,6 +235,8 @@ impl Workspace {
                         .child(row("Size", size))
                         .child(row("Line spacing", spacing))
                         .child(preview)
+                        .child(div().text_size(px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › APPEARANCE"))
+                        .child(row("Inlay hints", inlay))
                         .child(
                             div()
                                 .pt(px(12.))
@@ -233,12 +260,21 @@ impl Workspace {
         };
         eprintln!("smoke-settings: start -> {}", show());
         self.dispatch(Action::Settings, window, cx);
+        if std::env::var_os("BRISK_SMOKE_SETTINGS_HOLD").is_some() {
+            eprintln!("smoke-settings: holding with the dialog open");
+            return;
+        }
         eprintln!("smoke-settings: dialog open={} fonts={:?}", self.settings_dialog.is_some(), self.settings_dialog.as_ref().map(|d| d.fonts.clone()));
         self.settings_edit(|s| s.light = true, window);
         self.settings_edit(|s| s.font_size += 2.0, window);
         eprintln!("smoke-settings: light + size+2 (live) -> {} text color {:?}", show(), Theme::editor_bg());
         self.smoke_press("escape", window, cx);
         eprintln!("smoke-settings: escape -> open={} {}", self.settings_dialog.is_some(), show());
+        self.dispatch(Action::Settings, window, cx);
+        self.settings_edit(|s| s.inlay_hints = false, window);
+        eprintln!("smoke-settings: inlay hints off (live) -> {}", settings::inlay_hints());
+        self.smoke_press("escape", window, cx);
+        eprintln!("smoke-settings: escape -> inlay hints {}", settings::inlay_hints());
         self.dispatch(Action::Settings, window, cx);
         let font = self.settings_dialog.as_ref().and_then(|d| d.fonts.last().cloned()).unwrap_or_default();
         self.settings_edit(|s| {

@@ -313,6 +313,14 @@ y = [i * 2 for i in x]
             let _ = this.update(cx, |this, cx| {
                 let Some(ed) = this.active_editor().cloned() else { return };
                 eprintln!("smoke-intel: after ty's check, line 4 hints {:?}", ed.read(cx).inlay_labels(3));
+                // Settings > Editor > "Show inlay hints" hides and brings them back at once.
+                let mut s = crate::settings::current();
+                s.inlay_hints = false;
+                crate::settings::apply(&s);
+                eprintln!("smoke-intel: hints turned off, line 4 hints {:?}", ed.read(cx).inlay_labels(3));
+                s.inlay_hints = true;
+                crate::settings::apply(&s);
+                eprintln!("smoke-intel: hints turned on, line 4 hints {:?}", ed.read(cx).inlay_labels(3));
                 ed.update(cx, |e, _| e.buffer.undo());
             });
             if hold.as_deref() == Some("inlay") {
