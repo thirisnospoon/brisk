@@ -2,8 +2,8 @@
 1 ICON "../../assets/brisk.ico"
 
 1 VERSIONINFO
-FILEVERSION 0,2,4,0
-PRODUCTVERSION 0,2,4,0
+FILEVERSION 0,2,5,0
+PRODUCTVERSION 0,2,5,0
 FILEOS 0x40004
 FILETYPE 0x1
 BEGIN
@@ -13,11 +13,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Brisk"
       VALUE "FileDescription", "Brisk IDE"
-      VALUE "FileVersion", "0.2.4"
+      VALUE "FileVersion", "0.2.5"
       VALUE "InternalName", "brisk"
       VALUE "OriginalFilename", "brisk.exe"
       VALUE "ProductName", "Brisk"
-      VALUE "ProductVersion", "0.2.4"
+      VALUE "ProductVersion", "0.2.5"
     END
   END
   BLOCK "VarFileInfo"
