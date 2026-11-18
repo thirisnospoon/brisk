@@ -338,6 +338,8 @@ impl Workspace {
                     self.complete(ed, false, cx);
                 }
             }
+            // While the debugger is paused the hover shows the value (falls back to the docs).
+            E::HoverDoc(pos, at) if self.debug_hover(&ed, pos, at, cx) => {}
             E::HoverDoc(pos, at) => self.quick_doc(ed, Some((pos, at)), cx),
             E::CtrlClick(pos) => self.goto_declaration(ed, Some(pos), false, window, cx),
             E::ShowProblems | E::ContextMenu(_) | E::BreakpointsChanged | E::EditBreakpoint(_) | E::GutterMenu(_) | E::ShowCommit(_) => {}
@@ -385,7 +387,7 @@ impl Workspace {
     }
 
     /// Ctrl+Q at the caret, or the mouse resting on a word.
-    fn quick_doc(&mut self, ed: Entity<Editor>, mouse: Option<(usize, gpui::Point<gpui::Pixels>)>, cx: &mut Context<Self>) {
+    pub(super) fn quick_doc(&mut self, ed: Entity<Editor>, mouse: Option<(usize, gpui::Point<gpui::Pixels>)>, cx: &mut Context<Self>) {
         let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else {
             if mouse.is_none() {
                 self.no_ty("Quick Documentation");

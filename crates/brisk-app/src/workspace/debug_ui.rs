@@ -384,6 +384,58 @@ fn python_order(stack: &str) -> String {
     frames.concat().join("\n")
 }
 
+const KEYWORDS: &[&str] = &[
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for",
+    "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield",
+];
+
+/// The expression under the mouse for a value hover: the name at `col` with the dotted
+/// names before it (`obj.attr`), not inside a string or comment, not a keyword.
+fn hover_expression(line: &str, col: usize) -> Option<String> {
+    let c: Vec<char> = line.chars().collect();
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    if !c.get(col).copied().is_some_and(ident) {
+        return None;
+    }
+    // Inside a comment or a string: count quotes before the point.
+    let before: String = c[..col].iter().collect();
+    let (mut quote, mut i) = (None::<char>, 0);
+    let bc: Vec<char> = before.chars().collect();
+    while i < bc.len() {
+        match (quote, bc[i]) {
+            (None, '#') => return None,
+            (None, q @ ('"' | '\'')) => quote = Some(q),
+            (Some(_), '\\') => i += 1,
+            (Some(q), ch) if ch == q => quote = None,
+            _ => {}
+        }
+        i += 1;
+    }
+    if quote.is_some() {
+        return None;
+    }
+    let mut start = col;
+    while start > 0 && ident(c[start - 1]) {
+        start -= 1;
+    }
+    let mut end = col;
+    while end < c.len() && ident(c[end]) {
+        end += 1;
+    }
+    let word: String = c[start..end].iter().collect();
+    if KEYWORDS.contains(&word.as_str()) || word.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    while start >= 2 && c[start - 1] == '.' && ident(c[start - 2]) {
+        let mut s = start - 1;
+        while s > 0 && ident(c[s - 1]) {
+            s -= 1;
+        }
+        start = s;
+    }
+    Some(c[start..end].iter().collect())
+}
+
 /// Names used on a line of Python: identifiers outside strings and comments, not after a dot.
 fn line_names(line: &str) -> Vec<&str> {
     let b = line.as_bytes();
@@ -1556,6 +1608,52 @@ impl Workspace {
         .detach();
     }
 
+    // --- Value on hover ---------------------------------------------------------------
+
+    /// Mouse rest on a name while paused: `name = {type} value` and its first children, in
+    /// the editor's hover popup. False when the debugger is not paused here (docs instead).
+    pub(super) fn debug_hover(&mut self, ed: &Entity<Editor>, pos: usize, at: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) -> bool {
+        let frame = self.debug.frames.get(self.debug.frame).map(|f| f.id);
+        let live = self.debug.session.as_ref().filter(|s| matches!(s.state, State::Paused(_)));
+        let (Some(s), Some(frame)) = (live, frame) else { return false };
+        let e = ed.read(cx);
+        if !e.is_python() || pos >= e.buffer.len_chars() {
+            return false;
+        }
+        let (line, col) = e.buffer.pos_to_line_col(pos);
+        let Some(expr) = hover_expression(&e.buffer.line(line), col) else { return false };
+        let client = s.client.clone();
+        let ed = ed.clone();
+        cx.spawn(async move |this, cx| {
+            let res = client.request("evaluate", json!({"expression": expr, "frameId": frame, "context": "hover"})).await;
+            let Ok(Ok(v)) = res else {
+                // Not a value here (a module, an unknown name): the documentation.
+                let _ = this.update(cx, |this, cx| this.quick_doc(ed, Some((pos, at)), cx));
+                return;
+            };
+            let (value, reference) = brisk_dap::parse_evaluate(&v);
+            let ty = v.get("type").and_then(Value::as_str).unwrap_or("");
+            let mut text = if ty.is_empty() { format!("{expr} = {value}") } else { format!("{expr} = {{{ty}}} {value}") };
+            if reference > 0 {
+                if let Ok(Ok(kids)) = client.request("variables", json!({"variablesReference": reference})).await {
+                    // debugpy's "special variables" / "function variables" groups are left out.
+                    let kids: Vec<Variable> = brisk_dap::parse_variables(&kids).into_iter().filter(|k| !k.name.contains(' ')).collect();
+                    for k in kids.iter().take(30) {
+                        let v: String = k.value.chars().take(120).collect();
+                        text.push_str(&if k.type_name.is_empty() { format!("\n    {} = {v}", k.name) } else { format!("\n    {} = {{{}}} {v}", k.name, k.type_name) });
+                    }
+                    if kids.len() > 30 {
+                        text.push_str(&format!("\n    … {} more", kids.len() - 30));
+                    }
+                }
+            }
+            let md = format!("```\n{text}\n```");
+            let _ = ed.update(cx, |e, cx| e.show_doc(&md, crate::editor::Anchor::Mouse(pos, at), cx));
+        })
+        .detach();
+        true
+    }
+
     // --- Watches, Set Value, Copy Value ---------------------------------------------------
 
     /// Evaluate every watch in the selected frame (on each stop and after changes).
@@ -2632,6 +2730,19 @@ mod tests {
         assert_eq!(v.get(&3), None);
         assert_eq!(v.get(&4).map(String::as_str), Some("items: [5, 2]"));
         assert_eq!(v.get(&0), None);
+    }
+
+    #[test]
+    fn hover_expressions() {
+        let l = "    total = obj.items[0] + add(x)  # items here";
+        let at = |s: &str| l.find(s).unwrap();
+        assert_eq!(hover_expression(l, at("total") + 2).as_deref(), Some("total"));
+        assert_eq!(hover_expression(l, at("items") + 1).as_deref(), Some("obj.items"));
+        assert_eq!(hover_expression(l, at("add")).as_deref(), Some("add"));
+        assert_eq!(hover_expression(l, at("here")), None);
+        assert_eq!(hover_expression("s = \"x y\" if a else b", 5), None);
+        assert_eq!(hover_expression("s = \"x y\" if a else b", 10), None);
+        assert_eq!(hover_expression("s = \"x y\" if a else b", 13).as_deref(), Some("a"));
     }
 
     #[test]
