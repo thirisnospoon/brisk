@@ -30,13 +30,19 @@ pub fn has_package(python: &Path, package: &str) -> Option<bool> {
     Some(found)
 }
 
+/// The plugin's folder, written once per IDE session (not on every test run).
 fn plugin_dir() -> std::io::Result<PathBuf> {
+    static READY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    if let Some(d) = READY.get().filter(|d| d.join(format!("{PLUGIN_MODULE}.py")).is_file()) {
+        return Ok(d.clone());
+    }
     let dir = std::env::temp_dir().join("brisk-pytest");
     std::fs::create_dir_all(&dir)?;
     let f = dir.join(format!("{PLUGIN_MODULE}.py"));
     if std::fs::read_to_string(&f).ok().as_deref() != Some(PLUGIN_SRC) {
         std::fs::write(&f, PLUGIN_SRC)?;
     }
+    let _ = READY.set(dir.clone());
     Ok(dir)
 }
 

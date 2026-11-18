@@ -21,6 +21,14 @@ pub(super) struct Runs {
     pub dialog: Option<super::run_config_ui::RunDialog>,
     /// "Stop and Rerun" was picked for this configuration: start it without asking again.
     pub stop_confirmed: Option<String>,
+    /// `run.json` as last read or written (modified time, size): Shift+F10 parses it again
+    /// only when it changed on disk.
+    stamp: Option<(std::time::SystemTime, u64)>,
+}
+
+fn run_file_stamp(root: &Path) -> Option<(std::time::SystemTime, u64)> {
+    let m = std::fs::metadata(root.join(brisk_run::CONFIG_FILE)).ok()?;
+    Some((m.modified().ok()?, m.len()))
 }
 
 impl Runs {
@@ -30,7 +38,7 @@ impl Runs {
         if imported > 0 {
             let _ = brisk_run::save(root, &file);
         }
-        (Runs { file, venvs: brisk_run::project_venvs(root), all: None, panel: None, dialog: None, stop_confirmed: None }, imported)
+        (Runs { file, venvs: brisk_run::project_venvs(root), all: None, panel: None, dialog: None, stop_confirmed: None, stamp: run_file_stamp(root) }, imported)
     }
 
     fn known(&self) -> impl Iterator<Item = &Interpreter> {
@@ -86,17 +94,25 @@ impl Workspace {
     }
 
     pub(super) fn reload_runs(&mut self) {
+        let stamp = run_file_stamp(&self.root);
+        if stamp.is_some() && stamp == self.runs.stamp {
+            return;
+        }
         if let Ok(s) = std::fs::read_to_string(self.root.join(brisk_run::CONFIG_FILE)) {
             match serde_json::from_str::<RunFile>(&s) {
-                Ok(f) => self.runs.file = f,
+                Ok(f) => {
+                    self.runs.file = f;
+                    self.runs.stamp = stamp;
+                }
                 Err(e) => self.status = format!("{}: {e}", brisk_run::CONFIG_FILE),
             }
         }
     }
 
     pub(super) fn save_runs(&mut self) {
-        if let Err(e) = brisk_run::save(&self.root, &self.runs.file) {
-            self.status = format!("Cannot save {}: {e}", brisk_run::CONFIG_FILE);
+        match brisk_run::save(&self.root, &self.runs.file) {
+            Ok(()) => self.runs.stamp = run_file_stamp(&self.root),
+            Err(e) => self.status = format!("Cannot save {}: {e}", brisk_run::CONFIG_FILE),
         }
     }
 
