@@ -244,6 +244,12 @@ impl Workspace {
 
     /// Enter in the name / confirmation popup.
     pub(super) fn run_file_op(&mut self, target: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        // Moving a Python module: first ask ty which imports change (comes back here).
+        if let Some(FileOp::Rename(src) | FileOp::Move(src)) = self.file_op.clone() {
+            if self.will_move_python(&src, &target, window, cx) {
+                return;
+            }
+        }
         let Some(op) = self.file_op.take() else { return };
         let result: std::io::Result<()> = (|| {
             match &op {
@@ -269,6 +275,7 @@ impl Workspace {
             }
         })();
         if let Err(e) = result {
+            self.lsp.moved = None;
             self.status = format!("{} failed: {e}", op.title());
             cx.notify();
             return;
@@ -309,6 +316,9 @@ impl Workspace {
             FileOp::Delete(p) => format!("Moved {} to the Recycle Bin", self.rel(p)),
             _ => format!("{}: {}", op.title(), self.rel(&target)),
         };
+        if let FileOp::Rename(src) | FileOp::Move(src) = &op {
+            self.after_python_move(src, &target, cx);
+        }
         self.reindex_files(cx);
         self.refresh_git(cx);
         // A new or copied file opens in the editor, like PyCharm.
@@ -367,6 +377,7 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let list = task.await;
             let _ = this.update(cx, |this, cx| {
+                this.ty_files_rescanned(this.files.clone(), &list);
                 this.files = Some(Arc::new(list));
                 this.symbols.stale = true;
                 this.ensure_symbols(cx);
