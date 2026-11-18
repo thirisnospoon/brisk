@@ -69,6 +69,10 @@ pub enum RunKind {
     /// PyCharm's Compound: `target` lists other configurations (`;`-separated names), all
     /// started together, each in its own Run tab.
     Compound,
+    /// PyCharm's FastAPI template: `python -m uvicorn <target>`; `target` is `module:app`.
+    FastApi,
+    /// PyCharm's Flask server: `python -m flask --app <target> run`.
+    Flask,
 }
 
 impl RunKind {

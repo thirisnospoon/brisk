@@ -46,6 +46,8 @@ struct RunTab {
 pub enum RunEvent {
     /// A traceback / `file.py:12` link was clicked.
     Open(PathBuf, usize),
+    /// An `http(s)://` link was clicked (a server's address).
+    OpenUrl(String),
     Finished { name: String, code: Option<i32>, tests: Option<TestsOutcome> },
     /// The Rerun button: the workspace saves files first, then calls [`TerminalPanel::rerun`].
     RerunRequested,
@@ -276,6 +278,13 @@ impl TerminalPanel {
     }
 
     /// Ctrl+F2: stop the active tab's process (or any running one).
+    /// Stop every running process (smoke tests).
+    pub fn stop_all(&mut self) {
+        for t in self.tabs.iter().filter(|t| t.run.as_ref().is_some_and(|r| r.running)) {
+            t.session.kill();
+        }
+    }
+
     pub fn stop(&mut self) -> bool {
         let running = |t: &&Tab| t.run.as_ref().is_some_and(|r| r.running);
         let pick = self.tabs.get(self.active).filter(running).or_else(|| self.tabs.iter().find(running));
@@ -321,6 +330,27 @@ impl TerminalPanel {
     pub fn first_link(&self) -> Option<(PathBuf, usize)> {
         let text = self.active_text()?;
         text.lines().flat_map(brisk_run::find_links).find_map(|l| self.link_target(&l.path, l.line))
+    }
+
+    /// First `http(s)://` link in the active tab (smoke tests).
+    pub fn first_url(&self) -> Option<String> {
+        self.active_text()?.lines().flat_map(brisk_run::find_urls).map(|(_, u)| u).next()
+    }
+
+    /// Open the first `http(s)://` link as a click would (smoke tests).
+    pub fn click_first_url(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(u) = self.first_url() else { return false };
+        cx.emit(RunEvent::OpenUrl(u));
+        true
+    }
+
+    /// The `http(s)://` link under a grid cell, if any.
+    fn url_at(&self, row: usize, col: usize) -> Option<String> {
+        let snap = self.session()?.snapshot();
+        let cells = snap.cells.get(row * snap.cols..(row + 1) * snap.cols)?;
+        let (text, idx) = row_text(cells);
+        let ch = idx.iter().position(|&c| c >= col)?;
+        brisk_run::find_urls(&text).into_iter().find(|(r, _)| r.contains(&ch)).map(|(_, u)| u)
     }
 
     /// The link under a grid cell, if any.
@@ -462,6 +492,10 @@ impl TerminalPanel {
         if self.run_mode && e.click_count == 1 {
             if let Some((path, line)) = self.link_at(row, col) {
                 cx.emit(RunEvent::Open(path, line));
+                return;
+            }
+            if let Some(url) = self.url_at(row, col) {
+                cx.emit(RunEvent::OpenUrl(url));
                 return;
             }
         }
@@ -786,8 +820,9 @@ impl Element for TerminalElement {
             for r in 0..snap.rows {
                 let row = &mut snap.cells[r * snap.cols..(r + 1) * snap.cols];
                 let (text, idx) = row_text(row);
-                for l in brisk_run::find_links(&text) {
-                    for ch in l.cols {
+                let urls = brisk_run::find_urls(&text).into_iter().map(|(r, _)| r);
+                for cols in brisk_run::find_links(&text).into_iter().map(|l| l.cols).chain(urls) {
+                    for ch in cols {
                         if let Some(&c) = idx.get(ch) {
                             row[c].fg = LINK;
                             row[c].underline = true;

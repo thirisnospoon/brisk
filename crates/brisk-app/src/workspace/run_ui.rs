@@ -110,6 +110,15 @@ impl Workspace {
         let p = cx.new(|cx| TerminalPanel::new_run(root, cx));
         cx.subscribe_in(&p, window, |this: &mut Self, panel, ev: &RunEvent, window, cx| match ev {
             RunEvent::Open(path, line) => this.open_at(&path.clone(), *line, window, cx),
+            RunEvent::OpenUrl(url) => {
+                // A server bound to all interfaces is reached through localhost.
+                let url = url.replacen("://0.0.0.0", "://127.0.0.1", 1);
+                this.status = format!("Opening {url}");
+                if std::env::var_os("BRISK_SMOKE_WEB").is_none() {
+                    cx.open_url(&url);
+                }
+                this.last_url = Some(url);
+            }
             RunEvent::Finished { name, code, tests } => {
                 if let Some(t) = tests {
                     this.take_test_results(&t.results, cx);
@@ -170,6 +179,8 @@ impl Workspace {
         let for_path = |p: &Path, scope: &[String]| {
             if brisk_run::is_test_file(p) {
                 RunConfig::for_tests(&self.root, p, scope)
+            } else if let Some(c) = web_config(&self.root, p) {
+                c
             } else {
                 RunConfig::for_file(&self.root, p)
             }
@@ -216,6 +227,11 @@ impl Workspace {
         if cfg.kind == RunKind::Pytest && brisk_run::pytest::has_package(&python, "pytest") == Some(false) {
             let label = self.runs.lookup(&python).label(&self.root);
             self.show_toast(format!("pytest is not installed in {label}: run `pip install pytest` in the Terminal"), true, cx);
+            return;
+        }
+        if let Some(pkg) = brisk_run::web::server_package(cfg.kind).filter(|p| brisk_run::pytest::has_package(&python, p) == Some(false)) {
+            let label = self.runs.lookup(&python).label(&self.root);
+            self.show_toast(format!("{pkg} is not installed in {label}: run `pip install {pkg}` in the Terminal"), true, cx);
             return;
         }
         if !self.env_files_ok(&cfg, cx) {
@@ -363,6 +379,8 @@ impl Workspace {
                     let mut detail = match (c.kind, c.module) {
                         (RunKind::Pytest, _) => format!("pytest {}", c.target),
                         (RunKind::Compound, _) => format!("compound: {}", brisk_run::compound_names(&c.target).join(", ")),
+                        (RunKind::FastApi, _) => format!("uvicorn {}", c.target),
+                        (RunKind::Flask, _) => format!("flask --app {} run", c.target),
                         (_, true) => format!("-m {}", c.target),
                         _ => c.target.clone(),
                     };
@@ -648,6 +666,17 @@ impl Workspace {
 
 /// The pytest node path at a caret line: `["TestA", "test_b"]` inside a test method,
 /// `["TestA"]` elsewhere in a test class, `[]` outside tests.
+/// A file that defines a FastAPI / Flask application and has no `__main__` block runs as a
+/// server (PyCharm offers its FastAPI / Flask configuration for it).
+fn web_config(root: &Path, file: &Path) -> Option<RunConfig> {
+    let src = std::fs::read_to_string(file).ok()?;
+    if src.contains("__name__ == \"__main__\"") || src.contains("__name__ == '__main__'") {
+        return None;
+    }
+    let (kind, target) = brisk_run::web::app_target(root, file, &src)?;
+    Some(RunConfig::for_web(kind, file, target))
+}
+
 pub(super) fn test_scope(outline: &[brisk_syntax::OutlineItem], line: usize) -> Vec<String> {
     let mut enclosing: Vec<&brisk_syntax::OutlineItem> = outline.iter().filter(|o| o.line <= line && line <= o.end_line).collect();
     enclosing.sort_by_key(|o| o.depth);

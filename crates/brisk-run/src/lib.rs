@@ -6,11 +6,12 @@ mod interp;
 mod links;
 pub mod pytest;
 pub mod envfile;
+pub mod web;
 
 pub use config::{compound_names, import_idea, load, save, BeforeStep, RunConfig, RunFile, RunKind, CONFIG_FILE, MAX_TEMPORARY};
 pub use pytest::{is_test_file, split_nodeid, TestFeed, TestStatus, TestTree};
 pub use interp::{discover_all, probe, project_venvs, venv_python, InterpKind, Interpreter};
-pub use links::{find_links, Link};
+pub use links::{find_links, find_urls, Link};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -119,6 +120,12 @@ pub fn shell_command(root: &Path, cfg: &RunConfig, python: &Path, line: &str) ->
 
 pub fn build(root: &Path, cfg: &RunConfig, python: &Path) -> Command {
     let mut args = split_args(&cfg.interpreter_options);
+    if matches!(cfg.kind, RunKind::FastApi | RunKind::Flask) {
+        // Servers import `module:app` from the working directory (the project root by default).
+        args.extend(web::args(cfg));
+        let cwd = if cfg.working_directory.trim().is_empty() { root.to_path_buf() } else { resolve(root, &cfg.working_directory) };
+        return finish(root, cfg, python, args, cwd);
+    }
     if cfg.kind == RunKind::Pytest {
         return build_pytest(root, cfg, python, args);
     }

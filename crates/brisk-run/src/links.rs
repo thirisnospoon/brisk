@@ -65,3 +65,24 @@ pub fn find_links(line: &str) -> Vec<Link> {
     }
     out
 }
+
+/// `http://` and `https://` links in a line: character columns and the URL (trailing
+/// punctuation and closing brackets left out).
+pub fn find_urls(line: &str) -> Vec<(Range<usize>, String)> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(i) = ["http://", "https://"].iter().filter_map(|p| line[from..].find(p)).min() {
+        let s = from + i;
+        let len = line[s..].find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '`')).unwrap_or(line.len() - s);
+        let mut url = &line[s..s + len];
+        url = url.trim_end_matches(['.', ',', ';', ':', '!', '?']);
+        if url.ends_with(')') && !url.contains('(') {
+            url = &url[..url.len() - 1];
+        }
+        if url.len() > "https://".len() {
+            out.push((char_col(line, s)..char_col(line, s + url.len()), url.to_string()));
+        }
+        from = s + len.max(1);
+    }
+    out
+}

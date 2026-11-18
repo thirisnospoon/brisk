@@ -39,14 +39,18 @@ pub enum Kind {
     Module,
     Pytest,
     Compound,
+    FastApi,
+    Flask,
 }
 
 impl Kind {
-    const ALL: [Kind; 4] = [Kind::Script, Kind::Module, Kind::Pytest, Kind::Compound];
+    const ALL: [Kind; 6] = [Kind::Script, Kind::Module, Kind::Pytest, Kind::FastApi, Kind::Flask, Kind::Compound];
     fn of(c: &RunConfig) -> Kind {
         match (c.kind, c.module) {
             (RunKind::Pytest, _) => Kind::Pytest,
             (RunKind::Compound, _) => Kind::Compound,
+            (RunKind::FastApi, _) => Kind::FastApi,
+            (RunKind::Flask, _) => Kind::Flask,
             (_, true) => Kind::Module,
             _ => Kind::Script,
         }
@@ -57,12 +61,23 @@ impl Kind {
             Kind::Module => "Module name",
             Kind::Pytest => "pytest",
             Kind::Compound => "Compound",
+            Kind::FastApi => "FastAPI",
+            Kind::Flask => "Flask",
+        }
+    }
+    fn web(self) -> Option<RunKind> {
+        match self {
+            Kind::FastApi => Some(RunKind::FastApi),
+            Kind::Flask => Some(RunKind::Flask),
+            _ => None,
         }
     }
     fn apply(self, c: &mut RunConfig) {
         c.kind = match self {
             Kind::Pytest => RunKind::Pytest,
             Kind::Compound => RunKind::Compound,
+            Kind::FastApi => RunKind::FastApi,
+            Kind::Flask => RunKind::Flask,
             _ => RunKind::Python,
         };
         c.module = self == Kind::Module;
@@ -102,6 +117,9 @@ pub struct RunDialog {
     caret: usize,
     select_all: bool,
     error: Option<String>,
+    /// The project's FastAPI and Flask applications (`module:app`), found when the dialog
+    /// opens: a new or switched configuration of that kind gets it as its target.
+    apps: Vec<(RunKind, String)>,
 }
 
 pub fn env_to_text(env: &BTreeMap<String, String>) -> String {
@@ -163,6 +181,7 @@ fn label(f: Field, kind: Kind) -> &'static str {
             Kind::Module => "Module:",
             Kind::Pytest => "Target:",
             Kind::Compound => "Configurations:",
+            Kind::FastApi | Kind::Flask => "Application:",
         },
         Field::Keywords => "Keywords (-k):",
         Field::Parameters => "Parameters:",
@@ -302,10 +321,22 @@ impl RunDialog {
                 let k = Kind::of(&d.cfg);
                 let i = Kind::ALL.iter().position(|x| *x == k).unwrap_or(0);
                 let n = Kind::ALL.len();
-                Kind::ALL[if back { (i + n - 1) % n } else { (i + 1) % n }].apply(&mut d.cfg);
+                let k = Kind::ALL[if back { (i + n - 1) % n } else { (i + 1) % n }];
+                self.set_kind(k);
             }
             Field::Temporary => d.cfg.temporary = !d.cfg.temporary,
             _ => {}
+        }
+    }
+
+    /// Switch the shown configuration's kind; a server kind gets the detected application
+    /// unless its target already looks like `module:app`.
+    fn set_kind(&mut self, k: Kind) {
+        let app = k.web().and_then(|w| self.apps.iter().find(|(a, _)| *a == w)).map(|(_, t)| t.clone());
+        let Some(d) = self.draft() else { return };
+        k.apply(&mut d.cfg);
+        if let Some(t) = app.filter(|_| !d.cfg.target.contains(':')) {
+            d.cfg.target = t;
         }
     }
 
@@ -314,12 +345,14 @@ impl RunDialog {
         let base = match kind {
             Kind::Pytest => "pytest",
             Kind::Compound => "Compound",
+            Kind::FastApi => "FastAPI",
+            Kind::Flask => "Flask",
             _ => "Unnamed",
         };
-        let mut cfg = RunConfig { name: unique_name(base, &taken), ..Default::default() };
-        kind.apply(&mut cfg);
+        let cfg = RunConfig { name: unique_name(base, &taken), ..Default::default() };
         self.drafts.push(Draft::new(cfg));
         self.current = self.drafts.len() - 1;
+        self.set_kind(kind);
         self.focus(Field::Name, true);
     }
 
@@ -382,6 +415,9 @@ impl RunDialog {
                 };
                 return Err((i, Field::BeforeRun, format!("'{}': before launch, '{n}' is {why}", c.name)));
             }
+            if matches!(c.kind, RunKind::FastApi | RunKind::Flask) && c.target.trim().is_empty() {
+                return Err((i, Field::Target, format!("'{}': Application is empty (module:app)", c.name)));
+            }
             if c.kind == RunKind::Python && c.target.trim().is_empty() {
                 let what = if c.module { "Module name" } else { "Script path" };
                 return Err((i, Field::Target, format!("'{}': {what} is empty", c.name)));
@@ -401,7 +437,8 @@ impl Workspace {
         if let Some(i) = current {
             drafts[i].selected = true;
         }
-        let mut d = RunDialog { drafts, current: current.unwrap_or(0), field: Field::Name, caret: 0, select_all: false, error: None };
+        let mut d = RunDialog { drafts, current: current.unwrap_or(0), field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new() };
+        d.apps = [RunKind::FastApi, RunKind::Flask].into_iter().filter_map(|k| brisk_run::web::find_app(&self.root, Some(k)).map(|(k, _, t)| (k, t))).collect();
         d.focus(Field::Name, false);
         self.runs.dialog = Some(d);
         cx.notify();
@@ -566,6 +603,8 @@ impl Workspace {
             .child(tool("rc-add-py", "+ Py", "Add Python script configuration (Alt+Insert)", cx, |d| d.add(Kind::Script)))
             .child(tool("rc-add-mod", "+ -m", "Add Python module configuration", cx, |d| d.add(Kind::Module)))
             .child(tool("rc-add-pt", "+ pytest", "Add pytest configuration", cx, |d| d.add(Kind::Pytest)))
+            .child(tool("rc-add-fastapi", "+ FastAPI", "Add FastAPI configuration (uvicorn module:app)", cx, |d| d.add(Kind::FastApi)))
+            .child(tool("rc-add-flask", "+ Flask", "Add Flask server configuration (flask run)", cx, |d| d.add(Kind::Flask)))
             .child(tool("rc-add-comp", "+ Compound", "Add Compound configuration (runs several together)", cx, |d| d.add(Kind::Compound)))
             .child(tool("rc-copy", "⧉", "Copy configuration (Ctrl+D)", cx, |d| d.copy()))
             .child(tool("rc-remove", "−", "Remove configuration (Alt+Delete)", cx, |d| d.remove()))
@@ -580,6 +619,7 @@ impl Workspace {
                 let glyph = match Kind::of(&dr.cfg) {
                     Kind::Pytest => "⚗",
                     Kind::Compound => "◈",
+                    Kind::FastApi | Kind::Flask => "◎",
                     _ => "▶",
                 };
                 let name = if dr.cfg.name.trim().is_empty() { "<unnamed>".to_string() } else { dr.cfg.name.clone() };
@@ -632,9 +672,7 @@ impl Workspace {
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
                                     if let Some(d) = this.runs.dialog.as_mut() {
-                                        if let Some(dr) = d.draft() {
-                                            k.apply(&mut dr.cfg);
-                                        }
+                                        d.set_kind(k);
                                         d.field = Field::Kind;
                                     }
                                     cx.notify();
@@ -686,7 +724,11 @@ impl Workspace {
                                 Kind::Module => "package.module".to_string(),
                                 Kind::Pytest => "tests, tests/test_x.py::test_y (empty: everything)".to_string(),
                                 Kind::Compound => "server;client (names of other configurations)".to_string(),
+                                Kind::FastApi => "main:app (module:variable; no app found in the project)".to_string(),
+                                Kind::Flask => "app:app or app:create_app() (no app found in the project)".to_string(),
                             },
+                            Field::Parameters if kind == Kind::FastApi => "uvicorn options, e.g. --reload --port 8001".into(),
+                            Field::Parameters if kind == Kind::Flask => "flask run options, e.g. --debug --port 5001".into(),
                             Field::WorkingDirectory => if kind == Kind::Script { "the script's folder".into() } else { "the project root".into() },
                             Field::Env => "KEY=VALUE;KEY2=VALUE2 (wins over .env files)".into(),
                             Field::EnvFiles => ".env;config/dev.env (KEY=VALUE lines)".into(),
@@ -1026,6 +1068,15 @@ fn command_preview(root: &std::path::Path, c: &RunConfig, interp: &str) -> Strin
     }
     let python = c.interpreter.clone().unwrap_or_else(|| interp.to_string());
     let target = match (c.kind, c.module) {
+        (RunKind::FastApi | RunKind::Flask, _) => {
+            // web::args already carries the parameters.
+            let mut parts = vec![python];
+            if !c.interpreter_options.is_empty() {
+                parts.push(c.interpreter_options.clone());
+            }
+            parts.extend(brisk_run::web::args(c));
+            return format!("› {}", parts.join(" "));
+        }
         (RunKind::Pytest, _) => {
             let mut s = format!("-m pytest {}", c.target);
             if !c.keywords.is_empty() {
@@ -1068,7 +1119,7 @@ mod tests {
 
     #[test]
     fn dialog_editing() {
-        let mut d = RunDialog { drafts: Vec::new(), current: 0, field: Field::Name, caret: 0, select_all: false, error: None };
+        let mut d = RunDialog { drafts: Vec::new(), current: 0, field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new() };
         d.add(Kind::Script);
         assert_eq!(d.drafts[0].cfg.name, "Unnamed");
         assert!(d.select_all);
@@ -1091,5 +1142,22 @@ mod tests {
         d.add(Kind::Pytest);
         assert_eq!(d.drafts[1].cfg.kind, RunKind::Pytest);
         assert!(d.validate().is_ok(), "pytest may have an empty target");
+    }
+}
+
+impl Workspace {
+    /// The targets "+ FastAPI" and "+ Flask" get in a freshly opened dialog (smoke tests).
+    pub(super) fn web_dialog_probe(&mut self, cx: &mut Context<Self>) -> Vec<(String, String)> {
+        self.open_run_dialog(cx);
+        let Some(d) = self.runs.dialog.as_mut() else { return Vec::new() };
+        let mut out = Vec::new();
+        for k in [Kind::FastApi, Kind::Flask] {
+            d.add(k);
+            if let Some(dr) = d.drafts.last() {
+                out.push((dr.cfg.name.clone(), dr.cfg.target.clone()));
+            }
+        }
+        self.runs.dialog = None;
+        out
     }
 }

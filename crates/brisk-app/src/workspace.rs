@@ -41,6 +41,7 @@ mod terminal_env_ui;
 mod coverage_ui;
 mod profile_ui;
 mod before_launch_ui;
+mod web_smoke;
 mod templates_ui;
 mod win_input;
 
@@ -321,6 +322,8 @@ pub struct Workspace {
     before: Option<before_launch_ui::Chain>,
     /// The configuration whose Before launch just passed (its launch skips the check once).
     before_passed: Option<String>,
+    /// The last `http(s)://` link opened from the Run console.
+    last_url: Option<String>,
     /// pytest results per file for the run icons in the gutter.
     test_marks: run_marks_ui::TestMarks,
     /// Created on first open of Python Packages.
@@ -428,6 +431,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_WEB").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.web_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_BEFORE").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.before_smoke(window, cx));
@@ -604,6 +610,7 @@ impl Workspace {
             prof_pending: None,
             before: None,
             before_passed: None,
+            last_url: None,
             test_marks: Default::default(),
             packages: None,
             todo: None,
