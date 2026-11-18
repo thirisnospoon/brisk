@@ -92,6 +92,9 @@ impl Workspace {
             if !["annotate", "merge", "stash", "history", "log", "logmenu"].iter().any(|p| hold(p)) {
                 Self::smoke_compare(&this, cx, &bg, &root).await;
             }
+            if !["annotate", "merge", "stash", "history", "log", "logmenu"].iter().any(|p| hold(p)) {
+                Self::smoke_push(&this, cx, &bg, &root).await;
+            }
             let _ = this.update(cx, |_, cx| {
                 eprintln!("smoke-gitx: done");
                 if std::env::var_os("BRISK_SMOKE_GITX_HOLD").is_none() {
@@ -489,6 +492,88 @@ impl Workspace {
         });
         pause(bg, 1500).await;
         eprintln!("smoke-gitx: after rollback -> {:?}", sh(root, &["status", "--porcelain"]));
+    }
+
+    /// Push into a bare repository next to the scratch folder, then Fetch and Update Project
+    /// bring in a commit pushed from a second clone.
+    async fn smoke_push(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
+        fn dialog(this: &Workspace) -> String {
+            match this.git.as_ref().and_then(|g| g.dialog.as_ref()) {
+                Some(super::git_merge_ui::GitDialog::Push(d)) => match (&d.outgoing, &d.error) {
+                    (Some(o), _) => {
+                        let subjects: Vec<&str> = o.commits.iter().map(|c| c.subject.as_str()).collect();
+                        let files: Vec<&str> = d.files.iter().map(|f| f.path.as_str()).collect();
+                        format!("to {} new={} commits {subjects:?}, files of the first {files:?}", o.target, o.new_branch)
+                    }
+                    (None, e) => format!("error {e:?}"),
+                },
+                _ => "no push dialog".into(),
+            }
+        }
+        fn toast(this: &Workspace) -> String {
+            this.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default()
+        }
+        let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let origin = root.with_file_name(format!("{name}-origin.git"));
+        let other = root.with_file_name(format!("{name}-other"));
+        let _ = std::fs::remove_dir_all(&origin);
+        let _ = std::fs::remove_dir_all(&other);
+        let origin_s = origin.to_string_lossy().into_owned();
+        sh(root, &["init", "-q", "--bare", &origin_s]);
+        let _ = this.update_in(cx, |this, window, cx| {
+            this.dispatch(Action::Push, window, cx);
+        });
+        pause(bg, 1000).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: push without a remote -> {}", dialog(this));
+            this.smoke_press("escape", window, cx);
+        });
+        sh(root, &["remote", "add", "origin", &origin_s]);
+        let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::Push, window, cx));
+        pause(bg, 1000).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: push dialog (new branch) -> {}", dialog(this));
+            this.smoke_press("enter", window, cx);
+        });
+        pause(bg, 2000).await;
+        let _ = this.update(cx, |this, _| eprintln!("smoke-gitx: pushed -> toast {:?}, origin has {} commits", toast(this), sh(&this.root, &["rev-list", "--count", "origin/main"]).trim()));
+        let _ = std::fs::write(root.join("pushme.py"), "p = 1\n");
+        sh(root, &["add", "pushme.py"]);
+        commit_as(root, "Alice", "2025-08-01T10:00:00", "Add pushme.py");
+        let _ = this.update_in(cx, |this, window, cx| {
+            this.refresh_git(cx);
+            this.dispatch(Action::Push, window, cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: push dialog (1 commit) -> {}", dialog(this));
+            if hold("push") {
+                return;
+            }
+            this.smoke_press("enter", window, cx);
+        });
+        if hold("push") {
+            return;
+        }
+        pause(bg, 2000).await;
+        let _ = this.update(cx, |this, _| eprintln!("smoke-gitx: pushed again -> toast {:?}", toast(this)));
+        // A teammate pushes: Fetch reports it, Update Project merges it in.
+        sh(root, &["clone", "-q", "-b", "main", &origin_s, &other.to_string_lossy()]);
+        sh(&other, &["config", "user.name", "Carol"]);
+        sh(&other, &["config", "user.email", "carol@example.com"]);
+        let _ = std::fs::write(other.join("remote.py"), "r = 1\n");
+        sh(&other, &["add", "remote.py"]);
+        sh(&other, &["commit", "-q", "-m", "Add remote.py"]);
+        sh(&other, &["push", "-q"]);
+        let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::Fetch, window, cx));
+        pause(bg, 2000).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: fetch -> toast {:?}", toast(this));
+            this.dispatch(Action::UpdateProject, window, cx);
+        });
+        pause(bg, 2500).await;
+        let _ = this.update(cx, |this, _| eprintln!("smoke-gitx: update project -> toast {:?}, remote.py exists {}", toast(this), this.root.join("remote.py").exists()));
+        let _ = std::fs::remove_dir_all(&other);
     }
 
     /// Labels of the open context menu (smoke tests).

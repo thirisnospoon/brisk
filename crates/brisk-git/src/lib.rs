@@ -8,11 +8,13 @@ mod diff;
 mod graph;
 mod log_query;
 mod merge;
+mod remote;
 mod stash;
 
 pub use blame::{parse_blame, BlameLine};
 pub use diff::{align, line_changes, AlignedRow, LineChange, LineChangeKind, RowKind};
 pub use stash::StashEntry;
+pub use remote::Outgoing;
 pub use log_query::LogQuery;
 pub use merge::{lines_of, merge3, Chunk, ConflictVersions};
 pub use graph::{layout, GraphRow, Segment};

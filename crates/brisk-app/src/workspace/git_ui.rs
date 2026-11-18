@@ -400,12 +400,13 @@ impl Workspace {
                 }
                 self.refresh_git(cx);
             }
-            A::Push => self.git_op("Push", |r| r.push().map(|_| "Pushed successfully".into()), |_, _| {}, cx),
+            A::Push => self.open_push_dialog(cx),
+            A::Fetch => self.git_op("Fetch", |r| r.fetch_summary(), |_, _| {}, cx),
             A::UpdateProject => {
                 self.save_all(cx);
                 self.git_op(
                     "Update Project",
-                    |r| r.pull().map(|out| if out.contains("Already up to date") { "All files are up-to-date".into() } else { "Project updated".into() }),
+                    |r| r.update_project(),
                     |_, _| {},
                     cx,
                 );
@@ -575,14 +576,13 @@ impl Workspace {
             move |r| {
                 let short = r.commit(&msg, &paths, amend, &untracked)?;
                 let s = if n == 1 { "" } else { "s" };
-                if push {
-                    r.push()?;
-                    Ok(format!("{n} file{s} committed and pushed: {subject} ({short})"))
-                } else {
-                    Ok(format!("{n} file{s} committed: {subject} ({short})"))
-                }
+                Ok(format!("{n} file{s} committed: {subject} ({short})"))
             },
-            |this, cx| {
+            move |this, cx| {
+                // Commit and Push…: the Push dialog follows, like PyCharm.
+                if push {
+                    this.open_push_dialog(cx);
+                }
                 if let Some(g) = this.git.as_mut() {
                     g.amend = false;
                     g.message.update(cx, |e, cx| {
@@ -634,7 +634,7 @@ impl Workspace {
             }
             PopupKind::VcsOperations => {
                 use Action as A;
-                [A::Commit, A::Push, A::UpdateProject, A::Branches, A::ShowDiff, A::RollbackChanges, A::Annotate, A::ShowFileHistory, A::CompareWithBranch, A::ResolveConflicts, A::StashChanges, A::UnstashChanges, A::ToggleGitWindow, A::ToggleCommitWindow]
+                [A::Commit, A::Push, A::UpdateProject, A::Fetch, A::Branches, A::ShowDiff, A::RollbackChanges, A::Annotate, A::ShowFileHistory, A::CompareWithBranch, A::ResolveConflicts, A::StashChanges, A::UnstashChanges, A::ToggleGitWindow, A::ToggleCommitWindow]
                     .into_iter()
                     .filter(|a| a.info().title.to_lowercase().contains(&ql))
                     .map(|a| PopupItem {

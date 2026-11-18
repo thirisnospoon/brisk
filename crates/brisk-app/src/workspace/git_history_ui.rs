@@ -176,7 +176,7 @@ impl Workspace {
     }
 
     pub(super) fn history_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(d) = self.history() else { return };
+        let Some(d) = self.history() else { return self.push_key(e, window, cx) };
         let sel = d.selected;
         match e.keystroke.key.as_str() {
             "up" => self.history_select(sel.saturating_sub(1), cx),
@@ -192,7 +192,7 @@ impl Workspace {
     pub(super) fn render_history_dialog(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let d = match self.git.as_ref()?.dialog.as_ref()? {
             GitDialog::History(d) => d,
-            _ => return None,
+            _ => return self.render_push_dialog(cx),
         };
         let rows = d.commits.iter().enumerate().map(|(i, c)| {
             let on = i == d.selected;

@@ -169,3 +169,43 @@ fn log_filters() {
     assert!(authors.contains(&"Bob".to_string()) && authors.contains(&"Test".to_string()), "{authors:?}");
     let _ = fs::remove_dir_all(&d);
 }
+
+#[test]
+fn push_pull_fetch() {
+    let (d, repo) = temp_repo("remote");
+    let origin = d.with_file_name(format!("{}-origin.git", d.file_name().unwrap().to_string_lossy()));
+    let _ = fs::remove_dir_all(&origin);
+    let other = d.with_file_name(format!("{}-other", d.file_name().unwrap().to_string_lossy()));
+    let _ = fs::remove_dir_all(&other);
+    sh(&d, &["init", "-q", "--bare", origin.to_str().unwrap()]);
+    fs::write(d.join("a.py"), "x = 1\n").unwrap();
+    let files = vec!["a.py".to_string()];
+    repo.commit("first", &files, false, &files).unwrap();
+    assert!(repo.outgoing().is_err(), "no remote yet");
+    sh(&d, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    let o = repo.outgoing().unwrap();
+    assert!(o.new_branch && o.commits.len() == 1, "{o:?}");
+    assert!(repo.push_outgoing(&o).unwrap().starts_with("Pushed 1 commit to new branch origin/"));
+    fs::write(d.join("a.py"), "x = 2\n").unwrap();
+    repo.commit("second", &files, false, &[]).unwrap();
+    let o = repo.outgoing().unwrap();
+    assert!(!o.new_branch, "{o:?}");
+    assert_eq!(o.commits.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(), vec!["second"]);
+    assert_eq!(repo.push_outgoing(&o).unwrap(), format!("Pushed 1 commit to {}", o.target));
+    assert!(repo.outgoing().unwrap().commits.is_empty());
+    // Someone else pushes: Fetch reports it, Update Project brings it in.
+    let branch = o.target.split_once('/').unwrap().1.to_string();
+    sh(&d, &["clone", "-q", "-b", &branch, origin.to_str().unwrap(), other.to_str().unwrap()]);
+    sh(&other, &["config", "user.name", "Other"]);
+    sh(&other, &["config", "user.email", "other@example.com"]);
+    fs::write(other.join("b.py"), "y = 1\n").unwrap();
+    sh(&other, &["add", "b.py"]);
+    sh(&other, &["commit", "-q", "-m", "from other"]);
+    sh(&other, &["push", "-q"]);
+    assert_eq!(repo.fetch_summary().unwrap(), format!("Fetched: 1 commit incoming from {}", o.target));
+    assert_eq!(repo.update_project().unwrap(), "Updated: 1 commit, 1 file changed");
+    assert_eq!(repo.update_project().unwrap(), "All files are up-to-date");
+    let _ = fs::remove_dir_all(&d);
+    let _ = fs::remove_dir_all(&origin);
+    let _ = fs::remove_dir_all(&other);
+}

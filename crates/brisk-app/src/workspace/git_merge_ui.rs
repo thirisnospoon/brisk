@@ -40,6 +40,7 @@ pub enum GitDialog {
     Merge(MergeDialog),
     Stash(super::git_stash_ui::StashDialog),
     History(super::git_history_ui::HistoryDialog),
+    Push(super::git_push_ui::PushDialog),
 }
 
 impl MergeDialog {

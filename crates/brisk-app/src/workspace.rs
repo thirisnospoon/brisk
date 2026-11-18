@@ -10,6 +10,7 @@ mod edit_smoke;
 mod files_ui;
 mod find_ui;
 mod git_annotate_ui;
+mod git_push_ui;
 mod git_compare_ui;
 mod git_history_ui;
 mod git_log_filter;
@@ -982,7 +983,7 @@ impl Workspace {
                     self.refresh_git(cx);
                 }
             }
-            A::Commit | A::Push | A::UpdateProject | A::VcsQuickList | A::Branches | A::ShowDiff | A::RollbackChanges | A::Annotate | A::ResolveConflicts | A::StashChanges | A::UnstashChanges | A::ShowFileHistory | A::CompareWithBranch => {
+            A::Commit | A::Push | A::UpdateProject | A::VcsQuickList | A::Branches | A::ShowDiff | A::RollbackChanges | A::Annotate | A::ResolveConflicts | A::StashChanges | A::UnstashChanges | A::ShowFileHistory | A::CompareWithBranch | A::Fetch => {
                 self.git_action(action, window, cx)
             }
             A::ToggleStructureWindow => self.toggle_left(LeftTool::Structure, window, cx),
