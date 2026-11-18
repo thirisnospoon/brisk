@@ -616,7 +616,12 @@ impl Workspace {
                     v.push(PopupItem { label: "New Branch…".into(), detail: String::new(), hint: String::new(), target: Target::NewBranch });
                 }
                 for b in g.branches.iter().filter(|b| b.name.to_lowercase().contains(&ql)) {
-                    let detail = match (b.current, b.remote, &b.upstream) {
+                    // "origin/<same name>" says nothing new: just the remote.
+                    let upstream = b.upstream.as_ref().map(|u| match u.split_once('/') {
+                        Some((remote, rest)) if rest == b.name => remote.to_string(),
+                        _ => u.clone(),
+                    });
+                    let detail = match (b.current, b.remote, &upstream) {
                         (true, _, Some(u)) => format!("current · tracks {u}"),
                         (true, _, None) => "current".into(),
                         (false, true, _) => "remote".into(),
