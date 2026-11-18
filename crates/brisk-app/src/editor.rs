@@ -29,6 +29,7 @@ mod marks;
 mod lsp;
 mod inlay;
 mod middle_click;
+mod middle_scroll;
 mod big;
 mod extract;
 mod local_sig;
@@ -84,6 +85,10 @@ pub struct Editor {
     big: big::BigFile,
     /// A scrollbar thumb being dragged.
     drag: Option<scroll::Drag>,
+    /// The scrollbar under the mouse.
+    bar_hover: Option<scroll::Bar>,
+    /// Middle-button scrolling in progress.
+    middle: Option<middle_scroll::MiddleScroll>,
     /// Pointer position during a selection drag (drives auto-scroll past the edges).
     drag_pos: Option<Point<Pixels>>,
     autoscrolling: bool,
@@ -267,6 +272,8 @@ impl Editor {
             max_line: (u64::MAX, 0),
             big: Default::default(),
             drag: None,
+            bar_hover: None,
+            middle: None,
             drag_pos: None,
             autoscrolling: false,
             column_anchor: None,
@@ -331,6 +338,8 @@ impl Editor {
             max_line: (u64::MAX, 0),
             big: Default::default(),
             drag: None,
+            bar_hover: None,
+            middle: None,
             drag_pos: None,
             autoscrolling: false,
             column_anchor: None,
@@ -985,6 +994,10 @@ impl Editor {
 
     fn on_mouse_move(&mut self, e: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         let in_gutter = self.show_gutter && self.layout.as_ref().is_some_and(|l| e.position.x < l.text_left);
+        if e.pressed_button == Some(MouseButton::Middle) {
+            self.middle_move(e.position);
+        }
+        self.hover_scrollbar(Some(e.position), cx);
         if in_gutter != self.gutter_hover {
             self.gutter_hover = in_gutter;
             cx.notify();
@@ -1245,10 +1258,17 @@ impl Render for Editor {
             .flex_1()
             .min_h(px(0.))
             .relative()
-            .cursor(gpui::CursorStyle::IBeam)
+            .cursor(if self.middle_active() {
+                gpui::CursorStyle::ResizeUpDown
+            } else if self.bar_hover.is_some() || self.drag.is_some() {
+                gpui::CursorStyle::Arrow
+            } else {
+                gpui::CursorStyle::IBeam
+            })
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_down))
             .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_middle_down))
+            .on_mouse_up(MouseButton::Middle, cx.listener(|this, _, _, cx| this.middle_up(true, cx)))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -1258,10 +1278,14 @@ impl Render for Editor {
                     this.gutter_hover = false;
                     cx.notify();
                 }
+                if !*hovered {
+                    this.hover_scrollbar(None, cx);
+                }
             }))
             .child(EditorElement { editor: cx.entity() })
             .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))
             .when_some(self.render_tooltip(), |d, t| d.child(t))
+            .when_some(self.render_middle_anchor(), |d, a| d.child(a))
             .when_some(self.render_annotation_tip(), |d, t| d.child(t))
             .children(self.render_insight(cx));
         gpui::div()
@@ -1806,13 +1830,22 @@ impl Element for EditorElement {
                     }
                 }
             }
-            let thumb = Theme::scroll_thumb();
+            // Hovered or dragged: a faint track, and a lighter thumb 2 px thicker.
+            let look = |bar| if ed.bar_hot(bar) { (Theme::scroll_thumb_hot(), scroll::BAR - 2.) } else { (Theme::scroll_thumb(), scroll::BAR - 4.) };
             if let Some((top, h)) = ed.v_thumb(vh) {
-                thumbs.push(fill(Bounds::new(point(bounds.right() - px(scroll::BAR - 2.), bounds.top() + px(top)), size(px(scroll::BAR - 4.), px(h))), thumb).corner_radii(px(4.)));
+                let (color, t) = look(scroll::Bar::Vertical);
+                if ed.bar_hot(scroll::Bar::Vertical) {
+                    thumbs.push(fill(Bounds::new(point(bounds.right() - px(scroll::BAR), bounds.top()), size(px(scroll::BAR), px(vh))), Theme::scroll_track_hot()));
+                }
+                thumbs.push(fill(Bounds::new(point(bounds.right() - px(t + 1.), bounds.top() + px(top)), size(px(t), px(h))), color).corner_radii(px(t / 2.)));
             }
             let vw = f32::from(bounds.right() - text_left) - scroll::BAR;
             if let Some((left, w)) = ed.h_thumb(vw) {
-                thumbs.push(fill(Bounds::new(point(text_left + px(left), bounds.bottom() - px(scroll::BAR - 2.)), size(px(w), px(scroll::BAR - 4.))), thumb).corner_radii(px(4.)));
+                let (color, t) = look(scroll::Bar::Horizontal);
+                if ed.bar_hot(scroll::Bar::Horizontal) {
+                    thumbs.push(fill(Bounds::new(point(text_left, bounds.bottom() - px(scroll::BAR)), size(px(vw), px(scroll::BAR))), Theme::scroll_track_hot()));
+                }
+                thumbs.push(fill(Bounds::new(point(text_left + px(left), bounds.bottom() - px(t + 1.)), size(px(w), px(t))), color).corner_radii(px(t / 2.)));
             }
         }
         let dragging = ed.selecting || ed.drag.is_some();
@@ -1915,6 +1948,28 @@ impl Element for EditorElement {
                 window.paint_quad(q);
             }
         });
+        // Middle-button scrolling: follow the mouse anywhere in the window until the release.
+        if self.editor.read(cx).middle_active() {
+            let ed = self.editor.clone();
+            window.on_mouse_event(move |e: &MouseMoveEvent, phase, _, cx| {
+                if phase == gpui::DispatchPhase::Bubble {
+                    ed.update(cx, |ed, cx| {
+                        if e.pressed_button == Some(MouseButton::Middle) {
+                            ed.middle_move(e.position);
+                        } else {
+                            // Released where we did not see it (outside the window).
+                            ed.middle_up(false, cx);
+                        }
+                    });
+                }
+            });
+            let ed = self.editor.clone();
+            window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| {
+                if phase == gpui::DispatchPhase::Bubble && e.button == MouseButton::Middle {
+                    ed.update(cx, |ed, cx| ed.middle_up(true, cx));
+                }
+            });
+        }
         // While dragging (selection or a scrollbar), follow the mouse anywhere in the window.
         if dragging {
             let ed = self.editor.clone();

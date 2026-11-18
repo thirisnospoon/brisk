@@ -1,7 +1,8 @@
 //! Middle click on a name goes to its declaration, as Ctrl+Click does (PyCharm's default
-//! mouse shortcut for Go to Declaration or Usages).
+//! mouse shortcut for Go to Declaration or Usages). The press arms middle-button scrolling
+//! (middle_scroll.rs); the declaration opens on release if the mouse did not move.
 
-use super::{Editor, EditorEvent};
+use super::Editor;
 use gpui::{Context, MouseDownEvent, Window};
 
 impl Editor {
@@ -12,10 +13,7 @@ impl Editor {
         self.insight.completion = None;
         self.insight.doc = None;
         self.insight.signature = None;
-        if let Some(pos) = self.pos_for_point(e.position) {
-            cx.emit(EditorEvent::CtrlClick(pos));
-        }
-        cx.notify();
+        self.middle_scroll_start(e.position, window, cx);
     }
 
     /// Without ty: where the name at `pos` is declared in this file (a `def`, a `class`, or its

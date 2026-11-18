@@ -1,5 +1,7 @@
 //! Scrolling: horizontal scroll for long lines, the scrollbars (with error, change and search
 //! marks on the vertical one), dragging them, and auto-scroll while selecting past an edge.
+//! Over a scrollbar the pointer is an arrow and the thumb gets lighter and wider (also while
+//! it is dragged); a click on the track beside the thumb scrolls a page toward the click.
 
 use super::{line_height, Editor};
 use gpui::{Context, MouseMoveEvent, Pixels, Point, Window};
@@ -7,6 +9,13 @@ use gpui::{Context, MouseMoveEvent, Pixels, Point, Window};
 /// Scrollbar track thickness.
 pub(super) const BAR: f32 = 12.0;
 const MIN_THUMB: f32 = 24.0;
+
+/// A scrollbar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Bar {
+    Vertical,
+    Horizontal,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Drag {
@@ -92,7 +101,43 @@ impl Editor {
         Some(((self.scroll_x / max).clamp(0.0, 1.0) * (vw - w), w))
     }
 
-    /// A press on a scrollbar: start dragging (jumping there first when off the thumb).
+    /// The scrollbar under `p`, if it is shown there.
+    pub(super) fn scrollbar_at(&self, p: Point<Pixels>) -> Option<Bar> {
+        let l = self.layout.as_ref()?;
+        if !self.show_gutter {
+            return None;
+        }
+        let b = l.bounds;
+        let (vh, vw) = (self.view_height(), self.view_width());
+        let (x, y) = (f32::from(p.x - b.left()), f32::from(p.y - b.top()));
+        if !(0.0..f32::from(b.size.width)).contains(&x) || !(0.0..vh).contains(&y) {
+            return None;
+        }
+        if x >= f32::from(b.size.width) - BAR {
+            return self.v_thumb(vh).map(|_| Bar::Vertical);
+        }
+        if y >= vh - BAR && p.x >= l.text_left {
+            return self.h_thumb(vw).map(|_| Bar::Horizontal);
+        }
+        None
+    }
+
+    /// Mouse moves over the editor: track which scrollbar is under the pointer.
+    pub(super) fn hover_scrollbar(&mut self, p: Option<Point<Pixels>>, cx: &mut Context<Self>) {
+        let bar = p.and_then(|p| self.scrollbar_at(p));
+        if bar != self.bar_hover {
+            self.bar_hover = bar;
+            cx.notify();
+        }
+    }
+
+    /// A scrollbar is hovered or dragged: drawn lighter and wider.
+    pub(super) fn bar_hot(&self, bar: Bar) -> bool {
+        self.bar_hover == Some(bar)
+            || matches!((self.drag, bar), (Some(Drag::Vertical(_)), Bar::Vertical) | (Some(Drag::Horizontal(_)), Bar::Horizontal))
+    }
+
+    /// A press on a scrollbar: on the thumb start dragging it; beside it scroll a page that way.
     pub(super) fn scrollbar_down(&mut self, p: Point<Pixels>) -> bool {
         let Some(l) = self.layout.as_ref() else { return false };
         if !self.show_gutter {
@@ -103,17 +148,25 @@ impl Editor {
         let (x, y) = (f32::from(p.x - b.left()), f32::from(p.y - b.top()));
         if x >= f32::from(b.size.width) - BAR {
             let Some((top, h)) = self.v_thumb(vh) else { return true };
-            let grab = if y >= top && y <= top + h { y - top } else { h / 2.0 };
-            self.drag = Some(Drag::Vertical(grab));
-            self.drag_scrollbar(p);
+            if y >= top && y <= top + h {
+                self.drag = Some(Drag::Vertical(y - top));
+                self.drag_scrollbar(p);
+            } else {
+                let page = (vh - line_height()).max(line_height());
+                self.scroll_y = (self.scroll_y + if y < top { -page } else { page }).clamp(0.0, self.max_scroll_y());
+            }
             return true;
         }
         if y >= vh - BAR && p.x >= text_left {
             let Some((left, w)) = self.h_thumb(vw) else { return false };
             let hx = f32::from(p.x - text_left);
-            let grab = if hx >= left && hx <= left + w { hx - left } else { w / 2.0 };
-            self.drag = Some(Drag::Horizontal(grab));
-            self.drag_scrollbar(p);
+            if hx >= left && hx <= left + w {
+                self.drag = Some(Drag::Horizontal(hx - left));
+                self.drag_scrollbar(p);
+            } else {
+                let page = (vw - 4.0 * self.char_w()).max(self.char_w());
+                self.scroll_x = (self.scroll_x + if hx < left { -page } else { page }).clamp(0.0, self.max_scroll_x());
+            }
             return true;
         }
         false

@@ -36,6 +36,14 @@ impl Theme {
     pub fn scroll_thumb() -> Hsla {
         if Self::is_light() { gpui::hsla(0., 0., 0., 0.18) } else { gpui::hsla(0., 0., 1., 0.13) }
     }
+    /// Scrollbar thumb under the pointer or being dragged.
+    pub fn scroll_thumb_hot() -> Hsla {
+        if Self::is_light() { gpui::hsla(0., 0., 0., 0.34) } else { gpui::hsla(0., 0., 1., 0.28) }
+    }
+    /// Scrollbar track under the pointer.
+    pub fn scroll_track_hot() -> Hsla {
+        if Self::is_light() { gpui::hsla(0., 0., 0., 0.05) } else { gpui::hsla(0., 0., 1., 0.05) }
+    }
 
     // Editor
     pub fn editor_bg() -> Hsla { ui("editor_bg", 0x1e1f22, 0xffffff) }

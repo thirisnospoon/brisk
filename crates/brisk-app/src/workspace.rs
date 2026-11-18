@@ -29,6 +29,7 @@ mod history_ui;
 mod intel_smoke;
 mod complete_smoke;
 mod big_smoke;
+mod mouse_smoke;
 mod lsp_ui;
 mod main_menu;
 mod menu_ui;
@@ -388,6 +389,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_TEMPLATES").is_some() {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.templates_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_MOUSE").is_some() {
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.mouse_smoke(window, cx));
         }
         if let Some(f) = std::env::var_os("BRISK_SMOKE_BIG") {
             let f = PathBuf::from(f);
