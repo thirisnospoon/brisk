@@ -77,6 +77,8 @@ pub struct Session {
     /// Run to Cursor: a breakpoint that is not the user's.
     temp: Option<(PathBuf, usize)>,
     pub exit_code: Option<i64>,
+    /// Attached to a running process: Stop detaches and leaves it running.
+    pub attached: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -160,11 +162,18 @@ pub struct Debug {
     pub threads: Vec<(i64, String)>,
     pub threads_open: bool,
     /// Smart Step Into: the calls on the line (debugpy stepInTargets) to choose from.
-    pub smart_step: Option<SmartStep>,
+    pub chooser: Option<Chooser>,
 }
 
-pub struct SmartStep {
-    pub thread: i64,
+pub enum ChooserKind {
+    /// Smart Step Into on this thread.
+    StepInto(i64),
+    /// Attach to Process: target ids are process ids.
+    Attach,
+}
+
+pub struct Chooser {
+    pub kind: ChooserKind,
     /// (target id, label).
     pub targets: Vec<(i64, String)>,
     pub sel: usize,
@@ -200,7 +209,7 @@ impl Debug {
             muted: false,
             threads: Vec::new(),
             threads_open: false,
-            smart_step: None,
+            chooser: None,
         }
     }
 
@@ -527,6 +536,53 @@ fn inline_values(lines: &[String], stop: usize, vars: &[Variable]) -> std::colle
         }
     }
     out
+}
+
+/// What a Python command line runs, short: `app.py` or `-m http.server` (the list's label).
+fn process_target(cmd: &str) -> String {
+    let rest = match cmd.strip_prefix('"') {
+        Some(q) => q.split_once('"').map_or("", |x| x.1),
+        None => cmd.split_once(char::is_whitespace).map_or("", |x| x.1),
+    };
+    let mut it = rest.split_whitespace();
+    while let Some(t) = it.next() {
+        if t == "-m" {
+            return format!("-m {}", it.next().unwrap_or(""));
+        }
+        if t == "-c" {
+            return "-c …".into();
+        }
+        if !t.starts_with('-') {
+            let t = t.trim_matches('"');
+            return t.rsplit(['/', '\\']).next().unwrap_or(t).to_string();
+        }
+    }
+    String::new()
+}
+
+/// `pid<TAB>command line` for every process (Windows: CIM; elsewhere: `ps`).
+fn process_lines() -> String {
+    #[cfg(windows)]
+    let mut c = {
+        use std::os::windows::process::CommandExt;
+        let mut c = std::process::Command::new("powershell");
+        c.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }",
+        ]);
+        c.creation_flags(0x0800_0000);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut c = {
+        let mut c = std::process::Command::new("ps");
+        c.args(["-eo", "pid=,args="]);
+        c
+    };
+    c.stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    c.output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
 }
 
 /// `python [opts] (-m module | script) args` → what debugpy launches.
@@ -1139,6 +1195,7 @@ impl Workspace {
             A::ViewBreakpoints => self.open_bp_dialog(cx),
             A::MuteBreakpoints => self.toggle_mute_breakpoints(cx),
             A::SmartStepInto => self.smart_step_into(cx),
+            A::AttachToProcess => self.list_processes(cx),
             A::Debug => {
                 self.reload_runs();
                 let cfg = self.runs.file.selected_config().cloned().or_else(|| self.context_config(window, cx));
@@ -1347,7 +1404,7 @@ impl Workspace {
                     this.debug.info(e.clone());
                     this.show_toast(e, true, cx);
                 }
-                    Ok((client, events)) => this.attach_session(client, events, name, launch, window, cx),
+                    Ok((client, events)) => this.attach_session(client, events, name, ("launch", brisk_dap::launch_args(&launch)), window, cx),
                 }
                 cx.notify();
             });
@@ -1356,7 +1413,8 @@ impl Workspace {
         cx.notify();
     }
 
-    fn attach_session(&mut self, client: Arc<Client>, mut events: futures::channel::mpsc::UnboundedReceiver<Event>, name: String, launch: Launch, window: &mut Window, cx: &mut Context<Self>) {
+    /// A started adapter becomes the session: initialize, then `req` (launch or attach).
+    fn attach_session(&mut self, client: Arc<Client>, mut events: futures::channel::mpsc::UnboundedReceiver<Event>, name: String, req: (&'static str, Value), window: &mut Window, cx: &mut Context<Self>) {
         let task = cx.spawn_in(window, async move |this, cx| {
             while let Some(ev) = events.next().await {
                 if this.update_in(cx, |this, window, cx| this.debug_event(ev, window, cx)).is_err() {
@@ -1364,7 +1422,8 @@ impl Workspace {
                 }
             }
         });
-        self.debug.session = Some(Session { client: client.clone(), name, state: State::Starting, _events: task, temp: None, exit_code: None });
+        let attached = req.0 == "attach";
+        self.debug.session = Some(Session { client: client.clone(), name, state: State::Starting, _events: task, temp: None, exit_code: None, attached });
         cx.spawn(async move |this, cx| {
             let init = client.request("initialize", brisk_dap::initialize_args()).await;
             let err = match init {
@@ -1379,10 +1438,11 @@ impl Workspace {
                 });
                 return;
             }
-            let res = client.request("launch", brisk_dap::launch_args(&launch)).await;
+            let (command, args) = req;
+            let res = client.request(command, args).await;
             if let Ok(Err(e)) = res {
                 let _ = this.update(cx, |this, cx| {
-                    this.debug.info(format!("Cannot launch: {e}"));
+                    this.debug.info(format!("Cannot {command}: {e}"));
                     this.end_session(cx);
                     cx.notify();
                 });
@@ -1395,7 +1455,7 @@ impl Workspace {
         self.debug.gen += 1;
         self.debug.pending = false;
         if let Some(s) = self.debug.session.as_ref().filter(|s| s.state != State::Ended) {
-            let rx = s.client.request("disconnect", json!({"terminateDebuggee": true}));
+            let rx = s.client.request("disconnect", json!({"terminateDebuggee": !s.attached}));
             let client = s.client.clone();
             cx.spawn(async move |_, cx| {
                 let _ = futures::future::select(rx, cx.background_executor().timer(std::time::Duration::from_secs(2))).await;
@@ -1403,7 +1463,8 @@ impl Workspace {
             })
             .detach();
         }
-        self.debug.info("Stopped");
+        let detached = self.debug.session.as_ref().is_some_and(|s| s.attached && s.state != State::Ended);
+        self.debug.info(if detached { "Detached: the process keeps running" } else { "Stopped" });
         self.end_session(cx);
     }
 
@@ -1581,7 +1642,7 @@ impl Workspace {
                         this.debug_request("stepIn", json!({"threadId": thread, "targetId": targets[0].0}));
                         this.set_running(cx);
                     }
-                    _ => this.debug.smart_step = Some(SmartStep { thread, targets, sel: 0 }),
+                    _ => this.debug.chooser = Some(Chooser { kind: ChooserKind::StepInto(thread), targets, sel: 0 }),
                 }
                 cx.notify();
             });
@@ -1589,36 +1650,115 @@ impl Workspace {
         .detach();
     }
 
-    /// Step into the chosen call.
-    pub(super) fn smart_step_go(&mut self, i: usize, cx: &mut Context<Self>) {
-        let Some(st) = self.debug.smart_step.take() else { return };
-        if let Some((id, _)) = st.targets.get(i) {
-            if self.debug.paused_thread() == Some(st.thread) {
-                self.debug_request("stepIn", json!({"threadId": st.thread, "targetId": id}));
-                self.set_running(cx);
+    /// Step into the chosen call / attach to the chosen process.
+    pub(super) fn chooser_go(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(st) = self.debug.chooser.take() else { return };
+        if let Some((id, label)) = st.targets.get(i) {
+            match st.kind {
+                ChooserKind::StepInto(thread) => {
+                    if self.debug.paused_thread() == Some(thread) {
+                        self.debug_request("stepIn", json!({"threadId": thread, "targetId": id}));
+                        self.set_running(cx);
+                    }
+                }
+                ChooserKind::Attach => self.attach_to_process(*id as u32, label.clone(), window, cx),
             }
         }
         cx.notify();
     }
 
-    pub(super) fn smart_step_key(&mut self, e: &gpui::KeyDownEvent, cx: &mut Context<Self>) {
-        let Some(st) = self.debug.smart_step.as_mut() else { return };
+    // --- Attach to Process ----------------------------------------------------------------
+
+    /// Ctrl+Alt+F5: running Python processes (not debugpy's own) to choose from.
+    fn list_processes(&mut self, cx: &mut Context<Self>) {
+        self.status = "Looking for Python processes…".into();
+        cx.spawn(async move |this, cx| {
+            let ps = cx.background_executor().spawn(async move { process_lines() }).await;
+            let _ = this.update(cx, |this, cx| {
+                let procs = brisk_dap::python_processes(&ps, std::process::id());
+                if procs.is_empty() {
+                    this.status = "No Python processes to attach to".into();
+                } else {
+                    this.status.clear();
+                    let targets = procs.into_iter().map(|(pid, cmd)| (pid as i64, format!("{pid}  {}    {cmd}", process_target(&cmd)))).collect();
+                    this.debug.chooser = Some(Chooser { kind: ChooserKind::Attach, targets, sel: 0 });
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// debugpy's adapter (with the project interpreter) injects itself into `pid`.
+    pub(super) fn attach_to_process(&mut self, pid: u32, label: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.debug.is_live() {
+            self.stop_debug(cx);
+        }
+        let Some(python) = self.runs.interpreter(&self.root).map(|i| i.path) else {
+            self.show_toast("No Python interpreter configured: create a .venv or install Python".into(), true, cx);
+            return;
+        };
+        let name = format!("pid {pid}");
+        self.debug.last = None;
+        self.debug.exception = None;
+        self.debug.console.clear();
+        self.debug.frames.clear();
+        self.debug.idle_watches();
+        self.debug.tab = DebugTab::Console;
+        self.debug.info(format!("Attaching to {label}"));
+        self.bottom = Some(BottomTool::Debug);
+        self.status = format!("Attaching to process {pid}");
+        let root = self.root.clone();
+        self.debug.gen += 1;
+        self.debug.pending = true;
+        let gen = self.debug.gen;
+        cx.spawn_in(window, async move |this, cx| {
+            let adapter = cx.background_executor().spawn(async move { brisk_dap::adapter_command(&python) }).await;
+            let started = adapter.and_then(|a| Client::start(&a.program, &a.args, &root, &[]).map_err(|e| format!("cannot start debugpy: {e}")));
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.debug.gen != gen {
+                    if let Ok((client, _)) = &started {
+                        client.kill();
+                    }
+                    return;
+                }
+                this.debug.pending = false;
+                match started {
+                    Err(e) => {
+                        this.debug.info(e.clone());
+                        this.show_toast(e, true, cx);
+                    }
+                    Ok((client, events)) => this.attach_session(client, events, name, ("attach", brisk_dap::attach_args(pid, true)), window, cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub(super) fn chooser_key(&mut self, e: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(st) = self.debug.chooser.as_mut() else { return };
         let n = st.targets.len();
         match e.keystroke.key.as_str() {
-            "escape" => self.debug.smart_step = None,
+            "escape" => self.debug.chooser = None,
             "up" => st.sel = (st.sel + n - 1) % n.max(1),
             "down" | "tab" => st.sel = (st.sel + 1) % n.max(1),
             "enter" | "f7" => {
                 let i = st.sel;
-                self.smart_step_go(i, cx);
+                self.chooser_go(i, window, cx);
             }
             _ => {}
         }
         cx.notify();
     }
 
-    pub(super) fn render_smart_step(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let st = self.debug.smart_step.as_ref()?;
+    pub(super) fn render_chooser(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let st = self.debug.chooser.as_ref()?;
+        let title = match st.kind {
+            ChooserKind::StepInto(_) => "Smart Step Into  (Enter: step into · Esc: cancel)",
+            ChooserKind::Attach => "Attach to Process  (Enter: attach · Esc: cancel)",
+        };
         let rows = st.targets.iter().enumerate().map(|(i, (_, label))| {
             let selected = i == st.sel;
             div()
@@ -1632,8 +1772,11 @@ impl Workspace {
                 .font_family(MONO_FONT)
                 .when(selected, |x| x.bg(Theme::selection_row()))
                 .when(!selected, |x| x.hover(|s| s.bg(Theme::hover_row())))
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
                 .child(label.clone())
-                .on_click(cx.listener(move |this, _, _, cx| this.smart_step_go(i, cx)))
+                .on_click(cx.listener(move |this, _, w, cx| this.chooser_go(i, w, cx)))
         });
         Some(
             div()
@@ -1647,13 +1790,14 @@ impl Workspace {
                 .pt(px(120.))
                 .occlude()
                 .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
-                    this.debug.smart_step = None;
+                    this.debug.chooser = None;
                     cx.notify();
                 }))
                 .child(
                     div()
                         .id("smart-step-popup")
                         .min_w(px(260.))
+                        .max_w(px(900.))
                         .flex()
                         .flex_col()
                         .p(px(6.))
@@ -1666,7 +1810,7 @@ impl Workspace {
                         .text_size(px(13.))
                         .text_color(Theme::text())
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(div().px(px(10.)).pb(px(4.)).text_size(px(12.)).text_color(Theme::text_dim()).child("Smart Step Into  (Enter: step into · Esc: cancel)"))
+                        .child(div().px(px(10.)).pb(px(4.)).text_size(px(12.)).text_color(Theme::text_dim()).child(title))
                         .children(rows),
                 )
                 .into_any_element(),
@@ -3038,15 +3182,15 @@ impl Workspace {
             let mut labels = Vec::new();
             for _ in 0..50 {
                 wait(100).await;
-                labels = this.update(cx, |t, _| t.debug.smart_step.as_ref().map(|s| s.targets.iter().map(|t| t.1.clone()).collect::<Vec<_>>())).ok().flatten().unwrap_or_default();
+                labels = this.update(cx, |t, _| t.debug.chooser.as_ref().map(|s| s.targets.iter().map(|t| t.1.clone()).collect::<Vec<_>>())).ok().flatten().unwrap_or_default();
                 if !labels.is_empty() {
                     break;
                 }
             }
-            let _ = this.update_in(cx, |t, _, cx| {
+            let _ = this.update_in(cx, |t, w, cx| {
                 let i = labels.iter().position(|l| l.starts_with("a")).unwrap_or(0);
                 eprintln!("smoke-debug: smart step targets {labels:?} -> choose {:?}", labels.get(i));
-                t.smart_step_go(i, cx);
+                t.chooser_go(i, w, cx);
             });
             let s = settled!();
             wait(800).await;
@@ -3056,7 +3200,52 @@ impl Workspace {
                 t.dispatch(Action::Resume, w, cx);
             });
             until!(|s: Option<State>| s == Some(State::Ended));
+            let spin2 = dir.join("dbg_attach_target.py");
+            let _ = std::fs::write(&spin2, "import time\n\nn = 0\nwhile True:\n    n += 1\n    time.sleep(0.05)\n");
+            let python = this.update(cx, |t, _| t.runs.interpreter(&t.root).map(|i| i.path)).ok().flatten();
+            let child = python.and_then(|p| std::process::Command::new(p).arg(&spin2).spawn().ok());
+            wait(1500).await;
+            if let Some(mut child) = child {
+                let pid = child.id();
+                let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::AttachToProcess, w, cx));
+                let mut listed = Vec::new();
+                for _ in 0..100 {
+                    wait(100).await;
+                    listed = this.update(cx, |t, _| t.debug.chooser.as_ref().map(|c| c.targets.iter().map(|x| x.0).collect::<Vec<_>>())).ok().flatten().unwrap_or_default();
+                    if !listed.is_empty() {
+                        break;
+                    }
+                }
+                let _ = this.update_in(cx, |t, w, cx| {
+                    eprintln!("smoke-debug: attach list has target {} (of {})", listed.contains(&(pid as i64)), listed.len());
+                    t.open_file(&spin2, w, cx);
+                    if let Some(ed) = t.active_editor().cloned() {
+                        ed.update(cx, |e, cx| e.toggle_breakpoint(4, cx));
+                    }
+                    if let Some(i) = listed.iter().position(|x| *x == pid as i64) {
+                        t.chooser_go(i, w, cx);
+                    } else {
+                        t.debug.chooser = None;
+                    }
+                });
+                let s = settled!();
+                wait(800).await;
+                let _ = this.update_in(cx, |t, w, cx| {
+                    let n = t.debug.vars.iter().find(|r| r.var.name == "n").map(|r| r.var.value.clone());
+                    eprintln!("smoke-debug: attached -> {s:?} at {:?} n={n:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                    if let Some(ed) = t.active_editor().cloned() {
+                        ed.update(cx, |e, cx| e.toggle_breakpoint(4, cx));
+                    }
+                    t.dispatch(Action::Stop, w, cx);
+                });
+                wait(2500).await;
+                let alive = matches!(child.try_wait(), Ok(None));
+                let _ = this.update(cx, |t, _| eprintln!("smoke-debug: detach -> state={:?} process alive={alive} console {:?}", t.debug.state(), t.debug.console.last().map(|l| l.0.trim().to_string())));
+                let _ = child.kill();
+                let _ = child.wait();
+            }
             let _ = this.update_in(cx, |_, _, cx| {
+                let _ = std::fs::remove_file(&spin2);
                 let _ = std::fs::remove_file(&smart);
                 let _ = std::fs::remove_file(&raise);
                 let _ = std::fs::remove_file(&test);
@@ -3087,6 +3276,13 @@ mod tests {
         assert_eq!(v.get(&3), None);
         assert_eq!(v.get(&4).map(String::as_str), Some("items: [5, 2]"));
         assert_eq!(v.get(&0), None);
+    }
+
+    #[test]
+    fn process_targets() {
+        assert_eq!(process_target(r#""C:\Py 3\python.exe" -u C:/x/app.py --port 1"#), "app.py");
+        assert_eq!(process_target("python -m http.server 8765"), "-m http.server");
+        assert_eq!(process_target("python"), "");
     }
 
     #[test]

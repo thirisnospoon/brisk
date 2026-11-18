@@ -95,3 +95,12 @@ fn debug_a_script() {
     let _ = block_on(client.request("disconnect", json!({})));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn python_processes_filter() {
+    let ps = "12\tC:\\Py\\python.exe app.py --x\n13\t\"C:\\Program Files\\Py\\pythonw.exe\" gui.pyw\n14\tpython -m debugpy.adapter\n15\tnode server.js\n16\t/usr/bin/python3 worker.py\nbad line\n17\tpython own.py\n";
+    let p = python_processes(ps, 17);
+    assert_eq!(p.iter().map(|x| x.0).collect::<Vec<_>>(), [12, 13, 16]);
+    assert_eq!(p[0].1, "C:\\Py\\python.exe app.py --x");
+    assert_eq!(attach_args(42, true)["processId"], 42);
+}

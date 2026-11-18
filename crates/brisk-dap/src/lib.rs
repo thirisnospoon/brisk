@@ -277,6 +277,41 @@ pub fn launch_args(l: &Launch) -> Value {
     v
 }
 
+/// Attach to a running Python process: debugpy injects itself (`debugpy --pid`).
+pub fn attach_args(pid: u32, just_my_code: bool) -> Value {
+    json!({
+        "name": "Brisk",
+        "type": "python",
+        "request": "attach",
+        "processId": pid,
+        "justMyCode": just_my_code,
+        "showReturnValue": true,
+        "redirectOutput": true,
+        "subProcess": false,
+    })
+}
+
+/// Python processes in `ps`-like lines (`pid<TAB>command line`), without debugpy's own
+/// (adapters, launchers, programs it started) and without `own`.
+pub fn python_processes(lines: &str, own: u32) -> Vec<(u32, String)> {
+    let mut out = Vec::new();
+    for l in lines.lines() {
+        let Some((pid, cmd)) = l.trim().split_once(char::is_whitespace) else { continue };
+        let Ok(pid) = pid.trim().parse::<u32>() else { continue };
+        let cmd = cmd.trim();
+        let exe = match cmd.strip_prefix('"') {
+            Some(q) => q.split('"').next().unwrap_or(""),
+            None => cmd.split(char::is_whitespace).next().unwrap_or(""),
+        };
+        let name = exe.rsplit(['/', '\\']).next().unwrap_or("").to_ascii_lowercase();
+        if pid == own || !name.starts_with("python") || cmd.contains("debugpy") {
+            continue;
+        }
+        out.push((pid, cmd.to_string()));
+    }
+    out
+}
+
 /// One line breakpoint: 0-based line and an optional condition.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceBreakpoint {
