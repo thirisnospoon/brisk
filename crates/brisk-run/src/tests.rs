@@ -554,3 +554,39 @@ fn python_console_and_emulate_terminal() {
     let cmd = build(Path::new("/p"), &RunConfig { interpreter_options: "-X dev".into(), ..cfgs[0].clone() }, Path::new("python"));
     assert_eq!(cmd.args[..3], ["-X".to_string(), "dev".into(), "-i".into()]);
 }
+
+/// PyCharm's templates (`default="true"` configurations of `workspace.xml`) become Brisk's
+/// Python / pytest templates, and new temporary configurations start from them.
+#[test]
+fn imports_templates_and_applies_them() {
+    let root = tmp("templates");
+    std::fs::create_dir_all(root.join(".idea")).unwrap();
+    let ws = r#"<project><component name="RunManager">
+  <configuration default="true" type="PythonConfigurationType" factoryName="Python">
+    <envs>
+      <env name="PYTHONUNBUFFERED" value="1" />
+      <env name="APP_ENV" value="dev" />
+    </envs>
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/src" />
+    <option name="EMULATE_TERMINAL" value="true" />
+    <option name="SCRIPT_NAME" value="" />
+  </configuration>
+  <configuration default="true" type="tests" factoryName="py.test">
+    <option name="SCRIPT_NAME" value="" />
+  </configuration>
+  <configuration name="main" type="PythonConfigurationType" factoryName="Python">
+    <option name="SCRIPT_NAME" value="$PROJECT_DIR$/main.py" />
+  </configuration>
+</component></project>"#;
+    std::fs::write(root.join(".idea/workspace.xml"), ws).unwrap();
+    let mut f = config::import_idea(&root);
+    // The empty pytest template is dropped; existing configurations are left as imported.
+    assert_eq!(f.templates.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["Python"]);
+    assert_eq!(f.get("main").unwrap().working_directory, "");
+    let name = f.use_for_file(RunConfig::for_file(&root, &root.join("tool.py")));
+    let c = f.get(&name).unwrap();
+    assert_eq!((c.working_directory.as_str(), c.env.get("APP_ENV").map(String::as_str), c.emulate_terminal), ("$PROJECT_DIR$/src", Some("dev"), true));
+    let t = f.use_for_file(RunConfig::for_tests(&root, &root.join("test_x.py"), &[]));
+    assert!(f.get(&t).unwrap().env.is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}

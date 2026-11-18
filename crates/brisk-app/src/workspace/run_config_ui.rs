@@ -122,9 +122,9 @@ impl Kind {
 /// One configuration being edited; environment variables as PyCharm shows them in one
 /// line: `KEY=VALUE;KEY2=VALUE2`.
 #[derive(Clone, Debug)]
-struct Draft {
-    cfg: RunConfig,
-    env: String,
+pub(super) struct Draft {
+    pub(super) cfg: RunConfig,
+    pub(super) env: String,
     /// The toolbar's selected configuration (the selection follows renames).
     selected: bool,
 }
@@ -144,10 +144,10 @@ impl Draft {
 }
 
 pub struct RunDialog {
-    drafts: Vec<Draft>,
+    pub(super) drafts: Vec<Draft>,
     /// Index of the configuration shown in the form.
-    current: usize,
-    field: Field,
+    pub(super) current: usize,
+    pub(super) field: Field,
     /// Caret in the active text field, in chars.
     caret: usize,
     select_all: bool,
@@ -159,6 +159,10 @@ pub struct RunDialog {
     adding: Option<usize>,
     /// The detected Django settings module, put into a Django configuration's environment.
     django_settings: Option<String>,
+    /// Edit Configuration Templates: the list shows the templates; `other` holds the list
+    /// not shown (configurations or templates) and its selection.
+    pub(super) templates: bool,
+    other: (Vec<Draft>, usize),
 }
 
 pub fn env_to_text(env: &BTreeMap<String, String>) -> String {
@@ -201,6 +205,16 @@ fn flag(c: &mut RunConfig, f: Field) -> Option<&mut bool> {
         Field::EmulateTerminal => Some(&mut c.emulate_terminal),
         _ => None,
     }
+}
+
+/// Fields of a template: what new configurations of its kind start with.
+fn template_fields(kind: Kind) -> Vec<Field> {
+    use Field as F;
+    let mut v = vec![F::InterpreterOptions, F::WorkingDirectory, F::Env, F::EnvFiles, F::Interpreter, F::OnStart, F::AllowMultiple];
+    if kind != Kind::Pytest {
+        v.extend([F::PythonConsole, F::EmulateTerminal]);
+    }
+    v
 }
 
 /// Fields of the form for a kind of configuration, in Tab order.
@@ -275,8 +289,29 @@ impl RunDialog {
 
     fn fields(&self) -> Vec<Field> {
         match self.drafts.get(self.current) {
+            Some(d) if self.templates => template_fields(Kind::of(&d.cfg)),
             Some(d) => fields(Kind::of(&d.cfg), d.cfg.temporary),
             None => Vec::new(),
+        }
+    }
+
+    /// Show the templates instead of the configurations, or back.
+    pub(super) fn toggle_templates(&mut self) {
+        std::mem::swap(&mut self.drafts, &mut self.other.0);
+        std::mem::swap(&mut self.current, &mut self.other.1);
+        self.templates = !self.templates;
+        self.adding = None;
+        self.error = None;
+        let first = self.fields().first().copied().unwrap_or(Field::Name);
+        self.focus(first, false);
+    }
+
+    /// The configurations and templates to save; the list shown does not matter.
+    fn split(&self) -> (&[Draft], &[Draft]) {
+        if self.templates {
+            (&self.other.0, &self.drafts)
+        } else {
+            (&self.drafts, &self.other.0)
         }
     }
 
@@ -327,7 +362,8 @@ impl RunDialog {
     fn select_config(&mut self, i: usize) {
         if i < self.drafts.len() {
             self.current = i;
-            self.focus(Field::Name, false);
+            let first = self.fields().first().copied().unwrap_or(Field::Name);
+            self.focus(first, false);
             self.error = None;
         }
     }
@@ -415,6 +451,9 @@ impl RunDialog {
     }
 
     fn add(&mut self, kind: Kind) {
+        if self.templates {
+            return;
+        }
         let taken: Vec<&str> = self.drafts.iter().map(|d| d.cfg.name.as_str()).collect();
         let base = match kind {
             Kind::Pytest => "pytest",
@@ -429,10 +468,22 @@ impl RunDialog {
         self.drafts.push(Draft::new(cfg));
         self.current = self.drafts.len() - 1;
         self.set_kind(kind);
+        // A new Python / pytest configuration starts from its template.
+        let kind_now = self.drafts[self.current].cfg.kind;
+        if let Some(t) = self.other.0.iter().map(Draft::commit).find(|t| t.kind == kind_now) {
+            let file = brisk_run::RunFile { templates: vec![t], ..Default::default() };
+            let d = &mut self.drafts[self.current];
+            let mut c = d.commit();
+            file.apply_template(&mut c);
+            *d = Draft::new(RunConfig { name: d.cfg.name.clone(), ..c });
+        }
         self.focus(Field::Name, true);
     }
 
     fn copy(&mut self) {
+        if self.templates {
+            return;
+        }
         let Some(d) = self.drafts.get(self.current).cloned() else { return };
         let taken: Vec<&str> = self.drafts.iter().map(|d| d.cfg.name.as_str()).collect();
         let mut d = d;
@@ -445,7 +496,7 @@ impl RunDialog {
     }
 
     fn remove(&mut self) {
-        if self.current >= self.drafts.len() {
+        if self.templates || self.current >= self.drafts.len() {
             return;
         }
         self.drafts.remove(self.current);
@@ -454,6 +505,9 @@ impl RunDialog {
     }
 
     fn move_by(&mut self, up: bool) {
+        if self.templates {
+            return;
+        }
         let i = self.current;
         let j = if up { i.checked_sub(1) } else { (i + 1 < self.drafts.len()).then_some(i + 1) };
         if let Some(j) = j {
@@ -464,7 +518,7 @@ impl RunDialog {
 
     /// The configurations to save, or why they cannot be saved (and which one to show).
     fn validate(&self) -> Result<Vec<RunConfig>, (usize, Field, String)> {
-        let cfgs: Vec<RunConfig> = self.drafts.iter().map(Draft::commit).collect();
+        let cfgs: Vec<RunConfig> = self.split().0.iter().map(Draft::commit).collect();
         for (i, c) in cfgs.iter().enumerate() {
             if c.name.is_empty() {
                 return Err((i, Field::Name, "Name is empty".into()));
@@ -516,7 +570,8 @@ impl Workspace {
         if let Some(i) = current {
             drafts[i].selected = true;
         }
-        let mut d = RunDialog { drafts, current: current.unwrap_or(0), field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None, django_settings: None };
+        let templates = brisk_run::TEMPLATE_KINDS.iter().map(|(k, _)| Draft::new(f.template(*k))).collect();
+        let mut d = RunDialog { drafts, current: current.unwrap_or(0), field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None, django_settings: None, templates: false, other: (templates, 0) };
         d.apps = [RunKind::FastApi, RunKind::Flask].into_iter().filter_map(|k| brisk_run::web::find_app(&self.root, Some(k)).map(|(k, _, t)| (k, t))).collect();
         if let Some((m, settings)) = brisk_run::django::find_manage(&self.root) {
             d.django_settings = settings;
@@ -534,6 +589,9 @@ impl Workspace {
         let cfgs = match d.validate() {
             Ok(c) => c,
             Err((i, f, msg)) => {
+                if d.templates {
+                    d.toggle_templates();
+                }
                 d.current = i;
                 d.focus(f, false);
                 d.error = Some(msg);
@@ -542,7 +600,10 @@ impl Workspace {
             }
         };
         // The toolbar keeps the selected configuration, renamed or not; removed: Current File.
-        let selected = d.drafts.iter().zip(&cfgs).find(|(dr, _)| dr.selected).map(|(_, c)| c.name.clone());
+        let selected = d.split().0.iter().zip(&cfgs).find(|(dr, _)| dr.selected).map(|(_, c)| c.name.clone());
+        // Templates are kept only when they set something.
+        let templates = d.split().1.iter().map(Draft::commit).filter(|t| *t != RunConfig { name: t.name.clone(), kind: t.kind, ..Default::default() }).collect();
+        self.runs.file.templates = templates;
         self.runs.file.configurations = cfgs;
         self.runs.file.selected = selected;
         d.error = None;
@@ -598,7 +659,7 @@ impl Workspace {
                 let i = if k.key == "up" { d.current.saturating_sub(1) } else { (d.current + 1).min(d.drafts.len().saturating_sub(1)) };
                 d.select_config(i);
             }
-            "insert" if m.alt => d.adding = Some(0),
+            "insert" if m.alt && !d.templates => d.adding = Some(0),
             "d" if m.control => d.copy(),
             "delete" if m.alt => d.remove(),
             "tab" | "down" | "up" if !order.is_empty() => {
@@ -700,11 +761,37 @@ impl Workspace {
             .flex()
             .gap(px(2.))
             .pb(px(4.))
-            .child(tool("rc-add", "+", "Add New Configuration (Alt+Insert)", cx, |d| d.adding = if d.adding.is_some() { None } else { Some(0) }))
+            .child(tool("rc-add", "+", "Add New Configuration (Alt+Insert)", cx, |d| d.adding = if d.adding.is_some() || d.templates { None } else { Some(0) }))
             .child(tool("rc-copy", "⧉", "Copy configuration (Ctrl+D)", cx, |d| d.copy()))
             .child(tool("rc-remove", "−", "Remove configuration (Alt+Delete)", cx, |d| d.remove()))
             .child(tool("rc-up", "↑", "Move up (Alt+Shift+↑)", cx, |d| d.move_by(true)))
-            .child(tool("rc-down", "↓", "Move down (Alt+Shift+↓)", cx, |d| d.move_by(false)));
+            .child(tool("rc-down", "↓", "Move down (Alt+Shift+↓)", cx, |d| d.move_by(false)))
+            .child(div().flex_1())
+            .child(tool("rc-tpl", "⚙", "Edit Configuration Templates", cx, |d| d.toggle_templates()));
+        let templates_note = d.templates.then(|| {
+            div()
+                .id("rc-tpl-note")
+                .px(px(6.))
+                .pb(px(4.))
+                .text_size(px(12.))
+                .text_color(Theme::text_dim())
+                .child("Templates: what new configurations start with")
+        });
+        let back_link = div()
+            .id("rc-tpl-link")
+            .px(px(6.))
+            .py(px(4.))
+            .text_size(px(12.))
+            .cursor_pointer()
+            .text_color(Theme::accent())
+            .hover(|s| s.underline())
+            .child(if d.templates { "← Back to configurations" } else { "Edit configuration templates…" })
+            .on_click(cx.listener(|this, _, _, cx| {
+                if let Some(d) = this.runs.dialog.as_mut() {
+                    d.toggle_templates();
+                }
+                cx.notify();
+            }));
         let list = div()
             .id("rc-list")
             .flex_1()
@@ -780,14 +867,16 @@ impl Workspace {
             .border_r_1()
             .border_color(Theme::divider())
             .child(list_tools)
+            .children(templates_note)
             .when_some(templates, |x, t| x.child(t))
-            .when(d.adding.is_none(), |x| x.child(list));
+            .when(d.adding.is_none(), |x| x.child(list))
+            .child(back_link);
 
         // Right: the form.
         let caret = || div().w(px(1.5)).h(px(16.)).bg(Theme::caret());
         let mut rows: Vec<gpui::AnyElement> = Vec::new();
         if let Some(dr) = d.drafts.get(d.current) {
-            for f in fields(kind, dr.cfg.temporary) {
+            for f in if d.templates { template_fields(kind) } else { fields(kind, dr.cfg.temporary) } {
                 let active = d.field == f;
                 let value: gpui::AnyElement = match f {
                     Field::Kind => div()
@@ -989,7 +1078,7 @@ impl Workspace {
                 );
             }
         }
-        let preview = d.drafts.get(d.current).map(|dr| command_preview(&self.root, &dr.commit(), &project_interp)).unwrap_or_default();
+        let preview = d.drafts.get(d.current).filter(|_| !d.templates).map(|dr| command_preview(&self.root, &dr.commit(), &project_interp)).unwrap_or_default();
         let right = div()
             .flex_1()
             .min_w_0()
@@ -1015,7 +1104,7 @@ impl Workspace {
                     div()
                         .id("run-config-dialog")
                         .w(px(980.))
-                        .h(px(470.))
+                        .h(px(600.))
                         .flex()
                         .flex_col()
                         .p(px(16.))
@@ -1050,7 +1139,7 @@ impl Workspace {
     }
 
     /// Type text into the dialog as key presses with characters.
-    fn rc_type(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn rc_type(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         for ch in text.chars() {
             let key = if ch == ' ' { "space".to_string() } else { ch.to_lowercase().to_string() };
             let keystroke = gpui::Keystroke { modifiers: gpui::Modifiers::default(), key, key_char: Some(ch.to_string()) };
@@ -1325,7 +1414,7 @@ mod tests {
 
     #[test]
     fn dialog_editing() {
-        let mut d = RunDialog { drafts: Vec::new(), current: 0, field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None, django_settings: None };
+        let mut d = RunDialog { drafts: Vec::new(), current: 0, field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None, django_settings: None, templates: false, other: (Vec::new(), 0) };
         d.add(Kind::Script);
         assert_eq!(d.drafts[0].cfg.name, "Unnamed");
         assert!(d.select_all);

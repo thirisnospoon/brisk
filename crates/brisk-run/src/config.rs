@@ -174,9 +174,49 @@ pub struct RunFile {
     pub selected: Option<String>,
     #[serde(default)]
     pub configurations: Vec<RunConfig>,
+    /// Edit Configuration Templates: defaults for new Python and pytest configurations
+    /// (one per kind; name and target unused).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub templates: Vec<RunConfig>,
 }
 
+/// The kinds with a configuration template, and the template's name.
+pub const TEMPLATE_KINDS: [(RunKind, &str); 2] = [(RunKind::Python, "Python"), (RunKind::Pytest, "pytest")];
+
 impl RunFile {
+    /// The template of `kind`, or an empty one.
+    pub fn template(&self, kind: RunKind) -> RunConfig {
+        let name = TEMPLATE_KINDS.iter().find(|(k, _)| *k == kind).map_or("Python", |(_, n)| n);
+        self.templates.iter().find(|t| t.kind == kind).cloned().unwrap_or_else(|| RunConfig { name: name.into(), kind, ..Default::default() })
+    }
+
+    /// Fill a new configuration from its kind's template: interpreter, its options, working
+    /// directory, environment (the configuration's own variables win), .env files and the
+    /// launch options.
+    pub fn apply_template(&self, c: &mut RunConfig) {
+        let Some(t) = self.templates.iter().find(|t| t.kind == c.kind) else { return };
+        let fill = |v: &mut String, t: &String| {
+            if v.trim().is_empty() {
+                v.clone_from(t);
+            }
+        };
+        fill(&mut c.interpreter_options, &t.interpreter_options);
+        fill(&mut c.working_directory, &t.working_directory);
+        fill(&mut c.env_files, &t.env_files);
+        if c.interpreter.is_none() {
+            c.interpreter.clone_from(&t.interpreter);
+        }
+        for (k, v) in &t.env {
+            c.env.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+        if c.on_start == OnStart::Show {
+            c.on_start = t.on_start;
+        }
+        c.allow_multiple |= t.allow_multiple;
+        c.python_console |= t.python_console;
+        c.emulate_terminal |= t.emulate_terminal;
+    }
+
     pub fn get(&self, name: &str) -> Option<&RunConfig> {
         self.configurations.iter().find(|c| c.name == name)
     }
@@ -243,7 +283,9 @@ impl RunFile {
             i += 1;
             name = format!("{} ({i})", cfg.name);
         }
-        self.configurations.push(RunConfig { name: name.clone(), ..cfg });
+        let mut cfg = RunConfig { name: name.clone(), ..cfg };
+        self.apply_template(&mut cfg);
+        self.configurations.push(cfg);
         let temps: Vec<usize> = self.configurations.iter().enumerate().filter(|(_, c)| c.temporary).map(|(i, _)| i).collect();
         if temps.len() > MAX_TEMPORARY {
             self.configurations.remove(temps[0]);
@@ -324,6 +366,17 @@ fn parse_configuration(root: &Path, node: roxmltree::Node) -> Option<RunConfig> 
     if node.attribute("default") == Some("true") {
         return None;
     }
+    parse_node(root, node, false)
+}
+
+/// PyCharm's templates: `<configuration default="true" type="PythonConfigurationType">`.
+fn parse_template(root: &Path, node: roxmltree::Node) -> Option<RunConfig> {
+    let c = parse_node(root, node, true)?;
+    let name = TEMPLATE_KINDS.iter().find(|(k, _)| *k == c.kind)?.1;
+    Some(RunConfig { name: name.into(), target: String::new(), ..c })
+}
+
+fn parse_node(root: &Path, node: roxmltree::Node, template: bool) -> Option<RunConfig> {
     let kind = match (node.attribute("type"), node.attribute("factoryName")) {
         (Some("CompoundRunConfigurationType"), _) => {
             let members: Vec<&str> = node.children().filter(|n| n.has_tag_name("toRun")).filter_map(|n| n.attribute("name")).collect();
@@ -339,7 +392,8 @@ fn parse_configuration(root: &Path, node: roxmltree::Node) -> Option<RunConfig> 
     };
     // FastAPI / Flask / Django options, read after the loop.
     let mut web: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
-    let mut c = RunConfig { name: node.attribute("name")?.to_string(), kind, temporary: node.attribute("temporary") == Some("true"), ..Default::default() };
+    let name = if template { "" } else { node.attribute("name")? };
+    let mut c = RunConfig { name: name.to_string(), kind, temporary: node.attribute("temporary") == Some("true"), ..Default::default() };
     // <configuration activateToolWindowBeforeRun="false" focusToolWindowBeforeRun="true"
     // allowRunningInParallel="true"> (older PyCharm: singleton="false").
     c.on_start = match (node.attribute("activateToolWindowBeforeRun"), node.attribute("focusToolWindowBeforeRun")) {
@@ -428,7 +482,7 @@ fn parse_configuration(root: &Path, node: roxmltree::Node) -> Option<RunConfig> 
         return Some(c);
     }
     c.target = if c.module { module_name } else { script };
-    if c.target.is_empty() {
+    if c.target.is_empty() && !template {
         return None;
     }
     c.target = c.target.replace("$PROJECT_DIR$/", "");
@@ -511,6 +565,18 @@ pub(crate) fn configurations_in(root: &Path, xml: &str, component: &str) -> (Vec
     (out, selected)
 }
 
+/// The Python and pytest templates of a `workspace.xml`.
+pub(crate) fn templates_in(root: &Path, xml: &str) -> Vec<RunConfig> {
+    let Ok(doc) = roxmltree::Document::parse(xml) else { return Vec::new() };
+    let mut out: Vec<RunConfig> = Vec::new();
+    for n in doc.descendants().filter(|n| n.has_tag_name("configuration") && n.attribute("default") == Some("true")) {
+        if let Some(t) = parse_template(root, n).filter(|t| !out.iter().any(|o| o.kind == t.kind)) {
+            out.push(t);
+        }
+    }
+    out
+}
+
 /// Python run configurations from PyCharm: shared ones in `.idea/runConfigurations/` and
 /// `.run/*.run.xml` ("Store as project file"), then workspace ones (including temporary)
 /// from `.idea/workspace.xml`.
@@ -530,6 +596,7 @@ pub fn import_idea(root: &Path) -> RunFile {
         }
     }
     if let Ok(xml) = std::fs::read_to_string(root.join(".idea/workspace.xml")) {
+        f.templates = templates_in(root, &xml).into_iter().filter(|t| *t != RunConfig { name: t.name.clone(), kind: t.kind, ..Default::default() }).collect();
         let (cfgs, selected) = configurations_in(root, &xml, "RunManager");
         for c in cfgs {
             if f.get(&c.name).is_none() {
