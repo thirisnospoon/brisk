@@ -163,6 +163,8 @@ pub struct Debug {
     pub threads_open: bool,
     /// Smart Step Into: the calls on the line (debugpy stepInTargets) to choose from.
     pub chooser: Option<Chooser>,
+    /// The process of the last Attach (Rerun attaches again while it lives): (pid, label).
+    pub last_attach: Option<(u32, String)>,
 }
 
 pub enum ChooserKind {
@@ -210,6 +212,7 @@ impl Debug {
             threads: Vec::new(),
             threads_open: false,
             chooser: None,
+            last_attach: None,
         }
     }
 
@@ -1313,9 +1316,10 @@ impl Workspace {
                 }
                 window.focus(&self.debug.focus.clone());
             }
-            A::RerunDebug => match self.debug.last.clone() {
-                Some(cfg) => self.start_debug(cfg, window, cx),
-                None => self.status = "Rerun: nothing has been debugged yet".into(),
+            A::RerunDebug => match (self.debug.last.clone(), self.debug.last_attach.clone()) {
+                (Some(cfg), _) => self.start_debug(cfg, window, cx),
+                (None, Some((pid, label))) => self.reattach(pid, label, window, cx),
+                (None, None) => self.status = "Rerun: nothing has been debugged yet".into(),
             },
             A::EvaluateExpression => {
                 if self.debug.paused_thread().is_none() {
@@ -1415,6 +1419,7 @@ impl Workspace {
             self.stop_debug(cx);
         }
         self.debug.last = Some(cfg.clone());
+        self.debug.last_attach = None;
         let python = match &cfg.interpreter {
             Some(p) => Some(brisk_run::resolve(&self.root, p)),
             None => self.runs.interpreter(&self.root).map(|i| i.path),
@@ -1762,6 +1767,25 @@ impl Workspace {
         .detach();
     }
 
+    /// Rerun after an Attach: the same process again if it still runs.
+    fn reattach(&mut self, pid: u32, label: String, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            let ps = cx.background_executor().spawn(async move { process_lines() }).await;
+            let alive = brisk_dap::python_processes(&ps, std::process::id()).iter().any(|p| p.0 == pid);
+            let _ = this.update_in(cx, |this, window, cx| {
+                if alive {
+                    this.attach_to_process(pid, label, window, cx);
+                } else {
+                    let msg = format!("Process {pid} has exited: use Attach to Process (Ctrl+Alt+F5) to choose another");
+                    this.debug.info(msg.clone());
+                    this.show_toast(msg, false, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// debugpy's adapter (with the project interpreter) injects itself into `pid`.
     pub(super) fn attach_to_process(&mut self, pid: u32, label: String, window: &mut Window, cx: &mut Context<Self>) {
         if self.debug.is_live() {
@@ -1773,6 +1797,7 @@ impl Workspace {
         };
         let name = format!("pid {pid}");
         self.debug.last = None;
+        self.debug.last_attach = Some((pid, label.clone()));
         self.debug.exception = None;
         self.debug.console.clear();
         self.debug.frames.clear();
@@ -2442,7 +2467,7 @@ impl Workspace {
         let paused = matches!(state, Some(State::Paused(_)));
         let live = d.is_live();
         let running = state == Some(State::Running) && !d.pending;
-        let can_rerun = d.last.is_some();
+        let can_rerun = d.last.is_some() || d.last_attach.is_some();
         let title = match (&d.session, state) {
             _ if d.pending => format!("{} — starting debugpy…", d.last.as_ref().map(|c| c.name.as_str()).unwrap_or("")),
             (Some(s), Some(State::Paused(_))) => {
@@ -3314,8 +3339,37 @@ impl Workspace {
                 wait(2500).await;
                 let alive = matches!(child.try_wait(), Ok(None));
                 let _ = this.update(cx, |t, _| eprintln!("smoke-debug: detach -> state={:?} process alive={alive} console {:?}", t.debug.state(), t.debug.console.last().map(|l| l.0.trim().to_string())));
+                // Rerun attaches to the same process; once it has exited, a message.
+                let _ = this.update_in(cx, |t, w, cx| {
+                    if let Some(ed) = t.active_editor().cloned() {
+                        ed.update(cx, |e, cx| e.toggle_breakpoint(4, cx));
+                    }
+                    t.dispatch(Action::RerunDebug, w, cx);
+                });
+                let mut again = None;
+                for _ in 0..150 {
+                    wait(100).await;
+                    again = this.update(cx, |t, _| t.debug.session.as_ref().filter(|s| s.attached && matches!(s.state, State::Paused(_))).map(|s| s.name.clone())).ok().flatten();
+                    if again.is_some() {
+                        break;
+                    }
+                }
+                let _ = this.update_in(cx, |t, w, cx| {
+                    eprintln!("smoke-debug: rerun after attach -> {again:?} (pid {pid}) at {:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                    if let Some(ed) = t.active_editor().cloned() {
+                        ed.update(cx, |e, cx| e.toggle_breakpoint(4, cx));
+                    }
+                    t.dispatch(Action::Stop, w, cx);
+                });
+                wait(1500).await;
                 let _ = child.kill();
                 let _ = child.wait();
+                wait(500).await;
+                let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::RerunDebug, w, cx));
+                wait(4000).await;
+                let _ = this.update(cx, |t, _| {
+                    eprintln!("smoke-debug: rerun after exit -> live={} console {:?}", t.debug.is_live(), t.debug.console.last().map(|l| l.0.trim().to_string()));
+                });
             }
             let _ = this.update_in(cx, |_, _, cx| {
                 let _ = std::fs::remove_file(&spin2);
