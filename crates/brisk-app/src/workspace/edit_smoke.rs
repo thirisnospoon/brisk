@@ -15,7 +15,7 @@ impl Workspace {
         }
     }
 
-    fn smoke_type(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn smoke_type(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ed) = self.focused_editor(window, cx) {
             ed.update(cx, |e, cx| e.replace_text_in_range(None, text, window, cx));
         }

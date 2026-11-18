@@ -10,7 +10,9 @@ mod edit_smoke;
 mod files_ui;
 mod find_ui;
 mod git_annotate_ui;
+mod git_compare_ui;
 mod git_history_ui;
+mod git_log_filter;
 mod git_merge_ui;
 mod git_stash_ui;
 mod git_smoke;
@@ -544,7 +546,8 @@ impl Workspace {
                 return Some(f);
             }
         }
-        self.git.as_ref().map(|g| g.message.clone()).filter(|m| m.read(cx).focus_handle(cx).is_focused(window))
+        let git_fields = self.git.as_ref().map(|g| [g.message.clone(), g.filter.field.clone()]).into_iter().flatten();
+        git_fields.into_iter().find(|m| m.read(cx).focus_handle(cx).is_focused(window))
     }
 
     fn save_all(&mut self, cx: &mut Context<Self>) {
@@ -979,7 +982,7 @@ impl Workspace {
                     self.refresh_git(cx);
                 }
             }
-            A::Commit | A::Push | A::UpdateProject | A::VcsQuickList | A::Branches | A::ShowDiff | A::RollbackChanges | A::Annotate | A::ResolveConflicts | A::StashChanges | A::UnstashChanges | A::ShowFileHistory => {
+            A::Commit | A::Push | A::UpdateProject | A::VcsQuickList | A::Branches | A::ShowDiff | A::RollbackChanges | A::Annotate | A::ResolveConflicts | A::StashChanges | A::UnstashChanges | A::ShowFileHistory | A::CompareWithBranch => {
                 self.git_action(action, window, cx)
             }
             A::ToggleStructureWindow => self.toggle_left(LeftTool::Structure, window, cx),

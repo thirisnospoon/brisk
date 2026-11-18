@@ -25,6 +25,11 @@ pub struct DiffView {
 }
 
 impl DiffView {
+    /// (left label, right label, number of changes): for smoke tests.
+    pub fn summary(&self) -> (String, String, usize) {
+        (self.left_label.clone(), self.right_label.clone(), self.blocks.len())
+    }
+
     pub fn new(title: String, path: Option<PathBuf>, left_label: String, left: &str, right_label: String, right: &str, cx: &mut Context<Self>) -> Self {
         let rows = brisk_git::align(left, right);
         let mut blocks = Vec::new();

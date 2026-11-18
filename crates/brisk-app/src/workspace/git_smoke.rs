@@ -86,6 +86,12 @@ impl Workspace {
             if !hold("annotate") && !hold("merge") && !hold("stash") {
                 Self::smoke_history(&this, cx, &bg, &root).await;
             }
+            if !["annotate", "merge", "stash", "history"].iter().any(|p| hold(p)) {
+                Self::smoke_log(&this, cx, &bg).await;
+            }
+            if !["annotate", "merge", "stash", "history", "log"].iter().any(|p| hold(p)) {
+                Self::smoke_compare(&this, cx, &bg, &root).await;
+            }
             let _ = this.update(cx, |_, cx| {
                 eprintln!("smoke-gitx: done");
                 if std::env::var_os("BRISK_SMOKE_GITX_HOLD").is_none() {
@@ -330,6 +336,108 @@ impl Workspace {
             eprintln!("smoke-gitx: selection history {:?} -> {}", dialog(this).and_then(|d| d.lines), show(this));
             this.smoke_press("escape", window, cx);
         });
+    }
+
+    async fn smoke_log(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor) {
+        fn subjects(this: &Workspace) -> Vec<String> {
+            this.git.as_ref().map(|g| g.log.iter().map(|c| c.subject.clone()).collect()).unwrap_or_default()
+        }
+        let _ = this.update_in(cx, |this, window, cx| {
+            if this.bottom != Some(super::BottomTool::Git) {
+                this.dispatch(Action::ToggleGitWindow, window, cx);
+            }
+            this.refresh_git(cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: log -> {} commits, selected {:?}", subjects(this).len(), this.git.as_ref().and_then(|g| g.log_selected));
+            // Text filter: typed into the field, the log reloads after a pause.
+            if let Some(f) = this.git.as_ref().map(|g| g.filter.field.clone()) {
+                window.focus(&gpui::Focusable::focus_handle(f.read(cx), cx));
+            }
+            this.smoke_type("feature", window, cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: log text 'feature' -> {:?}", subjects(this));
+            // Esc clears the text; User and Branch filters.
+            this.smoke_press("escape", window, cx);
+            this.set_log_author(Some("Bob".into()), cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update(cx, |this, cx| {
+            eprintln!("smoke-gitx: log user Bob -> {:?}", subjects(this));
+            this.set_log_author(None, cx);
+            this.set_log_branch(Some("feature".into()), cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update(cx, |this, _| eprintln!("smoke-gitx: log branch feature -> {:?}", subjects(this)));
+        if hold("log") {
+            return;
+        }
+        let _ = this.update_in(cx, |this, window, cx| {
+            this.clear_log_filters(window, cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update(cx, |this, _| eprintln!("smoke-gitx: log filters cleared -> {} commits", subjects(this).len()));
+    }
+
+    async fn smoke_compare(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
+        fn diff(this: &Workspace, cx: &gpui::App) -> String {
+            match this.active.and_then(|i| this.tabs.get(i)) {
+                Some(super::Tab::Diff(d)) => {
+                    let d = d.read(cx);
+                    format!("{:?} {:?}", d.title, d.summary())
+                }
+                _ => "no diff tab".into(),
+            }
+        }
+        let file = root.join("other.py");
+        let _ = this.update_in(cx, |this, window, cx| {
+            this.open_file(&file, window, cx);
+            if let Some(ed) = this.active_editor().cloned() {
+                let labels: Vec<String> = this.git_menu_entries(&file, Some(&ed), cx).iter().filter_map(|e| match e {
+                    super::menu_ui::Entry::Item { label, .. } => Some(label.clone()),
+                    _ => None,
+                }).collect();
+                eprintln!("smoke-gitx: editor menu git entries -> {labels:?}");
+            }
+            // Compare with Branch… → the branch menu, then "feature" from it.
+            this.dispatch(Action::CompareWithBranch, window, cx);
+            eprintln!("smoke-gitx: compare with branch menu -> {:?}", this.menu_labels());
+            this.menu = None;
+            this.compare_with_rev("other.py", "feature", "other.py", "feature", window, cx);
+            eprintln!("smoke-gitx: compare with feature -> {}", diff(this, cx));
+            // The root commit's file: no "hash^" on the left.
+            let root_commit = sh(&this.root, &["rev-list", "--max-parents=0", "HEAD"]).trim().to_string();
+            let f = brisk_git::FileChange { path: "blame.py".into(), old_path: None, status: brisk_git::FileStatus::Added };
+            this.show_commit_diff(&root_commit, &f, window, cx);
+            eprintln!("smoke-gitx: root commit diff -> {}", diff(this, cx));
+            // Log details: right click on a file.
+            this.log_file_menu(root_commit.clone(), f.clone(), gpui::point(gpui::px(400.), gpui::px(400.)), cx);
+            eprintln!("smoke-gitx: log file menu -> {:?}", this.menu_labels());
+            this.menu = None;
+            this.compare_with_rev("blame.py", &root_commit, "blame.py", &root_commit[..8], window, cx);
+            eprintln!("smoke-gitx: diff with working tree -> {}", diff(this, cx));
+        });
+        // Rollback in the Commit window: the checked files (other.py and blame.py changed).
+        let _ = std::fs::write(root.join("blame.py"), "z = 0\na = 1\nb = 20\nc = 3\nd = 4\n");
+        let _ = this.update(cx, |this, cx| this.refresh_git(cx));
+        pause(bg, 1200).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            this.dispatch(Action::SaveAll, window, cx);
+            if this.left != Some(super::LeftTool::Commit) {
+                this.dispatch(Action::ToggleCommitWindow, window, cx);
+            }
+            window.focus(&this.commit_focus);
+            eprintln!("smoke-gitx: before rollback -> {:?}", sh(&this.root, &["status", "--porcelain"]));
+            this.dispatch(Action::RollbackChanges, window, cx);
+            let items: Vec<String> = this.popup.as_ref().map(|p| p.items.iter().map(|i| format!("{} | {}", i.label, i.detail)).collect()).unwrap_or_default();
+            eprintln!("smoke-gitx: rollback confirm -> {items:?}");
+            this.smoke_press("enter", window, cx);
+        });
+        pause(bg, 1500).await;
+        eprintln!("smoke-gitx: after rollback -> {:?}", sh(root, &["status", "--porcelain"]));
     }
 
     /// Labels of the open context menu (smoke tests).

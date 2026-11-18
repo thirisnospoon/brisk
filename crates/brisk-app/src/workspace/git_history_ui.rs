@@ -66,6 +66,16 @@ impl Workspace {
             enabled: true,
             run: Rc::new(move |this, _, cx| this.show_history(&p, None, cx)),
         });
+        let p = path.to_path_buf();
+        v.push(Entry::Item {
+            label: "Git: Compare with Branch…".into(),
+            shortcut: String::new(),
+            enabled: g.branches.iter().any(|b| !b.current),
+            run: Rc::new(move |this, window, cx| {
+                let pos = window.mouse_position();
+                this.compare_with_branch_menu(&p, pos, cx)
+            }),
+        });
         if let Some(lines) = editor.and_then(|ed| Self::selected_lines(ed, cx)) {
             let p = path.to_path_buf();
             v.push(Entry::Item {
@@ -151,6 +161,18 @@ impl Workspace {
         g.dialog = None;
         let status = if first { FileStatus::Added } else { FileStatus::Modified };
         self.show_commit_diff(&hash, &FileChange { path, old_path: None, status }, window, cx);
+    }
+
+    /// The selected commit's version against the local file (Show Diff with Working Tree).
+    pub(super) fn history_compare_local(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(d) = self.history() else { return };
+        let Some(c) = d.commits.get(d.selected) else { return };
+        let (hash, rel) = (c.hash.clone(), d.rel.clone());
+        let Some(g) = self.git.as_mut() else { return };
+        let path = g.repo.path_in_commit(&hash, &rel);
+        g.dialog = None;
+        let short = hash[..hash.len().min(8)].to_string();
+        self.compare_with_rev(&rel, &hash, &path, &short, window, cx);
     }
 
     pub(super) fn history_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -269,6 +291,7 @@ impl Workspace {
                         .items_center()
                         .gap(px(8.))
                         .child(div().flex_1().text_size(px(11.)).text_color(Theme::text_dim()).child("↑↓ select · Enter, Ctrl+D or double click: full diff · Esc close"))
+                        .child(button("hist-local", "Compare with Local", false).on_click(cx.listener(|this, _, w, cx| this.history_compare_local(w, cx))))
                         .child(button("hist-diff", "Show Diff", false).on_click(cx.listener(|this, _, w, cx| this.history_open_diff(w, cx))))
                         .child(button("hist-close", "Close", true).on_click(cx.listener(|this, _, w, cx| {
                             if let Some(g) = this.git.as_mut() {

@@ -143,3 +143,29 @@ fn stash_roundtrip() {
     assert!(repo.stash_list().unwrap().is_empty());
     let _ = fs::remove_dir_all(&d);
 }
+
+#[test]
+fn log_filters() {
+    let (d, repo) = temp_repo("logq");
+    fs::write(d.join("a.py"), "x = 1\n").unwrap();
+    let files = vec!["a.py".to_string()];
+    repo.commit("Add parser", &files, false, &files).unwrap();
+    repo.git(&["switch", "-q", "-c", "feature"]).unwrap();
+    fs::write(d.join("a.py"), "x = 2\n").unwrap();
+    repo.git(&["-c", "user.name=Bob", "-c", "user.email=bob@example.com", "commit", "-q", "-am", "Fix PARSER bug"]).unwrap();
+    repo.git(&["switch", "-q", "-"]).unwrap();
+    let subjects = |q: &LogQuery| repo.log_query(100, q).unwrap().iter().map(|c| c.subject.clone()).collect::<Vec<_>>();
+    assert_eq!(subjects(&LogQuery::default()), vec!["Fix PARSER bug", "Add parser"]);
+    let text = LogQuery { text: "parser bug".into(), ..Default::default() };
+    assert_eq!(subjects(&text), vec!["Fix PARSER bug"], "case-insensitive, fixed string");
+    let bob = LogQuery { author: Some("Bob".into()), ..Default::default() };
+    assert_eq!(subjects(&bob), vec!["Fix PARSER bug"]);
+    let branch = LogQuery { branch: Some(repo.git(&["branch", "--show-current"]).unwrap().trim().to_string()), ..Default::default() };
+    assert_eq!(subjects(&branch), vec!["Add parser"], "the feature commit is not on the first branch");
+    let first = repo.log(10).unwrap().pop().unwrap();
+    let by_hash = LogQuery { text: first.hash[..7].to_string(), ..Default::default() };
+    assert_eq!(subjects(&by_hash), vec!["Add parser"]);
+    let authors = repo.authors().unwrap();
+    assert!(authors.contains(&"Bob".to_string()) && authors.contains(&"Test".to_string()), "{authors:?}");
+    let _ = fs::remove_dir_all(&d);
+}
