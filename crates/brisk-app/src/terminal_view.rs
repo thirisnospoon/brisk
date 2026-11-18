@@ -14,6 +14,8 @@ use std::path::PathBuf;
 
 mod tests_view;
 mod console_find;
+mod dashboard;
+pub use dashboard::RunInfo;
 pub use tests_view::TestsOutcome;
 
 const CELL_H: f32 = 18.0;
@@ -41,6 +43,9 @@ struct RunTab {
     code: Option<i32>,
     /// pytest runs: the live test tree.
     tests: Option<tests_view::TestsView>,
+    /// Services shows how long a run took.
+    started: std::time::Instant,
+    ended: Option<std::time::Instant>,
 }
 
 /// Events from the Run window.
@@ -153,6 +158,7 @@ impl TerminalPanel {
                                 if let Some(t) = this.tabs.iter_mut().find(|t| t.id == id) {
                                     if let Some(r) = t.run.as_mut() {
                                         r.running = false;
+                                        r.ended = Some(std::time::Instant::now());
                                         let code = r.code.map(|c| c.to_string()).unwrap_or_else(|| "-1".into());
                                         t.session.inject(format!("\r\n\x1b[0mProcess finished with exit code {code}\r\n\x1b[?25l").as_bytes());
                                         let tests = r.tests.as_mut().map(|t| t.finish());
@@ -218,7 +224,7 @@ impl TerminalPanel {
         })
         .map_err(|e| format!("Cannot run {}: {e}", cmd.program.display()))?;
         let name = cfg.name.clone();
-        let tab = Tab { id, session, title: String::new(), number: 0, run: Some(RunTab { name: name.clone(), cfg, cmd, running: true, code: None, tests }) };
+        let tab = Tab { id, session, title: String::new(), number: 0, run: Some(RunTab { name: name.clone(), cfg, cmd, running: true, code: None, tests, started: std::time::Instant::now(), ended: None }) };
         if let Some(i) = self.tabs.iter().position(|t| t.run.as_ref().is_some_and(|r| r.name == name)) {
             // PyCharm reuses the configuration's tab (stopping a run still in progress).
             self.tabs[i].session.kill();

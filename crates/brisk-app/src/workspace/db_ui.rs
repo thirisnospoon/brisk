@@ -547,6 +547,7 @@ impl Workspace {
             g.source = Some((id, sql.clone()));
         });
         self.bottom = Some(BottomTool::Services);
+        self.services.selected = Some(super::services_ui::Item::Database);
         self.db_connect(di, After::Run { grid, sql }, window, cx);
     }
 
@@ -1071,15 +1072,18 @@ impl Workspace {
             .into_any_element()
     }
 
-    pub(super) fn render_services(&mut self, _cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// The database console's results, on the right of Services.
+    pub(super) fn render_db_results(&mut self, _cx: &mut Context<Self>) -> gpui::AnyElement {
         match &self.db.results {
             Some(g) => {
                 let title = g.read(_cx).title.clone();
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
                     .flex_col()
-                    .size_full()
-                    .child(Self::panel_header(&format!("Services · {title} · console")))
+                    .h_full()
+                    .child(Self::panel_header(&format!("{title} · console")))
                     .child(div().flex_1().min_h_0().child(g.clone()))
                     .into_any_element()
             }
