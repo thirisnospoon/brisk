@@ -36,6 +36,7 @@ mod run_ui;
 mod settings_ui;
 mod tabs_ui;
 mod venv_ui;
+mod run_anything_ui;
 mod templates_ui;
 mod win_input;
 
@@ -122,6 +123,8 @@ enum PopupKind {
     Interpreters,
     /// Add Interpreter: the base Python for a new project venv.
     AddInterpreter,
+    /// Run Anything (double Ctrl).
+    RunAnything,
     /// Alt+Enter: quick fixes for the problem at the caret.
     Intentions,
     /// Shift+F6: the new name.
@@ -219,6 +222,8 @@ enum Target {
     AddInterpreter,
     /// A new project venv from this base interpreter.
     CreateVenv(PathBuf),
+    /// A Run Anything command line.
+    RunAnything(String),
     Intention(Box<problems_ui::Intent>),
     Rename(String),
     Project(project_ui::ProjectCmd),
@@ -292,6 +297,8 @@ pub struct Workspace {
     venv_busy: bool,
     /// The offer to install requirements into a new venv.
     venv_offer: Option<venv_ui::VenvOffer>,
+    /// Run Anything history, newest first.
+    ra_history: Vec<String>,
     /// pytest results per file for the run icons in the gutter.
     test_marks: run_marks_ui::TestMarks,
     /// Created on first open of Python Packages.
@@ -399,6 +406,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_RUNANYTHING").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.run_anything_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_VENV").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.venv_smoke(window, cx));
@@ -546,6 +556,7 @@ impl Workspace {
             pyc: None,
             venv_busy: false,
             venv_offer: None,
+            ra_history: Vec::new(),
             test_marks: Default::default(),
             packages: None,
             todo: None,
@@ -1017,7 +1028,11 @@ impl Workspace {
 
     fn on_modifiers(&mut self, e: &ModifiersChangedEvent, window: &mut Window, cx: &mut Context<Self>) {
         let m = e.modifiers;
-        self.track_ctrl(m);
+        if self.track_ctrl(m) {
+            // Ctrl tapped twice with nothing in between: Run Anything, like PyCharm.
+            self.dispatch(Action::RunAnything, window, cx);
+            return;
+        }
         let only_shift = m.shift && !m.control && !m.alt && !m.platform;
         if only_shift {
             self.shift_alone = true;
@@ -1069,6 +1084,7 @@ impl Workspace {
             }
             A::ToggleStructureWindow => self.toggle_left(LeftTool::Structure, window, cx),
             A::ToggleBookmarksWindow => self.toggle_left(LeftTool::Bookmarks, window, cx),
+            A::RunAnything => self.open_run_anything(),
             A::ToggleTerminalWindow => self.toggle_bottom(BottomTool::Terminal, window, cx),
             A::ToggleRunWindow | A::Run | A::RunContext | A::Rerun | A::SelectRunConfiguration | A::EditRunConfigurations => {
                 self.run_action(action, window, cx)
@@ -1396,6 +1412,7 @@ impl Workspace {
             k @ (PopupKind::Branches | PopupKind::NewBranch | PopupKind::VcsOperations | PopupKind::Confirm) => self.git_popup_items(k, &q),
             k @ (PopupKind::RunConfigs(_) | PopupKind::Interpreters) => self.run_popup_items(k, &q),
             PopupKind::AddInterpreter => self.add_interpreter_items(&q),
+            PopupKind::RunAnything => self.run_anything_items(&q),
             PopupKind::Intentions => self.intention_items(&q),
             PopupKind::Rename => self.rename_items(&q),
         };
@@ -1460,6 +1477,10 @@ impl Workspace {
                     Some(Target::AddInterpreter) => {
                         self.open_popup(PopupKind::AddInterpreter);
                         cx.notify();
+                    }
+                    Some(Target::RunAnything(line)) => {
+                        self.popup = None;
+                        self.run_anything(line, window, cx);
                     }
                     Some(Target::CreateVenv(base)) => {
                         self.popup = None;
@@ -2093,6 +2114,7 @@ impl Workspace {
             PopupKind::RunConfigs(false) => ("Run Configurations", "Type to filter"),
             PopupKind::Interpreters => ("Python Interpreter", "Type to filter"),
             PopupKind::AddInterpreter => ("Add Interpreter", "A new virtual environment in the project from this Python"),
+            PopupKind::RunAnything => ("Run Anything", "python x.py, pytest …, pip install …, a configuration or any command"),
             PopupKind::Intentions => (self.problems.intents_title.unwrap_or("Context Actions"), "Type to filter"),
             PopupKind::Rename => ("Rename", "New name"),
             PopupKind::Projects => ("Projects", "Type to filter"),
@@ -2230,6 +2252,7 @@ impl Workspace {
                                         Target::SaveRunConfig(_) => ("⎙", Theme::text_muted()),
                                         Target::Interpreter(_) => ("◆", gpui::rgb(0x4b8bbe).into()),
                                         Target::AddInterpreter | Target::CreateVenv(_) => ("+", gpui::rgb(0x4b8bbe).into()),
+                                        Target::RunAnything(_) => ("▶", gpui::rgb(0x5fb865).into()),
                                         Target::Intention(_) => ("✦", gpui::rgb(0xe0b84a).into()),
                                         Target::Rename(_) => ("✎", gpui::rgb(0x4b8bbe).into()),
                                         Target::Project(project_ui::ProjectCmd::New) => ("+", Theme::text_muted()),
@@ -2457,7 +2480,8 @@ fn fade_in(id: &'static str, e: impl IntoElement, ms: u64) -> impl IntoElement {
 impl Workspace {
     /// "Ctrl, Ctrl+Up/Down": the second Ctrl press within 400 ms of a lone Ctrl tap,
     /// held, turns Up/Down into Clone Caret.
-    fn track_ctrl(&mut self, m: gpui::Modifiers) {
+    /// Track lone Ctrl taps; true on the release of a second quick tap with no key between.
+    fn track_ctrl(&mut self, m: gpui::Modifiers) -> bool {
         let only_ctrl = m.control && !m.shift && !m.alt && !m.platform;
         if only_ctrl {
             if !self.ctrl_alone {
@@ -2466,9 +2490,11 @@ impl Workspace {
             }
         } else if !m.modified() && self.ctrl_alone {
             // Released without another key: a tap (unless it was the clone hold).
+            let double = self.ctrl_clone;
             self.ctrl_tap = (!self.ctrl_clone).then(Instant::now);
             self.ctrl_alone = false;
             self.ctrl_clone = false;
+            return double;
         } else {
             self.ctrl_alone = false;
             self.ctrl_tap = None;
@@ -2476,6 +2502,7 @@ impl Workspace {
                 self.ctrl_clone = false;
             }
         }
+        false
     }
 }
 

@@ -208,6 +208,11 @@ impl Workspace {
             return;
         }
         let cmd = brisk_run::build(&self.root, &cfg, &python);
+        self.run_command(cfg, cmd, window, cx);
+    }
+
+    /// Start a prepared process in the Run window (a tab named after `cfg`).
+    pub(super) fn run_command(&mut self, cfg: RunConfig, cmd: brisk_run::Command, window: &mut Window, cx: &mut Context<Self>) {
         let panel = self.ensure_run_panel(window, cx);
         let name = cfg.name.clone();
         let res = panel.update(cx, |p, cx| {

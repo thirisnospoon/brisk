@@ -200,6 +200,7 @@ actions! {
     DebugContext => "Debug Context Configuration", "Run";
     Stop => "Stop", "Run";
     Rerun => "Rerun", "Run";
+    RunAnything => "Run Anything", "Run";
     SelectRunConfiguration => "Run...", "Run";
     EditRunConfigurations => "Edit Configurations", "Run";
     ToggleBreakpoint => "Toggle Line Breakpoint", "Run";
