@@ -1496,9 +1496,55 @@ impl Workspace {
             .when(!active, |d| d.hover(|s| s.bg(Theme::hover_row())))
             .active(|s| s.bg(Theme::press()))
             .cursor_pointer()
-            .on_click(cx.listener(move |this, _, window, cx| this.dispatch(action, window, cx)))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if active {
+                    this.hide_tool_window(ToolSide::of(action), window, cx);
+                } else {
+                    this.dispatch(action, window, cx);
+                }
+            }))
             .tooltip(move |_window, cx| cx.new(|_| Tip(tooltip.clone())).into())
             .child(glyph)
+    }
+
+    /// Hides the tool window on one side and gives the editor the focus.
+    fn hide_tool_window(&mut self, side: ToolSide, window: &mut Window, cx: &mut Context<Self>) {
+        match side {
+            ToolSide::Left => self.left = None,
+            ToolSide::Bottom => self.bottom = None,
+            ToolSide::Right => self.db.open = false,
+        }
+        self.focus_editor(window, cx);
+        cx.notify();
+    }
+
+    /// A narrow column on a tool window's edge with its "Hide" button (—), as in PyCharm's
+    /// tool window header.
+    fn hide_column(&self, side: ToolSide, cx: &mut Context<Self>) -> impl IntoElement {
+        let id = match side {
+            ToolSide::Left => "hide-left",
+            ToolSide::Bottom => "hide-bottom",
+            ToolSide::Right => "hide-right",
+        };
+        div().w(px(28.)).h_full().flex_shrink_0().flex().flex_col().items_center().pt(px(6.)).child(
+            div()
+                .id(id)
+                .w(px(22.))
+                .h(px(22.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(4.))
+                .text_size(px(13.))
+                .text_color(Theme::text_muted())
+                .cursor_pointer()
+                .hover(|s| s.bg(Theme::hover_row()).text_color(Theme::text()))
+                .active(|s| s.bg(Theme::press()))
+                .tooltip(|_, cx| cx.new(|_| Tip("Hide  Shift+Esc".into())).into())
+                .child("—")
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _, window, cx| this.hide_tool_window(side, window, cx))),
+        )
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2283,7 +2329,11 @@ impl Render for Workspace {
                     .min_h_0()
                     .child(self.render_left_stripe(cx))
                     .when_some(left, |d, panel| {
-                        d.child(div().w(px(300.)).h_full().flex_shrink_0().bg(Theme::panel()).border_r_1().border_color(Theme::border()).child(panel))
+                        d.child(
+                            div().w(px(300.)).h_full().flex_shrink_0().flex().bg(Theme::panel()).border_r_1().border_color(Theme::border())
+                                .child(div().flex_1().min_w_0().h_full().child(panel))
+                                .child(self.hide_column(ToolSide::Left, cx)),
+                        )
                     })
                     .child(
                         div()
@@ -2293,11 +2343,19 @@ impl Render for Workspace {
                             .flex_col()
                             .child(center)
                             .when_some(bottom, |d, panel| {
-                                d.child(div().h(px(bottom_h)).flex_shrink_0().bg(Theme::panel()).border_t_1().border_color(Theme::divider()).child(panel))
+                                d.child(
+                                    div().h(px(bottom_h)).flex_shrink_0().flex().bg(Theme::panel()).border_t_1().border_color(Theme::divider())
+                                        .child(div().flex_1().min_w_0().h_full().child(panel))
+                                        .child(self.hide_column(ToolSide::Bottom, cx)),
+                                )
                             }),
                     )
                     .when_some(right, |d, panel| {
-                        d.child(div().w(px(320.)).h_full().flex_shrink_0().bg(Theme::panel()).border_l_1().border_color(Theme::border()).child(panel))
+                        d.child(
+                            div().w(px(320.)).h_full().flex_shrink_0().flex().bg(Theme::panel()).border_l_1().border_color(Theme::border())
+                                .child(div().flex_1().min_w_0().h_full().child(panel))
+                                .child(self.hide_column(ToolSide::Right, cx)),
+                        )
                     })
                     .child(self.render_right_stripe(cx)),
             )
@@ -2310,6 +2368,24 @@ impl Render for Workspace {
             .children(self.render_run_dialog(cx).map(|e| fade_in("run-dialog-in", e, 110)))
             .children(self.render_git_dialog(cx).map(|e| fade_in("git-dialog-in", e, 110)))
             .children(self.render_menu(viewport, cx).map(|e| fade_in("menu-in", e, 90)))
+    }
+}
+
+/// Which edge a tool window sits on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ToolSide {
+    Left,
+    Bottom,
+    Right,
+}
+
+impl ToolSide {
+    fn of(toggle: Action) -> ToolSide {
+        match toggle {
+            Action::ToggleProjectWindow | Action::ToggleCommitWindow | Action::ToggleStructureWindow | Action::ToggleBookmarksWindow => ToolSide::Left,
+            Action::ToggleDatabaseWindow => ToolSide::Right,
+            _ => ToolSide::Bottom,
+        }
     }
 }
 
