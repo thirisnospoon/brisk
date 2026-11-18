@@ -44,7 +44,7 @@ pub enum Kind {
 }
 
 impl Kind {
-    const ALL: [Kind; 6] = [Kind::Script, Kind::Module, Kind::Pytest, Kind::FastApi, Kind::Flask, Kind::Compound];
+    const ALL: [Kind; 6] = [Kind::Script, Kind::Module, Kind::Pytest, Kind::Compound, Kind::FastApi, Kind::Flask];
     fn of(c: &RunConfig) -> Kind {
         match (c.kind, c.module) {
             (RunKind::Pytest, _) => Kind::Pytest,
