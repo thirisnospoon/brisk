@@ -89,7 +89,7 @@ impl Workspace {
             if !["annotate", "merge", "stash", "history"].iter().any(|p| hold(p)) {
                 Self::smoke_log(&this, cx, &bg).await;
             }
-            if !["annotate", "merge", "stash", "history", "log"].iter().any(|p| hold(p)) {
+            if !["annotate", "merge", "stash", "history", "log", "logmenu"].iter().any(|p| hold(p)) {
                 Self::smoke_compare(&this, cx, &bg, &root).await;
             }
             let _ = this.update(cx, |_, cx| {
@@ -338,6 +338,49 @@ impl Workspace {
         });
     }
 
+    /// Click filter chip `chip` (0 Branch, 1 User) with real mouse messages, then the menu
+    /// item whose label contains `item`.
+    async fn smoke_pick(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, chip: usize, item: &str) {
+        use super::menu_ui::Entry;
+        let rows = |e: &Entry| if matches!(e, Entry::Separator) { 9.0 } else { 26.0 };
+        let _ = this.update_in(cx, |_, window, _| {
+            let scale = window.scale_factor();
+            match super::git_log_filter::CHIP_BOUNDS.with(|c| c.borrow()[chip]) {
+                Some(b) => {
+                    let c = b.center();
+                    super::win_input::click(f32::from(c.x) * scale, f32::from(c.y) * scale);
+                }
+                None => eprintln!("smoke-gitx: chip {chip} was not painted"),
+            }
+        });
+        pause(bg, 500).await;
+        let _ = this.update_in(cx, |this, window, _| {
+            let Some(m) = this.menu.as_ref() else {
+                return eprintln!("smoke-gitx: chip {chip} click opened no menu");
+            };
+            let labels: Vec<String> = m.entries.iter().filter_map(|e| match e {
+                Entry::Item { label, .. } => Some(label.trim().to_string()),
+                _ => None,
+            }).collect();
+            eprintln!("smoke-gitx: chip {chip} menu (click) -> {labels:?}");
+            let Some(i) = m.entries.iter().position(|e| matches!(e, Entry::Item { label, .. } if label.contains(item))) else { return };
+            // The menu's own layout (menu_ui): 5 px padding, flipped up near the bottom edge.
+            let h: f32 = m.entries.iter().map(rows).sum::<f32>() + 10.0;
+            let vp = window.viewport_size();
+            let (mut x, mut y) = (f32::from(m.pos.x), f32::from(m.pos.y));
+            if x + 280.0 > f32::from(vp.width) {
+                x = (x - 280.0).max(0.0);
+            }
+            if y + h > f32::from(vp.height) {
+                y = (y - h).max(0.0);
+            }
+            let top: f32 = m.entries[..i].iter().map(rows).sum();
+            let scale = window.scale_factor();
+            super::win_input::click((x + 60.0) * scale, (y + 5.0 + top + 13.0) * scale);
+        });
+        pause(bg, 1300).await;
+    }
+
     async fn smoke_log(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor) {
         fn subjects(this: &Workspace) -> Vec<String> {
             this.git.as_ref().map(|g| g.log.iter().map(|c| c.subject.clone()).collect()).unwrap_or_default()
@@ -362,17 +405,23 @@ impl Workspace {
             eprintln!("smoke-gitx: log text 'feature' -> {:?}", subjects(this));
             // Esc clears the text; User and Branch filters.
             this.smoke_press("escape", window, cx);
-            this.set_log_author(Some("Bob".into()), cx);
         });
         pause(bg, 1200).await;
-        let _ = this.update(cx, |this, cx| {
-            eprintln!("smoke-gitx: log user Bob -> {:?}", subjects(this));
-            this.set_log_author(None, cx);
-            this.set_log_branch(Some("feature".into()), cx);
+        // Real Windows clicks: the User chip, then "Bob" in its menu.
+        Self::smoke_pick(this, cx, bg, 1, "Bob").await;
+        let _ = this.update(cx, |this, _| eprintln!("smoke-gitx: log user Bob (clicks) -> {:?}", subjects(this)));
+        Self::smoke_pick(this, cx, bg, 1, "All users").await;
+        Self::smoke_pick(this, cx, bg, 0, "feature").await;
+        let _ = this.update(cx, |this, _| {
+            let q = this.git.as_ref().map(|g| g.filter.query.clone()).unwrap_or_default();
+            eprintln!("smoke-gitx: log branch feature (clicks) -> {:?}, query {:?} / {:?}", subjects(this), q.branch, q.author);
         });
-        pause(bg, 1200).await;
-        let _ = this.update(cx, |this, _| eprintln!("smoke-gitx: log branch feature -> {:?}", subjects(this)));
         if hold("log") {
+            return;
+        }
+        if hold("logmenu") {
+            // The User popup left open by a real click (no item matches), for a screenshot.
+            Self::smoke_pick(this, cx, bg, 1, "<keep open>").await;
             return;
         }
         let _ = this.update_in(cx, |this, window, cx| {
@@ -431,6 +480,8 @@ impl Workspace {
             }
             window.focus(&this.commit_focus);
             eprintln!("smoke-gitx: before rollback -> {:?}", sh(&this.root, &["status", "--porcelain"]));
+            // Space unchecks the first row: only the other checked file is rolled back.
+            this.smoke_press("space", window, cx);
             this.dispatch(Action::RollbackChanges, window, cx);
             let items: Vec<String> = this.popup.as_ref().map(|p| p.items.iter().map(|i| format!("{} | {}", i.label, i.detail)).collect()).unwrap_or_default();
             eprintln!("smoke-gitx: rollback confirm -> {items:?}");

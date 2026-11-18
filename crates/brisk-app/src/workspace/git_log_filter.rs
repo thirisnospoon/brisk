@@ -32,6 +32,16 @@ impl LogFilter {
     }
 }
 
+thread_local! {
+    /// Where the Branch and User chips were painted (window pixels): smoke clicks aim here.
+    pub static CHIP_BOUNDS: std::cell::RefCell<[Option<gpui::Bounds<gpui::Pixels>>; 2]> = const { std::cell::RefCell::new([None, None]) };
+}
+
+/// A canvas filling its parent that records the parent's bounds in `CHIP_BOUNDS[i]`.
+fn track(i: usize) -> impl IntoElement {
+    gpui::canvas(move |b, _, _| CHIP_BOUNDS.with(|c| c.borrow_mut()[i] = Some(b)), |_, _, _, _| {}).absolute().top_0().left_0().size_full()
+}
+
 impl Workspace {
     fn log_filter_text(&self, cx: &Context<Self>) -> Option<String> {
         let g = self.git.as_ref()?;
@@ -194,8 +204,12 @@ impl Workspace {
                 .child(label)
         };
         let branch = chip("log-filter-branch", format!("Branch: {} ▾", q.branch.as_deref().unwrap_or("All")), q.branch.is_some())
+            .relative()
+            .child(track(0))
             .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| this.branch_filter_menu(e.position, cx)));
         let user = chip("log-filter-user", format!("User: {} ▾", q.author.as_deref().unwrap_or("All")), q.author.is_some())
+            .relative()
+            .child(track(1))
             .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| this.author_filter_menu(e.position, cx)));
         div()
             .flex()
