@@ -306,7 +306,7 @@ impl Workspace {
                 .cursor_pointer()
                 .text_color(if tab == t { Theme::text() } else { Theme::text_muted() })
                 .when(tab == t, |d| d.bg(Theme::selection_row()))
-                .hover(|s| s.bg(Theme::hover_row()))
+                .when(!(tab == t), |d| d.hover(|s| s.bg(Theme::hover_row())))
                 .child(label)
                 .on_click(cx.listener(move |this, _, window, cx| this.set_problems_tab(t, window, cx)))
         };
@@ -375,8 +375,9 @@ impl Workspace {
                                 .items_center()
                                 .gap(px(8.))
                                 .text_size(px(13.))
+                                .w_full()
                                 .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
-                                .hover(|s| s.bg(Theme::hover_row()))
+                                .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
                                 .cursor_pointer();
                             match r {
                                 Row::File(f, count) => {

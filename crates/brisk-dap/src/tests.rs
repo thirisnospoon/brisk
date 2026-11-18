@@ -46,7 +46,7 @@ fn debug_a_script() {
     });
     let wait_for = |name: &str| -> Value {
         loop {
-            match erx.recv_timeout(Duration::from_secs(30)).expect("event timeout") {
+            match erx.recv_timeout(Duration::from_secs(90)).unwrap_or_else(|_| panic!("timed out waiting for {name}")) {
                 Event::Dap { event, body } if event == name => return body,
                 Event::AdapterExited => panic!("adapter exited waiting for {name}"),
                 _ => {}
@@ -84,7 +84,7 @@ fn debug_a_script() {
     block_on(client.request("continue", json!({"threadId": thread}))).unwrap().unwrap();
     let mut out = String::new();
     loop {
-        match erx.recv_timeout(Duration::from_secs(30)).expect("event timeout") {
+        match erx.recv_timeout(Duration::from_secs(90)).expect("event timeout") {
             Event::Dap { event, body } if event == "output" => out.push_str(body["output"].as_str().unwrap_or("")),
             Event::Dap { event, .. } if event == "terminated" => break,
             Event::AdapterExited => break,

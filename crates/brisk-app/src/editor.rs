@@ -62,6 +62,9 @@ pub struct Editor {
     focus: FocusHandle,
     scroll_y: f32,
     scroll_x: f32,
+    /// Smooth wheel scrolling: (target scroll_y, the value the animation last set).
+    smooth: Option<(f32, f32)>,
+    smooth_task: Option<gpui::Task<()>>,
     /// (buffer version, longest line in chars): the horizontal scroll range.
     max_line: (u64, usize),
     /// A scrollbar thumb being dragged.
@@ -226,6 +229,8 @@ impl Editor {
             focus: cx.focus_handle(),
             scroll_y: 0.0,
             scroll_x: 0.0,
+            smooth: None,
+            smooth_task: None,
             max_line: (u64::MAX, 0),
             drag: None,
             drag_pos: None,
@@ -280,6 +285,8 @@ impl Editor {
             focus: cx.focus_handle(),
             scroll_y: 0.0,
             scroll_x: 0.0,
+            smooth: None,
+            smooth_task: None,
             max_line: (u64::MAX, 0),
             drag: None,
             drag_pos: None,
@@ -1008,8 +1015,58 @@ impl Editor {
             window.refresh();
             return;
         }
+        // A mouse wheel moves in steps of lines: glide there instead of jumping. Touchpads send
+        // pixels and are already smooth.
+        if matches!(e.delta, gpui::ScrollDelta::Lines(_)) && !e.modifiers.shift && d.x == px(0.) {
+            self.smooth_scroll(f32::from(d.y), cx);
+            return;
+        }
+        self.smooth = None;
         self.scroll_by(f32::from(d.x), f32::from(d.y), e.modifiers.shift);
         cx.notify();
+    }
+
+    fn smooth_scroll(&mut self, dy: f32, cx: &mut Context<Self>) {
+        // Keep adding to the running target unless something else moved the view meanwhile.
+        let base = match self.smooth {
+            Some((target, last)) if last == self.scroll_y => target,
+            _ => self.scroll_y,
+        };
+        let target = (base - dy).clamp(0.0, self.max_scroll_y());
+        self.smooth = Some((target, self.scroll_y));
+        if self.smooth_task.is_some() {
+            return;
+        }
+        self.smooth_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(std::time::Duration::from_millis(7)).await;
+                let go_on = this
+                    .update(cx, |ed, cx| {
+                        let Some((target, last)) = ed.smooth else { return false };
+                        if last != ed.scroll_y {
+                            // Caret moves, Go to Line and the like take over.
+                            ed.smooth = None;
+                            return false;
+                        }
+                        let left = target - ed.scroll_y;
+                        if left.abs() < 0.5 {
+                            ed.scroll_y = target;
+                            ed.smooth = None;
+                        } else {
+                            // About 90 ms to settle, fast at first, like PyCharm's smooth scrolling.
+                            ed.scroll_y += left * 0.3;
+                            ed.smooth = Some((target, ed.scroll_y));
+                        }
+                        cx.notify();
+                        ed.smooth.is_some()
+                    })
+                    .unwrap_or(false);
+                if !go_on {
+                    break;
+                }
+            }
+            let _ = this.update(cx, |ed, _| ed.smooth_task = None);
+        }));
     }
 }
 

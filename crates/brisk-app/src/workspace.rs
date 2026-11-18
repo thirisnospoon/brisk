@@ -1110,12 +1110,14 @@ impl Workspace {
         true
     }
 
-    fn tree_click(&mut self, id: NodeId, e: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    /// A press on a tree row: select at once; a double press opens or toggles; a press on the
+    /// chevron toggles.
+    fn tree_press(&mut self, id: NodeId, clicks: usize, chevron: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.tree_selected = Some(id);
         window.focus(&self.tree_focus);
-        let double = e.click_count() >= 2;
+        let double = clicks >= 2;
         if self.tree.nodes[id].is_dir {
-            if double || e.position().x < px(0.) {
+            if double || chevron {
                 self.tree.toggle(id);
             }
         } else if double {
@@ -1372,7 +1374,8 @@ impl Workspace {
             .text_size(px(14.))
             .text_color(if active { Theme::text() } else { Theme::text_muted() })
             .when(active, |d| d.bg(Theme::selection_row()))
-            .hover(|s| s.bg(Theme::hover_row()))
+            .when(!active, |d| d.hover(|s| s.bg(Theme::hover_row())))
+            .active(|s| s.bg(Theme::press()))
             .cursor_pointer()
             .on_click(cx.listener(move |this, _, window, cx| this.dispatch(action, window, cx)))
             .tooltip(move |_window, cx| cx.new(|_| Tip(tooltip.clone())).into())
@@ -1391,6 +1394,7 @@ impl Workspace {
                 .gap(px(5.))
                 .rounded(px(5.))
                 .hover(|s| s.bg(Theme::hover_row()))
+                .active(|s| s.bg(Theme::press()))
                 .cursor_pointer()
                 .child(text)
                 .child(div().text_size(px(9.)).text_color(Theme::text_muted()).child("▼"))
@@ -1540,11 +1544,22 @@ impl Workspace {
                                     .pl(px(8. + r.depth as f32 * 16.))
                                     .gap(px(4.))
                                     .text_size(px(13.))
+                                    .w_full()
                                     .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
-                                    .hover(|s| s.bg(Theme::hover_row()))
-                                    .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| this.tree_click(id, e, window, cx)))
+                                    .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
+                                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| this.tree_press(id, e.click_count, false, window, cx)))
                                     .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| this.tree_menu(id, e.position, window, cx)))
-                                    .child(div().w(px(12.)).text_color(Theme::text_muted()).child(chevron))
+                                    .child(
+                                        div()
+                                            .w(px(12.))
+                                            .text_color(Theme::text_muted())
+                                            .hover(|s| s.text_color(Theme::text()))
+                                            .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                                                cx.stop_propagation();
+                                                this.tree_press(id, e.click_count, true, window, cx);
+                                            }))
+                                            .child(chevron),
+                                    )
                                     .child(div().w(px(16.)).text_color(icon_color).child(icon))
                                     .child(div().text_color(name_color).whitespace_nowrap().child(label))
                             })
@@ -1640,12 +1655,14 @@ impl Workspace {
                     .text_size(px(13.))
                     .text_color(if active { Theme::text() } else { Theme::text_muted() })
                     .when(active, |d| d.border_b_2().border_color(if focused { Theme::accent() } else { Theme::text_dim() }).bg(Theme::editor_bg()))
-                    .hover(|s| s.bg(Theme::hover_row()))
+                    .when(!active, |d| d.hover(|s| s.bg(Theme::hover_row())))
                     .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, window, cx| {
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
                         this.focus_pane(second, window, cx);
-                        this.save_all(cx);
-                        this.active = Some(i);
+                        if this.active != Some(i) {
+                            this.save_all(cx);
+                            this.active = Some(i);
+                        }
                         this.focus_editor(window, cx);
                         cx.notify();
                     }))
@@ -1661,7 +1678,19 @@ impl Workspace {
                     .child(div().text_color(name_color).child(title))
                     .when(dirty, |d| d.child(div().text_color(Theme::text_muted()).child("•")))
                     .child(
-                        div().id(("tab-close", i)).text_color(Theme::text_dim()).hover(|s| s.text_color(Theme::text())).child("×")
+                        div()
+                            .id(("tab-close", i))
+                            .w(px(16.))
+                            .h(px(16.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(4.))
+                            .text_color(Theme::text_dim())
+                            .hover(|s| s.text_color(Theme::text()).bg(Theme::press()))
+                            .child("×")
+                            // The press must not also activate the tab underneath.
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
                                 this.focus_pane(second, window, cx);
@@ -1926,8 +1955,16 @@ impl Workspace {
                                         .gap(px(8.))
                                         .rounded(px(5.))
                                         .when(i == selected, |d| d.bg(Theme::selection_row()))
-                                        .hover(|s| s.bg(Theme::hover_row()))
+                                        .when(!(i == selected), |d| d.hover(|s| s.bg(Theme::hover_row())))
                                         .cursor_pointer()
+                                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                            if let Some(p) = this.popup.as_mut() {
+                                                if p.selected != i {
+                                                    p.selected = i;
+                                                    cx.notify();
+                                                }
+                                            }
+                                        }))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             if let Some(p) = this.popup.as_mut() {
                                                 p.selected = i;
@@ -2059,13 +2096,25 @@ impl Render for Workspace {
                     .child(self.render_right_stripe(cx)),
             )
             .child(self.render_status(cx))
-            .children(self.render_toast())
-            .children(self.render_popup(cx))
-            .children(self.render_find_popup(cx))
-            .children(self.render_ds_dialog(cx))
-            .children(self.render_settings(cx))
-            .children(self.render_menu(viewport, cx))
+            .children(self.render_toast().map(|e| fade_in("toast-in", e, 160)))
+            .children(self.render_popup(cx).map(|e| fade_in("popup-in", e, 110)))
+            .children(self.render_find_popup(cx).map(|e| fade_in("find-in", e, 110)))
+            .children(self.render_ds_dialog(cx).map(|e| fade_in("ds-in", e, 110)))
+            .children(self.render_settings(cx).map(|e| fade_in("settings-in", e, 110)))
+            .children(self.render_menu(viewport, cx).map(|e| fade_in("menu-in", e, 90)))
     }
+}
+
+/// Overlays (popups, menus, dialogs, toasts) fade in over `ms` instead of popping up.
+fn fade_in(id: &'static str, e: impl IntoElement, ms: u64) -> impl IntoElement {
+    use gpui::{Animation, AnimationExt};
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .child(e)
+        .with_animation(id, Animation::new(std::time::Duration::from_millis(ms)).with_easing(gpui::ease_out_quint()), |d, t| d.opacity(t))
 }
 
 impl Workspace {

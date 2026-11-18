@@ -575,7 +575,7 @@ impl Workspace {
                 .cursor_pointer()
                 .when(on, |d| d.bg(Theme::selection_row()).text_color(Theme::text()))
                 .when(!on, |d| d.text_color(Theme::text_muted()))
-                .hover(|s| s.bg(Theme::hover_row()))
+                .when(!on, |d| d.hover(|s| s.bg(Theme::hover_row())))
                 .tooltip(move |_, cx| cx.new(|_| Tip(tip.clone())).into())
                 .child(label)
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -672,7 +672,7 @@ impl Workspace {
                             .gap(px(12.))
                             .rounded(px(5.))
                             .when(i == selected, |d| d.bg(Theme::selection_row()))
-                            .hover(|s| s.bg(Theme::hover_row()))
+                            .when(!(i == selected), |d| d.hover(|s| s.bg(Theme::hover_row())))
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                                 this.find.selected = i;
@@ -836,8 +836,9 @@ impl Workspace {
                             .items_center()
                             .gap(px(8.))
                             .text_size(px(13.))
+                            .w_full()
                             .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
-                            .hover(|s| s.bg(Theme::hover_row()))
+                            .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
                             .cursor_pointer();
                         match w.rows[i] {
                             WRow::File(fi, count) => {

@@ -1019,8 +1019,9 @@ impl Workspace {
                                 .pl(px(8. + row.depth as f32 * 16.))
                                 .pr(px(8.))
                                 .text_size(px(13.))
+                                .w_full()
                                 .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
-                                .hover(|s| s.bg(Theme::hover_row()))
+                                .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
                                 .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                                     window.focus(&this.db.focus);
                                     this.db.selected = ix;

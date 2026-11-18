@@ -446,7 +446,7 @@ impl TerminalPanel {
                     .rounded(px(5.))
                     .text_color(if active { Theme::text() } else { Theme::text_muted() })
                     .when(active, |d| d.bg(Theme::selection_row()))
-                    .hover(|s| s.bg(Theme::hover_row()))
+                    .when(!active, |d| d.hover(|s| s.bg(Theme::hover_row())))
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.active = i;

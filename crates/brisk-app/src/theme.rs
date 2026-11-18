@@ -25,6 +25,8 @@ impl Theme {
     pub fn accent() -> Hsla { pick(0x3574f0, 0x3574f0) }
     pub fn selection_row() -> Hsla { pick(0x2e436e, 0xd5e1ff) }
     pub fn hover_row() -> Hsla { pick(0x35373b, 0xe6e8ed) }
+    /// A button while the mouse is pressed on it.
+    pub fn press() -> Hsla { pick(0x43454a, 0xd3d5db) }
     pub fn excluded() -> Hsla { pick(0xc77c32, 0xb35f00) }
     pub fn modified() -> Hsla { pick(0x6c9be8, 0x0a50a1) }
     /// The background of warning banners (file changed on disk).

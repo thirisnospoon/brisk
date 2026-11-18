@@ -160,8 +160,18 @@ impl Workspace {
                     .gap(px(16.))
                     .rounded(px(4.))
                     .text_color(if enabled { Theme::text() } else { Theme::text_dim() })
-                    .when(enabled, |d| d.cursor_pointer().hover(|s| s.bg(Theme::selection_row())))
                     .when(selected == Some(i), |d| d.bg(Theme::selection_row()))
+                    // The mouse moves the selection, so hover and keyboard never show two rows.
+                    .when(enabled, |d| {
+                        d.cursor_pointer().on_mouse_move(cx.listener(move |this, _, _, cx| {
+                            if let Some(m) = this.menu.as_mut() {
+                                if m.selected != Some(i) {
+                                    m.selected = Some(i);
+                                    cx.notify();
+                                }
+                            }
+                        }))
+                    })
                     .on_click(cx.listener(move |this, _, window, cx| this.run_menu_entry(i, window, cx)))
                     .child(label.clone())
                     .child(div().flex_1())

@@ -801,7 +801,7 @@ impl Workspace {
                 .pl(px(28.))
                 .text_size(px(13.))
                 .when(sel == Some(i), |d| d.bg(Theme::selection_row()))
-                .hover(|s| s.bg(Theme::hover_row()))
+                .when(!(sel == Some(i)), |d| d.hover(|s| s.bg(Theme::hover_row())))
                 .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                     if let Some(g) = this.git.as_mut() {
                         g.commit_sel = Some(i);
@@ -1102,8 +1102,9 @@ impl Workspace {
                             .flex()
                             .items_center()
                             .text_size(px(13.))
+                            .w_full()
                             .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
-                            .hover(|s| s.bg(Theme::hover_row()))
+                            .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 if let Some(g) = this.git.as_ref() {
                                     window.focus(&g.log_focus.clone());
@@ -1156,7 +1157,7 @@ impl Workspace {
                         .rounded(px(4.))
                         .px(px(4.))
                         .when(dsel == Some(fi), |d| d.bg(Theme::selection_row()))
-                        .hover(|s| s.bg(Theme::hover_row()))
+                        .when(!(dsel == Some(fi)), |d| d.hover(|s| s.bg(Theme::hover_row())))
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                             if let Some(g) = this.git.as_mut() {

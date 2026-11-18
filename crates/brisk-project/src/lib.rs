@@ -307,8 +307,9 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn sample() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("brisk-proj-{}", std::process::id()));
+    /// A fresh sample project; `tag` keeps tests running in parallel apart.
+    fn sample(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("brisk-proj-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(d.join("app/models")).unwrap();
         fs::create_dir_all(d.join(".venv/lib")).unwrap();
@@ -322,7 +323,7 @@ mod tests {
 
     #[test]
     fn tree_lazy_sorted_hidden_excluded() {
-        let d = sample();
+        let d = sample("tree");
         let mut t = ProjectTree::new(&d);
         let rows = t.rows().to_vec();
         let names: Vec<_> = rows.iter().skip(1).map(|r| t.nodes[r.id].name.clone()).collect();
@@ -337,7 +338,7 @@ mod tests {
 
     #[test]
     fn file_list_and_fuzzy() {
-        let d = sample();
+        let d = sample("fuzzy");
         let fl = FileList::scan(&d);
         assert!(fl.files.contains(&"app/models/user.py".to_string()));
         assert!(!fl.files.iter().any(|f| f.starts_with(".venv")));
