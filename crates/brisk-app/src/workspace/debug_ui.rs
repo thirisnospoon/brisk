@@ -57,11 +57,44 @@ pub struct Session {
     pub exit_code: Option<i64>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowKind {
+    Scope,
+    Var,
+    WatchHeader,
+    /// A watch: its index in `Debug::watches`.
+    Watch(usize),
+}
+
 #[derive(Clone, Debug)]
 pub struct VarRow {
     pub depth: usize,
     pub var: Variable,
     pub expanded: bool,
+    pub kind: RowKind,
+    /// The `variablesReference` of the container (setVariable), 0 for scopes and watches.
+    pub parent: i64,
+}
+
+impl VarRow {
+    fn var(depth: usize, var: Variable, parent: i64) -> Self {
+        Self { depth, var, expanded: false, kind: RowKind::Var, parent }
+    }
+}
+
+/// What the variables tree is editing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditTarget {
+    NewWatch,
+    Watch(usize),
+    /// Set Value of this row.
+    Value(usize),
+}
+
+#[derive(Clone, Debug)]
+pub struct VarEdit {
+    pub target: EditTarget,
+    pub text: String,
 }
 
 pub struct Debug {
@@ -75,6 +108,11 @@ pub struct Debug {
     pub frames: Vec<Frame>,
     pub frame: usize,
     pub vars: Vec<VarRow>,
+    /// Watch expressions (persisted per project).
+    pub watches: Vec<String>,
+    /// The selected row of the variables tree.
+    pub sel: Option<usize>,
+    pub edit: Option<VarEdit>,
     pub tab: DebugTab,
     pub focus: FocusHandle,
     console_scroll: ScrollHandle,
@@ -100,6 +138,9 @@ impl Debug {
             frames: Vec::new(),
             frame: 0,
             vars: Vec::new(),
+            watches: load_watches(root),
+            sel: None,
+            edit: None,
             tab: DebugTab::Debugger,
             focus: cx.focus_handle(),
             console_scroll: ScrollHandle::new(),
@@ -155,6 +196,44 @@ impl Debug {
         self.console_scroll.scroll_to_bottom();
     }
 
+    /// Rows before the first scope: the Watches section and what is expanded under it.
+    fn watch_len(&self) -> usize {
+        self.vars.iter().position(|r| r.kind == RowKind::Scope).unwrap_or(self.vars.len())
+    }
+
+    /// The Watches section from evaluated values (None: not evaluated).
+    fn watch_section(&self, vals: Option<Vec<Result<Variable, String>>>) -> Vec<VarRow> {
+        if self.watches.is_empty() {
+            return Vec::new();
+        }
+        let head = Variable { name: "Watches".into(), value: String::new(), type_name: String::new(), reference: 0 };
+        let mut v = vec![VarRow { depth: 0, var: head, expanded: true, kind: RowKind::WatchHeader, parent: 0 }];
+        for (i, w) in self.watches.iter().enumerate() {
+            let var = match vals.as_ref().and_then(|v| v.get(i)) {
+                Some(Ok(x)) => Variable { name: w.clone(), ..x.clone() },
+                Some(Err(e)) => Variable { name: w.clone(), value: format!("<error: {e}>"), type_name: String::new(), reference: -1 },
+                None => Variable { name: w.clone(), value: String::new(), type_name: String::new(), reference: 0 },
+            };
+            v.push(VarRow { depth: 1, var, expanded: false, kind: RowKind::Watch(i), parent: 0 });
+        }
+        v
+    }
+
+    /// Replace the Watches section, keeping the scopes below it.
+    fn set_watch_rows(&mut self, rows: Vec<VarRow>) {
+        let n = self.watch_len();
+        let had = self.sel.and_then(|s| self.vars.get(s)).map(|r| (r.kind, r.var.name.clone()));
+        self.vars.splice(..n, rows);
+        self.sel = had.and_then(|(k, name)| self.vars.iter().position(|r| r.kind == k && r.var.name == name)).or(self.sel.filter(|&s| s < self.vars.len()));
+    }
+
+    /// Watches without values (the program runs or ended).
+    fn idle_watches(&mut self) {
+        self.vars.clear();
+        self.vars = self.watch_section(None);
+        self.sel = None;
+    }
+
     fn info(&mut self, text: impl Into<String>) {
         let mut t: String = text.into();
         t.push('\n');
@@ -180,6 +259,34 @@ fn load(root: &Path) -> Vec<StoredBp> {
             })
         })
         .collect()
+}
+
+fn watches_path() -> PathBuf {
+    brisk_db::config_dir().join("watches.json")
+}
+
+fn load_watches(root: &Path) -> Vec<String> {
+    let Ok(s) = std::fs::read_to_string(watches_path()) else { return Vec::new() };
+    let Ok(v) = serde_json::from_str::<Value>(&s) else { return Vec::new() };
+    v.get(root.to_string_lossy().to_lowercase()).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default()
+}
+
+fn save_watches(root: &Path, list: &[String]) {
+    let path = watches_path();
+    let mut all: serde_json::Map<String, Value> =
+        std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default();
+    let key = root.to_string_lossy().to_lowercase();
+    if list.is_empty() {
+        all.remove(&key);
+    } else {
+        all.insert(key, json!(list));
+    }
+    if let Some(d) = path.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    if let Ok(s) = serde_json::to_string_pretty(&Value::Object(all)) {
+        let _ = std::fs::write(path, s);
+    }
 }
 
 /// `python [opts] (-m module | script) args` → what debugpy launches.
@@ -459,6 +566,26 @@ impl Workspace {
                 }
                 self.pause_debug(cx);
             }
+            A::AddToWatches => {
+                // The selection or the word at the caret; nothing there: type one in.
+                let text = self.active_editor().map(|ed| {
+                    let e = ed.read(cx);
+                    let sel = e.buffer.selected_text();
+                    if sel.trim().is_empty() {
+                        e.buffer.slice(e.buffer.word_range_at(e.buffer.primary().head))
+                    } else {
+                        sel
+                    }
+                });
+                let text = text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty() && !t.contains('\n'));
+                self.debug.tab = DebugTab::Debugger;
+                self.bottom = Some(BottomTool::Debug);
+                match text {
+                    Some(t) if self.focused_editor(window, cx).is_some() => self.add_watch(t, cx),
+                    _ => self.debug.edit = Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }),
+                }
+                window.focus(&self.debug.focus.clone());
+            }
             A::RerunDebug => match self.debug.last.clone() {
                 Some(cfg) => self.start_debug(cfg, window, cx),
                 None => self.status = "Rerun: nothing has been debugged yet".into(),
@@ -503,7 +630,7 @@ impl Workspace {
             }
         }
         self.debug.frames.clear();
-        self.debug.vars.clear();
+        self.debug.idle_watches();
         self.clear_exec_marks(cx);
     }
 
@@ -565,7 +692,7 @@ impl Workspace {
         let name = cfg.name.clone();
         self.debug.console.clear();
         self.debug.frames.clear();
-        self.debug.vars.clear();
+        self.debug.idle_watches();
         self.debug.tab = DebugTab::Console;
         self.debug.info(cmd.display());
         self.bottom = Some(BottomTool::Debug);
@@ -656,7 +783,8 @@ impl Workspace {
             s.state = State::Ended;
         }
         self.debug.frames.clear();
-        self.debug.vars.clear();
+        self.debug.idle_watches();
+        self.debug.edit = None;
         self.clear_exec_marks(cx);
         for e in self.editors().cloned().collect::<Vec<_>>() {
             e.update(cx, |e, cx| {
@@ -772,7 +900,8 @@ impl Workspace {
                 window.focus(&self.debug.focus.clone());
             }
         }
-        self.debug.vars.clear();
+        self.debug.idle_watches();
+        self.evaluate_watches(cx);
         let Some(s) = &self.debug.session else { return };
         let rx = s.client.request("scopes", json!({"frameId": f.id}));
         let client = s.client.clone();
@@ -788,12 +917,15 @@ impl Workspace {
                 let mut rows = Vec::new();
                 for (k, s) in scopes.into_iter().enumerate() {
                     let open = k == 0 && first.is_some();
-                    rows.push(VarRow { depth: 0, var: s, expanded: open });
+                    let parent = s.reference;
+                    rows.push(VarRow { depth: 0, var: s, expanded: open, kind: RowKind::Scope, parent: 0 });
                     if open {
-                        rows.extend(first.clone().unwrap_or_default().into_iter().map(|v| VarRow { depth: 1, var: v, expanded: false }));
+                        rows.extend(first.clone().unwrap_or_default().into_iter().map(|v| VarRow::var(1, v, parent)));
                     }
                 }
-                this.debug.vars = rows;
+                let n = this.debug.watch_len();
+                this.debug.vars.truncate(n);
+                this.debug.vars.extend(rows);
                 cx.notify();
             });
         })
@@ -803,6 +935,7 @@ impl Workspace {
     /// Expand or collapse a variable row.
     pub(super) fn toggle_var(&mut self, i: usize, cx: &mut Context<Self>) {
         let Some(row) = self.debug.vars.get(i).cloned() else { return };
+        self.debug.sel = Some(i);
         if row.var.reference <= 0 {
             return;
         }
@@ -825,12 +958,235 @@ impl Workspace {
                 this.debug.vars[i].expanded = true;
                 let at = i + 1;
                 for (k, v) in kids.into_iter().enumerate() {
-                    this.debug.vars.insert(at + k, VarRow { depth: row.depth + 1, var: v, expanded: false });
+                    this.debug.vars.insert(at + k, VarRow::var(row.depth + 1, v, row.var.reference));
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    // --- Watches, Set Value, Copy Value ---------------------------------------------------
+
+    /// Evaluate every watch in the selected frame (on each stop and after changes).
+    fn evaluate_watches(&mut self, cx: &mut Context<Self>) {
+        let frame = self.debug.frames.get(self.debug.frame).map(|f| f.id);
+        let live = self.debug.session.as_ref().filter(|s| matches!(s.state, State::Paused(_)));
+        let (Some(s), Some(frame)) = (live, frame) else {
+            let rows = self.debug.watch_section(None);
+            self.debug.set_watch_rows(rows);
+            return;
+        };
+        let client = s.client.clone();
+        let exprs = self.debug.watches.clone();
+        cx.spawn(async move |this, cx| {
+            let mut vals = Vec::new();
+            for e in &exprs {
+                let r = client.request("evaluate", json!({"expression": e, "frameId": frame, "context": "watch"})).await;
+                vals.push(match r {
+                    Ok(Ok(v)) => {
+                        let (value, reference) = brisk_dap::parse_evaluate(&v);
+                        let type_name = v.get("type").and_then(Value::as_str).unwrap_or("").to_string();
+                        Ok(Variable { name: e.clone(), value, type_name, reference })
+                    }
+                    Ok(Err(e)) => Err(e),
+                    Err(_) => Err("no reply".into()),
+                });
+            }
+            let _ = this.update(cx, |this, cx| {
+                // Stale: the watches or the frame changed meanwhile.
+                if this.debug.watches != exprs || this.debug.frames.get(this.debug.frame).map(|f| f.id) != Some(frame) {
+                    return;
+                }
+                let rows = this.debug.watch_section(Some(vals));
+                this.debug.set_watch_rows(rows);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn watches_changed(&mut self, cx: &mut Context<Self>) {
+        save_watches(&self.root, &self.debug.watches);
+        self.evaluate_watches(cx);
+        cx.notify();
+    }
+
+    pub(super) fn add_watch(&mut self, expr: String, cx: &mut Context<Self>) {
+        let expr = expr.trim().to_string();
+        if expr.is_empty() {
+            return;
+        }
+        if !self.debug.watches.contains(&expr) {
+            self.debug.watches.push(expr);
+        }
+        self.watches_changed(cx);
+    }
+
+    pub(super) fn remove_watch(&mut self, i: usize, cx: &mut Context<Self>) {
+        if i < self.debug.watches.len() {
+            self.debug.watches.remove(i);
+            self.watches_changed(cx);
+        }
+    }
+
+    fn edit_watch(&mut self, i: usize, expr: String, cx: &mut Context<Self>) {
+        let expr = expr.trim().to_string();
+        if expr.is_empty() {
+            return self.remove_watch(i, cx);
+        }
+        if let Some(w) = self.debug.watches.get_mut(i) {
+            *w = expr;
+            self.watches_changed(cx);
+        }
+    }
+
+    /// F2 / double click: edit a watch's expression, or set a variable's value.
+    pub(super) fn begin_edit(&mut self, i: usize) {
+        let Some(r) = self.debug.vars.get(i) else { return };
+        self.debug.sel = Some(i);
+        self.debug.edit = match r.kind {
+            RowKind::Watch(w) => Some(VarEdit { target: EditTarget::Watch(w), text: self.debug.watches.get(w).cloned().unwrap_or_default() }),
+            RowKind::WatchHeader => Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }),
+            RowKind::Var if r.parent > 0 && self.debug.paused_thread().is_some() => Some(VarEdit { target: EditTarget::Value(i), text: r.var.value.clone() }),
+            _ => None,
+        };
+    }
+
+    pub(super) fn commit_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(ed) = self.debug.edit.take() else { return };
+        match ed.target {
+            EditTarget::NewWatch => self.add_watch(ed.text, cx),
+            EditTarget::Watch(w) => self.edit_watch(w, ed.text, cx),
+            EditTarget::Value(i) => self.set_value(i, ed.text, cx),
+        }
+        cx.notify();
+    }
+
+    /// Set Value (DAP setVariable) of a variable row.
+    pub(super) fn set_value(&mut self, i: usize, value: String, cx: &mut Context<Self>) {
+        let Some(row) = self.debug.vars.get(i).cloned().filter(|r| r.kind == RowKind::Var && r.parent > 0) else { return };
+        let Some(s) = self.debug.session.as_ref().filter(|s| matches!(s.state, State::Paused(_))) else { return };
+        let rx = s.client.request("setVariable", json!({"variablesReference": row.parent, "name": row.var.name, "value": value}));
+        cx.spawn(async move |this, cx| {
+            let res = rx.await;
+            let _ = this.update(cx, |this, cx| {
+                match res {
+                    Ok(Ok(v)) => {
+                        let at = if this.debug.vars.get(i).is_some_and(|r| r.parent == row.parent && r.var.name == row.var.name) {
+                            Some(i)
+                        } else {
+                            this.debug.vars.iter().position(|r| r.parent == row.parent && r.var.name == row.var.name)
+                        };
+                        if let Some(at) = at {
+                            if this.debug.vars[at].expanded {
+                                // Collapse: the children are of the old value.
+                                this.toggle_var(at, cx);
+                            }
+                            let r = &mut this.debug.vars[at];
+                            r.var.value = v.get("value").and_then(Value::as_str).unwrap_or("").to_string();
+                            if let Some(t) = v.get("type").and_then(Value::as_str) {
+                                r.var.type_name = t.to_string();
+                            }
+                            r.var.reference = v.get("variablesReference").and_then(Value::as_i64).unwrap_or(0);
+                        }
+                        this.evaluate_watches(cx);
+                    }
+                    Ok(Err(e)) => {
+                        this.status = format!("Cannot set value: {e}");
+                        this.debug.info(format!("Cannot set {}: {e}", row.var.name));
+                    }
+                    Err(_) => {}
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn copy_value(&mut self, i: usize, cx: &mut Context<Self>) {
+        let Some(r) = self.debug.vars.get(i) else { return };
+        if matches!(r.kind, RowKind::Scope | RowKind::WatchHeader) {
+            return;
+        }
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(r.var.value.clone()));
+        self.status = format!("Copied the value of {}", r.var.name);
+    }
+
+    /// Keys in the variables tree (the Debugger tab has focus).
+    fn vars_key(&mut self, k: &gpui::Keystroke, cx: &mut Context<Self>) -> bool {
+        let ctrl = k.modifiers.control || k.modifiers.platform;
+        if let Some(ed) = self.debug.edit.as_mut() {
+            match k.key.as_str() {
+                "enter" => self.commit_edit(cx),
+                "escape" => self.debug.edit = None,
+                "backspace" => {
+                    ed.text.pop();
+                }
+                "v" if ctrl => {
+                    if let Some(t) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                        ed.text.push_str(t.lines().next().unwrap_or(""));
+                    }
+                }
+                _ if ctrl || k.modifiers.alt => return false,
+                _ => match k.key_char.as_deref() {
+                    Some(t) if !t.chars().any(char::is_control) => ed.text.push_str(t),
+                    _ => return false,
+                },
+            }
+            cx.notify();
+            return true;
+        }
+        let n = self.debug.vars.len();
+        let sel = self.debug.sel.filter(|&s| s < n);
+        match (k.key.as_str(), ctrl) {
+            ("c", true) => {
+                if let Some(s) = sel {
+                    self.copy_value(s, cx);
+                }
+            }
+            (_, true) => return false,
+            ("down", _) if n > 0 => self.debug.sel = Some(sel.map_or(0, |s| (s + 1).min(n - 1))),
+            ("up", _) if n > 0 => self.debug.sel = Some(sel.map_or(0, |s| s.saturating_sub(1))),
+            ("right", _) => {
+                if let Some(s) = sel.filter(|&s| !self.debug.vars[s].expanded) {
+                    self.toggle_var(s, cx);
+                }
+            }
+            ("left", _) => {
+                if let Some(s) = sel {
+                    let r = &self.debug.vars[s];
+                    if r.expanded && r.var.reference > 0 {
+                        self.toggle_var(s, cx);
+                    } else if let Some(p) = (0..s).rev().find(|&j| self.debug.vars[j].depth < r.depth) {
+                        self.debug.sel = Some(p);
+                    }
+                }
+            }
+            ("enter", _) => {
+                if let Some(s) = sel {
+                    if self.debug.vars[s].var.reference > 0 {
+                        self.toggle_var(s, cx);
+                    } else {
+                        self.begin_edit(s);
+                    }
+                }
+            }
+            ("f2", _) => {
+                if let Some(s) = sel {
+                    self.begin_edit(s);
+                }
+            }
+            ("insert", _) => self.debug.edit = Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }),
+            ("delete", _) => {
+                if let Some(RowKind::Watch(w)) = sel.map(|s| self.debug.vars[s].kind) {
+                    self.remove_watch(w, cx);
+                }
+            }
+            _ => return false,
+        }
+        cx.notify();
+        true
     }
 
     /// Enter in the console's input line: evaluate in the selected frame.
@@ -874,10 +1230,13 @@ impl Workspace {
 
     /// Keys while the Debug window has focus: the console's input line.
     pub(super) fn debug_key(&mut self, e: &gpui::KeyDownEvent, window: &Window, cx: &mut Context<Self>) -> bool {
-        if !self.debug.focus.is_focused(window) || self.debug.tab != DebugTab::Console {
+        if !self.debug.focus.is_focused(window) {
             return false;
         }
         let k = &e.keystroke;
+        if self.debug.tab == DebugTab::Debugger {
+            return self.vars_key(k, cx);
+        }
         if k.modifiers.control || k.modifiers.alt || k.modifiers.platform {
             return false;
         }
@@ -941,7 +1300,7 @@ impl Workspace {
                 .justify_center()
                 .rounded(px(5.))
                 .text_color(if on { color } else { Theme::text_dim() })
-                .when(on, |x| x.cursor_pointer().hover(|s| s.bg(Theme::hover_row())))
+                .when(on, |x| x.cursor_pointer().hover(|s| s.bg(Theme::hover_row())).active(|s| s.bg(Theme::press())))
                 .child(glyph)
                 .tooltip(move |_, cx| cx.new(|_| super::Tip(tip.into())).into())
                 .on_click(cx.listener(move |this, _, w, cx| {
@@ -991,7 +1350,7 @@ impl Workspace {
         };
         let tabs = div().flex().px(px(6.)).child(tab("dbg-tab-dbg", "Debugger", DebugTab::Debugger, d.tab, cx)).child(tab("dbg-tab-con", "Console", DebugTab::Console, d.tab, cx));
         let body: gpui::AnyElement = match d.tab {
-            DebugTab::Debugger => self.render_debugger_tab(cx),
+            DebugTab::Debugger => self.render_debugger_tab(window, cx),
             DebugTab::Console => self.render_console_tab(window, cx),
         };
         div()
@@ -1011,7 +1370,7 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn render_debugger_tab(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn render_debugger_tab(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let d = &self.debug;
         let frames = div()
             .id("dbg-frames")
@@ -1043,16 +1402,46 @@ impl Workspace {
                         cx.notify();
                     }))
             }));
-        let vars = div()
-            .id("dbg-vars")
-            .flex_1()
-            .h_full()
-            .overflow_y_scroll()
-            .font_family(MONO_FONT)
-            .text_size(px(12.5))
-            .children(d.vars.iter().enumerate().map(|(i, r)| {
-                let arrow = if r.var.reference > 0 { if r.expanded { "▾" } else { "▸" } } else { " " };
-                let scope = r.depth == 0;
+        let paused = d.paused_thread().is_some();
+        let focused = d.focus.is_focused(window);
+        let caret = || div().w(px(1.5)).h(px(14.)).bg(Theme::caret());
+        let input = |text: &str, focused: bool| div().flex().items_center().px(px(3.)).border_1().border_color(Theme::accent()).rounded(px(3.)).child(text.to_string()).when(focused, |x| x.child(caret()));
+        let edit = d.edit.clone();
+        let mut rows: Vec<gpui::AnyElement> = Vec::new();
+        let new_watch_at = d.watch_len();
+        let new_watch_row = |text: &str| {
+            div()
+                .id("dbg-new-watch")
+                .h(px(21.))
+                .pl(px(8. + 16.))
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .child(div().w(px(12.)).text_color(Theme::text_dim()).child("+"))
+                .child(input(text, focused))
+                .into_any_element()
+        };
+        for (i, r) in d.vars.iter().enumerate() {
+            if i == new_watch_at {
+                if let Some(e) = edit.as_ref().filter(|e| e.target == EditTarget::NewWatch) {
+                    rows.push(new_watch_row(&e.text));
+                }
+            }
+            let arrow = if r.var.reference > 0 { if r.expanded { "▾" } else { "▸" } } else { " " };
+            let header = matches!(r.kind, RowKind::Scope | RowKind::WatchHeader);
+            let watch = matches!(r.kind, RowKind::Watch(_));
+            let editing_name = matches!((r.kind, edit.as_ref().map(|e| e.target)), (RowKind::Watch(w), Some(EditTarget::Watch(x))) if w == x);
+            let editing_value = edit.as_ref().is_some_and(|e| e.target == EditTarget::Value(i));
+            let error = r.var.value.starts_with("<error: ") && watch;
+            let name_color = if header { Theme::text_muted() } else if watch { Theme::accent() } else { Theme::syntax(brisk_syntax::Highlight::Property) };
+            let value: gpui::AnyElement = if editing_value {
+                input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
+            } else if watch && r.var.value.is_empty() && !paused {
+                div().text_color(Theme::text_dim()).child("not available: the program is not paused").into_any_element()
+            } else {
+                div().text_color(if error { Theme::error() } else { Theme::text() }).child(r.var.value.chars().take(300).collect::<String>()).into_any_element()
+            };
+            rows.push(
                 div()
                     .id(("dbg-var", i))
                     .h(px(21.))
@@ -1064,16 +1453,99 @@ impl Workspace {
                     .whitespace_nowrap()
                     .overflow_hidden()
                     .when(r.var.reference > 0, |x| x.cursor_pointer())
-                    .hover(|s| s.bg(Theme::hover_row()))
+                    .when(d.sel == Some(i), |x| x.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
+                    .when(d.sel != Some(i), |x| x.hover(|s| s.bg(Theme::hover_row())))
                     .child(div().w(px(12.)).text_color(Theme::text_dim()).child(arrow))
-                    .child(div().text_color(if scope { Theme::text_muted() } else { Theme::syntax(brisk_syntax::Highlight::Property) }).child(r.var.name.clone()))
-                    .when(!scope, |x| {
+                    .child(if editing_name {
+                        input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
+                    } else {
+                        div().text_color(name_color).child(r.var.name.clone()).into_any_element()
+                    })
+                    .when(!header, |x| {
                         x.child(div().text_color(Theme::text_dim()).child("="))
                             .when(!r.var.type_name.is_empty(), |x| x.child(div().text_color(Theme::text_dim()).child(format!("{{{}}}", r.var.type_name))))
-                            .child(div().text_color(Theme::text()).child(r.var.value.chars().take(300).collect::<String>()))
+                            .child(value)
                     })
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_var(i, cx)))
-            }));
+                    .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, _, cx| {
+                        if this.debug.edit.as_ref().is_some_and(|e| e.target != EditTarget::Value(i)) {
+                            this.commit_edit(cx);
+                        }
+                        if ev.click_count() >= 2 {
+                            this.begin_edit(i);
+                        } else {
+                            this.toggle_var(i, cx);
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            );
+        }
+        if new_watch_at >= d.vars.len() {
+            if let Some(e) = edit.as_ref().filter(|e| e.target == EditTarget::NewWatch) {
+                rows.push(new_watch_row(&e.text));
+            }
+        }
+        if rows.is_empty() {
+            rows.push(div().p(px(8.)).text_color(Theme::text_dim()).child(if paused { "Loading…" } else { "Variables appear when the program is paused. Insert adds a watch." }).into_any_element());
+        }
+        let sel = d.sel;
+        let sel_kind = sel.and_then(|s| d.vars.get(s)).map(|r| (r.kind, r.parent));
+        let can_remove = matches!(sel_kind, Some((RowKind::Watch(_), _)));
+        let can_set = matches!(sel_kind, Some((RowKind::Var, p)) if p > 0) && paused;
+        let can_copy = matches!(sel_kind, Some((RowKind::Var | RowKind::Watch(_), _)));
+        let mini = |id: &'static str, label: &'static str, tip: &'static str, on: bool, f: fn(&mut Workspace, &mut Context<Workspace>), cx: &mut Context<Self>| {
+            div()
+                .id(id)
+                .px(px(6.))
+                .h(px(20.))
+                .flex()
+                .items_center()
+                .rounded(px(4.))
+                .text_size(px(12.))
+                .text_color(if on { Theme::text() } else { Theme::text_dim() })
+                .when(on, |x| x.cursor_pointer().hover(|s| s.bg(Theme::hover_row())).active(|s| s.bg(Theme::press())))
+                .child(label)
+                .tooltip(move |_, cx| cx.new(|_| super::Tip(tip.into())).into())
+                .on_click(cx.listener(move |this, _, w, cx| {
+                    if on {
+                        f(this, cx);
+                        w.focus(&this.debug.focus.clone());
+                        cx.notify();
+                    }
+                }))
+        };
+        let bar = div()
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .px(px(4.))
+            .h(px(24.))
+            .border_b_1()
+            .border_color(Theme::divider())
+            .child(mini("dbg-watch-add", "+ Watch", "New Watch  Insert", true, |t, _| t.debug.edit = Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }), cx))
+            .child(mini("dbg-watch-remove", "− Watch", "Remove Watch  Delete", can_remove, |t, cx| {
+                if let Some(RowKind::Watch(w)) = t.debug.sel.and_then(|s| t.debug.vars.get(s)).map(|r| r.kind) {
+                    t.remove_watch(w, cx);
+                }
+            }, cx))
+            .child(mini("dbg-set-value", "Set Value", "Set Value  F2", can_set, |t, _| {
+                if let Some(s) = t.debug.sel {
+                    t.begin_edit(s);
+                }
+            }, cx))
+            .child(mini("dbg-copy-value", "Copy Value", "Copy Value  Ctrl+C", can_copy, |t, cx| {
+                if let Some(s) = t.debug.sel {
+                    t.copy_value(s, cx);
+                }
+            }, cx));
+        let vars = div()
+            .id("dbg-vars")
+            .flex_1()
+            .h_full()
+            .flex()
+            .flex_col()
+            .child(bar)
+            .child(div().id("dbg-vars-list").flex_1().min_h_0().overflow_y_scroll().font_family(MONO_FONT).text_size(px(12.5)).children(rows));
         div().size_full().flex().child(frames).child(vars).into_any_element()
     }
 
@@ -1196,6 +1668,46 @@ impl Workspace {
                 let v: Vec<String> = t.debug.vars.iter().filter(|r| r.depth >= 2).map(|r| format!("{}={}", r.var.name, r.var.value)).collect();
                 eprintln!("smoke-debug: expanded items -> {v:?}");
             });
+            // Set Value of items[0], Copy Value of items.
+            let _ = this.update_in(cx, |t, _, cx| {
+                if let Some(i) = t.debug.vars.iter().position(|r| r.depth >= 2 && r.var.name == "0") {
+                    t.set_value(i, "10".into(), cx);
+                }
+            });
+            wait(800).await;
+            let _ = this.update_in(cx, |t, _, cx| {
+                let v = t.debug.vars.iter().find(|r| r.depth >= 2 && r.var.name == "0").map(|r| r.var.value.clone());
+                if let Some(i) = t.debug.vars.iter().position(|r| r.var.name == "items") {
+                    t.copy_value(i, cx);
+                }
+                let clip = cx.read_from_clipboard().and_then(|c| c.text());
+                eprintln!("smoke-debug: set value items[0] -> {v:?}; copy value of items -> {clip:?}");
+                t.debug.watches.clear();
+                for w in ["len(items)", "total", "nope_x"] {
+                    t.add_watch(w.into(), cx);
+                }
+            });
+            wait(1000).await;
+            let watch_rows = |t: &Workspace| -> Vec<String> {
+                t.debug.vars.iter().filter(|r| matches!(r.kind, RowKind::Watch(_))).map(|r| format!("{}={}", r.var.name, r.var.value)).collect()
+            };
+            let _ = this.update_in(cx, |t, _, cx| {
+                eprintln!("smoke-debug: watches -> {:?}", watch_rows(t));
+                // Edit the first watch (as F2 + typing + Enter), remove the failing one (Delete).
+                if let Some(i) = t.debug.vars.iter().position(|r| r.kind == RowKind::Watch(0)) {
+                    t.begin_edit(i);
+                    if let Some(e) = t.debug.edit.as_mut() {
+                        e.text = "len(items) + 1".into();
+                    }
+                    t.commit_edit(cx);
+                }
+                t.remove_watch(2, cx);
+            });
+            wait(1000).await;
+            let _ = this.update_in(cx, |t, _, _| {
+                let saved = std::fs::read_to_string(watches_path()).unwrap_or_default();
+                eprintln!("smoke-debug: edited watches -> {:?}; saved={}", watch_rows(t), saved.contains("len(items) + 1") && !saved.contains("nope_x"));
+            });
             // Evaluate in the console.
             let _ = this.update_in(cx, |t, w, cx| {
                 t.dispatch(Action::EvaluateExpression, w, cx);
@@ -1218,6 +1730,8 @@ impl Workspace {
                 }
             }
             eprintln!("smoke-debug: f7, shift-f8, f8 -> {seen:?} (return line {})", ret_line + 1);
+            wait(500).await;
+            let _ = this.update_in(cx, |t, _, _| eprintln!("smoke-debug: watches after f8 -> {:?}", watch_rows(t)));
             // Conditional breakpoint inside the loop, then F9.
             let _ = this.update_in(cx, |t, _, cx| {
                 if let Some(ed) = t.active_editor().cloned() {

@@ -1087,7 +1087,7 @@ impl Workspace {
             A::PasteFromHistory if self.focused_editor(window, cx).is_some() => self.open_popup(PopupKind::PasteHistory),
             A::ShowLocalHistory => self.show_local_history(cx),
             A::ToggleBreakpoint | A::ViewBreakpoints | A::Debug | A::DebugContext | A::Resume | A::StepOver | A::StepInto | A::StepOut | A::RunToCursor | A::EvaluateExpression
-            | A::PauseProgram | A::RerunDebug => {
+            | A::PauseProgram | A::RerunDebug | A::AddToWatches => {
                 self.debug_action(action, window, cx);
             }
             A::ToggleBookmark | A::ToggleBookmarkWithMnemonic | A::ShowBookmarks | A::FileStructurePopup => {

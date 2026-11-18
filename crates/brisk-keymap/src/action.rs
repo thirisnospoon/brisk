@@ -212,6 +212,7 @@ actions! {
     EvaluateExpression => "Evaluate Expression", "Run";
     PauseProgram => "Pause Program", "Run";
     RerunDebug => "Rerun Debug Session", "Run";
+    AddToWatches => "Add to Watches", "Run";
 
     // VCS
     Commit => "Commit", "Git";
