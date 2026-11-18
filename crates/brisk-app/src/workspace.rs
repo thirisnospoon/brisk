@@ -2154,29 +2154,45 @@ impl Workspace {
     }
 
     fn render_welcome(&self) -> impl IntoElement {
+        // A two-column grid: labels right-aligned, shortcuts left-aligned, equal rows.
         let km = self.resolver.keymap();
-        let row = |label: &str, a: Action| {
-            div()
-                .flex()
-                .gap(px(16.))
-                .child(div().w(px(180.)).text_color(Theme::text_muted()).child(label.to_string()))
-                .child(div().text_color(Theme::modified()).child(km.shortcut_label(a).unwrap_or_default()))
-        };
+        let items = [
+            ("Search Everywhere", Action::SearchEverywhere),
+            ("Go to File", Action::GotoFile),
+            ("Recent Files", Action::RecentFiles),
+            ("Find Action", Action::FindAction),
+            ("Project View", Action::ToggleProjectWindow),
+            ("Terminal", Action::ToggleTerminalWindow),
+        ];
+        let cell = || div().h(px(30.)).flex().items_center();
         div()
             .size_full()
             .flex()
-            .flex_col()
             .items_center()
             .justify_center()
-            .gap(px(10.))
             .bg(Theme::editor_bg())
-            .text_size(px(14.))
-            .child(row("Search Everywhere", Action::SearchEverywhere))
-            .child(row("Go to File", Action::GotoFile))
-            .child(row("Recent Files", Action::RecentFiles))
-            .child(row("Find Action", Action::FindAction))
-            .child(row("Project View", Action::ToggleProjectWindow))
-            .child(row("Terminal", Action::ToggleTerminalWindow))
+            .font_family(ui_font())
+            .text_size(px(13.))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(18.))
+                    .child(div().flex().flex_col().items_end().children(items.iter().map(|(label, _)| cell().text_color(Theme::text_muted()).child(*label))))
+                    .child(div().flex().flex_col().items_start().children(items.iter().map(|(_, a)| {
+                        cell().child(
+                            div()
+                                .px(px(6.))
+                                .h(px(20.))
+                                .flex()
+                                .items_center()
+                                .rounded(px(4.))
+                                .bg(Theme::hover_row())
+                                .text_color(Theme::accent())
+                                .text_size(px(12.))
+                                .child(km.shortcut_label(*a).unwrap_or_default()),
+                        )
+                    }))),
+            )
     }
 
     fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2404,15 +2420,27 @@ impl Workspace {
                                         Target::History(..) => ("◷", Theme::text_muted()),
                                         Target::BpCondition(_) | Target::BpRemove => ("●", Theme::breakpoint()),
                                     };
+                                    let branch = matches!(it.target, Target::Branch(_));
+                                    // A branch row has no room to spare: "tracks …" is shown only
+                                    // when it fits whole next to the name (otherwise in the tooltip).
+                                    let room = 680. - 12. - 16. - 16. - 84. - 3. * 8.;
+                                    let show_detail = !branch || text_width(cx, &it.label, 13.) + text_width(cx, &it.detail, 12.) <= room;
+                                    let label = if branch { fit_text(cx, &it.label, 13., room) } else { it.label.clone() };
+                                    let tip: Option<SharedString> = branch.then(|| if it.detail.is_empty() { it.label.clone() } else { format!("{}
+{}", it.label, it.detail) }.into());
                                     div()
                                         .id(("item", i))
                                         .h(px(28.))
+                                        .flex_shrink_0()
                                         .mx(px(6.))
                                         .px(px(8.))
                                         .flex()
                                         .items_center()
                                         .gap(px(8.))
+                                        .whitespace_nowrap()
+                                        .overflow_hidden()
                                         .rounded(px(5.))
+                                        .when_some(tip, |d, t| d.tooltip(move |_, cx| cx.new(|_| Tip(t.clone())).into()))
                                         .when(i == selected, |d| d.bg(Theme::selection_row()))
                                         .when(!(i == selected), |d| d.hover(|s| s.bg(Theme::hover_row())))
                                         .cursor_pointer()
@@ -2431,16 +2459,53 @@ impl Workspace {
                                             let ev = KeyDownEvent { keystroke: gpui::Keystroke::parse("enter").unwrap(), is_held: false };
                                             this.popup_key(&ev, window, cx);
                                         }))
-                                        .child(div().w(px(16.)).text_color(color).child(icon))
-                                        .child(it.label.clone())
-                                        .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(it.detail.clone()))
-                                        .child(div().flex_1())
-                                        .child(div().text_color(Theme::text_muted()).text_size(px(12.)).child(it.hint.clone()))
+                                        // Fixed slots: the icon and the hint keep their size, the label
+                                        // shrinks with an ellipsis, and the detail only takes what is
+                                        // left (it goes first when the label is long).
+                                        .child(div().w(px(16.)).flex_shrink_0().text_color(color).child(icon))
+                                        .child(div().min_w_0().flex_shrink().overflow_hidden().text_ellipsis().child(label))
+                                        .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().text_color(Theme::text_dim()).text_size(px(12.)).when(show_detail, |d| d.child(it.detail.clone())))
+                                        .child(
+                                            div()
+                                                .flex_shrink_0()
+                                                .flex()
+                                                .justify_end()
+                                                .text_color(Theme::text_muted())
+                                                .text_size(px(12.))
+                                                .when(branch, |d| d.w(px(84.)).font_family(crate::theme::mono_font()))
+                                                .child(it.hint.clone()),
+                                        )
                                 })),
                         ),
                 ),
         )
     }
+}
+
+/// The width of `text` in the UI font at `size` px (for layouts that must not clip).
+fn text_width(cx: &App, text: &str, size: f32) -> f32 {
+    let ts = cx.text_system();
+    let id = ts.resolve_font(&gpui::font(ui_font()));
+    text.chars().map(|c| ts.advance(id, px(size), c).map(|a| f32::from(a.width)).unwrap_or(size * 0.55)).sum()
+}
+
+/// `text` cut with "…" to fit `room` px (GPUI clips a shrunk flex item without an ellipsis).
+fn fit_text(cx: &App, text: &str, size: f32, room: f32) -> String {
+    if text_width(cx, text, size) <= room {
+        return text.to_string();
+    }
+    let budget = room - text_width(cx, "…", size);
+    let mut w = 0.;
+    let mut out = String::new();
+    for c in text.chars() {
+        w += text_width(cx, c.encode_utf8(&mut [0; 4]), size);
+        if w > budget {
+            break;
+        }
+        out.push(c);
+    }
+    out.push('…');
+    out
 }
 
 /// Text glyph icons (our own, not JetBrains artwork).

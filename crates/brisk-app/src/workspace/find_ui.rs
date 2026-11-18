@@ -638,17 +638,10 @@ impl Workspace {
                 }))
         };
         let field_box = |id: &'static str, value: &str, placeholder: &'static str, focused: bool, selected: bool, which: Field, cx: &mut Context<Self>| {
-            div()
+            crate::ui_kit::input_frame(focused, false, crate::ui_kit::CONTROL_H)
                 .id(id)
                 .mx(px(10.))
-                .px(px(10.))
-                .h(px(30.))
-                .flex()
-                .items_center()
-                .rounded(px(6.))
-                .border_1()
-                .border_color(if focused { Theme::accent() } else { Theme::divider() })
-                .bg(Theme::bg())
+                .px(px(8.))
                 .font_family(mono_font())
                 .cursor_text()
                 .on_click(cx.listener(move |this, _, _, cx| {

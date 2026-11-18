@@ -330,17 +330,8 @@ impl Editor {
         let none = !f.opts.query.is_empty() && f.matches.is_empty();
         let count = self.find_count();
         let input = |e: Entity<Editor>, bad: bool| {
-            div()
-                .w(px(320.))
-                .h(px(26.))
-                .pl(px(6.))
-                .pt(px(2.))
-                .rounded(px(4.))
-                .border_1()
-                .border_color(if bad { Theme::error() } else { Theme::divider() })
-                .bg(Theme::bg())
-                .overflow_hidden()
-                .child(e)
+            let h = crate::ui_kit::COMPACT_H;
+            crate::ui_kit::input_frame(false, bad, h).w(px(320.)).child(crate::ui_kit::editor_slot(&e, "", false, h - 2.))
         };
         let toggle = |id: &'static str, label: &'static str, on: bool, tip: char, cx: &mut Context<Self>| {
             div()

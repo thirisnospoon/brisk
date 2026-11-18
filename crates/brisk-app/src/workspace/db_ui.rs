@@ -1103,16 +1103,10 @@ impl Workspace {
                 .gap(px(10.))
                 .child(div().w(px(90.)).text_color(Theme::text_muted()).child(f.label()))
                 .child(
-                    div()
+                    crate::ui_kit::input_frame(active, false, crate::ui_kit::CONTROL_H)
                         .flex_1()
-                        .h(px(28.))
+                        .flex_shrink()
                         .px(px(8.))
-                        .flex()
-                        .items_center()
-                        .rounded(px(5.))
-                        .border_1()
-                        .border_color(if active { Theme::accent() } else { Theme::divider() })
-                        .bg(Theme::bg())
                         .cursor(if f.is_text() { gpui::CursorStyle::IBeam } else { gpui::CursorStyle::Arrow })
                         .child(value),
                 )

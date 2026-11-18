@@ -8,6 +8,7 @@ mod crash;
 mod diff_view;
 mod grid_view;
 mod icons;
+mod ui_kit;
 mod editor;
 mod editorconfig;
 mod keys;
