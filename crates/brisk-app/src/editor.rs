@@ -15,6 +15,7 @@ use gpui::prelude::*;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+pub mod annotate;
 mod bookmarks;
 pub mod breakpoints;
 mod select;
@@ -111,6 +112,9 @@ pub struct Editor {
     breakpoints: breakpoints::Breakpoints,
     /// The debugger is paused on this line (its top frame, or the frame picked in Debug).
     pub exec_line: Option<usize>,
+    /// Annotate with Git Blame: the column, and the hovered line.
+    pub annotation: Option<annotate::Annotation>,
+    ann_hover: Option<(usize, Point<Pixels>)>,
     sel_stack: select::SelStack,
     /// Ctrl+wheel distance not yet turned into a font size step.
     zoom_acc: f32,
@@ -151,6 +155,10 @@ pub enum EditorEvent {
     BreakpointsChanged,
     /// Right click on the breakpoint of this line: edit its condition.
     EditBreakpoint(usize),
+    /// Right click on the line numbers: the gutter menu (Annotate with Git Blame).
+    GutterMenu(Point<Pixels>),
+    /// A click on a blame annotation: show this commit's diff of the file.
+    ShowCommit(String),
 }
 
 impl gpui::EventEmitter<EditorEvent> for Editor {}
@@ -259,6 +267,8 @@ impl Editor {
             bookmarks: Default::default(),
             breakpoints: Default::default(),
             exec_line: None,
+            annotation: None,
+            ann_hover: None,
             sel_stack: Default::default(),
             zoom_acc: 0.0,
             editorconfig,
@@ -315,6 +325,8 @@ impl Editor {
             bookmarks: Default::default(),
             breakpoints: Default::default(),
             exec_line: None,
+            annotation: None,
+            ann_hover: None,
             sel_stack: Default::default(),
             zoom_acc: 0.0,
             editorconfig: Default::default(),
@@ -872,6 +884,9 @@ impl Editor {
             cx.notify();
             return;
         }
+        if e.button == MouseButton::Left && self.annotation_click(e.position, cx) {
+            return;
+        }
         if e.button == MouseButton::Left && self.breakpoint_click(e.position, cx) {
             return;
         }
@@ -908,6 +923,9 @@ impl Editor {
         if in_gutter != self.gutter_hover {
             self.gutter_hover = in_gutter;
             cx.notify();
+        }
+        if self.annotation.is_some() {
+            self.annotation_hover(e.position, cx);
         }
         // Selection and scrollbar drags are handled window-wide (`global_drag`).
         if self.selecting || self.drag.is_some() {
@@ -960,6 +978,11 @@ impl Editor {
         self.close_insight();
         if let Some(line) = self.breakpoint_at_point(e.position) {
             cx.emit(EditorEvent::EditBreakpoint(line));
+            cx.notify();
+            return;
+        }
+        if self.show_gutter && !self.is_field && self.layout.as_ref().is_some_and(|l| e.position.x < l.text_left) {
+            cx.emit(EditorEvent::GutterMenu(e.position));
             cx.notify();
             return;
         }
@@ -1173,6 +1196,7 @@ impl Render for Editor {
             .child(EditorElement { editor: cx.entity() })
             .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))
             .when_some(self.render_tooltip(), |d, t| d.child(t))
+            .when_some(self.render_annotation_tip(), |d, t| d.child(t))
             .children(self.render_insight(cx));
         gpui::div()
             .id("editor")
@@ -1302,6 +1326,8 @@ struct Prepaint {
     bookmark_marks: Vec<(usize, Option<ShapedLine>)>,
     /// Breakpoints on screen: (row index, has a condition, verified by the debugger).
     breakpoint_marks: Vec<(usize, bool, Option<bool>)>,
+    /// Blame annotations on screen: (row index, label, age).
+    annotations: Vec<(usize, ShapedLine, f32)>,
     gutter_w: Pixels,
     char_w: Pixels,
     marks: marks::CaretMarks,
@@ -1365,7 +1391,7 @@ impl Element for EditorElement {
         let digit = window.text_system().shape_line("0".into(), font_size, &[run(1, Theme::text())], None);
         let char_w = digit.width;
         let digits = n_lines.to_string().len().max(3);
-        let gutter_w = if ed.show_gutter { char_w * digits as f32 + px(46.) } else { px(0.) };
+        let gutter_w = if ed.show_gutter { char_w * digits as f32 + px(46.) + ed.annotation_width(char_w) } else { px(0.) };
 
         // Highlights: one query per run of consecutive shown lines (folds split them).
         let rope = b.rope();
@@ -1466,7 +1492,17 @@ impl Element for EditorElement {
                 }
             }
         }
-        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, gutter_w, char_w, marks }
+        let mut annotations = Vec::new();
+        if let Some(a) = ed.annotation.as_ref().filter(|_| ed.show_gutter) {
+            for (i, &l) in rows.iter().enumerate() {
+                if let Some(Some(x)) = a.lines.get(l) {
+                    let s = x.label();
+                    let color = if ed.ann_hover.is_some_and(|h| h.0 == l) { Theme::accent() } else { Theme::text_muted() };
+                    annotations.push((i, window.text_system().shape_line(SharedString::from(s.clone()), font_size * 0.9, &[run(s.len(), color)], None), x.age));
+                }
+            }
+        }
+        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, annotations, gutter_w, char_w, marks }
     }
 
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), pp: &mut Prepaint, window: &mut Window, cx: &mut App) {
@@ -1480,6 +1516,8 @@ impl Element for EditorElement {
         let text_left = bounds.left() + pp.gutter_w + px(8.);
         let text_x = text_left - px(ed.scroll_x);
         let exec_line = ed.exec_line;
+        let ann_x0 = bounds.left() + ed.annotation_left();
+        let ann_w = ed.annotation_width(pp.char_w) - px(6.);
         let y_of = |l: usize| bounds.top() + px(ed.row_of(l) as f32 * line_height() - ed.scroll_y);
         let rows = &pp.rows;
         let first = rows.first().copied().unwrap_or(0);
@@ -1696,6 +1734,14 @@ impl Element for EditorElement {
             }
             // Gutter (painted over text so horizontal overflow never covers line numbers).
             window.paint_quad(fill(Bounds::new(bounds.origin, size(text_left - bounds.left() - px(2.), bounds.size.height)), Theme::editor_bg()));
+            if !pp.annotations.is_empty() {
+                // Newer lines get a stronger tint, like PyCharm's annotation colors.
+                for (i, label, age) in &pp.annotations {
+                    let y = line_ys[*i];
+                    window.paint_quad(fill(Bounds::new(point(ann_x0, y), size(ann_w, lh)), Theme::accent().opacity(0.06 + 0.22 * (1.0 - age))));
+                    let _ = label.paint(point(ann_x0 + px(4.), y), lh, window, cx);
+                }
+            }
             for (n, y) in pp.numbers.iter().zip(&line_ys) {
                 let x = bounds.left() + pp.gutter_w - px(30.) - n.width;
                 let _ = n.paint(point(x, *y), lh, window, cx);

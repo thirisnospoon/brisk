@@ -9,6 +9,8 @@ mod edit2_smoke;
 mod edit_smoke;
 mod files_ui;
 mod find_ui;
+mod git_annotate_ui;
+mod git_smoke;
 mod git_ui;
 mod history_ui;
 mod intel_smoke;
@@ -340,6 +342,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNCFG").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_dialog_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_GITX").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.gitx_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_RUNWIN").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_window_smoke(window, cx));
@@ -951,7 +956,7 @@ impl Workspace {
                     self.refresh_git(cx);
                 }
             }
-            A::Commit | A::Push | A::UpdateProject | A::VcsQuickList | A::Branches | A::ShowDiff | A::RollbackChanges => {
+            A::Commit | A::Push | A::UpdateProject | A::VcsQuickList | A::Branches | A::ShowDiff | A::RollbackChanges | A::Annotate => {
                 self.git_action(action, window, cx)
             }
             A::ToggleStructureWindow => self.toggle_left(LeftTool::Structure, window, cx),

@@ -447,12 +447,28 @@ impl Workspace {
 }
 
 impl Workspace {
-    /// `BRISK_SMOKE_RUNWIN=1` in a project with `ask.py` (input()), `main.py`, `sleep.py`
-    /// and `w1.py`…`w5.py`: stdin, save-before-run, tabs, toggles, Clear All, saving a
-    /// temporary configuration.
+    /// `BRISK_SMOKE_RUNWIN=1` (on a scratch project): writes `ask.py` (input()), `main.py`,
+    /// `sleep.py` and `w1.py`…`w5.py` into the project root and checks stdin,
+    /// save-before-run, tabs, toggles, Clear All and saving a temporary configuration.
     pub(super) fn run_window_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let bg = cx.background_executor().clone();
         let root = self.root.clone();
+        let mut files = vec![
+            ("ask.py".to_string(), "name = input(\"name? \")\nprint(\"hello\", name)\n".to_string()),
+            ("main.py".to_string(), "print(\"main\")\n".to_string()),
+            ("sleep.py".to_string(), "import time\nprint(\"sleeping\")\ntime.sleep(60)\n".to_string()),
+        ];
+        for i in 1..=5 {
+            files.push((format!("w{i}.py"), format!("print(\"w{i} \" + \"x\" * 150)\n")));
+        }
+        for (name, text) in files {
+            if let Err(e) = std::fs::write(root.join(&name), text) {
+                eprintln!("smoke-runwin: cannot write {name}: {e}");
+            }
+        }
+        let _ = std::fs::remove_file(root.join(brisk_run::CONFIG_FILE));
+        self.reload_runs();
+        self.runs.file = Default::default();
         cx.spawn_in(window, async move |this, cx| {
             let wait_idle = async |this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindowContext, what: &str| {
                 for _ in 0..200 {
