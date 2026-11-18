@@ -2481,11 +2481,13 @@ impl Workspace {
         let label = if branch { fit_text(cx, &it.label, 13., room) } else { it.label.to_string() };
         let tip: Option<SharedString> = branch.then(|| if it.detail.is_empty() { it.label.to_string() } else { format!("{}
 {}", it.label, it.detail) }.into());
-        div()
+        // uniform_list sizes an item to its content: the row spans the list's width through a
+        // full-width wrapper (its padding is the row's side margin).
+        let row = div()
             .id(("item", i))
+            .w_full()
             .h(px(28.))
             .flex_shrink_0()
-            .mx(px(6.))
             .px(px(8.))
             .flex()
             .items_center()
@@ -2527,7 +2529,8 @@ impl Workspace {
                     .text_size(px(12.))
                     .when(branch, |d| d.w(px(84.)).font_family(crate::theme::mono_font()))
                     .child(it.hint.clone()),
-            )
+            );
+        div().id(("item-wrap", i)).w_full().px(px(6.)).child(row)
     }
 }
 

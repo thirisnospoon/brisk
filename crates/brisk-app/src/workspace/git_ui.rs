@@ -879,6 +879,7 @@ impl Workspace {
         let (icon, icon_color) = file_icon(file_name(&c.path), false);
         div()
             .id(("chg", i))
+            .w_full()
             .h(px(24.))
             .flex()
             .items_center()
@@ -912,6 +913,7 @@ impl Workspace {
     fn commit_group_row(id: &'static str, title: &'static str, state: Option<bool>, n: usize, untracked: bool, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         div()
             .id(id)
+            .w_full()
             .h(px(24.))
             .flex()
             .items_center()
