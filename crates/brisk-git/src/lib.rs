@@ -3,9 +3,11 @@
 //! Using the CLI keeps us in sync with whatever git the user has (credentials helpers, hooks,
 //! LFS, config) — the same approach PyCharm takes.
 
+mod blame;
 mod diff;
 mod graph;
 
+pub use blame::{parse_blame, BlameLine};
 pub use diff::{align, line_changes, AlignedRow, LineChange, LineChangeKind, RowKind};
 pub use graph::{layout, GraphRow, Segment};
 
@@ -225,7 +227,17 @@ impl Repo {
             Err(e) if e.0.contains("does not have any commits") || e.0.contains("unknown revision") => return Ok(Vec::new()),
             Err(e) => return Err(e),
         };
-        Ok(out
+        Ok(parse_log(&out))
+    }
+
+    pub fn commit_message(&self, hash: &str) -> Result<String> {
+        self.git(&["show", "-s", "--format=%B", hash]).map(|s| s.trim_end().to_string())
+    }
+}
+
+/// Records of `git log --format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e`.
+fn parse_log(out: &str) -> Vec<Commit> {
+    out
             .split('\x1e')
             .filter_map(|rec| {
                 let rec = rec.trim_start_matches(['\n', '\r']);
@@ -243,12 +255,10 @@ impl Repo {
                     subject: f[6].to_string(),
                 })
             })
-            .collect())
-    }
+            .collect()
+}
 
-    pub fn commit_message(&self, hash: &str) -> Result<String> {
-        self.git(&["show", "-s", "--format=%B", hash]).map(|s| s.trim_end().to_string())
-    }
+impl Repo {
 
     /// Files changed by a commit (vs its first parent).
     pub fn commit_files(&self, hash: &str) -> Result<Vec<FileChange>> {

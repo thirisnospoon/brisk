@@ -86,3 +86,24 @@ fn status_parsing_renames_and_branch_ab() {
     assert_eq!(r.path, "new name.py");
     assert_eq!(r.old_path.as_deref(), Some("old.py"));
 }
+
+#[test]
+fn blame_and_file_log() {
+    let (d, repo) = temp_repo("blame");
+    fs::write(d.join("a.py"), "x = 1\ny = 2\n").unwrap();
+    let files = vec!["a.py".to_string()];
+    repo.commit("first", &files, false, &files).unwrap();
+    fs::write(d.join("a.py"), "x = 1\ny = 3\n").unwrap();
+    repo.commit("second", &files, false, &[]).unwrap();
+    let b = repo.blame("a.py", None).unwrap();
+    assert_eq!(b.iter().map(|l| l.summary.as_str()).collect::<Vec<_>>(), vec!["first", "second"]);
+    assert_eq!(b[0].author, "Test");
+    assert_eq!(b[0].email, "test@example.com");
+    // Unsaved editor text: the new line is not committed.
+    let b = repo.blame("a.py", Some("x = 1\nnew\ny = 3\n")).unwrap();
+    assert_eq!(b.len(), 3);
+    assert!(b[1].is_uncommitted() && !b[0].is_uncommitted());
+    let log = repo.file_log("a.py", 10).unwrap();
+    assert_eq!(log.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(), vec!["second", "first"]);
+    let _ = fs::remove_dir_all(&d);
+}

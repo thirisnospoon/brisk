@@ -131,6 +131,8 @@ impl Workspace {
             EditorEvent::ContextMenu(at) => this.open_editor_menu(ed.clone(), *at, cx),
             EditorEvent::BreakpointsChanged => this.breakpoints_changed(ed.clone(), cx),
             EditorEvent::EditBreakpoint(line) => this.edit_breakpoint(ed.clone(), *line, cx),
+            EditorEvent::GutterMenu(at) => this.open_gutter_menu(ed.clone(), *at, cx),
+            EditorEvent::ShowCommit(hash) => this.show_annotation_commit(ed.clone(), hash.clone(), window, cx),
             ev => this.lsp_editor_event(ed.clone(), ev, window, cx),
         })
         .detach();

@@ -246,6 +246,7 @@ impl Workspace {
                 self.load_vcs_base(e, cx);
             }
         }
+        self.refresh_annotations(head_changed, cx);
         if self.git.as_ref().is_some_and(|g| g.log_selected.is_none() && !g.log.is_empty()) {
             self.select_log(0, cx);
         }
@@ -408,6 +409,10 @@ impl Workspace {
                     self.show_change_diff(&c, window, cx);
                 }
             }
+            A::Annotate => match self.active_editor().cloned() {
+                Some(ed) => self.toggle_annotate(ed, cx),
+                None => self.status = "Annotate: open a file first".into(),
+            },
             A::RollbackChanges => {
                 let files: Vec<FileChange> = if self.commit_focus.is_focused(window) {
                     self.selected_change().into_iter().collect()
@@ -472,7 +477,7 @@ impl Workspace {
         self.open_diff(view, window, cx);
     }
 
-    fn show_commit_diff(&mut self, hash: &str, c: &FileChange, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn show_commit_diff(&mut self, hash: &str, c: &FileChange, window: &mut Window, cx: &mut Context<Self>) {
         let Some(g) = &self.git else { return };
         let short = &hash[..hash.len().min(8)];
         let base_path = c.old_path.clone().unwrap_or_else(|| c.path.clone());
