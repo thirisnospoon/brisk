@@ -66,6 +66,7 @@ pub struct PyConsole {
     hist_pos: Option<usize>,
     draft: String,
     scroll: ScrollHandle,
+    bar: crate::scrollbar::BarState,
 }
 
 const MAX_LINES: usize = 5000;
@@ -96,6 +97,7 @@ impl PyConsole {
             hist_pos: None,
             draft: String::new(),
             scroll: ScrollHandle::new(),
+            bar: Default::default(),
         }
     }
 
@@ -580,7 +582,7 @@ impl Workspace {
                     .child(div().text_color(Theme::text_dim()).child(ty))
                     .child(div().text_color(Theme::text()).child(v.value.clone()))
             }));
-        let left = div().flex_1().min_w_0().h_full().flex().flex_col().child(lines).child(input);
+        let left = div().flex_1().min_w_0().h_full().flex().flex_col().child(div().relative().flex_1().min_h_0().flex().flex_col().child(lines).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::Handle(p.scroll.clone()), p.bar.clone()))).child(input);
         div()
             .id("pyc-window")
             .track_focus(&p.focus)

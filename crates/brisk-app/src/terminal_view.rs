@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 mod tests_view;
 mod console_find;
+mod scroll_bar;
 mod dashboard;
 pub use dashboard::RunInfo;
 pub use tests_view::TestsOutcome;
@@ -124,6 +125,7 @@ pub struct TerminalPanel {
     pub failed_first: bool,
     /// The Test History list is open.
     pub history_open: bool,
+    bar: crate::scrollbar::BarState,
 }
 
 #[derive(Clone, Copy)]
@@ -239,6 +241,7 @@ impl TerminalPanel {
             search: Default::default(),
             failed_first: false,
             history_open: false,
+            bar: Default::default(),
         }
     }
 
@@ -950,12 +953,14 @@ impl Render for TerminalPanel {
                 .when(self.search.open, |d| d.child(self.render_search_bar(cx)))
                 .when(self.search.open && self.search.filter, |d| d.child(self.render_filtered(cx)))
                 .when(!(self.search.open && self.search.filter), |d| d.child(
+                div().relative().flex_1().min_h_0().flex().child(
                 div()
                     .id("terminal-grid")
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
-                    .mx(px(8.))
+                    .ml(px(8.))
+                    .mr(px(crate::scrollbar::BAR))
                     .mb(px(4.))
                     .cursor(gpui::CursorStyle::IBeam)
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
@@ -964,6 +969,7 @@ impl Render for TerminalPanel {
                     .on_scroll_wheel(cx.listener(Self::on_scroll))
                     .when_some(self.error.clone(), |d, e| d.child(div().text_color(rgb(0xf05d5d)).child(e)))
                     .child(TerminalElement { panel: cx.entity() }),
+                ).child(self.scrollbar(cx)),
             ))))))
     }
 }
