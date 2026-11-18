@@ -156,6 +156,9 @@ pub struct Debug {
     pub bp_dialog: Option<BpDialog>,
     /// Mute Breakpoints: none are sent (exception breakpoints neither); for this window only.
     pub muted: bool,
+    /// The program's threads at a stop: (id, name). The chooser shows when there are several.
+    pub threads: Vec<(i64, String)>,
+    pub threads_open: bool,
 }
 
 impl Debug {
@@ -186,6 +189,8 @@ impl Debug {
             exc_uncaught: load_exc(root).1,
             bp_dialog: None,
             muted: false,
+            threads: Vec::new(),
+            threads_open: false,
         }
     }
 
@@ -1238,6 +1243,8 @@ impl Workspace {
             }
         }
         self.debug.frames.clear();
+        self.debug.threads.clear();
+        self.debug.threads_open = false;
         self.debug.idle_watches();
         self.debug.exception = None;
         self.clear_exec_marks(cx);
@@ -1394,6 +1401,8 @@ impl Workspace {
             s.state = State::Ended;
         }
         self.debug.frames.clear();
+        self.debug.threads.clear();
+        self.debug.threads_open = false;
         self.debug.idle_watches();
         self.debug.edit = None;
         self.debug.exception = None;
@@ -1457,6 +1466,7 @@ impl Workspace {
                 self.debug.tab = DebugTab::Debugger;
                 self.bottom = Some(BottomTool::Debug);
                 self.load_frames(thread, window, cx);
+                self.load_threads(cx);
             }
             "continued" => self.set_running(cx),
             "exited" => {
@@ -1524,6 +1534,86 @@ impl Workspace {
         }
         self.focus_editor(window, cx);
         cx.notify();
+    }
+
+    /// The thread list for the chooser above Frames.
+    fn load_threads(&mut self, cx: &mut Context<Self>) {
+        let Some(s) = &self.debug.session else { return };
+        let rx = s.client.request("threads", json!({}));
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(v)) = rx.await else { return };
+            let threads: Vec<(i64, String)> = v
+                .get("threads")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(|t| Some((t.get("id")?.as_i64()?, t.get("name").and_then(Value::as_str).unwrap_or("").to_string()))).collect())
+                .unwrap_or_default();
+            let _ = this.update(cx, |this, cx| {
+                if this.debug.paused_thread().is_some() {
+                    this.debug.threads = threads;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Another thread in the chooser: its stack and variables; steps and Resume go to it.
+    pub(super) fn select_thread(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        self.debug.threads_open = false;
+        let Some(s) = self.debug.session.as_mut().filter(|s| matches!(s.state, State::Paused(_))) else { return };
+        s.state = State::Paused(id);
+        self.debug.frames.clear();
+        self.load_frames(id, window, cx);
+        cx.notify();
+    }
+
+    fn render_threads(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let d = &self.debug;
+        let cur = d.paused_thread()?;
+        if d.threads.len() < 2 {
+            return None;
+        }
+        let name = |id: i64| d.threads.iter().find(|t| t.0 == id).map(|t| t.1.clone()).unwrap_or_else(|| format!("Thread {id}"));
+        let head = div()
+            .id("dbg-thread")
+            .h(px(24.))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .cursor_pointer()
+            .border_b_1()
+            .border_color(Theme::divider())
+            .hover(|s| s.bg(Theme::hover_row()))
+            .child(div().text_color(Theme::text_dim()).child("Thread"))
+            .child(div().flex_1().child(name(cur)))
+            .child(div().text_color(Theme::text_dim()).child(if d.threads_open { "▴" } else { "▾" }))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.debug.threads_open = !this.debug.threads_open;
+                cx.notify();
+            }));
+        let list = d.threads.iter().map(|(id, n)| {
+            let id = *id;
+            div()
+                .id(("dbg-thread-row", id as u64))
+                .h(px(22.))
+                .pl(px(20.))
+                .flex()
+                .items_center()
+                .cursor_pointer()
+                .when(id == cur, |x| x.bg(Theme::selection_row()))
+                .when(id != cur, |x| x.hover(|s| s.bg(Theme::hover_row())))
+                .child(n.clone())
+                .on_click(cx.listener(move |this, _, w, cx| this.select_thread(id, w, cx)))
+        });
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .child(head)
+                .when(d.threads_open, |x| x.children(list).child(div().h(px(1.)).bg(Theme::divider())))
+                .into_any_element(),
+        )
     }
 
     fn load_frames(&mut self, thread: i64, window: &mut Window, cx: &mut Context<Self>) {
@@ -2110,6 +2200,7 @@ impl Workspace {
     }
 
     fn render_debugger_tab(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let threads = self.render_threads(cx);
         let d = &self.debug;
         let frames = div()
             .id("dbg-frames")
@@ -2119,6 +2210,7 @@ impl Workspace {
             .overflow_y_scroll()
             .border_r_1()
             .border_color(Theme::divider())
+            .children(threads)
             .when(d.frames.is_empty(), |x| x.child(div().p(px(8.)).text_color(Theme::text_dim()).child(if d.paused_thread().is_some() { "Loading…" } else { "Frames appear when the program is paused" })))
             .children(d.frames.iter().enumerate().map(|(i, f)| {
                 let file = f.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -2749,6 +2841,48 @@ impl Workspace {
                     eprintln!("smoke-debug: pytest {what} result {summary:?}");
                 });
             }
+            let thr = dir.join("dbg_threads.py");
+            let _ = std::fs::write(&thr, "import threading\nev = threading.Event()\ndef work(n):\n    x = n * 2\n    ev.set()\n    return x\ndef main():\n    t = threading.Thread(target=work, args=(5,), name=\"Worker\")\n    t.start()\n    t.join()\nmain()\n");
+            let _ = this.update_in(cx, |t, w, cx| {
+                t.open_file(&thr, w, cx);
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.toggle_breakpoint(4, cx));
+                }
+                t.dispatch(Action::DebugContext, w, cx);
+            });
+            let s = settled!();
+            let mut threads = Vec::new();
+            for _ in 0..50 {
+                wait(100).await;
+                threads = this.update(cx, |t, _| t.debug.threads.clone()).unwrap_or_default();
+                if !threads.is_empty() {
+                    break;
+                }
+            }
+            let main_id = threads.iter().find(|t| t.1 == "MainThread").map(|t| t.0);
+            let _ = this.update_in(cx, |t, w, cx| {
+                let shown = t.render_threads(cx).is_some();
+                eprintln!(
+                    "smoke-debug: threads {s:?} at {:?} threads={:?} chooser={shown}",
+                    t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)),
+                    threads.iter().map(|t| t.1.as_str()).collect::<Vec<_>>()
+                );
+                if let Some(id) = main_id {
+                    t.select_thread(id, w, cx);
+                }
+            });
+            wait(1500).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                let frames: Vec<String> = t.debug.frames.iter().map(|f| format!("{}:{}", f.name, f.line + 1)).collect();
+                eprintln!("smoke-debug: main thread -> paused={:?} frames has main:10 {}", t.debug.paused_thread() == main_id, frames.iter().any(|f| f == "main:10"));
+                t.dispatch(Action::Resume, w, cx);
+            });
+            until!(|s: Option<State>| s == Some(State::Ended));
+            let _ = this.update_in(cx, |t, _, cx| {
+                eprintln!("smoke-debug: threads after end {:?} {:?}", t.debug.threads, t.debug.console.iter().rev().take(3).map(|l| l.0.trim().to_string()).collect::<Vec<_>>());
+                let _ = std::fs::remove_file(&thr);
+                let _ = cx;
+            });
             let _ = this.update_in(cx, |_, _, cx| {
                 let _ = std::fs::remove_file(&raise);
                 let _ = std::fs::remove_file(&test);
