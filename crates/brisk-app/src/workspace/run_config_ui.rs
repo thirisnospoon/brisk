@@ -1461,7 +1461,7 @@ mod tests {
 
     #[test]
     fn dialog_editing() {
-        let mut d = RunDialog { drafts: Vec::new(), current: 0, field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None, django_settings: None, templates: false, other: (Vec::new(), 0) };
+        let mut d = RunDialog { drafts: Vec::new(), current: 0, field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None, django_settings: None, templates: false, other: (Vec::new(), 0), test_runner: None };
         d.add(Kind::Script);
         assert_eq!(d.drafts[0].cfg.name, "Unnamed");
         assert!(d.select_all);
