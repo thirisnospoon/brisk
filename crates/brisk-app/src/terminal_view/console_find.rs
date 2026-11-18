@@ -3,7 +3,7 @@
 //! only the matching lines (a click on one jumps to it).
 
 use super::TerminalPanel;
-use crate::theme::{Theme, MONO_FONT};
+use crate::theme::{Theme, mono_font};
 use brisk_terminal::Found;
 use gpui::prelude::*;
 use gpui::{div, px, Context, Keystroke, MouseButton};
@@ -236,7 +236,7 @@ impl TerminalPanel {
                     .border_1()
                     .border_color(if s.focused { Theme::accent() } else { Theme::border() })
                     .when(none, |d| d.bg(Theme::error().opacity(0.15)))
-                    .font_family(MONO_FONT)
+                    .font_family(mono_font())
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .child(s.query.clone())
@@ -278,7 +278,7 @@ impl TerminalPanel {
             .min_h_0()
             .mx(px(8.))
             .overflow_y_scroll()
-            .font_family(MONO_FONT)
+            .font_family(mono_font())
             .text_size(px(13.))
             .when(empty, |d| d.child(div().p(px(8.)).text_color(Theme::text_muted()).child("No lines match")))
             .children(lines.into_iter().enumerate().map(|(i, (line, text))| {

@@ -1008,7 +1008,7 @@ impl Workspace {
                             .border_color(Theme::divider())
                             .bg(Theme::editor_bg())
                             .overflow_hidden()
-                            .font_family(MONO_FONT)
+                            .font_family(mono_font())
                             .child(message),
                     )
                     .child(

@@ -53,7 +53,7 @@ use crate::editor::Editor;
 use crate::grid_view::GridView;
 use crate::keys;
 use crate::terminal_view::TerminalPanel;
-use crate::theme::{Theme, MONO_FONT, UI_FONT};
+use crate::theme::{Theme, mono_font, ui_font};
 use brisk_keymap::{pycharm_keymap, Action, KeyResolver, Resolution, ALL_ACTIONS};
 use brisk_project::{FileList, NodeId, ProjectTree};
 use gpui::prelude::*;
@@ -2466,7 +2466,7 @@ impl Render for Workspace {
             .flex_col()
             .bg(Theme::bg())
             .text_color(Theme::text())
-            .font_family(UI_FONT)
+            .font_family(ui_font())
             .child(self.render_toolbar(cx))
             .child(
                 div()

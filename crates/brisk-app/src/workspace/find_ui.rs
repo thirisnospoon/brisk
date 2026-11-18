@@ -608,7 +608,7 @@ impl Workspace {
                 .py(px(1.))
                 .rounded(px(4.))
                 .text_size(px(12.))
-                .font_family(MONO_FONT)
+                .font_family(mono_font())
                 .cursor_pointer()
                 .when(on, |d| d.bg(Theme::selection_row()).text_color(Theme::text()))
                 .when(!on, |d| d.text_color(Theme::text_muted()))
@@ -645,7 +645,7 @@ impl Workspace {
                 .border_1()
                 .border_color(if focused { Theme::accent() } else { Theme::divider() })
                 .bg(Theme::bg())
-                .font_family(MONO_FONT)
+                .font_family(mono_font())
                 .cursor_text()
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.find.field = which;
@@ -723,7 +723,7 @@ impl Workspace {
                                 }
                                 cx.notify();
                             }))
-                            .child(match_line(m).flex_1().font_family(MONO_FONT).text_size(px(12.5)))
+                            .child(match_line(m).flex_1().font_family(mono_font()).text_size(px(12.5)))
                             .child(div().flex_shrink_0().text_size(px(12.)).text_color(Theme::text_muted()).whitespace_nowrap().child(format!("{name} {}", m.line + 1)))
                     })
                     .collect()
@@ -750,7 +750,7 @@ impl Workspace {
                     .child(div().px(px(12.)).py(px(4.)).text_size(px(12.)).text_color(Theme::text_muted()).child(rel))
                     .children((lo..hi).map(|l| {
                         let text = lines[l].clone();
-                        let row = div().h(px(18.)).flex().font_family(MONO_FONT).text_size(px(12.5));
+                        let row = div().h(px(18.)).flex().font_family(mono_font()).text_size(px(12.5));
                         let num = div().w(px(48.)).flex_shrink_0().pr(px(10.)).flex().justify_end().text_color(Theme::gutter_fg()).child((l + 1).to_string());
                         if l == m.line {
                             row.bg(Theme::current_line()).child(num).child(match_line(&Match { text: m.text.clone(), hl: m.hl.clone(), ..m.clone() }).flex_1())
@@ -938,8 +938,8 @@ impl Workspace {
                                         }
                                         cx.notify();
                                     }))
-                                    .child(div().w(px(40.)).flex_shrink_0().flex().justify_end().text_color(Theme::gutter_fg_active()).font_family(MONO_FONT).text_size(px(12.)).child((m.line + 1).to_string()))
-                                    .child(match_line(m).flex_1().font_family(MONO_FONT).text_size(px(12.5)))
+                                    .child(div().w(px(40.)).flex_shrink_0().flex().justify_end().text_color(Theme::gutter_fg_active()).font_family(mono_font()).text_size(px(12.)).child((m.line + 1).to_string()))
+                                    .child(match_line(m).flex_1().font_family(mono_font()).text_size(px(12.5)))
                             }
                         }
                     })

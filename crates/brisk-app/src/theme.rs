@@ -109,15 +109,31 @@ impl Theme {
 }
 
 #[cfg(target_os = "windows")]
-pub const MONO_FONT: &str = "Consolas";
+const DEFAULT_MONO_FONT: &str = "Consolas";
 #[cfg(target_os = "macos")]
-pub const MONO_FONT: &str = "Menlo";
+const DEFAULT_MONO_FONT: &str = "Menlo";
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub const MONO_FONT: &str = "DejaVu Sans Mono";
+const DEFAULT_MONO_FONT: &str = "DejaVu Sans Mono";
 
 #[cfg(target_os = "windows")]
-pub const UI_FONT: &str = "Segoe UI";
+const DEFAULT_UI_FONT: &str = "Segoe UI";
 #[cfg(target_os = "macos")]
-pub const UI_FONT: &str = ".SystemUIFont";
+const DEFAULT_UI_FONT: &str = ".SystemUIFont";
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub const UI_FONT: &str = "Noto Sans";
+const DEFAULT_UI_FONT: &str = "Noto Sans";
+
+/// The UI font: `BRISK_UI_FONT` overrides the platform default (for comparing fonts).
+pub fn ui_font() -> &'static str {
+    static F: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+    F.get_or_init(|| env_font("BRISK_UI_FONT").unwrap_or(DEFAULT_UI_FONT))
+}
+
+/// The default editor and console font: `BRISK_MONO_FONT` overrides the platform default.
+pub fn mono_font() -> &'static str {
+    static F: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+    F.get_or_init(|| env_font("BRISK_MONO_FONT").unwrap_or(DEFAULT_MONO_FONT))
+}
+
+fn env_font(var: &str) -> Option<&'static str> {
+    std::env::var(var).ok().filter(|f| !f.trim().is_empty()).map(|f| &*Box::leak(f.into_boxed_str()))
+}

@@ -2,7 +2,7 @@
 //! the console (or the selected test's output and failure) on the right.
 
 use super::{RunEvent, TerminalPanel, TermEvent, LINK};
-use crate::theme::{Theme, MONO_FONT};
+use crate::theme::{Theme, mono_font};
 use brisk_run::{TestFeed, TestStatus, TestTree};
 use futures::channel::mpsc;
 use gpui::prelude::*;
@@ -402,7 +402,7 @@ impl TerminalPanel {
             .px(px(8.))
             .overflow_y_scroll()
             .track_scroll(&t.details_scroll)
-            .font(font(MONO_FONT))
+            .font(font(mono_font()))
             .text_size(px(super::FONT_SIZE))
             .children(lines)
     }

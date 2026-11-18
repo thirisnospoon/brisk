@@ -2,7 +2,7 @@
 //! Parameter Info. The workspace asks ty and hands the results here.
 
 use super::{line_height, Editor, EditorEvent};
-use crate::theme::{Theme, MONO_FONT};
+use crate::theme::{Theme, mono_font};
 use brisk_lsp::{CompletionItem, DocBlock, Signature};
 use gpui::prelude::*;
 use gpui::{point, px, Context, HighlightStyle, MouseButton, Pixels, Point, StyledText};
@@ -408,7 +408,7 @@ impl Editor {
                         .border_color(Theme::divider())
                         .bg(Theme::panel())
                         .shadow_md()
-                        .font_family(MONO_FONT)
+                        .font_family(mono_font())
                         .text_size(px(12.5))
                         .text_color(Theme::text_muted())
                         .child(StyledText::new(sig.label.clone()).with_highlights(hl))
@@ -486,7 +486,7 @@ impl Editor {
                         .bg(Theme::panel())
                         .shadow_lg()
                         .text_size(px(13.))
-                        .font_family(MONO_FONT)
+                        .font_family(mono_font())
                         .cursor(gpui::CursorStyle::Arrow)
                         .children(rows)
                         .into_any_element(),

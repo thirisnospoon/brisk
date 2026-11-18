@@ -257,7 +257,7 @@ impl Workspace {
             .min_h_0()
             .overflow_y_scroll()
             .text_size(px(12.5))
-            .font_family(crate::theme::MONO_FONT)
+            .font_family(crate::theme::mono_font())
             .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, w, cx| {
                 if !e.keystroke.modifiers.modified() {
                     let k = e.keystroke.key.clone();

@@ -6,7 +6,7 @@
 use super::{BottomTool, PopupItem, PopupKind, Target, Workspace};
 use crate::editor::breakpoints::Breakpoint;
 use crate::editor::Editor;
-use crate::theme::{Theme, MONO_FONT};
+use crate::theme::{Theme, mono_font};
 use brisk_dap::{Client, Event, Frame, Launch, SourceBreakpoint, Variable};
 use brisk_keymap::Action;
 use brisk_run::RunConfig;
@@ -1082,7 +1082,7 @@ impl Workspace {
                             .border_1()
                             .border_color(if editing { Theme::accent() } else { Theme::divider() })
                             .bg(Theme::editor_bg())
-                            .font_family(MONO_FONT)
+                            .font_family(mono_font())
                             .cursor_text()
                             .child(cond)
                             .when(editing, |x| x.child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret())))
@@ -1780,7 +1780,7 @@ impl Workspace {
                 .items_center()
                 .rounded(px(4.))
                 .cursor_pointer()
-                .font_family(MONO_FONT)
+                .font_family(mono_font())
                 .when(selected, |x| x.bg(Theme::selection_row()))
                 .when(!selected, |x| x.hover(|s| s.bg(Theme::hover_row())))
                 .overflow_hidden()
@@ -2668,7 +2668,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .child(bar)
-            .child(div().id("dbg-vars-list").flex_1().min_h_0().overflow_y_scroll().font_family(MONO_FONT).text_size(px(12.5)).children(rows));
+            .child(div().id("dbg-vars-list").flex_1().min_h_0().overflow_y_scroll().font_family(mono_font()).text_size(px(12.5)).children(rows));
         let banner = d.exception.clone().map(|e| {
             div()
                 .flex_shrink_0()
@@ -2699,7 +2699,7 @@ impl Workspace {
             .track_scroll(&d.console_scroll)
             .px(px(8.))
             .py(px(4.))
-            .font_family(MONO_FONT)
+            .font_family(mono_font())
             .text_size(px(12.5))
             .children(d.console.iter().enumerate().map(|(ln, (t, k))| {
                 let color = match k {
@@ -2745,7 +2745,7 @@ impl Workspace {
             .gap(px(6.))
             .border_t_1()
             .border_color(Theme::divider())
-            .font_family(MONO_FONT)
+            .font_family(mono_font())
             .text_size(px(12.5))
             .child(div().text_color(Theme::accent()).child(">>>"))
             .child(if d.input.is_empty() && !focused {

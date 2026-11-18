@@ -5,7 +5,7 @@
 use super::{BottomTool, Workspace};
 use crate::editor::Editor;
 use crate::py_console::{Console, Event, Var};
-use crate::theme::{Theme, MONO_FONT};
+use crate::theme::{Theme, mono_font};
 use brisk_keymap::Action;
 use gpui::prelude::*;
 use gpui::{div, px, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ScrollHandle, Window};
@@ -492,7 +492,7 @@ impl Workspace {
             .track_scroll(&p.scroll)
             .px(px(8.))
             .py(px(4.))
-            .font_family(MONO_FONT)
+            .font_family(mono_font())
             .text_size(px(12.5))
             .children(p.lines.iter().map(|(t, k)| {
                 let text = t.trim_end_matches('\n').to_string();
@@ -525,7 +525,7 @@ impl Workspace {
             .py(px(3.))
             .border_t_1()
             .border_color(Theme::divider())
-            .font_family(MONO_FONT)
+            .font_family(mono_font())
             .text_size(px(12.5))
             .child(div().pt(px(1.)).text_color(Theme::accent()).child(prompt))
             .child(
@@ -548,9 +548,9 @@ impl Workspace {
             .overflow_y_scroll()
             .border_l_1()
             .border_color(Theme::divider())
-            .font_family(MONO_FONT)
+            .font_family(mono_font())
             .text_size(px(12.5))
-            .when(p.vars.is_empty(), |x| x.child(div().p(px(8.)).text_color(Theme::text_dim()).font_family(crate::theme::UI_FONT).child("Variables appear after a command defines them")))
+            .when(p.vars.is_empty(), |x| x.child(div().p(px(8.)).text_color(Theme::text_dim()).font_family(crate::theme::ui_font()).child("Variables appear after a command defines them")))
             .children(p.vars.iter().enumerate().map(|(i, v)| {
                 let ty = match v.size {
                     Some(n) => format!("{{{}: {n}}}", v.ty),

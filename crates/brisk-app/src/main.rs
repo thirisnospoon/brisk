@@ -42,6 +42,22 @@ fn main() {
     settings::load();
 
     Application::new().run(move |cx: &mut App| {
+        // Fonts shipped next to the exe (or in BRISK_FONT_DIR): .ttf / .otf files are added to
+        // the text system, so the UI does not depend on what Windows has installed.
+        for dir in fonts_dirs() {
+            let fonts: Vec<std::borrow::Cow<'static, [u8]>> = std::fs::read_dir(&dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("ttf") || x.eq_ignore_ascii_case("otf")))
+                .filter_map(|p| std::fs::read(p).ok())
+                .map(std::borrow::Cow::Owned)
+                .collect();
+            if !fonts.is_empty() {
+                let _ = cx.text_system().add_fonts(fonts);
+            }
+        }
         let bounds = Bounds::centered(None, size(px(1400.), px(900.)), cx);
         let title = format!("{} – Brisk", root.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
         cx.open_window(
@@ -55,4 +71,13 @@ fn main() {
         .expect("failed to open window");
         cx.activate(true);
     });
+}
+
+/// Folders whose fonts Brisk loads at start: `BRISK_FONT_DIR`, then `fonts` next to the exe.
+fn fonts_dirs() -> Vec<std::path::PathBuf> {
+    let mut v: Vec<std::path::PathBuf> = std::env::var_os("BRISK_FONT_DIR").map(Into::into).into_iter().collect();
+    if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("fonts"))) {
+        v.push(d);
+    }
+    v
 }

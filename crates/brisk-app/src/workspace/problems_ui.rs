@@ -3,7 +3,7 @@
 
 use super::{BottomTool, PopupItem, PopupKind, Target, Workspace};
 use crate::editor::{DiagSource, Editor, EditorEvent};
-use crate::theme::{Theme, MONO_FONT};
+use crate::theme::{Theme, mono_font};
 use brisk_lint::{Diagnostic, Severity};
 use gpui::prelude::*;
 use gpui::{div, px, uniform_list, ClickEvent, Context, Entity, EntityId, FocusHandle, Focusable, UniformListScrollHandle, Window};
@@ -438,7 +438,7 @@ impl Workspace {
                                         }))
                                         .child(div().w(px(14.)).text_color(c).child(g))
                                         .child(div().text_color(Theme::text()).overflow_hidden().whitespace_nowrap().child(d.title()))
-                                        .child(div().text_color(Theme::text_dim()).font_family(MONO_FONT).text_size(px(12.)).child(format!(":{}", d.start.line + 1)))
+                                        .child(div().text_color(Theme::text_dim()).font_family(mono_font()).text_size(px(12.)).child(format!(":{}", d.start.line + 1)))
                                 }
                             }
                         })

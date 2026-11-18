@@ -9,7 +9,7 @@
 use super::menu_ui::Entry;
 use super::{Tab, Workspace};
 use crate::editor::Editor;
-use crate::theme::{Theme, MONO_FONT};
+use crate::theme::{Theme, mono_font};
 use brisk_keymap::Action;
 use gpui::prelude::*;
 use gpui::{div, px, Context, Entity, MouseButton, Pixels, Point, Window};
@@ -284,7 +284,7 @@ impl Workspace {
             .flex_col()
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| this.focus_pane(second, window, cx)))
             .when(!tabs.is_empty(), |d| d.child(self.render_tabs(tabs, active, focused, second, cx)))
-            .child(div().flex_1().min_h_0().font_family(MONO_FONT).child(self.pane_content(tabs, active)))
+            .child(div().flex_1().min_h_0().font_family(mono_font()).child(self.pane_content(tabs, active)))
             .into_any_element()
     }
 

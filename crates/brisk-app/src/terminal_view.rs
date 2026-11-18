@@ -1,6 +1,6 @@
 //! Terminal tool window (Alt+F12): tabs of shell sessions, grid rendering, PyCharm key behavior.
 
-use crate::theme::{Theme, MONO_FONT};
+use crate::theme::{Theme, mono_font};
 use brisk_terminal::{encode_key, KeyMods, SelectKind, Session, Snapshot, SpawnOptions, TermEvent};
 use futures::channel::mpsc;
 use futures::StreamExt;
@@ -860,7 +860,7 @@ impl Element for TerminalElement {
 
     fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), window: &mut Window, cx: &mut App) -> Prepaint {
         let fs = px(FONT_SIZE);
-        let mono = font(MONO_FONT);
+        let mono = font(mono_font());
         let m = window.text_system().shape_line("M".into(), fs, &[TextRun { len: 1, font: mono.clone(), color: Theme::text(), background_color: None, underline: None, strikethrough: None }], None);
         let cell_w = m.width;
         let fit = (f32::from(bounds.size.width) / f32::from(cell_w)).floor().max(2.0) as usize;

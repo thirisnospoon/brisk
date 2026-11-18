@@ -2,7 +2,7 @@
 //! Python, prose with inline code, emphasis and clickable links. Shared by Quick
 //! Documentation (Ctrl+Q / hover) and the completion list's documentation panel.
 
-use crate::theme::{Theme, MONO_FONT, UI_FONT};
+use crate::theme::{Theme, mono_font, ui_font};
 use brisk_lsp::{DocBlock, InlineStyle};
 use brisk_syntax::{Lang, SyntaxTree};
 use gpui::prelude::*;
@@ -53,7 +53,7 @@ pub(super) fn doc_elements(blocks: &[DocBlock], key: &'static str, compact: bool
             DocBlock::Code(code) => gpui::div()
                 .px(px(pad))
                 .py(px(if compact { 2. } else { 6. }))
-                .font_family(MONO_FONT)
+                .font_family(mono_font())
                 .text_size(px(code_size))
                 .text_color(Theme::text())
                 .whitespace_nowrap()
@@ -82,7 +82,7 @@ pub(super) fn doc_elements(blocks: &[DocBlock], key: &'static str, compact: bool
                 gpui::div()
                     .px(px(pad))
                     .py(px(if compact { 2. } else { 6. }))
-                    .font_family(UI_FONT)
+                    .font_family(ui_font())
                     .text_size(px(text_size))
                     .text_color(if compact { Theme::text_muted() } else { Theme::text() })
                     .child(text)

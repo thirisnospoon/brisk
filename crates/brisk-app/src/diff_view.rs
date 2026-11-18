@@ -1,6 +1,6 @@
 //! Side-by-side diff viewer tab (PyCharm's "Show Diff", Ctrl+D). Read-only; virtualized rows.
 
-use crate::theme::{Theme, MONO_FONT};
+use crate::theme::{Theme, mono_font};
 use brisk_git::{AlignedRow, RowKind};
 use gpui::prelude::*;
 use gpui::{div, px, uniform_list, App, Context, FocusHandle, Focusable, SharedString, UniformListScrollHandle, Window};
@@ -156,7 +156,7 @@ impl Render for DiffView {
                 )
                 .track_scroll(self.scroll.clone())
                 .flex_1()
-                .font_family(MONO_FONT)
+                .font_family(mono_font())
                 .text_size(px(13.))
                 .text_color(Theme::text()),
             )

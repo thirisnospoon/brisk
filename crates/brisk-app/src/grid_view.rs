@@ -1,7 +1,7 @@
 //! Result grid: query output in the Services window and "Edit Data" tabs. Read-only for now.
 //! Only visible rows are built (uniform_list), so a 500-row page costs the same as 20.
 
-use crate::theme::{Theme, MONO_FONT};
+use crate::theme::{Theme, mono_font};
 use brisk_db::QueryOutput;
 use gpui::prelude::*;
 use gpui::{
@@ -316,7 +316,7 @@ impl Render for GridView {
             .flex()
             .flex_col()
             .bg(Theme::editor_bg())
-            .font_family(MONO_FONT)
+            .font_family(mono_font())
             .text_size(px(12.5))
             .text_color(Theme::text())
             .child(self.render_header(cx))

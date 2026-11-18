@@ -23,7 +23,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { light: false, editor_font: crate::theme::MONO_FONT.to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true }
+        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true }
     }
 }
 
@@ -114,7 +114,7 @@ pub fn line_height() -> f32 {
 }
 
 pub fn editor_font() -> String {
-    CURRENT.read().ok().and_then(|s| s.as_ref().map(|s| s.editor_font.clone())).unwrap_or_else(|| crate::theme::MONO_FONT.to_string())
+    CURRENT.read().ok().and_then(|s| s.as_ref().map(|s| s.editor_font.clone())).unwrap_or_else(|| crate::theme::mono_font().to_string())
 }
 
 /// Zoom all editors (not saved, like PyCharm's "Change Font Size"): `delta` points, or back

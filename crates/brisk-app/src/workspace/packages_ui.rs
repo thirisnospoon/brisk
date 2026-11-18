@@ -5,7 +5,7 @@
 use super::{BottomTool, Workspace};
 use crate::editor::Editor;
 use crate::py_packages::{self, Package, Tool};
-use crate::theme::{Theme, MONO_FONT};
+use crate::theme::{Theme, mono_font};
 use brisk_keymap::Action;
 use gpui::prelude::*;
 use gpui::{div, px, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ScrollHandle, Window};
@@ -392,7 +392,7 @@ impl Workspace {
                     .when(sel, |d| d.bg(Theme::selection_row()))
                     .when(!sel, |d| d.hover(|s| s.bg(Theme::hover_row())))
                     .child(div().w(px(320.)).child(pk.name.clone()))
-                    .child(div().font_family(MONO_FONT).text_size(px(12.5)).text_color(Theme::text_muted()).child(pk.version.clone()))
+                    .child(div().font_family(mono_font()).text_size(px(12.5)).text_color(Theme::text_muted()).child(pk.version.clone()))
                     .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, w, cx| {
                         if let Some(p) = this.packages.as_mut() {
                             p.selected = i;

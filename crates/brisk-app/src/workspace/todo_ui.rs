@@ -3,7 +3,7 @@
 //! saved while the window exists.
 
 use super::{BottomTool, Workspace};
-use crate::theme::{Theme, MONO_FONT};
+use crate::theme::{Theme, mono_font};
 use crate::todo_scan::{self, Item};
 use brisk_keymap::Action;
 use gpui::prelude::*;
@@ -255,7 +255,7 @@ impl Workspace {
                     Row::Item(it) => {
                         let fixme = it.text.to_lowercase().starts_with("fixme");
                         row.pl(px(34.))
-                            .child(div().text_size(px(12.)).text_color(Theme::text_dim()).font_family(MONO_FONT).child(format!("({}, {})", it.line + 1, it.col + 1)))
+                            .child(div().text_size(px(12.)).text_color(Theme::text_dim()).font_family(mono_font()).child(format!("({}, {})", it.line + 1, it.col + 1)))
                             .child(div().text_color(if fixme { Theme::warning() } else { Theme::syntax(brisk_syntax::Highlight::Comment) }).child(it.text.clone()))
                     }
                 }
