@@ -560,6 +560,52 @@ fn process_target(cmd: &str) -> String {
     String::new()
 }
 
+/// The statement starting at `line`: following lines join while brackets are open or
+/// the line ends with a backslash (at most 30 lines).
+fn statement_text(lines: &[String], line: usize) -> String {
+    let mut out = String::new();
+    let mut depth = 0i32;
+    for l in lines.iter().skip(line).take(30) {
+        let code = l.split('#').next().unwrap_or("");
+        out.push_str(code);
+        out.push('\n');
+        depth += code.chars().map(|c| match c {
+            '(' | '[' | '{' => 1,
+            ')' | ']' | '}' => -1,
+            _ => 0,
+        }).sum::<i32>();
+        if depth <= 0 && !code.trim_end().ends_with('\\') {
+            break;
+        }
+    }
+    out
+}
+
+/// Smart Step Into targets of this statement: debugpy lists every call of the frame's code
+/// not run yet (later lines too), as `a(b(3))` or `f (call 2)`. A target stays when its
+/// callee is called in `stmt`; when none would, all stay.
+fn targets_on_statement(stmt: &str, targets: Vec<(i64, String)>) -> Vec<(i64, String)> {
+    let squeezed: String = stmt.chars().filter(|c| !c.is_whitespace()).collect();
+    let callee = |label: &str| -> String {
+        let l = label.split(" (call ").next().unwrap_or(label);
+        l.split('(').next().unwrap_or(l).chars().filter(|c| !c.is_whitespace()).collect()
+    };
+    let on = |label: &str| {
+        let c = callee(label);
+        if c.is_empty() {
+            return true;
+        }
+        let pat = format!("{c}(");
+        // The callee must not be the tail of a longer name (`xa(` is not `a(`).
+        squeezed.match_indices(&pat).any(|(i, _)| {
+            let before = squeezed[..i].chars().next_back();
+            !before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || (ch == '.' && !c.contains('.')))
+        })
+    };
+    let kept: Vec<(i64, String)> = targets.iter().filter(|t| on(&t.1)).cloned().collect();
+    if kept.is_empty() { targets } else { kept }
+}
+
 /// `pid<TAB>command line` for every process (Windows: CIM; elsewhere: `ps`).
 fn process_lines() -> String {
     #[cfg(windows)]
@@ -1629,6 +1675,18 @@ impl Workspace {
         };
         let Some(s) = &self.debug.session else { return };
         let rx = s.client.request("stepInTargets", json!({"frameId": frame}));
+        // The stop's statement, from its editor (or the file on disk).
+        let stmt = self.debug.frames.get(self.debug.frame).and_then(|f| {
+            let p = f.path.clone()?;
+            let lines: Vec<String> = match self.editors().find(|e| e.read(cx).path.as_ref() == Some(&p)) {
+                Some(ed) => {
+                    let b = &ed.read(cx).buffer;
+                    (f.line..(f.line + 30).min(b.len_lines())).map(|l| b.line(l)).collect()
+                }
+                None => std::fs::read_to_string(&p).ok()?.lines().skip(f.line).take(30).map(String::from).collect(),
+            };
+            Some(statement_text(&lines, 0))
+        });
         cx.spawn(async move |this, cx| {
             let res = rx.await;
             let _ = this.update(cx, |this, cx| {
@@ -1642,6 +1700,10 @@ impl Workspace {
                         .map(|a| a.iter().filter_map(|t| Some((t.get("id")?.as_i64()?, t.get("label").and_then(Value::as_str).unwrap_or("?").to_string()))).collect())
                         .unwrap_or_default(),
                     _ => Vec::new(),
+                };
+                let targets = match &stmt {
+                    Some(s) => targets_on_statement(s, targets),
+                    None => targets,
                 };
                 match targets.len() {
                     // Nothing to choose (or no support): a plain Step Into.
@@ -3294,6 +3356,23 @@ mod tests {
         assert_eq!(process_target(r#""C:\Py 3\python.exe" -u C:/x/app.py --port 1"#), "app.py");
         assert_eq!(process_target("python -m http.server 8765"), "-m http.server");
         assert_eq!(process_target("python"), "");
+    }
+
+    #[test]
+    fn smart_step_targets_of_the_line() {
+        let t = |v: &[&str]| v.iter().enumerate().map(|(i, s)| (i as i64, s.to_string())).collect::<Vec<_>>();
+        let names = |v: Vec<(i64, String)>| v.into_iter().map(|x| x.1).collect::<Vec<_>>();
+        let lines: Vec<String> = ["r = a(b(3))", "print(r)"].map(String::from).to_vec();
+        let st = statement_text(&lines, 0);
+        assert_eq!(names(targets_on_statement(&st, t(&["b(3)", "a(b(3))", "print(r)"]))), ["b(3)", "a(b(3))"]);
+        // A call spread over lines; `(call 2)`; a method; a longer name is not a match.
+        let lines: Vec<String> = ["x = f(", "    g(1),", "    f(2))  # h(3)", "h(4)"].map(String::from).to_vec();
+        let st = statement_text(&lines, 0);
+        assert_eq!(names(targets_on_statement(&st, t(&["g(1)", "f(2)", "f (call 2)", "h(4)"]))), ["g(1)", "f(2)", "f (call 2)"]);
+        let st = statement_text(&["y = obj.run(xa(1))".to_string()], 0);
+        assert_eq!(names(targets_on_statement(&st, t(&["obj.run(xa(1))", "a(2)", "xa(1)"]))), ["obj.run(xa(1))", "xa(1)"]);
+        // Nothing matches (labels debugpy shortened): keep all.
+        assert_eq!(targets_on_statement("z = 1\n", t(&["q()"])).len(), 1);
     }
 
     #[test]
