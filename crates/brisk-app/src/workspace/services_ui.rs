@@ -292,7 +292,14 @@ impl Workspace {
                 });
                 pause(1500).await;
                 let _ = this.update(cx, |this, cx| {
-                    let runs = std::fs::read_to_string(this.root.join("fail.log")).map(|s| s.lines().count()).unwrap_or(0);
+                    if what == "stop" {
+                        if let Some(id) = id_of(this, cx, name) {
+                            this.services_select(Item::Run(id), cx);
+                        }
+                        let text = this.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default();
+                        eprintln!("smoke-services: {name} console ends {:?}", text.lines().last().unwrap_or(""));
+                    }
+                    let runs =std::fs::read_to_string(this.root.join("fail.log")).map(|s| s.lines().count()).unwrap_or(0);
                     eprintln!("smoke-services: click {what} on {name} -> rows {:?}, fail ran {runs}x, services open {}", rows(this, cx), this.bottom == Some(BottomTool::Services));
                 });
             }

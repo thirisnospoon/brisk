@@ -54,6 +54,44 @@ pub struct RunConfig {
     /// Created by Ctrl+Shift+F10 from a file; replaced after [`MAX_TEMPORARY`].
     #[serde(default, skip_serializing_if = "is_false")]
     pub temporary: bool,
+    /// What the IDE shows when the configuration starts.
+    #[serde(default, skip_serializing_if = "OnStart::is_default")]
+    pub on_start: OnStart,
+    /// PyCharm's "Allow multiple instances": a new run starts next to a running one instead
+    /// of asking to stop it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_multiple: bool,
+}
+
+/// When a configuration starts: PyCharm's "Activate tool window" / "Focus tool window",
+/// or its run shown in Services.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OnStart {
+    /// Show the Run window, the caret stays in the editor.
+    #[default]
+    Show,
+    /// Show the Run window and focus its console.
+    Focus,
+    /// Show the run in Services (Alt+8).
+    Services,
+    /// Leave the tool windows as they are.
+    Nothing,
+}
+
+impl OnStart {
+    pub const ALL: [OnStart; 4] = [OnStart::Show, OnStart::Focus, OnStart::Services, OnStart::Nothing];
+    fn is_default(&self) -> bool {
+        *self == OnStart::Show
+    }
+    pub fn title(self) -> &'static str {
+        match self {
+            OnStart::Show => "Show Run window",
+            OnStart::Focus => "Focus Run window",
+            OnStart::Services => "Show in Services",
+            OnStart::Nothing => "Don't show",
+        }
+    }
 }
 
 fn is_false(b: &bool) -> bool {
@@ -285,9 +323,23 @@ fn parse_configuration(root: &Path, node: roxmltree::Node) -> Option<RunConfig> 
         }
         (Some("PythonConfigurationType"), _) => RunKind::Python,
         (Some("tests"), Some("py.test")) => RunKind::Pytest,
+        (Some("Python.FastAPI"), _) => RunKind::FastApi,
+        (Some("Python.FlaskServer"), _) => RunKind::Flask,
+        (Some("Python.DjangoServer"), _) => RunKind::Django,
+        (Some("DjangoTestsConfigurationType"), _) => RunKind::DjangoTests,
         _ => return None,
     };
+    // FastAPI / Flask / Django options, read after the loop.
+    let mut web: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
     let mut c = RunConfig { name: node.attribute("name")?.to_string(), kind, temporary: node.attribute("temporary") == Some("true"), ..Default::default() };
+    // <configuration activateToolWindowBeforeRun="false" focusToolWindowBeforeRun="true"
+    // allowRunningInParallel="true"> (older PyCharm: singleton="false").
+    c.on_start = match (node.attribute("activateToolWindowBeforeRun"), node.attribute("focusToolWindowBeforeRun")) {
+        (Some("false"), _) => OnStart::Nothing,
+        (_, Some("true")) => OnStart::Focus,
+        _ => OnStart::Show,
+    };
+    c.allow_multiple = node.attribute("allowRunningInParallel") == Some("true") || node.attribute("singleton") == Some("false");
     let (mut test_target, mut target_type) = (String::new(), String::from("PATH"));
     let mut extra = Vec::new();
     let mut script = String::new();
@@ -311,6 +363,9 @@ fn parse_configuration(root: &Path, node: roxmltree::Node) -> Option<RunConfig> 
                     "_new_target" => test_target = unquote(&v),
                     "_new_targetType" => target_type = unquote(&v),
                     "_new_keywords" => c.keywords = unquote(&v),
+                    n @ ("file" | "additionalOptions" | "target" | "targetType" | "application" | "flaskDebug" | "host" | "port" | "runNoReload" | "TARGET" | "USE_OPTIONS" | "OPTIONS") => {
+                        web.insert(n, v);
+                    }
                     "_new_parameters" | "_new_additionalArguments" => {
                         let v = unquote(&v);
                         if !v.is_empty() {
@@ -345,6 +400,13 @@ fn parse_configuration(root: &Path, node: roxmltree::Node) -> Option<RunConfig> 
     if !module_sdk && !sdk.is_empty() {
         c.interpreter = Some(sdk);
     }
+    if matches!(kind, RunKind::FastApi | RunKind::Flask | RunKind::Django | RunKind::DjangoTests) {
+        c.working_directory = c.working_directory.replace("$PROJECT_DIR$/", "");
+        if c.working_directory == "$PROJECT_DIR$" {
+            c.working_directory.clear();
+        }
+        return server_configuration(root, c, web);
+    }
     if kind == RunKind::Pytest {
         c.parameters = extra.join(" ");
         let t = test_target.replace("$PROJECT_DIR$/", "").replace("$PROJECT_DIR$", "");
@@ -363,30 +425,98 @@ fn parse_configuration(root: &Path, node: roxmltree::Node) -> Option<RunConfig> 
     Some(c)
 }
 
+/// PyCharm's FastAPI (`file`), Flask Server (`target` path or module + `application`) and
+/// Django Server / Django tests configurations as Brisk's `module:app` / `manage.py` ones.
+fn server_configuration(root: &Path, mut c: RunConfig, web: std::collections::HashMap<&str, String>) -> Option<RunConfig> {
+    let opt = |k: &str| web.get(k).map(|v| v.trim().to_string()).unwrap_or_default();
+    let on = |k: &str| web.get(k).is_some_and(|v| v == "true");
+    // uvicorn and flask import the module from the working directory.
+    let base = if c.working_directory.is_empty() { root.to_path_buf() } else { crate::resolve(root, &c.working_directory) };
+    let module = |path: &str| {
+        let file = crate::resolve(root, path);
+        crate::web::module_of(&base, &file).or_else(|| crate::web::module_of(root, &file)).map(|m| (file, m))
+    };
+    let mut params = Vec::new();
+    match c.kind {
+        RunKind::FastApi => {
+            let (file, m) = module(&opt("file"))?;
+            let var = std::fs::read_to_string(&file).ok().and_then(|s| crate::web::app_in_source(&s)).map(|(_, v)| v).unwrap_or_else(|| "app".into());
+            c.target = format!("{m}:{var}");
+            params.push(opt("additionalOptions"));
+        }
+        RunKind::Flask => {
+            let target = opt("target");
+            let m = if opt("targetType") == "PYTHON" { target } else { module(&target)?.1 };
+            let app = opt("application");
+            c.target = if app.is_empty() { m } else { format!("{m}:{app}") };
+            if on("flaskDebug") {
+                c.env.entry("FLASK_DEBUG".into()).or_insert_with(|| "1".into());
+            }
+            params.push(opt("additionalOptions"));
+        }
+        _ => {
+            // PyCharm takes manage.py from the project's Django settings; the tests
+            // configuration may name it as a module.
+            let named = c.env.remove("PYCHARM_DJANGO_MANAGE_MODULE").map(|m| root.join(format!("{}.py", m.replace('.', "/")))).filter(|p| p.is_file());
+            let manage = named.or_else(|| crate::django::find_manage(root).map(|(m, _)| m));
+            c.target = manage.map(|m| crate::relativize(root, &m)).unwrap_or_else(|| "manage.py".into());
+            if c.kind == RunKind::Django {
+                let (host, port) = (opt("host"), opt("port"));
+                params.push(match (host.is_empty(), port.is_empty()) {
+                    (_, true) if host.is_empty() => String::new(),
+                    (true, false) => port,
+                    (false, true) => format!("{host}:8000"),
+                    (false, false) => format!("{host}:{port}"),
+                    _ => String::new(),
+                });
+                if on("runNoReload") {
+                    params.push("--noreload".into());
+                }
+                params.push(opt("additionalOptions"));
+            } else {
+                params.push(opt("TARGET"));
+                if on("USE_OPTIONS") {
+                    params.push(opt("OPTIONS"));
+                }
+            }
+        }
+    }
+    c.parameters = params.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" ");
+    Some(c)
+}
+
 pub(crate) fn configurations_in(root: &Path, xml: &str, component: &str) -> (Vec<RunConfig>, Option<String>) {
     let Ok(doc) = roxmltree::Document::parse(xml) else { return (Vec::new(), None) };
     let mut out = Vec::new();
     let mut selected = None;
     for comp in doc.descendants().filter(|n| n.has_tag_name("component") && n.attribute("name") == Some(component)) {
         // selected="Python.main" or "Python tests.pytest in tests"
-        if let Some(s) = comp.attribute("selected").and_then(|s| s.strip_prefix("Python tests.").or_else(|| s.strip_prefix("Python."))) {
-            selected = Some(s.to_string());
+        // selected="Python.main", "Python tests.pytest in tests", "Django server.site"...
+        if let Some(s) = comp.attribute("selected") {
+            let known = ["Python tests.", "Python.", "Django server.", "Django tests.", "FastAPI.", "Flask server.", "Compound."];
+            selected = known.iter().find_map(|p| s.strip_prefix(p)).or_else(|| s.split_once('.').map(|(_, n)| n)).map(str::to_string);
         }
         out.extend(comp.children().filter(|n| n.has_tag_name("configuration")).filter_map(|n| parse_configuration(root, n)));
     }
     (out, selected)
 }
 
-/// Python run configurations from PyCharm: shared ones in `.idea/runConfigurations/`, then
-/// workspace ones (including temporary) from `.idea/workspace.xml`.
+/// Python run configurations from PyCharm: shared ones in `.idea/runConfigurations/` and
+/// `.run/*.run.xml` ("Store as project file"), then workspace ones (including temporary)
+/// from `.idea/workspace.xml`.
 pub fn import_idea(root: &Path) -> RunFile {
     let mut f = RunFile::default();
-    let dir = root.join(".idea/runConfigurations");
-    let mut files: Vec<_> = std::fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "xml")).collect();
-    files.sort();
-    for p in files {
-        if let Ok(xml) = std::fs::read_to_string(&p) {
-            f.configurations.extend(configurations_in(root, &xml, "ProjectRunConfigurationManager").0);
+    for dir in [root.join(".idea/runConfigurations"), root.join(".run")] {
+        let mut files: Vec<_> = std::fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "xml")).collect();
+        files.sort();
+        for p in files {
+            if let Ok(xml) = std::fs::read_to_string(&p) {
+                for c in configurations_in(root, &xml, "ProjectRunConfigurationManager").0 {
+                    if f.get(&c.name).is_none() {
+                        f.configurations.push(c);
+                    }
+                }
+            }
         }
     }
     if let Ok(xml) = std::fs::read_to_string(root.join(".idea/workspace.xml")) {

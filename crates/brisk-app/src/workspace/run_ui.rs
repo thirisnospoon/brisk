@@ -19,6 +19,8 @@ pub(super) struct Runs {
     pub panel: Option<Entity<TerminalPanel>>,
     /// Edit Configurations dialog, when open.
     pub dialog: Option<super::run_config_ui::RunDialog>,
+    /// "Stop and Rerun" was picked for this configuration: start it without asking again.
+    pub stop_confirmed: Option<String>,
 }
 
 impl Runs {
@@ -28,7 +30,7 @@ impl Runs {
         if imported > 0 {
             let _ = brisk_run::save(root, &file);
         }
-        (Runs { file, venvs: brisk_run::project_venvs(root), all: None, panel: None, dialog: None }, imported)
+        (Runs { file, venvs: brisk_run::project_venvs(root), all: None, panel: None, dialog: None, stop_confirmed: None }, imported)
     }
 
     fn known(&self) -> impl Iterator<Item = &Interpreter> {
@@ -203,6 +205,9 @@ impl Workspace {
             self.run_compound(&cfg, window, cx);
             return;
         }
+        if self.ask_stop_running(&cfg, cx) {
+            return;
+        }
         if self.before_launch(&cfg, before_launch_ui::Then::Run, window, cx) {
             return;
         }
@@ -231,6 +236,34 @@ impl Workspace {
         }
         let cmd = brisk_run::build(&self.root, &cfg, &python);
         self.run_command(cfg, cmd, window, cx);
+    }
+
+    /// Without "Allow multiple instances", running a configuration that is still running asks
+    /// first, like PyCharm: Stop and Rerun, or Cancel. Returns whether it asked.
+    fn ask_stop_running(&mut self, cfg: &RunConfig, cx: &mut Context<Self>) -> bool {
+        if cfg.allow_multiple || self.runs.stop_confirmed.take().as_deref() == Some(cfg.name.as_str()) {
+            return false;
+        }
+        if !self.runs.panel.as_ref().is_some_and(|p| p.read(cx).running_named(&cfg.name)) {
+            return false;
+        }
+        let items = vec![
+            PopupItem { label: format!("Stop and Rerun '{}'", cfg.name), detail: "it is still running; allow multiple instances in its configuration to run both".into(), hint: "Enter".into(), target: Target::StopAndRerun(Box::new(cfg.clone())) },
+            PopupItem { label: "Cancel".into(), detail: String::new(), hint: "Esc".into(), target: Target::Cancel },
+        ];
+        self.popup = Some(super::Popup { kind: super::PopupKind::Confirm, query: String::new(), selected: 0, items });
+        cx.notify();
+        true
+    }
+
+    /// "Stop and Rerun": stop the running instances, then run it.
+    pub(super) fn stop_and_rerun(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
+        self.popup = None;
+        if let Some(p) = self.runs.panel.clone() {
+            p.update(cx, |p, _| p.stop_named(&cfg.name));
+        }
+        self.runs.stop_confirmed = Some(cfg.name.clone());
+        self.run_config(cfg, window, cx);
     }
 
     /// Rerun (Ctrl+F5 / ↻): the active tab's command again, after its Before launch steps.
@@ -282,19 +315,29 @@ impl Workspace {
     /// [`Self::run_command`] into Run tab `tab` (a Rerun keeps its tab, pinned or not).
     pub(super) fn run_command_in(&mut self, cfg: RunConfig, cmd: brisk_run::Command, tab: Option<u64>, window: &mut Window, cx: &mut Context<Self>) {
         let panel = self.ensure_run_panel(window, cx);
-        let name = cfg.name.clone();
+        let (name, on_start) = (cfg.name.clone(), cfg.on_start);
         let res = panel.update(cx, |p, cx| {
             cx.notify();
             p.run_in(cfg, cmd, tab)
         });
         match res {
             Ok(()) => {
-                self.bottom = Some(BottomTool::Run);
                 self.status = format!("Running '{name}'");
-                // PyCharm shows the Run window but keeps the caret in the editor.
-                if self.active.is_none() {
-                    let f = panel.read(cx).focus_handle(cx);
-                    window.focus(&f);
+                match on_start {
+                    brisk_run::OnStart::Nothing => {}
+                    brisk_run::OnStart::Services => {
+                        self.bottom = Some(BottomTool::Services);
+                        self.services.selected = panel.read(cx).runs_info().into_iter().find(|r| r.active).map(|r| super::services_ui::Item::Run(r.id));
+                    }
+                    // PyCharm shows the Run window but keeps the caret in the editor
+                    // ("Focus tool window" moves it to the console).
+                    o => {
+                        self.bottom = Some(BottomTool::Run);
+                        if self.active.is_none() || o == brisk_run::OnStart::Focus {
+                            let f = panel.read(cx).focus_handle(cx);
+                            window.focus(&f);
+                        }
+                    }
                 }
             }
             Err(e) => self.show_toast(e, true, cx),
@@ -522,7 +565,7 @@ impl Workspace {
 }
 
 impl Workspace {
-    /// `BRISK_SMOKE_RUNWIN=1` (on a scratch project): writes `ask.py` (input()), `main.py`,
+    /// `BRISK_SMOKE_RUNWIN=1` (on an empty folder): writes `ask.py` (input()), `main.py`,
     /// `sleep.py` and `w1.py`…`w5.py` into the project root and checks stdin,
     /// save-before-run, tabs, toggles, Clear All and saving a temporary configuration.
     pub(super) fn run_window_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {

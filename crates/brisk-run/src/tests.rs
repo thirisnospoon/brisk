@@ -444,3 +444,96 @@ fn before_launch_steps_and_import() {
     let (cfgs, _) = super::config::configurations_in(Path::new("/p"), xml, "RunManager");
     assert_eq!(cfgs[0].before_run, "migrate");
 }
+
+/// PyCharm's FastAPI / Flask Server / Django Server / Django tests configurations, shaped like
+/// real `.run/*.run.xml` files and `workspace.xml` entries.
+#[test]
+fn imports_pycharm_server_configurations() {
+    let root = tmp("webimport");
+    std::fs::create_dir_all(root.join("api")).unwrap();
+    std::fs::create_dir_all(root.join("server")).unwrap();
+    std::fs::create_dir_all(root.join("src/site")).unwrap();
+    std::fs::create_dir_all(root.join(".run")).unwrap();
+    std::fs::write(root.join("api/main.py"), "from fastapi import FastAPI\napi = FastAPI()\n").unwrap();
+    std::fs::write(root.join("app.py"), "from flask import Flask\napp = Flask(__name__)\n").unwrap();
+    std::fs::write(root.join("server/web.py"), "from flask import Flask\nweb = Flask(__name__)\n").unwrap();
+    std::fs::write(root.join("src/site/manage.py"), "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'site.settings')\nimport django\n").unwrap();
+    std::fs::write(
+        root.join(".run/api.run.xml"),
+        r#"<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="api" type="Python.FastAPI" singleton="false" focusToolWindowBeforeRun="true">
+    <option name="additionalOptions" value="--port 8001  --reload" />
+    <option name="file" value="$PROJECT_DIR$/api/main.py" />
+    <option name="ENV_FILES" value="" />
+    <option name="WORKING_DIRECTORY" value="" />
+    <option name="IS_MODULE_SDK" value="true" />
+    <method v="2" />
+  </configuration>
+</component>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join(".run/Flask (app.py).run.xml"),
+        r#"<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Flask (app.py:app)" type="Python.FlaskServer" nameIsGenerated="true">
+    <option name="application" value="app" />
+    <option name="flaskDebug" value="true" />
+    <option name="target" value="$PROJECT_DIR$/app.py" />
+    <option name="targetType" value="PATH" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <method v="2" />
+  </configuration>
+</component>"#,
+    )
+    .unwrap();
+    let ws = r#"<project><component name="RunManager" selected="Django server.runserver">
+  <configuration default="false" name="server" type="Python.FlaskServer">
+    <option name="application" value="web" />
+    <option name="target" value="server.web" />
+    <option name="targetType" value="PYTHON" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+  </configuration>
+  <configuration name="runserver" type="Python.DjangoServer" factoryName="Django server">
+    <envs>
+      <env name="PYTHONUNBUFFERED" value="1" />
+      <env name="DJANGO_SETTINGS_MODULE" value="site.settings" />
+    </envs>
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <option name="port" value="8080" />
+    <option name="host" value="0.0.0.0" />
+    <option name="additionalOptions" value="--insecure" />
+    <option name="runNoReload" value="true" />
+    <option name="useCustomRunCommand" value="false" />
+  </configuration>
+  <configuration name="tests" type="DjangoTestsConfigurationType">
+    <envs>
+      <env name="PYCHARM_DJANGO_MANAGE_MODULE" value="src.site.manage" />
+    </envs>
+    <option name="TARGET" value="polls" />
+    <option name="USE_OPTIONS" value="true" />
+    <option name="OPTIONS" value="--noinput" />
+  </configuration>
+</component></project>"#;
+    std::fs::create_dir_all(root.join(".idea")).unwrap();
+    std::fs::write(root.join(".idea/workspace.xml"), ws).unwrap();
+    let f = config::import_idea(&root);
+    let got: Vec<(&str, RunKind, &str, &str)> = f.configurations.iter().map(|c| (c.name.as_str(), c.kind, c.target.as_str(), c.parameters.as_str())).collect();
+    assert_eq!(
+        got,
+        vec![
+            ("Flask (app.py:app)", RunKind::Flask, "app:app", ""),
+            ("api", RunKind::FastApi, "api.main:api", "--port 8001  --reload"),
+            ("server", RunKind::Flask, "server.web:web", ""),
+            ("runserver", RunKind::Django, "src/site/manage.py", "0.0.0.0:8080 --noreload --insecure"),
+            ("tests", RunKind::DjangoTests, "src/site/manage.py", "polls --noinput"),
+        ]
+    );
+    assert_eq!(f.get("Flask (app.py:app)").unwrap().env.get("FLASK_DEBUG").map(String::as_str), Some("1"));
+    assert_eq!(f.get("runserver").unwrap().env.get("DJANGO_SETTINGS_MODULE").map(String::as_str), Some("site.settings"));
+    assert!(f.get("tests").unwrap().env.is_empty());
+    assert_eq!(f.selected.as_deref(), Some("runserver"));
+    let api = f.get("api").unwrap();
+    assert_eq!((api.on_start, api.allow_multiple), (OnStart::Focus, true));
+    assert_eq!((f.get("tests").unwrap().on_start, f.get("tests").unwrap().allow_multiple), (OnStart::Show, false));
+    let _ = std::fs::remove_dir_all(&root);
+}
