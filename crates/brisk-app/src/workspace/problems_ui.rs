@@ -27,6 +27,10 @@ pub(super) enum Intent {
     FixAllOfCode(String),
     FixAll,
     Suppress(Diagnostic),
+    /// Ctrl+J: insert this live template.
+    Template(&'static str),
+    /// Ctrl+Alt+T: surround with `SURROUNDERS[i]`.
+    Surround(usize),
     /// A language server quick fix (ty: import a name, qualify it): title and edits.
     Lsp(String, Vec<brisk_lsp::FileEdits>),
 }
@@ -56,6 +60,8 @@ pub(super) struct Problems {
     pub error: Option<String>,
     lint_gen: HashMap<EntityId, u64>,
     pub(super) intents: Vec<PopupItem>,
+    /// Popup title when the list is not Alt+Enter's (Surround With, Insert Live Template).
+    pub(super) intents_title: Option<&'static str>,
 }
 
 impl Problems {
@@ -70,6 +76,7 @@ impl Problems {
             error: None,
             lint_gen: HashMap::new(),
             intents: Vec::new(),
+            intents_title: None,
         }
     }
 }
@@ -531,6 +538,7 @@ impl Workspace {
             return;
         }
         self.problems.intents = items;
+        self.problems.intents_title = None;
         self.open_popup(PopupKind::Intentions);
     }
 
@@ -549,6 +557,8 @@ impl Workspace {
                 }
             }
             Intent::Suppress(d) => ed.update(cx, |e, cx| e.suppress(&d, cx)),
+            Intent::Template(key) => ed.update(cx, |e, cx| e.insert_template(key, cx)),
+            Intent::Surround(i) => ed.update(cx, |e, cx| e.surround_with(i, cx)),
             Intent::Lsp(title, edits) => {
                 let (_, failed) = self.apply_file_edits(edits, cx);
                 self.status = lsp_title(&title);

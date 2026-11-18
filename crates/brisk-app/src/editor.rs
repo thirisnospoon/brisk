@@ -25,6 +25,7 @@ mod fold;
 mod marks;
 mod lsp;
 mod scroll;
+pub mod templates;
 pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
 
@@ -697,6 +698,13 @@ impl Editor {
             self.insight.signature = None;
         }
         match action {
+            // Live templates, block comments (editor/templates.rs).
+            A::EditorTab if !self.is_field && !self.completion_open() && self.expand_live_template(cx) => return true,
+            A::CommentBlock if !self.is_field => {
+                self.toggle_block_comment(cx);
+                return true;
+            }
+            A::CommentLine if !self.is_field && self.toggle_line_block_comment(cx) => return true,
             A::NextMethod | A::PreviousMethod if !self.is_field => {
                 self.goto_method(action == A::NextMethod, cx);
                 return true;

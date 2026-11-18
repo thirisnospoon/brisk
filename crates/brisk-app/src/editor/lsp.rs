@@ -192,6 +192,13 @@ impl Editor {
             "down" => c.selected = (c.selected + 1) % n,
             "pageup" => c.selected = c.selected.saturating_sub(VISIBLE),
             "pagedown" => c.selected = (c.selected + VISIBLE).min(n - 1),
+            // Tab on a live template's abbreviation ("def" is also a keyword item): expand
+            // the template, as PyCharm does.
+            "tab" if self.template_before_caret().is_some() => {
+                self.insight.completion = None;
+                self.expand_live_template(cx);
+                return true;
+            }
             "enter" | "tab" => {
                 self.accept_completion(key == "tab", cx);
                 return true;
