@@ -2,10 +2,11 @@
 //! so typing stays fast. The longest-line width refreshes at most once a second while
 //! typing, completion words come from the lines around the caret, and inlay hints are off.
 //! From `LAZY_FOLD_LINES` lines on, fold markers are recomputed on a background thread
-//! `FOLD_DEBOUNCE` after the last edit instead of on every frame. The syntax tree itself is reparsed incrementally (brisk-syntax); a reparse
-//! on the UI thread gets `PARSE_BUDGET`, and one that needs longer (error recovery after an
-//! unclosed bracket can take seconds) finishes on a background thread while the shifted old
-//! tree keeps the highlights in place.
+//! `FOLD_DEBOUNCE` after the last edit instead of on every frame, and so are the ▶ run marks.
+//! The syntax tree of a large file is not parsed on the UI thread after an edit: the old tree
+//! is shifted to the new positions (highlights stay in place) and the incremental parse runs
+//! on a background thread (`background_parse`). Only a first parse without a tree runs here,
+//! within `PARSE_BUDGET`.
 
 use super::Editor;
 use gpui::Context;
@@ -21,7 +22,7 @@ const REFRESH: Duration = Duration::from_millis(1000);
 pub const LAZY_FOLD_LINES: usize = 5_000;
 
 /// Pause in typing before the fold markers are recomputed.
-const FOLD_DEBOUNCE: Duration = Duration::from_millis(300);
+pub(super) const FOLD_DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// Longest reparse on the UI thread in a large file.
 pub const PARSE_BUDGET: Duration = Duration::from_millis(30);
@@ -34,6 +35,8 @@ pub struct BigFile {
     /// Buffer version a fold recompute is scheduled for, and whether one is running.
     folds_for: Option<u64>,
     folds_running: bool,
+    /// Buffer version a run-marks recompute is scheduled for.
+    pub(super) marks_for: Option<u64>,
     extent_at: Option<Instant>,
     /// A background parse is running.
     parsing: bool,

@@ -104,15 +104,56 @@ impl Editor {
         let v = self.buffer.version();
         if self.run_cache.0 != v {
             let test = self.path.as_deref().is_some_and(brisk_run::is_test_file);
-            let text = self.text().to_string();
-            self.run_cache = (v, run_marks(&text, test));
+            self.text();
+            self.run_cache = (v, run_marks(&self.text_cache.1, test));
         }
         self.run_cache.1.clone()
     }
 
-    /// The marks as last computed (paint must not mutate).
+    /// Prepaint: keep the marks current. A long file recomputes them on a background thread
+    /// once typing pauses; meanwhile the old marks stay (a click still recomputes them).
+    pub(super) fn refresh_run_marks(&mut self, cx: &mut gpui::Context<Self>) {
+        let v = self.buffer.version();
+        if self.run_slot() == px(0.) || self.run_cache.0 == v {
+            return;
+        }
+        if self.buffer.len_lines() < super::big::LAZY_FOLD_LINES || self.run_cache.0 == u64::MAX {
+            self.run_marks();
+            return;
+        }
+        if self.big.marks_for == Some(v) {
+            return;
+        }
+        self.big.marks_for = Some(v);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(super::big::FOLD_DEBOUNCE).await;
+            let job = this
+                .update(cx, |e, cx| {
+                    if e.buffer.version() != v {
+                        return None;
+                    }
+                    let test = e.path.as_deref().is_some_and(brisk_run::is_test_file);
+                    let text = e.text().to_string();
+                    Some(cx.background_executor().spawn(async move { run_marks(&text, test) }))
+                })
+                .ok()
+                .flatten();
+            let Some(job) = job else { return };
+            let marks = job.await;
+            let _ = this.update(cx, |e, cx| {
+                if e.buffer.version() == v {
+                    e.run_cache = (v, marks);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The marks as last computed (paint must not mutate); a long file keeps showing the
+    /// previous ones until the recompute lands.
     pub(super) fn run_marks_now(&self) -> &[RunMark] {
-        if self.run_cache.0 == self.buffer.version() {
+        if self.run_cache.0 == self.buffer.version() || (self.run_cache.0 != u64::MAX && self.buffer.len_lines() >= super::big::LAZY_FOLD_LINES) {
             &self.run_cache.1
         } else {
             &[]

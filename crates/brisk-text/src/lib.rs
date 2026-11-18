@@ -5,6 +5,7 @@
 pub mod encoding;
 
 use ropey::Rope;
+pub use ropey::Rope as TextRope;
 use std::ops::Range;
 use std::time::{Duration, Instant};
 

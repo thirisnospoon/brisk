@@ -4,13 +4,14 @@
 
 mod scope;
 mod sql;
-pub use scope::NameRefs;
+pub use scope::{name_refs_of, occurrences_of, NameRefs};
 pub use sql::highlight_sql;
+pub use tree_sitter::Tree;
 
 use std::ops::Range;
 use std::path::Path;
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{InputEdit, Language, Parser, Point, Query, QueryCursor, Tree};
+use tree_sitter::{InputEdit, Language, Parser, Point, Query, QueryCursor};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Highlight {
@@ -266,6 +267,20 @@ impl SyntaxTree {
     /// edited to the new positions, stays in place: highlights shift with the text but may be
     /// stale around the change, and `is_stale()` is true until a parse completes (for example
     /// `parse_full` on a background thread, handed back through `adopt`).
+    /// Moves the old tree to the positions of `text` without parsing and leaves it stale: the
+    /// parse itself runs elsewhere (`stale_job` / `adopt`). Costs a diff of the two texts.
+    pub fn shift(&mut self, text: &str) {
+        if self.parsed == text {
+            return;
+        }
+        if let Some(tree) = self.tree.as_mut() {
+            tree.edit(&text_edit(&self.parsed, text));
+        }
+        self.stale = true;
+        self.parsed.clear();
+        self.parsed.push_str(text);
+    }
+
     pub fn parse_within(&mut self, text: &str, budget: Option<std::time::Duration>) {
         let old = match self.tree.take() {
             Some(mut tree) if !self.parsed.is_empty() || self.stale => {
@@ -471,11 +486,7 @@ impl SyntaxTree {
 
     /// The identifier token covering `byte` (for highlighting its other occurrences).
     pub fn identifier_at(&self, byte: usize) -> Option<Range<usize>> {
-        let tree = self.tree.as_ref()?;
-        let leaf = tree.root_node().descendant_for_byte_range(byte, byte)?;
-        let k = leaf.kind();
-        (leaf.child_count() == 0 && (k.contains("identifier") || matches!(k, "bare_key" | "variable_name" | "tag_name" | "property_name" | "class_name")))
-            .then(|| leaf.byte_range())
+        identifier_at_of(self.tree.as_ref()?, byte)
     }
 
     /// Whether the token at `byte` is an identifier of the same kind family (used to skip
@@ -542,6 +553,14 @@ pub struct OutlineItem {
 }
 
 /// Foldable regions of `tree` (see `SyntaxTree::fold_ranges`); usable on a background thread.
+/// [`SyntaxTree::identifier_at`] on a copy of the tree.
+pub fn identifier_at_of(tree: &Tree, byte: usize) -> Option<Range<usize>> {
+    let leaf = tree.root_node().descendant_for_byte_range(byte, byte)?;
+    let k = leaf.kind();
+    (leaf.child_count() == 0 && (k.contains("identifier") || matches!(k, "bare_key" | "variable_name" | "tag_name" | "property_name" | "class_name")))
+        .then(|| leaf.byte_range())
+}
+
 pub fn fold_ranges_of(lang: Lang, tree: &Tree) -> Vec<(usize, usize)> {
     let foldable = |k: &str| -> bool {
         match lang {
@@ -817,6 +836,25 @@ mod incremental_tests {
         check(&mut inc, "class A:\n    x = 'é ö'\n");
         check(&mut inc, "");
         check(&mut inc, &base);
+    }
+
+    #[test]
+    fn shifted_tree_is_stale_until_the_background_parse() {
+        let mut text: String = (0..500).map(|i| format!("def f{i}(a):\n    return a\n\n")).collect();
+        let mut inc = SyntaxTree::new(Lang::Python);
+        inc.parse(&text);
+        // Two keystrokes shifted without parsing: the tree stays, marked stale.
+        text.insert_str(3000, "x");
+        inc.shift(&text);
+        text.insert_str(3001, " = (");
+        inc.shift(&text);
+        assert!(inc.is_stale() && inc.tree().is_some());
+        let (lang, job_text, tree) = inc.stale_job().unwrap();
+        inc.adopt(&job_text, parse_full(lang, &job_text, tree.as_ref()).unwrap());
+        assert!(!inc.is_stale());
+        let mut full = SyntaxTree::new(Lang::Python);
+        full.parse(&text);
+        assert_eq!(inc.tree().unwrap().root_node().to_sexp(), full.tree().unwrap().root_node().to_sexp());
     }
 
     #[test]

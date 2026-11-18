@@ -7,7 +7,7 @@
 use super::Editor;
 use gpui::Context;
 use std::ops::Range;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Whole-file occurrence marks only for files up to this size (bytes).
 const STRIPE_LIMIT: usize = 2 * 1024 * 1024;
@@ -29,7 +29,6 @@ pub struct CaretMarks {
 pub struct Occurrences {
     /// (caret, buffer version) they are for.
     key: (usize, u64),
-    since: Instant,
     ready: bool,
     /// Char ranges, sorted.
     all: Vec<Range<usize>>,
@@ -38,40 +37,63 @@ pub struct Occurrences {
 
 impl Default for Occurrences {
     fn default() -> Self {
-        Self { key: (usize::MAX, u64::MAX), since: Instant::now(), ready: false, all: Vec::new(), lines: Vec::new() }
+        Self { key: (usize::MAX, u64::MAX), ready: false, all: Vec::new(), lines: Vec::new() }
     }
 }
 
-fn is_word(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
+/// Usages (char ranges, sorted) of the identifier at char `head`, and their lines for the
+/// scrollbar. Pure, so a large file runs it on a background thread.
+fn find_usages(lang: brisk_syntax::Lang, tree: &brisk_syntax::Tree, text: &str, rope: &brisk_text::TextRope, head: usize) -> (Vec<Range<usize>>, Vec<usize>) {
+    let hb = rope.char_to_byte(head);
+    let all: Vec<_> = brisk_syntax::occurrences_of(lang, tree, text, hb, STRIPE_LIMIT).into_iter().map(|r| rope.byte_to_char(r.start)..rope.byte_to_char(r.end)).collect();
+    let mut lines: Vec<usize> = if text.len() <= STRIPE_LIMIT { all.iter().map(|r| rope.char_to_line(r.start)).collect() } else { Vec::new() };
+    lines.dedup();
+    (all, lines)
 }
 
 impl Editor {
-    /// Prepaint: restart the delay when the caret or the text changed; compute the usages
-    /// once it has passed. Uses `text_cache` (fresh after `reparse`).
+    /// Prepaint: when the caret or the text changed, forget the usages and start the delay;
+    /// once it has passed, compute them (on a background thread in a long file).
     pub(super) fn update_occurrences(&mut self, cx: &mut Context<Self>) {
         let b = &self.buffer;
         let single = b.selections.len() == 1 && b.primary().is_empty() && self.read_error.is_none();
         let key = if single { (b.primary().head, b.version()) } else { (usize::MAX, b.version()) };
-        if key != self.occ.key {
-            self.occ = Occurrences { key, since: Instant::now(), ..Default::default() };
-            if single {
-                cx.spawn(async move |this, cx| {
-                    cx.background_executor().timer(OCCURRENCE_DELAY).await;
-                    let _ = this.update(cx, |e, cx| {
-                        if e.occ.key == key {
-                            cx.notify();
-                        }
-                    });
+        if key == self.occ.key {
+            return;
+        }
+        self.occ = Occurrences { key, ..Default::default() };
+        if !single {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(OCCURRENCE_DELAY).await;
+            let job = this
+                .update(cx, |e, cx| {
+                    if e.occ.key != key {
+                        return None;
+                    }
+                    e.reparse();
+                    if e.buffer.len_lines() < super::big::LAZY_FOLD_LINES {
+                        e.fill_occurrences();
+                        cx.notify();
+                        return None;
+                    }
+                    let s = e.syntax.as_ref()?;
+                    let (lang, tree, text, rope) = (s.lang(), s.tree()?.clone(), e.text_cache.1.clone(), e.buffer.rope().clone());
+                    Some(cx.background_executor().spawn(async move { find_usages(lang, &tree, &text, &rope, key.0) }))
                 })
-                .detach();
-            }
-            return;
-        }
-        if self.occ.ready || !single || self.occ.since.elapsed() < OCCURRENCE_DELAY || self.text_cache.0 != b.version() {
-            return;
-        }
-        self.fill_occurrences();
+                .ok()
+                .flatten();
+            let Some(job) = job else { return };
+            let (all, lines) = job.await;
+            let _ = this.update(cx, |e, cx| {
+                if e.occ.key == key {
+                    (e.occ.ready, e.occ.all, e.occ.lines) = (true, all, lines);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Compute the usages for the current caret now (also for smokes, without the delay).
@@ -79,45 +101,13 @@ impl Editor {
         let head = self.buffer.primary().head;
         self.occ.key = (head, self.buffer.version());
         self.occ.ready = true;
-        let all = self.occurrences_at(head);
-        let rope = self.buffer.rope();
-        let mut lines: Vec<usize> = all.iter().map(|r| rope.char_to_line(r.start)).collect();
-        lines.dedup();
-        self.occ.all = all;
-        self.occ.lines = if self.text_cache.1.len() <= STRIPE_LIMIT { lines } else { Vec::new() };
-    }
-
-    /// Usages (char ranges) of the identifier at char `head`, or the one just before it.
-    fn occurrences_at(&self, head: usize) -> Vec<Range<usize>> {
-        let Some(s) = &self.syntax else { return Vec::new() };
-        let text = &self.text_cache.1;
-        let rope = self.buffer.rope();
-        let to_chars = |r: Range<usize>| rope.byte_to_char(r.start)..rope.byte_to_char(r.end);
-        let hb = rope.char_to_byte(head);
-        if let Some(refs) = s.name_refs(text, hb) {
-            return refs.ranges.into_iter().map(to_chars).collect();
-        }
-        let before = (head > 0).then(|| rope.char_to_byte(head - 1));
-        let Some(word) = s.identifier_at(hb).or_else(|| before.and_then(|p| s.identifier_at(p))) else {
-            return Vec::new();
+        self.text();
+        let Some(tree) = self.syntax.as_ref().and_then(|s| s.tree()) else {
+            (self.occ.all, self.occ.lines) = (Vec::new(), Vec::new());
+            return;
         };
-        let name = &text[word.clone()];
-        if name.is_empty() || text.len() > STRIPE_LIMIT {
-            return Vec::new();
-        }
-        let mut out = Vec::new();
-        let mut from = 0;
-        while let Some(i) = text[from..].find(name) {
-            let st = from + i;
-            let en = st + name.len();
-            from = en;
-            let left_ok = !text[..st].chars().next_back().is_some_and(is_word);
-            let right_ok = !text[en..].chars().next().is_some_and(is_word);
-            if left_ok && right_ok && s.is_identifier(st..en) {
-                out.push(to_chars(st..en));
-            }
-        }
-        out
+        let lang = self.syntax.as_ref().map(|s| s.lang()).unwrap_or(brisk_syntax::Lang::Python);
+        (self.occ.all, self.occ.lines) = find_usages(lang, tree, &self.text_cache.1, self.buffer.rope(), head);
     }
 
     /// The variable at the caret and its usages in this file, from the syntax tree (Python):

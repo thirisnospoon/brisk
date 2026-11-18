@@ -479,10 +479,17 @@ impl Editor {
         if self.parsed_version == v {
             return;
         }
-        let text = self.text().to_string();
-        let budget = self.is_big().then_some(big::PARSE_BUDGET);
+        self.text();
+        let large = self.is_big();
         if let Some(s) = &mut self.syntax {
-            s.parse_within(&text, budget);
+            // A large file with a tree: only shift the tree on this thread, the parse runs in
+            // the background (`background_parse`). Even an incremental parse there takes
+            // tens of ms while a statement is half typed (error recovery).
+            if large && s.tree().is_some() {
+                s.shift(&self.text_cache.1);
+            } else {
+                s.parse_within(&self.text_cache.1, large.then_some(big::PARSE_BUDGET));
+            }
         }
         self.parsed_version = v;
     }
@@ -1502,7 +1509,7 @@ impl Element for EditorElement {
             ed.refresh_line_extent();
             ed.sync_folds();
             ed.sync_bookmarks();
-            ed.run_marks();
+            ed.refresh_run_marks(cx);
             let h = if ed.show_gutter {
                 ed.fold_headers()
             } else {

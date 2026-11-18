@@ -5,9 +5,9 @@
 //! declared `global`/`nonlocal`. Nested scopes that bind the same name shadow it.
 //! Comprehension variables count as bindings of the enclosing scope (an approximation).
 
-use crate::{Lang, SyntaxTree};
+use crate::{identifier_at_of, Lang, SyntaxTree};
 use std::ops::Range;
-use tree_sitter::Node;
+use tree_sitter::{Node, Tree};
 
 /// The occurrences of the name at a position.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,51 +142,83 @@ impl SyntaxTree {
     /// Occurrences of the variable at `byte` (Python only). None when there is no variable
     /// there (an attribute, a keyword argument name, a keyword, a string).
     pub fn name_refs(&self, text: &str, byte: usize) -> Option<NameRefs> {
-        if self.lang != Lang::Python {
-            return None;
-        }
-        let tree = self.tree.as_ref()?;
-        let mut leaf = tree.root_node().descendant_for_byte_range(byte, byte)?;
-        if leaf.kind() != "identifier" && byte > 0 {
-            leaf = tree.root_node().descendant_for_byte_range(byte - 1, byte - 1)?;
-        }
-        if leaf.kind() != "identifier" || is_member(leaf) {
-            return None;
-        }
-        let name = text.get(leaf.byte_range())?.to_string();
-        // The scopes around the identifier, innermost first; a def's own name belongs outside.
-        let mut scopes = Vec::new();
-        let mut n = leaf;
-        while let Some(p) = n.parent() {
-            if is_scope(p.kind()) && !same(p.child_by_field_name("name"), n) {
-                scopes.push(p);
-            }
-            n = p;
-        }
-        let mut global = false;
-        let mut found = None;
-        for (i, s) in scopes.iter().enumerate() {
-            // Class bodies are invisible from nested functions: only the innermost may be one.
-            if s.kind() == "class_definition" && i > 0 {
-                continue;
-            }
-            match binds(*s, text, &name) {
-                Some(true) if !global => {
-                    found = Some(*s);
-                    break;
-                }
-                Some(false) => global = true,
-                _ => {}
-            }
-        }
-        let scope = found.unwrap_or_else(|| tree.root_node());
-        let local = found.is_some_and(|s| s.kind() != "class_definition");
-        let mut ranges = Vec::new();
-        collect(scope, text, &name, true, &mut ranges);
-        ranges.sort_by_key(|r| r.start);
-        ranges.dedup();
-        Some(NameRefs { name, ranges, local })
+        name_refs_of(self.lang, self.tree.as_ref()?, text, byte)
     }
+}
+
+/// [`SyntaxTree::name_refs`] on a copy of the tree (for a background thread).
+pub fn name_refs_of(lang: Lang, tree: &Tree, text: &str, byte: usize) -> Option<NameRefs> {
+    if lang != Lang::Python {
+        return None;
+    }
+    let mut leaf = tree.root_node().descendant_for_byte_range(byte, byte)?;
+    if leaf.kind() != "identifier" && byte > 0 {
+        leaf = tree.root_node().descendant_for_byte_range(byte - 1, byte - 1)?;
+    }
+    if leaf.kind() != "identifier" || is_member(leaf) {
+        return None;
+    }
+    let name = text.get(leaf.byte_range())?.to_string();
+    // The scopes around the identifier, innermost first; a def's own name belongs outside.
+    let mut scopes = Vec::new();
+    let mut n = leaf;
+    while let Some(p) = n.parent() {
+        if is_scope(p.kind()) && !same(p.child_by_field_name("name"), n) {
+            scopes.push(p);
+        }
+        n = p;
+    }
+    let mut global = false;
+    let mut found = None;
+    for (i, s) in scopes.iter().enumerate() {
+        // Class bodies are invisible from nested functions: only the innermost may be one.
+        if s.kind() == "class_definition" && i > 0 {
+            continue;
+        }
+        match binds(*s, text, &name) {
+            Some(true) if !global => {
+                found = Some(*s);
+                break;
+            }
+            Some(false) => global = true,
+            _ => {}
+        }
+    }
+    let scope = found.unwrap_or_else(|| tree.root_node());
+    let local = found.is_some_and(|s| s.kind() != "class_definition");
+    let mut ranges = Vec::new();
+    collect(scope, text, &name, true, &mut ranges);
+    ranges.sort_by_key(|r| r.start);
+    ranges.dedup();
+    Some(NameRefs { name, ranges, local })
+}
+
+/// Byte ranges of the usages of the name under `byte` (also when `byte` is right after it):
+/// scope-aware in Python, otherwise every match of the identifier outside strings and
+/// comments, searched only in texts up to `limit` bytes.
+pub fn occurrences_of(lang: Lang, tree: &Tree, text: &str, byte: usize, limit: usize) -> Vec<Range<usize>> {
+    if let Some(refs) = name_refs_of(lang, tree, text, byte) {
+        return refs.ranges;
+    }
+    let word = identifier_at_of(tree, byte).or_else(|| byte.checked_sub(1).and_then(|p| identifier_at_of(tree, p)));
+    let Some(word) = word else { return Vec::new() };
+    let name = &text[word];
+    if name.is_empty() || text.len() > limit {
+        return Vec::new();
+    }
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(i) = text[from..].find(name) {
+        let (st, en) = (from + i, from + i + name.len());
+        from = en;
+        let left_ok = !text[..st].chars().next_back().is_some_and(is_word);
+        let right_ok = !text[en..].chars().next().is_some_and(is_word);
+        if left_ok && right_ok && identifier_at_of(tree, st).is_some_and(|r| r == (st..en)) {
+            out.push(st..en);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
