@@ -9,6 +9,7 @@ mod db_ui;
 mod services_ui;
 mod pin_smoke;
 mod multi_smoke;
+mod pycon_smoke;
 mod debug_ui;
 mod disk_ui;
 mod edit2_smoke;
@@ -443,6 +444,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_PYCON").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.pycon_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_MULTI").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.multi_smoke(window, cx));

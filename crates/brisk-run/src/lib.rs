@@ -135,6 +135,9 @@ pub fn build(root: &Path, cfg: &RunConfig, python: &Path) -> Command {
     if cfg.kind == RunKind::Pytest {
         return build_pytest(root, cfg, python, args);
     }
+    if cfg.python_console {
+        args.push("-i".into());
+    }
     if cfg.module {
         args.push("-m".into());
         args.push(cfg.target.trim().to_string());

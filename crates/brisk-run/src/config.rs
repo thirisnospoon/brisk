@@ -61,6 +61,14 @@ pub struct RunConfig {
     /// of asking to stop it.
     #[serde(default, skip_serializing_if = "is_false")]
     pub allow_multiple: bool,
+    /// PyCharm's "Run with Python Console": `python -i`, an interactive prompt after the
+    /// script ends (with its variables).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub python_console: bool,
+    /// PyCharm's "Emulate terminal in output console": the process gets a pseudo-terminal
+    /// instead of pipes (colors, `\r` progress bars, `getpass`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub emulate_terminal: bool,
 }
 
 /// When a configuration starts: PyCharm's "Activate tool window" / "Focus tool window",
@@ -359,6 +367,8 @@ fn parse_configuration(root: &Path, node: roxmltree::Node) -> Option<RunConfig> 
                     "WORKING_DIRECTORY" => c.working_directory = v,
                     "ENV_FILES" => c.env_files = v.replace("$PROJECT_DIR$/", ""),
                     "SDK_HOME" => sdk = v,
+                    "SHOW_COMMAND_LINE" => c.python_console = v == "true",
+                    "EMULATE_TERMINAL" => c.emulate_terminal = v == "true",
                     "IS_MODULE_SDK" => module_sdk = v != "false",
                     "_new_target" => test_target = unquote(&v),
                     "_new_targetType" => target_type = unquote(&v),

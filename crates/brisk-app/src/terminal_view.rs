@@ -246,9 +246,24 @@ impl TerminalPanel {
         } else {
             None
         };
-        let session = Session::spawn_process(spawn.to_std(), &cmd.display(), cols, rows, move |e| {
+        let on_event = move |e| {
             let _ = tx.unbounded_send((id, e));
-        })
+        };
+        let session = if cfg.emulate_terminal {
+            // ConPTY drops the last output of a process that exits at once (the pipe closes
+            // before it flushes): the interpreter runs the program as a child, waits for it,
+            // gives the console a moment, then exits with its code.
+            const WRAP: &str = "import subprocess, sys, time
+r = subprocess.call(sys.argv[1:])
+time.sleep(0.3)
+sys.exit(r)";
+            let mut args = vec!["-c".to_string(), WRAP.to_string(), spawn.program.display().to_string()];
+            args.extend(spawn.args.iter().cloned());
+            let opts = brisk_terminal::SpawnOptions { shell: Some((spawn.program.display().to_string(), args)), cwd: Some(spawn.cwd.clone()), env: spawn.env.clone() };
+            Session::spawn_process_pty(opts, &cmd.display(), cols, rows, on_event)
+        } else {
+            Session::spawn_process(spawn.to_std(), &cmd.display(), cols, rows, on_event)
+        }
         .map_err(|e| format!("Cannot run {}: {e}", cmd.program.display()))?;
         let name = cfg.name.clone();
         // "Allow multiple instances": a running tab of the configuration stays.

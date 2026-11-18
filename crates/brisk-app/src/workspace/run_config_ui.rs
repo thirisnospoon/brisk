@@ -25,12 +25,14 @@ pub enum Field {
     BeforeCommand,
     OnStart,
     AllowMultiple,
+    PythonConsole,
+    EmulateTerminal,
     Temporary,
 }
 
 impl Field {
     fn is_text(self) -> bool {
-        !matches!(self, Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple)
+        !matches!(self, Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal)
     }
 }
 
@@ -191,6 +193,16 @@ pub fn env_from_text(s: &str) -> BTreeMap<String, String> {
     out
 }
 
+/// The yes/no option behind a checkbox field.
+fn flag(c: &mut RunConfig, f: Field) -> Option<&mut bool> {
+    match f {
+        Field::AllowMultiple => Some(&mut c.allow_multiple),
+        Field::PythonConsole => Some(&mut c.python_console),
+        Field::EmulateTerminal => Some(&mut c.emulate_terminal),
+        _ => None,
+    }
+}
+
 /// Fields of the form for a kind of configuration, in Tab order.
 fn fields(kind: Kind, temporary: bool) -> Vec<Field> {
     use Field as F;
@@ -203,6 +215,9 @@ fn fields(kind: Kind, temporary: bool) -> Vec<Field> {
         v.push(F::Keywords);
     }
     v.extend([F::Parameters, F::InterpreterOptions, F::WorkingDirectory, F::Env, F::EnvFiles, F::Interpreter, F::BeforeRun, F::BeforeCommand, F::OnStart, F::AllowMultiple]);
+    if matches!(kind, Kind::Script | Kind::Module) {
+        v.extend([F::PythonConsole, F::EmulateTerminal]);
+    }
     if temporary {
         v.push(F::Temporary);
     }
@@ -232,6 +247,8 @@ fn label(f: Field, kind: Kind) -> &'static str {
         Field::BeforeCommand => "Before launch, command:",
         Field::OnStart => "When started:",
         Field::AllowMultiple => "Multiple instances:",
+        Field::PythonConsole => "Python Console:",
+        Field::EmulateTerminal => "Terminal:",
         Field::Temporary => "Temporary:",
     }
 }
@@ -277,7 +294,7 @@ impl RunDialog {
             Field::BeforeRun => &mut d.cfg.before_run,
             Field::BeforeCommand => &mut d.cfg.before_command,
             Field::Interpreter => d.cfg.interpreter.get_or_insert_with(String::new),
-            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple => return None,
+            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal => return None,
         })
     }
 
@@ -295,7 +312,7 @@ impl RunDialog {
             Field::BeforeRun => &d.cfg.before_run,
             Field::BeforeCommand => &d.cfg.before_command,
             Field::Interpreter => return d.cfg.interpreter.as_deref().map_or(0, |s| s.chars().count()),
-            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple => return 0,
+            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal => return 0,
         };
         s.chars().count()
     }
@@ -365,7 +382,11 @@ impl RunDialog {
                 self.set_kind(k);
             }
             Field::Temporary => d.cfg.temporary = !d.cfg.temporary,
-            Field::AllowMultiple => d.cfg.allow_multiple = !d.cfg.allow_multiple,
+            Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal => {
+                if let Some(b) = flag(&mut d.cfg, f) {
+                    *b = !*b;
+                }
+            }
             Field::OnStart => {
                 let all = brisk_run::OnStart::ALL;
                 let i = all.iter().position(|x| *x == d.cfg.on_start).unwrap_or(0);
@@ -821,24 +842,34 @@ impl Workspace {
                                 }))
                         }))
                         .into_any_element(),
-                    Field::AllowMultiple => div()
-                        .id("rc-multiple")
-                        .flex()
-                        .gap(px(6.))
-                        .cursor_pointer()
-                        .child(div().text_color(if dr.cfg.allow_multiple { Theme::accent() } else { Theme::text_muted() }).child(if dr.cfg.allow_multiple { "☑" } else { "☐" }))
-                        .child(div().text_color(Theme::text_muted()).child(if dr.cfg.allow_multiple { "allowed: a new run starts next to a running one" } else { "a new run asks to stop the running one" }))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            if let Some(d) = this.runs.dialog.as_mut() {
-                                d.field = Field::AllowMultiple;
-                                if let Some(dr) = d.draft() {
-                                    dr.cfg.allow_multiple = !dr.cfg.allow_multiple;
+                    Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal => {
+                        let mut c = dr.cfg.clone();
+                        let on = flag(&mut c, f).is_some_and(|b| *b);
+                        let text = match (f, on) {
+                            (Field::AllowMultiple, true) => "allowed: a new run starts next to a running one",
+                            (Field::AllowMultiple, false) => "a new run asks to stop the running one",
+                            (Field::PythonConsole, _) => "Run with Python Console (python -i: a prompt after the script, with its variables)",
+                            _ => "Emulate terminal in output console (colors, progress bars, getpass)",
+                        };
+                        div()
+                            .id(("rc-flag", f as usize))
+                            .flex()
+                            .gap(px(6.))
+                            .cursor_pointer()
+                            .child(div().text_color(if on { Theme::accent() } else { Theme::text_muted() }).child(if on { "☑" } else { "☐" }))
+                            .child(div().text_color(Theme::text_muted()).child(text))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                if let Some(d) = this.runs.dialog.as_mut() {
+                                    d.field = f;
+                                    if let Some(b) = d.draft().and_then(|dr| flag(&mut dr.cfg, f)) {
+                                        *b = !*b;
+                                    }
                                 }
-                            }
-                            cx.notify();
-                        }))
-                        .into_any_element(),
+                                cx.notify();
+                            }))
+                            .into_any_element()
+                    }
                     Field::Temporary => div()
                         .flex()
                         .gap(px(8.))

@@ -537,3 +537,20 @@ fn imports_pycharm_server_configurations() {
     assert_eq!((f.get("tests").unwrap().on_start, f.get("tests").unwrap().allow_multiple), (OnStart::Show, false));
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// "Run with Python Console" (`SHOW_COMMAND_LINE`) adds `-i`; "Emulate terminal in output
+/// console" (`EMULATE_TERMINAL`) is kept for the Run window.
+#[test]
+fn python_console_and_emulate_terminal() {
+    let xml = r#"<project><component name="RunManager">
+  <configuration name="con" type="PythonConfigurationType" factoryName="Python">
+    <option name="SCRIPT_NAME" value="$PROJECT_DIR$/con.py" />
+    <option name="SHOW_COMMAND_LINE" value="true" />
+    <option name="EMULATE_TERMINAL" value="true" />
+  </configuration>
+</component></project>"#;
+    let (cfgs, _) = super::config::configurations_in(Path::new("/p"), xml, "RunManager");
+    assert_eq!((cfgs[0].python_console, cfgs[0].emulate_terminal), (true, true));
+    let cmd = build(Path::new("/p"), &RunConfig { interpreter_options: "-X dev".into(), ..cfgs[0].clone() }, Path::new("python"));
+    assert_eq!(cmd.args[..3], ["-X".to_string(), "dev".into(), "-i".into()]);
+}
