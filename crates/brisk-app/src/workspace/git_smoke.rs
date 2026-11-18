@@ -83,6 +83,9 @@ impl Workspace {
             if !hold("annotate") && !hold("merge") {
                 Self::smoke_stash(&this, cx, &bg, &root).await;
             }
+            if !hold("annotate") && !hold("merge") && !hold("stash") {
+                Self::smoke_history(&this, cx, &bg, &root).await;
+            }
             let _ = this.update(cx, |_, cx| {
                 eprintln!("smoke-gitx: done");
                 if std::env::var_os("BRISK_SMOKE_GITX_HOLD").is_none() {
@@ -263,6 +266,70 @@ impl Workspace {
             eprintln!("smoke-gitx: drop -> dialog open {}, toast {:?}, list {:?}", this.git_dialog_open(), this.toast.as_ref().map(|t| t.0.clone()), sh(&this.root, &["stash", "list"]));
         });
         pause(bg, 300).await;
+    }
+
+    async fn smoke_history(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
+        fn dialog(this: &Workspace) -> Option<&super::git_history_ui::HistoryDialog> {
+            match this.git.as_ref()?.dialog.as_ref()? {
+                super::git_merge_ui::GitDialog::History(d) => Some(d),
+                _ => None,
+            }
+        }
+        fn show(this: &Workspace) -> String {
+            match dialog(this) {
+                Some(d) => {
+                    let subjects: Vec<&str> = d.commits.iter().map(|c| c.subject.as_str()).collect();
+                    let changed: Vec<&str> = d.patch.lines().filter(|l| (l.starts_with('+') || l.starts_with('-')) && !l.starts_with("+++") && !l.starts_with("---")).collect();
+                    format!("{subjects:?}, selected {} patch {changed:?}", d.selected)
+                }
+                None => "no dialog".into(),
+            }
+        }
+        let file = root.join("blame.py");
+        let _ = this.update_in(cx, |this, window, cx| {
+            this.open_file(&file, window, cx);
+            // Tree context menu of a file: the Git entries.
+            let labels: Vec<String> = this.git_menu_entries(&file, None, cx).iter().filter_map(|e| match e {
+                super::menu_ui::Entry::Item { label, .. } => Some(label.clone()),
+                _ => None,
+            }).collect();
+            eprintln!("smoke-gitx: tree menu git entries -> {labels:?}");
+            this.dispatch(Action::ShowFileHistory, window, cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: history -> {}", show(this));
+            this.smoke_press("down", window, cx);
+            eprintln!("smoke-gitx: history down -> {}", show(this));
+        });
+        if hold("history") {
+            return;
+        }
+        let _ = this.update_in(cx, |this, window, cx| {
+            let tabs = this.tabs.len();
+            this.smoke_press("ctrl-d", window, cx);
+            let tab = this.active.and_then(|i| match this.tabs.get(i) {
+                Some(super::Tab::Diff(d)) => Some(d.read(cx).title.clone()),
+                _ => None,
+            });
+            eprintln!("smoke-gitx: ctrl-d -> dialog open {}, tabs {tabs} -> {}, active diff {tab:?}", this.git_dialog_open(), this.tabs.len());
+            // Show History for Selection: line 1 ("a = 1") only changed in the first commit.
+            this.open_file(&file, window, cx);
+            if let Some(ed) = this.active_editor().cloned() {
+                ed.update(cx, |e, cx| e.select_on_line(0, 0..5, cx));
+                let labels: Vec<String> = this.git_menu_entries(&file, Some(&ed), cx).iter().filter_map(|e| match e {
+                    super::menu_ui::Entry::Item { label, .. } => Some(label.clone()),
+                    _ => None,
+                }).collect();
+                eprintln!("smoke-gitx: editor menu git entries -> {labels:?}");
+            }
+            this.dispatch(Action::ShowFileHistory, window, cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: selection history {:?} -> {}", dialog(this).and_then(|d| d.lines), show(this));
+            this.smoke_press("escape", window, cx);
+        });
     }
 
     /// Labels of the open context menu (smoke tests).

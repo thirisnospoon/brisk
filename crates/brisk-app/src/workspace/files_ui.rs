@@ -456,6 +456,7 @@ impl Workspace {
                 run: Rc::new(move |this: &mut Workspace, window, cx| this.open_file(&p, window, cx)),
             });
         }
+        v.extend(self.git_menu_entries(&path, None, cx));
         v.push(self.path_entries(path.clone()));
         v.push(Entry::Item {
             label: "Show in Explorer".into(),

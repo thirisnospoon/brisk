@@ -39,6 +39,7 @@ pub enum GitDialog {
     Conflicts(ConflictsDialog),
     Merge(MergeDialog),
     Stash(super::git_stash_ui::StashDialog),
+    History(super::git_history_ui::HistoryDialog),
 }
 
 impl MergeDialog {

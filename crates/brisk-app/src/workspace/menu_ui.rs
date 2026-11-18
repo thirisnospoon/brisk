@@ -75,6 +75,7 @@ impl Workspace {
             v.push(self.action_entry(&format!("Run '{name}'"), Action::RunContext, true, true));
         }
         if let Some(p) = path {
+            v.extend(self.git_menu_entries(&p, Some(&ed), cx));
             v.push(self.path_entries(p));
             v.push(Entry::Item {
                 label: "Show in Explorer".into(),

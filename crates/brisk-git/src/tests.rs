@@ -105,6 +105,13 @@ fn blame_and_file_log() {
     assert!(b[1].is_uncommitted() && !b[0].is_uncommitted());
     let log = repo.file_log("a.py", 10).unwrap();
     assert_eq!(log.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(), vec!["second", "first"]);
+    // History preview: the patch of one commit; history for line 2 only.
+    let patch = repo.file_patch(&log[0].hash, "a.py").unwrap();
+    assert!(patch.contains("-y = 2") && patch.contains("+y = 3"), "{patch}");
+    let lines = repo.line_log("a.py", 2, 2, 10).unwrap();
+    assert_eq!(lines.iter().map(|(c, _)| c.subject.as_str()).collect::<Vec<_>>(), vec!["second", "first"]);
+    assert!(lines[0].1.contains("+y = 3"), "{}", lines[0].1);
+    assert_eq!(repo.line_log("a.py", 1, 1, 10).unwrap().len(), 1, "line 1 never changed after the first commit");
     let _ = fs::remove_dir_all(&d);
 }
 

@@ -111,4 +111,24 @@ impl Repo {
         }
         rel.to_string()
     }
+    /// The patch `hash` made to `path` (the path in that commit), for the history preview.
+    pub fn file_patch(&self, hash: &str, path: &str) -> Result<String> {
+        self.git(&["show", "--format=", "--no-color", "-M", hash, "--", path])
+    }
+
+    /// Show History for Selection: commits that touched lines `start..=end` (1-based) of
+    /// `rel`, newest first, each with the patch of just those lines (`git log -L`).
+    pub fn line_log(&self, rel: &str, start: usize, end: usize, limit: usize) -> Result<Vec<(Commit, String)>> {
+        let range = format!("-L{start},{end}:{rel}");
+        let n = format!("-n{limit}");
+        let out = self.git(&["log", "--no-color", &n, &range, "--format=%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1d"])?;
+        Ok(out
+            .split('\x1e')
+            .filter_map(|rec| {
+                let (head, patch) = rec.split_once('\x1d')?;
+                let c = crate::parse_log(&format!("{head}\x1e")).pop()?;
+                Some((c, patch.trim_start_matches('\n').to_string()))
+            })
+            .collect())
+    }
 }

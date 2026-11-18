@@ -10,6 +10,7 @@ mod edit_smoke;
 mod files_ui;
 mod find_ui;
 mod git_annotate_ui;
+mod git_history_ui;
 mod git_merge_ui;
 mod git_stash_ui;
 mod git_smoke;

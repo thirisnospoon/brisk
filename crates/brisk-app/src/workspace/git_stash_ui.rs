@@ -38,9 +38,9 @@ impl Workspace {
         match action {
             A::StashChanges => self.open_stash_push(cx),
             A::UnstashChanges => self.open_unstash(cx),
-            // Show History comes with the history task.
             A::ShowFileHistory => {
                 let _ = window;
+                self.show_file_history_action(cx);
             }
             _ => {}
         }
@@ -82,7 +82,7 @@ impl Workspace {
     /// Create the stash: open files are saved first so their edits go into it.
     pub(super) fn stash_push(&mut self, cx: &mut Context<Self>) {
         let Some(StashDialog::Push { message, untracked }) = self.stash_dialog() else { return };
-        let (message, untracked) = (message.clone(), *untracked);
+        let (message, untracked) = (message.trim().to_string(), *untracked);
         self.save_all(cx);
         self.set_stash_dialog(None, cx);
         self.git_op("Stash", move |r| r.stash_push(&message, untracked).map(|_| "Changes stashed".to_string()), |_, _| {}, cx);
@@ -183,7 +183,7 @@ impl Workspace {
                     _ => {}
                 }
             }
-            None => {}
+            None => self.history_key(e, window, cx),
         }
         cx.notify();
     }
@@ -191,7 +191,7 @@ impl Workspace {
     pub(super) fn render_stash_dialog(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let d = match self.git.as_ref()?.dialog.as_ref()? {
             GitDialog::Stash(d) => d,
-            _ => return None,
+            _ => return self.render_history_dialog(cx),
         };
         Some(match d {
             StashDialog::Push { message, untracked } => self.render_stash_push(message, *untracked, cx),
