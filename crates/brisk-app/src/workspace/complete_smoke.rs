@@ -70,6 +70,103 @@ impl Workspace {
                     }
                 });
             }
+            // Postfix completion: `.if` on a whole-line expression, `.par` and `.print` on a primary.
+            for (typed, pick) in [("value > 1.if", "if"), ("compute_total([1]).par", "par"), ("order.pr", "print")] {
+                let _ = this.update(cx, |this, cx| {
+                    if let Some(ed) = this.active_editor().cloned() {
+                        ed.update(cx, |e, cx| {
+                            while e.close_insight() {}
+                            let end = e.buffer.len_chars();
+                            e.buffer.set_caret(end, false);
+                            e.type_for_smoke("\n", cx);
+                        });
+                    }
+                });
+                for ch in typed.chars() {
+                    pause(30).await;
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(ed) = this.active_editor().cloned() {
+                            ed.update(cx, |e, cx| e.type_for_smoke(&ch.to_string(), cx));
+                        }
+                    });
+                }
+                wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| e.read(cx).completion_open())).await;
+                pause(300).await;
+                let _ = this.update(cx, |this, cx| {
+                    let Some(ed) = this.active_editor().cloned() else { return };
+                    let summary = ed.read(cx).insight_summary();
+                    let ok = ed.update(cx, |e, cx| e.accept_postfix(pick, cx));
+                    let t = ed.read(cx).text_string();
+                    let tail: Vec<&str> = t.lines().rev().take(2).collect::<Vec<_>>().into_iter().rev().collect();
+                    eprintln!("smoke-complete: postfix {typed:?} -> {summary}; accepted {pick}: {ok} -> {tail:?}, caret {:?}", ed.read(cx).caret_line_col());
+                    // Leave the file valid for ty: give the `if` a body.
+                    if pick == "if" {
+                        ed.update(cx, |e, cx| e.type_for_smoke("pass", cx));
+                    }
+                });
+            }
+            // Live templates: abbreviation + Tab.
+            for abbr in ["ifn", "tryexcept"] {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let Some(ed) = this.active_editor().cloned() else { return };
+                    ed.update(cx, |e, cx| {
+                        while e.close_insight() {}
+                        let end = e.buffer.len_chars();
+                        e.buffer.set_caret(end, false);
+                        e.type_for_smoke("\n", cx);
+                        e.buffer.insert(abbr);
+                        e.close_insight();
+                    });
+                    this.smoke_press("tab", window, cx);
+                    let t = ed.read(cx).text_string();
+                    let n = if abbr == "ifn" { 2 } else { 4 };
+                    let tail: Vec<&str> = t.lines().rev().take(n).collect::<Vec<_>>().into_iter().rev().collect();
+                    eprintln!("smoke-complete: template {abbr} + Tab -> {tail:?}, field active {}", ed.read(cx).template_active());
+                    this.smoke_press("escape", window, cx);
+                });
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.smoke_press("ctrl-j", window, cx);
+                let labels: Vec<String> = this.problems.intents.iter().map(|i| i.label.clone()).filter(|l| ["main", "iter", "prop", "ifn", "tryexcept"].iter().any(|k| l.starts_with(k))).collect();
+                eprintln!("smoke-complete: Ctrl+J has {labels:?}");
+                this.popup = None;
+            });
+            // Parameter Info (Ctrl+P) and Quick Definition (Ctrl+Shift+I) on `value = compute_total([1, 2])`.
+            let call = this
+                .update(cx, |this, cx| this.active_editor().and_then(|e| e.read(cx).text_string().lines().position(|l| l.starts_with("value = compute_total"))))
+                .ok()
+                .flatten();
+            if let Some(line) = call {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    if let Some(ed) = this.active_editor().cloned() {
+                        ed.update(cx, |e, cx| {
+                            while e.close_insight() {}
+                            e.select_on_line(line, 23..23, cx);
+                        });
+                    }
+                    this.smoke_press("ctrl-p", window, cx);
+                });
+                let shown = wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| e.read(cx).signature_open())).await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let Some(ed) = this.active_editor().cloned() else { return };
+                    eprintln!("smoke-complete: Ctrl+P -> shown {shown}, {}, status {:?}", ed.read(cx).insight_summary(), this.status);
+                    ed.update(cx, |e, cx| {
+                        while e.close_insight() {}
+                        e.select_on_line(line, 10..10, cx);
+                    });
+                    this.smoke_press("ctrl-shift-i", window, cx);
+                });
+                wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| e.read(cx).doc_shown_text().0.is_some())).await;
+                let _ = this.update(cx, |this, cx| {
+                    let Some(ed) = this.active_editor().cloned() else { return };
+                    let doc = ed.read(cx).doc_shown_text().0.unwrap_or_default();
+                    eprintln!("smoke-complete: Ctrl+Shift+I -> {:?}, status {:?}", doc.lines().take(4).collect::<Vec<_>>(), this.status);
+                });
+                if std::env::var("BRISK_SMOKE_COMPLETE_HOLD").as_deref() == Ok("quickdef") {
+                    eprintln!("smoke-complete: holding");
+                    return;
+                }
+            }
             // Middle click on `compute_total` in `value = compute_total([1, 2])`.
             let line = this
                 .update(cx, |this, cx| {

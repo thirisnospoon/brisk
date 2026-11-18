@@ -289,7 +289,7 @@ impl Workspace {
                 self.nav_step(action == A::NavigateBack, window, cx);
                 return true;
             }
-            A::GotoDeclaration | A::GotoTypeDeclaration | A::QuickDocumentation | A::ParameterInfo | A::CodeCompletion | A::SmartCompletion | A::FindUsages | A::ShowUsages | A::Rename => {}
+            A::GotoDeclaration | A::GotoTypeDeclaration | A::QuickDefinition | A::QuickDocumentation | A::ParameterInfo | A::CodeCompletion | A::SmartCompletion | A::FindUsages | A::ShowUsages | A::Rename => {}
             _ => return false,
         }
         let Some(ed) = self.editor_for_lsp(window, cx) else {
@@ -300,6 +300,7 @@ impl Workspace {
             A::GotoDeclaration => self.goto_declaration(ed, None, false, window, cx),
             A::GotoTypeDeclaration => self.goto_declaration(ed, None, true, window, cx),
             A::QuickDocumentation => self.quick_doc(ed, None, cx),
+            A::QuickDefinition => self.quick_definition(ed, cx),
             A::ParameterInfo => self.parameter_info(ed, cx),
             A::CodeCompletion | A::SmartCompletion => self.complete(ed, true, cx),
             A::FindUsages | A::ShowUsages => self.find_usages(ed, None, window, cx),
@@ -429,6 +430,46 @@ impl Workspace {
         .detach();
     }
 
+    /// Ctrl+Shift+I: the definition's source in a popup at the caret. Without ty, a `def`,
+    /// `class` or assignment of the name in this file.
+    fn quick_definition(&mut self, ed: Entity<Editor>, cx: &mut Context<Self>) {
+        let root = self.root.clone();
+        let place = move |path: &Path, line: usize| format!("{}:{}", path.strip_prefix(&root).unwrap_or(path).to_string_lossy().replace('\\', "/"), line + 1);
+        let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else {
+            let (found, text, path) = {
+                let e = ed.read(cx);
+                (e.local_declaration(e.buffer.primary().head), e.text_string(), e.path.clone())
+            };
+            match (found.and_then(|(line, _)| crate::editor::definition_source(&text, line)), path) {
+                (Some((first, src)), Some(path)) => ed.update(cx, |e, cx| e.show_definition(&place(&path, first), &src, cx)),
+                _ => self.no_ty("Quick Definition"),
+            }
+            return;
+        };
+        let fut = ty.definition(&path, p);
+        cx.spawn(async move |this, cx| {
+            let res = fut.await;
+            let _ = this.update(cx, |this, cx| {
+                match res {
+                    Ok(locs) if !locs.is_empty() => {
+                        let l = &locs[0];
+                        // The open editor's text when the file is open (it may be unsaved).
+                        let open = this.editors().find(|e| e.read(cx).path.as_deref() == Some(l.path.as_path())).map(|e| e.read(cx).text_string());
+                        let text = open.or_else(|| std::fs::read_to_string(&l.path).ok()).unwrap_or_default();
+                        match crate::editor::definition_source(&text, l.start.line) {
+                            Some((first, src)) => ed.update(cx, |e, cx| e.show_definition(&place(&l.path, first), &src, cx)),
+                            None => this.status = "Cannot find definition".into(),
+                        }
+                    }
+                    Ok(_) => this.status = "Cannot find definition".into(),
+                    Err(e) => this.status = format!("ty: {e}"),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Ctrl+P, and automatically after `(` and `,`.
     fn parameter_info(&mut self, ed: Entity<Editor>, cx: &mut Context<Self>) {
         let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else { return self.no_ty("Parameter Info") };
@@ -481,7 +522,8 @@ impl Workspace {
                     return;
                 }
                 match res {
-                    Ok((items, incomplete)) if !items.is_empty() => {
+                    // Postfix templates show even when ty has nothing for `expr.`.
+                    Ok((items, incomplete)) if !items.is_empty() || !ed.read(cx).postfix_items(start).is_empty() => {
                         // Still typing the same word?
                         let again = ed.update(cx, |e, cx| {
                             if e.word_start_before_caret() != start {

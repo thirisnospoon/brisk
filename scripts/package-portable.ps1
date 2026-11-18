@@ -34,6 +34,17 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 
 $zip = Join-Path $dist "$name.zip"
 if (Test-Path $zip) { Remove-Item -Force $zip }
-Compress-Archive -Path $dir -DestinationPath $zip
+# .NET ZipFile with '/' in entry names: Compress-Archive in Windows PowerShell 5.1 writes '\',
+# which unzip and other non-Windows tools take as part of the file name.
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+$archive = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
+try {
+    foreach ($f in Get-ChildItem -Recurse -File $dir) {
+        $entry = $name + '/' + $f.FullName.Substring($dir.Length + 1).Replace('\', '/')
+        [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $f.FullName, $entry, [IO.Compression.CompressionLevel]::Optimal)
+    }
+} finally {
+    $archive.Dispose()
+}
 $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
 "Packaged $zip ($mb MB)"

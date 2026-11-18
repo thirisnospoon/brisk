@@ -139,7 +139,8 @@ impl Editor {
     }
 
     /// Completion results for the word starting at `start`.
-    pub fn show_completion_list(&mut self, items: Vec<CompletionItem>, start: usize, incomplete: bool, cx: &mut Context<Self>) {
+    pub fn show_completion_list(&mut self, mut items: Vec<CompletionItem>, start: usize, incomplete: bool, cx: &mut Context<Self>) {
+        items.extend(self.postfix_items(start));
         self.insight.requery = None;
         self.insight.completion = Some(Completion { items, shown: Vec::new(), selected: 0, top: 0, start, incomplete });
         self.refilter_completion();
@@ -167,10 +168,11 @@ impl Editor {
         };
         let mut ranked: Vec<(u8, usize)> = c.items.iter().enumerate().filter_map(|(i, it)| matches(&it.label, &prefix).map(|r| (r, i))).collect();
         // Names already in scope before auto-imports of the same match quality (PyCharm).
-        ranked.sort_by_key(|&(r, i)| (r, !c.items[i].extra.is_empty(), i));
+        ranked.sort_by_key(|&(r, i)| (r, !c.items[i].extra.is_empty() && c.items[i].kind != 15, i));
         let shown: Vec<usize> = ranked.into_iter().map(|(_, i)| i).collect();
         // A single exact match needs no list.
-        let exact_only = shown.len() == 1 && c.items[shown[0]].label == prefix;
+        // A single exact match needs no list, unless it is a postfix template (`x.if`).
+        let exact_only = shown.len() == 1 && c.items[shown[0]].label == prefix && c.items[shown[0]].kind != 15;
         if shown.is_empty() || exact_only {
             if shown.is_empty() && c.incomplete {
                 self.insight.requery = Some(c.start);
