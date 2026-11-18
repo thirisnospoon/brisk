@@ -689,7 +689,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-app"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "brisk-dap",
  "brisk-db",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-dap"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "futures",
  "serde_json",
@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-db"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "mysql",
  "native-tls",
@@ -733,18 +733,18 @@ dependencies = [
 
 [[package]]
 name = "brisk-git"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "similar",
 ]
 
 [[package]]
 name = "brisk-keymap"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "brisk-lint"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "brisk-run",
  "serde",
@@ -753,7 +753,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-lsp"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "brisk-lint",
  "futures",
@@ -762,7 +762,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-project"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "ignore",
  "nucleo-matcher",
@@ -770,7 +770,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-run"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "brisk-terminal",
  "roxmltree",
@@ -780,7 +780,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-search"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "globset",
  "memchr",
@@ -789,7 +789,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-syntax"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "streaming-iterator",
  "tree-sitter",
@@ -807,14 +807,14 @@ dependencies = [
 
 [[package]]
 name = "brisk-terminal"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "alacritty_terminal",
 ]
 
 [[package]]
 name = "brisk-text"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "encoding_rs",
  "ropey",
