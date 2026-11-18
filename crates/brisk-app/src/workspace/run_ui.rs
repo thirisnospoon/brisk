@@ -34,7 +34,7 @@ impl Runs {
         self.venvs.iter().chain(self.all.iter().flatten())
     }
 
-    fn lookup(&self, path: &Path) -> Interpreter {
+    pub(super) fn lookup(&self, path: &Path) -> Interpreter {
         self.known().find(|i| i.path == path).cloned().unwrap_or_else(|| Interpreter {
             path: path.to_path_buf(),
             version: String::new(),
@@ -351,6 +351,9 @@ impl Workspace {
                 v.dedup_by(|a, b| a.detail == b.detail);
                 if self.runs.all.is_none() {
                     v.push(PopupItem { label: "Detecting interpreters…".into(), detail: String::new(), hint: String::new(), target: Target::Cancel });
+                }
+                if "add interpreter".contains(&ql) && !self.venv_busy {
+                    v.push(PopupItem { label: "Add Interpreter…".into(), detail: "a new .venv in the project".into(), hint: String::new(), target: Target::AddInterpreter });
                 }
                 v
             }

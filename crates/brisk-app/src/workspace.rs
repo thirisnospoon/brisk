@@ -34,6 +34,7 @@ mod run_marks_ui;
 mod run_ui;
 mod settings_ui;
 mod tabs_ui;
+mod venv_ui;
 mod templates_ui;
 mod win_input;
 
@@ -118,6 +119,8 @@ enum PopupKind {
     /// Run configurations; `true` runs the picked one (Alt+Shift+F10), `false` only selects it.
     RunConfigs(bool),
     Interpreters,
+    /// Add Interpreter: the base Python for a new project venv.
+    AddInterpreter,
     /// Alt+Enter: quick fixes for the problem at the caret.
     Intentions,
     /// Shift+F6: the new name.
@@ -213,6 +216,10 @@ enum Target {
     /// Make a temporary run configuration permanent.
     SaveRunConfig(String),
     Interpreter(PathBuf),
+    /// "Add Interpreter…" in the interpreter popup.
+    AddInterpreter,
+    /// A new project venv from this base interpreter.
+    CreateVenv(PathBuf),
     Intention(Box<problems_ui::Intent>),
     Rename(String),
     Project(project_ui::ProjectCmd),
@@ -282,6 +289,10 @@ pub struct Workspace {
     debug: debug_ui::Debug,
     /// Created on first open of the Python Console.
     pyc: Option<console_ui::PyConsole>,
+    /// A project venv is being created (Add Interpreter).
+    venv_busy: bool,
+    /// The offer to install requirements into a new venv.
+    venv_offer: Option<venv_ui::VenvOffer>,
     /// pytest results per file for the run icons in the gutter.
     test_marks: run_marks_ui::TestMarks,
     /// Created on first open of Python Packages.
@@ -386,6 +397,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_VENV").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.venv_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_PYCONSOLE").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.python_console_smoke(window, cx));
@@ -528,6 +542,8 @@ impl Workspace {
             db,
             debug,
             pyc: None,
+            venv_busy: false,
+            venv_offer: None,
             test_marks: Default::default(),
             packages: None,
             todo: None,
@@ -1368,6 +1384,7 @@ impl Workspace {
             }
             k @ (PopupKind::Branches | PopupKind::NewBranch | PopupKind::VcsOperations | PopupKind::Confirm) => self.git_popup_items(k, &q),
             k @ (PopupKind::RunConfigs(_) | PopupKind::Interpreters) => self.run_popup_items(k, &q),
+            PopupKind::AddInterpreter => self.add_interpreter_items(&q),
             PopupKind::Intentions => self.intention_items(&q),
             PopupKind::Rename => self.rename_items(&q),
         };
@@ -1429,6 +1446,15 @@ impl Workspace {
                     }
                     Some(Target::Cancel) => self.focus_editor(window, cx),
                     Some(t @ (Target::RunConfig(..) | Target::EditRunConfigs | Target::SaveRunConfig(_) | Target::Interpreter(_))) => self.run_popup_pick(t, window, cx),
+                    Some(Target::AddInterpreter) => {
+                        self.open_popup(PopupKind::AddInterpreter);
+                        cx.notify();
+                    }
+                    Some(Target::CreateVenv(base)) => {
+                        self.popup = None;
+                        self.create_venv(base, cx);
+                        self.focus_editor(window, cx);
+                    }
                     Some(Target::Intention(i)) => self.apply_intent(*i, window, cx),
                     Some(Target::Rename(n)) => self.apply_rename(n, window, cx),
                     Some(Target::Project(c)) => {
@@ -2055,6 +2081,7 @@ impl Workspace {
             PopupKind::RunConfigs(true) => ("Run", "Type to filter"),
             PopupKind::RunConfigs(false) => ("Run Configurations", "Type to filter"),
             PopupKind::Interpreters => ("Python Interpreter", "Type to filter"),
+            PopupKind::AddInterpreter => ("Add Interpreter", "A new virtual environment in the project from this Python"),
             PopupKind::Intentions => (self.problems.intents_title.unwrap_or("Context Actions"), "Type to filter"),
             PopupKind::Rename => ("Rename", "New name"),
             PopupKind::Projects => ("Projects", "Type to filter"),
@@ -2192,6 +2219,7 @@ impl Workspace {
                                         Target::EditRunConfigs => ("✎", Theme::text_muted()),
                                         Target::SaveRunConfig(_) => ("⎙", Theme::text_muted()),
                                         Target::Interpreter(_) => ("◆", gpui::rgb(0x4b8bbe).into()),
+                                        Target::AddInterpreter | Target::CreateVenv(_) => ("+", gpui::rgb(0x4b8bbe).into()),
                                         Target::Intention(_) => ("✦", gpui::rgb(0xe0b84a).into()),
                                         Target::Rename(_) => ("✎", gpui::rgb(0x4b8bbe).into()),
                                         Target::Project(project_ui::ProjectCmd::New) => ("+", Theme::text_muted()),
@@ -2373,6 +2401,7 @@ impl Render for Workspace {
             )
             .child(self.render_status(cx))
             .children(self.render_toast().map(|e| fade_in("toast-in", e, 160)))
+            .children(self.render_venv_offer(cx).map(|e| fade_in("venv-offer-in", e, 160)))
             .children(self.render_popup(cx).map(|e| fade_in("popup-in", e, 110)))
             .children(self.render_find_popup(cx).map(|e| fade_in("find-in", e, 110)))
             .children(self.render_ds_dialog(cx).map(|e| fade_in("ds-in", e, 110)))
