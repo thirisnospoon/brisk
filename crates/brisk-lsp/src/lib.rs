@@ -243,6 +243,32 @@ pub struct Signature {
 /// A file's edits from a rename.
 pub type FileEdits = (PathBuf, Vec<Edit>);
 
+/// Edits from several answers combined per file: duplicates and edits overlapping one
+/// already taken are dropped (the wider edit at a position wins), so each file's edits can
+/// be applied together.
+pub fn merge_file_edits(groups: Vec<FileEdits>) -> Vec<FileEdits> {
+    let mut by_file: Vec<FileEdits> = Vec::new();
+    for (path, edits) in groups {
+        match by_file.iter_mut().find(|(p, _)| *p == path) {
+            Some((_, e)) => e.extend(edits),
+            None => by_file.push((path, edits)),
+        }
+    }
+    for (_, edits) in &mut by_file {
+        edits.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+        let mut kept: Vec<Edit> = Vec::with_capacity(edits.len());
+        for e in edits.drain(..) {
+            if kept.last().is_some_and(|k| e.start < k.end || (e.start == k.start && e.end == k.end)) {
+                continue;
+            }
+            kept.push(e);
+        }
+        *edits = kept;
+    }
+    by_file.retain(|(_, e)| !e.is_empty());
+    by_file
+}
+
 fn pos(v: &Value) -> Pos {
     Pos { line: v["line"].as_u64().unwrap_or(0) as usize, col: v["character"].as_u64().unwrap_or(0) as usize }
 }
@@ -675,4 +701,6 @@ impl Ty {
 mod tests;
 
 mod markdown;
+mod module_rename;
+pub use module_rename::{module_name, rename_module_refs};
 pub use markdown::{parse_doc_text, unescape_md, DocText, InlineStyle};

@@ -452,9 +452,10 @@ impl Editor {
         }
         self.by_source[source as usize] = diags;
         // ty repeats some ruff findings (undefined names): keep ruff's, it has fixes and noqa.
+        // A graver ty finding on the same span stays (`import-not-found` under ruff's F401).
         let ruff = &self.by_source[0];
         let mut all = ruff.clone();
-        all.extend(self.by_source[1].iter().filter(|t| !ruff.iter().any(|r| r.start == t.start && r.end == t.end)).cloned());
+        all.extend(self.by_source[1].iter().filter(|t| !ruff.iter().any(|r| r.start == t.start && r.end == t.end && r.severity <= t.severity)).cloned());
         all.sort_by_key(|d| (d.start, d.severity));
         self.diagnostics = all;
         self.diag_version = version;

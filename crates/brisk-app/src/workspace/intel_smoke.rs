@@ -12,6 +12,10 @@ use std::time::{Duration, Instant};
 
 const SRC: &str = "import sys\nimport os\n\nx = defaultdict(list)\nprint(os.sep, x)\n";
 
+fn pass(ok: bool) -> &'static str {
+    if ok { "ok" } else { "FAIL" }
+}
+
 /// No HTML entity or backslash escape left over from ty's Markdown.
 fn clean(s: &str) -> bool {
     !["&gt;", "&lt;", "&amp;", "\\_", "\\*"].iter().any(|e| s.contains(e))
@@ -199,7 +203,8 @@ impl Workspace {
             let _ = this.update(cx, |this, _| {
                 eprintln!("smoke-intel: rename module -> {:?}", this.status);
                 let t = std::fs::read_to_string(this.root.join("uses_util.py")).unwrap_or_default();
-                eprintln!("smoke-intel: uses_util.py now {:?}", t.lines().take(2).collect::<Vec<_>>());
+                let ok = t == "from smokepkg.helpers import add\nimport smokepkg.helpers\n\nprint(add(1, 2), smokepkg.helpers.add)\n";
+                eprintln!("smoke-intel: rename module {}: uses_util.py {:?}", pass(ok), t.lines().collect::<Vec<_>>());
             });
             // Rename the package folder: imports of it everywhere follow, including files
             // that moved with it.
@@ -212,22 +217,46 @@ impl Workspace {
             let _ = this.update(cx, |this, _| {
                 eprintln!("smoke-intel: rename package -> {:?}", this.status);
                 let t = std::fs::read_to_string(this.root.join("uses_util.py")).unwrap_or_default();
-                eprintln!("smoke-intel: uses_util.py now {:?}", t.lines().take(2).collect::<Vec<_>>());
+                let ok = t == "from smokelib.helpers import add\nimport smokelib.helpers\n\nprint(add(1, 2), smokelib.helpers.add)\n";
+                eprintln!("smoke-intel: rename package {}: uses_util.py {:?}", pass(ok), t.lines().collect::<Vec<_>>());
                 let t = std::fs::read_to_string(this.root.join("smokelib").join("inner.py")).unwrap_or_default();
-                eprintln!("smoke-intel: smokelib/inner.py now {:?}", t.lines().next().unwrap_or(""));
-                eprintln!("smoke-intel: old folder gone: {}", !this.root.join("smokepkg").exists());
+                eprintln!("smoke-intel: rename package {}: smokelib/inner.py {:?}", pass(t.starts_with("from smokelib.helpers import add\n")), t.lines().next().unwrap_or(""));
+                eprintln!("smoke-intel: rename package {}: old folder gone", pass(!this.root.join("smokepkg").exists()));
+                // A file that still names the old package: ty must flag it, which proves ty
+                // has seen the move before the clean importer below counts.
+                let _ = std::fs::write(this.root.join("probe_old.py"), "import smokepkg.helpers\n");
             });
-            // ty knows the new layout: the importer opens without unresolved imports.
             let _ = this.update_in(cx, |this, window, cx| {
+                this.reindex_files(cx);
+                let f = this.root.join("probe_old.py");
+                this.open_file(&f, window, cx);
+            });
+            let unresolved = |this: &Self, cx: &gpui::App| -> Vec<String> {
+                this.active_editor().map(|e| e.read(cx).diagnostics.iter().filter(|d| d.code.starts_with("unresolved") || d.code == "import-not-found").map(|d| d.title()).collect()).unwrap_or_default()
+            };
+            // ty may check the new file before it has handled the move and push no update
+            // later: touch the file each second so it checks again.
+            for _ in 0..15 {
+                if this.update(cx, |this, cx| !unresolved(this, cx).is_empty()).unwrap_or(true) {
+                    break;
+                }
+                pause(1000).await;
+                let _ = this.update(cx, |this, cx| {
+                    if let Some(ed) = this.active_editor().cloned() {
+                        ed.update(cx, |e, cx| e.type_for_smoke("\n", cx));
+                    }
+                });
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                eprintln!("smoke-intel: rename package {}: ty flags the old name: {:?}", pass(!unresolved(this, cx).is_empty()), unresolved(this, cx));
                 let f = this.root.join("uses_util.py");
                 this.open_file(&f, window, cx);
             });
-            pause(2500).await;
+            pause(1500).await;
             let _ = this.update(cx, |this, cx| {
-                let Some(ed) = this.active_editor() else { return };
-                let e = ed.read(cx);
-                let bad: Vec<String> = e.diagnostics.iter().filter(|d| d.code.starts_with("unresolved")).map(|d| d.title()).collect();
-                eprintln!("smoke-intel: {:?} unresolved after the move: {bad:?}", e.path.as_ref().and_then(|p| p.file_name()));
+                let bad = unresolved(this, cx);
+                eprintln!("smoke-intel: rename package {}: uses_util.py unresolved {bad:?}", pass(bad.is_empty()));
+                let _ = std::fs::remove_file(this.root.join("probe_old.py"));
             });
             let _ = this.update(cx, |this, cx| {
                 if let Some(ed) = this.active_editor().cloned() {
