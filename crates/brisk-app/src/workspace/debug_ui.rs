@@ -185,6 +185,8 @@ pub struct Debug {
     pub input: String,
     history: Vec<String>,
     history_pos: usize,
+    /// Tab in the console: debugpy's completions for the input's last name.
+    pub completion: Option<ConsoleCompletion>,
     pub frames: Vec<Frame>,
     pub frame: usize,
     pub vars: Vec<VarRow>,
@@ -245,8 +247,9 @@ impl Debug {
             stored: load(root),
             console: Vec::new(),
             input: String::new(),
-            history: Vec::new(),
-            history_pos: 0,
+            history: load_history(),
+            history_pos: usize::MAX,
+            completion: None,
             frames: Vec::new(),
             frame: 0,
             vars: Vec::new(),
@@ -430,6 +433,52 @@ fn save_exc(root: &Path, raised: bool, uncaught: bool, classes: &[ExcClass]) {
     if let Ok(s) = serde_json::to_string_pretty(&Value::Object(all)) {
         let _ = std::fs::write(path, s);
     }
+}
+
+/// The completion list under the console's input line.
+pub struct ConsoleCompletion {
+    /// (label, type) from debugpy, for the name that began at byte `start` of the input.
+    pub items: Vec<(String, String)>,
+    pub start: usize,
+    pub sel: usize,
+}
+
+impl ConsoleCompletion {
+    /// The items that still match what is typed after `start`.
+    fn shown<'a>(&'a self, input: &str) -> Vec<&'a (String, String)> {
+        let q = input.get(self.start..).unwrap_or("").to_lowercase();
+        self.items.iter().filter(|(l, _)| l.to_lowercase().starts_with(&q)).collect()
+    }
+}
+
+/// Where the name being typed at the end of the console input begins (byte index).
+fn completion_start(input: &str) -> usize {
+    input.char_indices().rev().take_while(|(_, c)| c.is_alphanumeric() || *c == '_').last().map(|(i, _)| i).unwrap_or(input.len())
+}
+
+/// The longest prefix every label shares (case-sensitive).
+fn common_prefix<'a>(labels: impl IntoIterator<Item = &'a str>) -> String {
+    let mut it = labels.into_iter();
+    let Some(first) = it.next() else { return String::new() };
+    let mut p: &str = first;
+    for l in it {
+        let n = p.chars().zip(l.chars()).take_while(|(a, b)| a == b).map(|(a, _)| a.len_utf8()).sum();
+        p = &p[..n];
+    }
+    p.to_string()
+}
+
+/// Public names first (dunder and _private last), keeping debugpy's order otherwise.
+fn order_completions(items: &mut [(String, String)]) {
+    items.sort_by_key(|(l, _)| (l.starts_with("__"), l.starts_with('_')));
+}
+
+fn history_path() -> PathBuf {
+    brisk_db::config_dir().join("debug_console_history.json")
+}
+
+fn load_history() -> Vec<String> {
+    std::fs::read_to_string(history_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
 }
 
 fn watches_path() -> PathBuf {
@@ -2635,9 +2684,14 @@ impl Workspace {
         if expr.trim().is_empty() {
             return;
         }
+        self.debug.completion = None;
         self.debug.history.retain(|h| *h != expr);
         self.debug.history.push(expr.clone());
-        self.debug.history_pos = self.debug.history.len();
+        let n = self.debug.history.len().saturating_sub(100);
+        self.debug.history.drain(..n);
+        self.debug.history_pos = usize::MAX;
+        let _ = std::fs::create_dir_all(brisk_db::config_dir());
+        let _ = std::fs::write(history_path(), serde_json::to_string(&self.debug.history).unwrap_or_default());
         self.debug.print(&format!(">>> {expr}\n"), Line::Input);
         let frame = self.debug.frames.get(self.debug.frame).map(|f| f.id);
         let Some(s) = self.debug.session.as_ref().filter(|s| s.state != State::Ended) else {
@@ -2668,6 +2722,89 @@ impl Workspace {
         .detach();
     }
 
+    /// Tab in the console: ask debugpy what the name at the end of the input can be.
+    fn complete_input(&mut self, cx: &mut Context<Self>) {
+        let Some(frame) = self.debug.frames.get(self.debug.frame).map(|f| f.id) else {
+            self.status = "Completion works while the program is paused".into();
+            return;
+        };
+        let Some(s) = self.debug.session.as_ref().filter(|s| s.state != State::Ended) else { return };
+        let text = self.debug.input.clone();
+        let rx = s.client.request("completions", json!({"text": text, "column": text.chars().count() + 1, "frameId": frame}));
+        cx.spawn(async move |this, cx| {
+            let res = rx.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.debug.input != text {
+                    return;
+                }
+                let mut items: Vec<(String, String)> = match res {
+                    Ok(Ok(v)) => v
+                        .get("targets")
+                        .and_then(Value::as_array)
+                        .map(|a| a.iter().filter_map(|t| Some((t.get("label")?.as_str()?.to_string(), t.get("type").and_then(Value::as_str).unwrap_or("").to_string()))).collect())
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                order_completions(&mut items);
+                let start = completion_start(&text);
+                match items.len() {
+                    0 => this.status = "No completions".into(),
+                    1 => {
+                        this.debug.input.truncate(start);
+                        this.debug.input.push_str(&items[0].0);
+                    }
+                    _ => {
+                        let typed = &text[start..];
+                        let p = common_prefix(items.iter().map(|i| i.0.as_str()));
+                        if p.len() > typed.len() && p.starts_with(typed) {
+                            this.debug.input.truncate(start);
+                            this.debug.input.push_str(&p);
+                        }
+                        this.debug.completion = Some(ConsoleCompletion { items, start, sel: 0 });
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Keys while the completion list is open; false lets the input line have the key.
+    fn completion_key(&mut self, key: &str) -> bool {
+        let Some(c) = self.debug.completion.as_mut() else { return false };
+        let n = c.shown(&self.debug.input).len();
+        match key {
+            "up" => c.sel = c.sel.checked_sub(1).unwrap_or(n.saturating_sub(1)),
+            "down" => c.sel = if c.sel + 1 < n { c.sel + 1 } else { 0 },
+            "pageup" => c.sel = c.sel.saturating_sub(8),
+            "pagedown" => c.sel = (c.sel + 8).min(n.saturating_sub(1)),
+            "escape" => self.debug.completion = None,
+            "enter" | "tab" => {
+                let start = c.start;
+                if let Some(l) = c.shown(&self.debug.input).get(c.sel).map(|i| i.0.clone()) {
+                    self.debug.input.truncate(start);
+                    self.debug.input.push_str(&l);
+                }
+                self.debug.completion = None;
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// After the input changed: the list follows what is typed, or closes.
+    fn refilter_completion(&mut self) {
+        let Some(c) = self.debug.completion.as_mut() else { return };
+        let input = &self.debug.input;
+        let start_ok = input.len() >= c.start && input.get(c.start..).is_some_and(|t| t.chars().all(|ch| ch.is_alphanumeric() || ch == '_'));
+        let n = if start_ok { c.shown(input).len() } else { 0 };
+        if n == 0 {
+            self.debug.completion = None;
+        } else {
+            c.sel = c.sel.min(n - 1);
+        }
+    }
+
     /// Keys while the Debug window has focus: the console's input line.
     pub(super) fn debug_key(&mut self, e: &gpui::KeyDownEvent, window: &Window, cx: &mut Context<Self>) -> bool {
         if !self.debug.focus.is_focused(window) {
@@ -2680,7 +2817,12 @@ impl Workspace {
         if k.modifiers.control || k.modifiers.alt || k.modifiers.platform {
             return false;
         }
+        if self.completion_key(k.key.as_str()) {
+            cx.notify();
+            return true;
+        }
         match k.key.as_str() {
+            "tab" if !k.modifiers.shift => self.complete_input(cx),
             "enter" => self.evaluate_input(cx),
             "backspace" => {
                 self.debug.input.pop();
@@ -2688,13 +2830,14 @@ impl Workspace {
             "space" => self.debug.input.push(' '),
             "escape" => self.debug.input.clear(),
             "up" => {
-                if self.debug.history_pos > 0 {
-                    self.debug.history_pos -= 1;
-                    self.debug.input = self.debug.history[self.debug.history_pos].clone();
+                let pos = self.debug.history_pos.min(self.debug.history.len());
+                if pos > 0 {
+                    self.debug.history_pos = pos - 1;
+                    self.debug.input = self.debug.history[pos - 1].clone();
                 }
             }
             "down" => {
-                if self.debug.history_pos + 1 < self.debug.history.len() {
+                if self.debug.history_pos.saturating_add(1) < self.debug.history.len() {
                     self.debug.history_pos += 1;
                     self.debug.input = self.debug.history[self.debug.history_pos].clone();
                 } else {
@@ -2707,6 +2850,7 @@ impl Workspace {
                 _ => return false,
             },
         }
+        self.refilter_completion();
         cx.notify();
         true
     }
@@ -3101,7 +3245,38 @@ impl Workspace {
             } else {
                 div().flex().items_center().child(d.input.clone()).when(focused, |x| x.child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret()))).into_any_element()
             });
-        div().size_full().flex().flex_col().child(lines).child(input).into_any_element()
+        let popup = d.completion.as_ref().map(|c| {
+            let shown = c.shown(&d.input);
+            let first = c.sel.saturating_sub(7);
+            let left = 8. + 30. + 7.5 * d.input[..c.start.min(d.input.len())].chars().count() as f32;
+            div()
+                .absolute()
+                .bottom(px(28.))
+                .left(px(left))
+                .min_w(px(220.))
+                .max_w(px(480.))
+                .py(px(2.))
+                .bg(Theme::panel())
+                .border_1()
+                .border_color(Theme::divider())
+                .rounded(px(4.))
+                .shadow_md()
+                .font_family(MONO_FONT)
+                .text_size(px(12.5))
+                .occlude()
+                .children(shown.into_iter().enumerate().skip(first).take(8).map(|(j, (label, kind))| {
+                    div()
+                        .h(px(20.))
+                        .px(px(8.))
+                        .flex()
+                        .items_center()
+                        .gap(px(12.))
+                        .when(j == c.sel, |x| x.bg(Theme::selection_row()))
+                        .child(div().flex_1().whitespace_nowrap().child(label.clone()))
+                        .child(div().text_color(Theme::text_dim()).text_size(px(11.)).child(kind.clone()))
+                }))
+        });
+        div().size_full().relative().flex().flex_col().child(lines).child(input).children(popup).into_any_element()
     }
 
     // --- Smoke --------------------------------------------------------------------------
@@ -3258,9 +3433,34 @@ impl Workspace {
                 t.evaluate_input(cx);
             });
             wait(800).await;
-            let _ = this.update_in(cx, |t, _, _| {
+            let _ = this.update_in(cx, |t, _, cx| {
                 let tail: Vec<String> = t.debug.console.iter().rev().take(2).map(|(l, _)| l.trim_end().to_string()).collect();
                 eprintln!("smoke-debug: evaluate -> {tail:?}");
+                // Tab completion: one match is inserted, several open the list.
+                t.debug.input = "ite".into();
+                t.complete_input(cx);
+            });
+            wait(800).await;
+            let _ = this.update(cx, |t, cx| {
+                eprintln!("smoke-debug: tab after 'ite' -> {:?} list {:?}", t.debug.input, t.debug.completion.as_ref().map(|c| c.shown(&t.debug.input).iter().map(|i| i.0.clone()).collect::<Vec<_>>()));
+                t.debug.completion = None;
+                t.debug.input = "items.".into();
+                t.complete_input(cx);
+            });
+            wait(800).await;
+            let _ = this.update(cx, |t, cx| {
+                let shown: Vec<String> = t.debug.completion.as_ref().map(|c| c.shown(&t.debug.input).iter().take(4).map(|i| i.0.clone()).collect()).unwrap_or_default();
+                eprintln!("smoke-debug: tab after 'items.' -> list {shown:?}");
+                for ch in ["c", "o"] {
+                    t.debug.input.push_str(ch);
+                    t.refilter_completion();
+                }
+                let shown: Vec<String> = t.debug.completion.as_ref().map(|c| c.shown(&t.debug.input).iter().map(|i| i.0.clone()).collect()).unwrap_or_default();
+                t.completion_key("down");
+                t.completion_key("enter");
+                eprintln!("smoke-debug: typed 'co' -> {shown:?}, down+enter -> {:?}; history file has {}", t.debug.input, load_history().iter().any(|h| h == "sum(items) * 10"));
+                t.debug.input.clear();
+                cx.notify();
             });
             // F7 into add(), Shift+F8 out, F8 over.
             let mut seen = Vec::new();
@@ -3816,6 +4016,21 @@ mod tests {
         // Nothing for all exceptions: only the classes.
         let v = exception_args(false, false, false, &[ExcClass { enabled: false, ..c("A", true) }, c("B", true)]);
         assert_eq!(v["exceptionOptions"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn console_completion() {
+        assert_eq!(completion_start("items.ap"), 6);
+        assert_eq!(completion_start("len(ite"), 4);
+        assert_eq!(completion_start("x + "), 4);
+        assert_eq!(common_prefix(["append", "apply"]), "app");
+        assert_eq!(common_prefix(["a"]), "a");
+        let mut v = vec![("__len__".to_string(), String::new()), ("_x".into(), String::new()), ("append".into(), String::new())];
+        order_completions(&mut v);
+        assert_eq!(v.iter().map(|i| i.0.as_str()).collect::<Vec<_>>(), ["append", "_x", "__len__"]);
+        let c = ConsoleCompletion { items: v, start: 6, sel: 0 };
+        assert_eq!(c.shown("items.ap").len(), 1);
+        assert_eq!(c.shown("items.").len(), 3);
     }
 
     #[test]
