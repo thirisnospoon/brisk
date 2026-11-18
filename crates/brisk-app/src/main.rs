@@ -1,4 +1,4 @@
-//! Brisk â€” a lightweight IDE with PyCharm's layout, keymap and behavior.
+//! Brisk — a lightweight IDE with PyCharm's layout, keymap and behavior.
 //!
 //! Usage: `brisk [project-dir]` (defaults to the current directory).
 
@@ -35,7 +35,7 @@ fn main() {
 
     Application::new().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1400.), px(900.)), cx);
-        let title = format!("{} â€“ Brisk", root.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
+        let title = format!("{} – Brisk", root.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
