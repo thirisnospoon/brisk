@@ -317,7 +317,7 @@ impl Workspace {
                     .items_center()
                     .gap(px(8.))
                     .px(px(10.))
-                    .h(px(34.))
+                    .h(px(crate::ui_kit::header_h()))
                     .bg(Theme::panel())
                     .border_b_1()
                     .border_color(Theme::divider())

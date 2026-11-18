@@ -7,7 +7,7 @@
 //! when focus moves. A file is open in one group at a time.
 
 use super::menu_ui::Entry;
-use super::{Tab, Workspace};
+use super::{PopupItem, PopupKind, Tab, Target, Workspace};
 use crate::editor::Editor;
 use crate::theme::{Theme, mono_font};
 use brisk_keymap::Action;
@@ -297,15 +297,77 @@ impl Workspace {
         let rel = path.strip_prefix(&self.root).ok()?;
         let mut parts = vec![self.project_name()];
         parts.extend(rel.iter().map(|p| p.to_string_lossy().into_owned()));
-        let last = parts.len() - 1;
+        // The symbols around the caret follow the file (class › method); cached in the editor
+        // per text version and caret line.
+        let (outline, chain) = e.update(cx, |ed, _| ed.caret_scope());
+        let file = parts.len() - 1;
+        let last = file + chain.len();
         let mut row = div().h(px(24.)).flex_shrink_0().flex().items_center().gap(px(4.)).px(px(12.)).text_size(px(12.)).font_family(crate::theme::ui_font()).whitespace_nowrap().overflow_hidden();
+        let crumb = |id: usize, text: String, color: gpui::Hsla| {
+            div().id(("crumb", id)).px(px(3.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).text_color(color).child(text)
+        };
         for (i, p) in parts.into_iter().enumerate() {
             if i > 0 {
                 row = row.child(crate::icons::icon("chevron-right", 10., Theme::text_dim()));
             }
-            row = row.child(div().text_color(if i == last { Theme::text() } else { Theme::text_muted() }).child(p));
+            if i == file {
+                // The file: its top-level classes and functions.
+                let ed = e.clone();
+                row = row.child(crumb(i, p, if i == last { Theme::text() } else { Theme::text_muted() }).on_click(cx.listener(move |this, _, w, cx| this.open_crumb_popup(&ed, None, w, cx))));
+            } else {
+                row = row.child(div().px(px(3.)).text_color(Theme::text_muted()).child(p));
+            }
+        }
+        for (k, &ix) in chain.iter().enumerate() {
+            let o = &outline[ix];
+            let (icon, color): (&str, gpui::Hsla) = match o.kind {
+                brisk_syntax::OutlineKind::Class => ("C", gpui::rgb(0x4b8bbe).into()),
+                brisk_syntax::OutlineKind::Method => ("m", gpui::rgb(0xe0a85a).into()),
+                brisk_syntax::OutlineKind::Function => ("ƒ", gpui::rgb(0xb07fd5).into()),
+            };
+            let ed = e.clone();
+            row = row.child(crate::icons::icon("chevron-right", 10., Theme::text_dim())).child(
+                div()
+                    .id(("crumb", file + 1 + k))
+                    .px(px(3.))
+                    .rounded(px(4.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Theme::hover_row()))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(div().text_color(color).text_size(px(11.)).font_weight(gpui::FontWeight::SEMIBOLD).child(icon))
+                    .child(div().text_color(if file + 1 + k == last { Theme::text() } else { Theme::text_muted() }).child(o.name.clone()))
+                    .on_click(cx.listener(move |this, _, w, cx| this.open_crumb_popup(&ed, Some(k), w, cx))),
+            );
         }
         Some(row.into_any_element())
+    }
+
+    /// A breadcrumb was clicked: its level's neighbours (the same parent) in a popup, the
+    /// clicked one selected, as in PyCharm. `level`: the index in the caret's chain, `None` for
+    /// the file (the top level).
+    fn open_crumb_popup(&mut self, e: &Entity<Editor>, level: Option<usize>, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = e.read(cx).path.clone() else { return };
+        let (outline, chain) = e.update(cx, |ed, _| ed.caret_scope());
+        let (parent, depth, current) = match level {
+            Some(k) if k < chain.len() => (k.checked_sub(1).map(|p| chain[p]), outline[chain[k]].depth, Some(chain[k])),
+            _ => (None, 0, chain.first().copied()),
+        };
+        let items = crate::editor::scope_siblings(&outline, parent, depth);
+        let selected = items.iter().position(|&i| Some(i) == current).unwrap_or(0);
+        self.structure = items
+            .iter()
+            .map(|&i| {
+                let o = &outline[i];
+                PopupItem { label: o.name.clone(), detail: format!(":{}", o.line + 1), hint: String::new(), target: Target::Symbol(path.clone(), o.line, 0, o.kind) }
+            })
+            .collect();
+        self.open_popup(PopupKind::FileStructure);
+        if let Some(p) = self.popup.as_mut() {
+            p.selected = selected;
+        }
+        cx.notify();
     }
 
     /// The editor area: one group, or two with a divider.

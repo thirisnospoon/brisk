@@ -227,14 +227,14 @@ impl Workspace {
                         this.services_select(Item::Database, cx);
                         w.focus(&this.services.focus.clone());
                     }))
-                    .child(div().w(px(12.)).text_color(Theme::accent()).child("⛁"))
+                    .child(crate::icons::icon("database", 12., Theme::accent()))
                     .child(format!("{title} · console")),
             );
         }
         let right: gpui::AnyElement = match (sel, &self.runs.panel) {
             (Some(Item::Run(_)), Some(p)) => div().flex_1().min_w_0().h_full().child(p.clone()).into_any_element(),
             (Some(Item::Database), _) => self.render_db_results(cx),
-            _ => div().flex_1().p(px(12.)).text_color(Theme::text_muted()).text_size(px(13.)).child("Select a run to see its console. Runs appear here as you start them (Shift+F10, Ctrl+Shift+F10).").into_any_element(),
+            _ => crate::ui_kit::empty_state("play", "Select a run to see its console. Runs appear here as you start them (Shift+F10, Ctrl+Shift+F10).").into_any_element(),
         };
         div().id("services-window").size_full().flex().child(tree).child(div().flex_1().min_w_0().h_full().flex().child(right)).into_any_element()
     }

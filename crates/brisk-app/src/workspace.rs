@@ -1739,6 +1739,7 @@ impl Workspace {
             }))
             .tooltip(move |_window, cx| cx.new(|_| Tip(tooltip.clone())).into())
             .child(crate::icons::icon(icon, 16., if active { Theme::text() } else { Theme::text_muted() }))
+            .map(|d| crate::ui_kit::pill_in(d, gpui::ElementId::Name(format!("pill-{id}").into()), active, Theme::text().opacity(0.14)))
     }
 
     /// Hides the tool window on one side and gives the editor the focus.
@@ -1909,7 +1910,7 @@ impl Workspace {
 
     fn panel_header(title: &str) -> impl IntoElement {
         div()
-            .h(px(34.))
+            .h(px(crate::ui_kit::header_h()))
             .flex()
             .items_center()
             .px(px(12.))
@@ -2038,7 +2039,11 @@ impl Workspace {
             .flex_col()
             .size_full()
             .child(Self::panel_header(title))
-            .child(div().px(px(12.)).text_size(px(13.)).text_color(Theme::text_muted()).child(body.to_string()))
+            .map(|d| if crate::theme::islands() {
+                d.child(crate::ui_kit::empty_state("list-todo", body.to_string()))
+            } else {
+                d.child(div().px(px(12.)).text_size(px(13.)).text_color(Theme::text_muted()).child(body.to_string()))
+            })
             .into_any_element()
     }
 
@@ -2185,6 +2190,7 @@ impl Workspace {
                                 this.close_tab(i, window, cx);
                             })),
                     ))
+                    .map(|d| crate::ui_kit::pill_in(d, ("tab-pill", i + 1000 * second as usize), active, if focused { Theme::selection_row() } else { Theme::hover_row() }))
             }))
     }
 
@@ -2208,6 +2214,7 @@ impl Workspace {
             .bg(Theme::editor_bg())
             .font_family(ui_font())
             .text_size(px(13.))
+            .when(crate::theme::islands(), |d| d.flex_col().gap(px(20.)).child(crate::icons::icon("file-text", 40., Theme::text_dim().opacity(0.6))))
             .child(
                 div()
                     .flex()
@@ -2735,6 +2742,8 @@ impl ToolSide {
 /// settle the last few pixels upward: short enough never to hold up the next keystroke.
 fn fade_in(id: &'static str, e: impl IntoElement, ms: u64) -> impl IntoElement {
     use gpui::{Animation, AnimationExt};
+    // Islands: popups, menus and dialogs take 140 ms (toasts keep 160), still ease-out.
+    let ms = if crate::theme::islands() { ms.clamp(140, 160) } else { ms };
     // Toasts and balloons rise a little more than popups and menus.
     let rise = if ms >= 160 { 8. } else if ms >= 110 { 4. } else { 2. };
     div()

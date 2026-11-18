@@ -933,7 +933,7 @@ impl Workspace {
                 .child(crate::icons::glyph(glyph, 14., Theme::text_muted()))
         };
         let header = div()
-            .h(px(34.))
+            .h(px(crate::ui_kit::header_h()))
             .flex()
             .items_center()
             .px(px(12.))

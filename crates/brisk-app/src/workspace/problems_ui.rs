@@ -352,7 +352,7 @@ impl Workspace {
             None => "Project".into(),
         };
         let header = div()
-            .h(px(34.))
+            .h(px(crate::ui_kit::header_h()))
             .flex_none()
             .flex()
             .items_center()
@@ -389,7 +389,10 @@ impl Workspace {
         };
         let focus = self.problems.focus.clone();
         let body: gpui::AnyElement = match empty {
-            Some(msg) => div().flex_1().flex().items_center().justify_center().text_color(Theme::text_muted()).text_size(px(13.)).child(msg).into_any_element(),
+            Some(msg) => {
+                let icon = if n == 0 && msg == "No problems found" { "circle-check" } else { "triangle-alert" };
+                crate::ui_kit::empty_state(icon, msg).into_any_element()
+            }
             None => uniform_list(
                 "problems",
                 n,
