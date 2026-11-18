@@ -26,7 +26,7 @@ pub struct Details {
 
 pub struct Git {
     pub repo: Repo,
-    status: Status,
+    pub(super) status: Status,
     by_path: HashMap<String, FileStatus>,
     branches: Vec<Branch>,
     log: Vec<Commit>,
@@ -123,16 +123,16 @@ pub fn status_color(s: FileStatus) -> Hsla {
     }
 }
 
-fn file_name(rel: &str) -> &str {
+pub(super) fn file_name(rel: &str) -> &str {
     rel.rsplit('/').next().unwrap_or(rel)
 }
 
-fn dir_name(rel: &str) -> &str {
+pub(super) fn dir_name(rel: &str) -> &str {
     rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("")
 }
 
 /// "5 minutes ago" for recent commits, otherwise a UTC date (no tz database needed).
-fn fmt_time(t: i64) -> String {
+pub(super) fn fmt_time(t: i64) -> String {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let d = now - t;
     if (0..60).contains(&d) {
@@ -303,7 +303,7 @@ impl Workspace {
     }
 
     /// Run a git operation in the background, then notify, reload files and refresh state.
-    fn git_op(
+    pub(super) fn git_op(
         &mut self,
         title: &'static str,
         op: impl FnOnce(&Repo) -> brisk_git::Result<String> + Send + 'static,

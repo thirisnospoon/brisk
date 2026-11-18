@@ -80,6 +80,9 @@ impl Workspace {
             if !hold("annotate") {
                 Self::smoke_conflicts(&this, cx, &bg, &root).await;
             }
+            if !hold("annotate") && !hold("merge") {
+                Self::smoke_stash(&this, cx, &bg, &root).await;
+            }
             let _ = this.update(cx, |_, cx| {
                 eprintln!("smoke-gitx: done");
                 if std::env::var_os("BRISK_SMOKE_GITX_HOLD").is_none() {
@@ -193,6 +196,73 @@ impl Workspace {
         eprintln!("smoke-gitx: git status -> {:?}", sh(root, &["status", "--porcelain"]));
         sh(root, &["commit", "-q", "--no-edit"]);
         pause(bg, 500).await;
+    }
+
+    async fn smoke_stash(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
+        use super::git_stash_ui::StashDialog;
+        fn dialog(this: &Workspace) -> Option<&StashDialog> {
+            match this.git.as_ref()?.dialog.as_ref()? {
+                super::git_merge_ui::GitDialog::Stash(d) => Some(d),
+                _ => None,
+            }
+        }
+        // A tracked change and an untracked file.
+        let _ = std::fs::write(root.join("other.py"), "v = 'stashed'\n");
+        let _ = std::fs::write(root.join("note.py"), "note = 1\n");
+        let _ = this.update(cx, |this, cx| this.refresh_git(cx));
+        pause(bg, 1200).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            this.dispatch(Action::StashChanges, window, cx);
+            // Typed message, Alt+U includes untracked files, Enter creates the stash.
+            for ch in "wip 1".chars() {
+                let keystroke = gpui::Keystroke { modifiers: gpui::Modifiers::default(), key: ch.to_string(), key_char: Some(ch.to_string()) };
+                this.on_key_down(&gpui::KeyDownEvent { keystroke, is_held: false }, window, cx);
+            }
+            this.smoke_press("backspace alt-u", window, cx);
+            if let Some(StashDialog::Push { message, untracked }) = dialog(this) {
+                eprintln!("smoke-gitx: stash dialog -> message {message:?}, untracked {untracked}");
+            }
+            this.smoke_press("enter", window, cx);
+        });
+        pause(bg, 1500).await;
+        eprintln!(
+            "smoke-gitx: after stash -> other.py {:?}, note.py exists {}, list {:?}",
+            std::fs::read_to_string(root.join("other.py")).unwrap_or_default(),
+            root.join("note.py").exists(),
+            sh(root, &["stash", "list"])
+        );
+        let _ = this.update_in(cx, |this, window, cx| {
+            this.dispatch(Action::UnstashChanges, window, cx);
+            if let Some(StashDialog::List { entries, files, .. }) = dialog(this) {
+                let names: Vec<String> = entries.iter().map(|e| format!("{} {}", e.name, e.message)).collect();
+                let paths: Vec<String> = files.iter().map(|f| format!("{:?} {}", f.status, f.path)).collect();
+                eprintln!("smoke-gitx: unstash dialog -> {names:?}, files {paths:?}");
+            }
+        });
+        if hold("stash") {
+            return;
+        }
+        let _ = this.update_in(cx, |this, window, cx| {
+            // A file row opens its diff (stash^ vs stash) and closes the dialog.
+            this.stash_file_diff(0, window, cx);
+            eprintln!("smoke-gitx: file diff -> dialog open {}, tabs {}", this.git_dialog_open(), this.tabs.len());
+            // Apply keeps the stash.
+            this.dispatch(Action::UnstashChanges, window, cx);
+            this.smoke_press("enter", window, cx);
+        });
+        pause(bg, 1500).await;
+        eprintln!(
+            "smoke-gitx: after apply -> other.py {:?}, note.py exists {}, list {:?}",
+            std::fs::read_to_string(root.join("other.py")).unwrap_or_default(),
+            root.join("note.py").exists(),
+            sh(root, &["stash", "list"])
+        );
+        let _ = this.update_in(cx, |this, window, cx| {
+            this.dispatch(Action::UnstashChanges, window, cx);
+            this.smoke_press("delete", window, cx);
+            eprintln!("smoke-gitx: drop -> dialog open {}, toast {:?}, list {:?}", this.git_dialog_open(), this.toast.as_ref().map(|t| t.0.clone()), sh(&this.root, &["stash", "list"]));
+        });
+        pause(bg, 300).await;
     }
 
     /// Labels of the open context menu (smoke tests).

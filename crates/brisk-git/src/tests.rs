@@ -107,3 +107,32 @@ fn blame_and_file_log() {
     assert_eq!(log.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(), vec!["second", "first"]);
     let _ = fs::remove_dir_all(&d);
 }
+
+#[test]
+fn stash_roundtrip() {
+    let (d, repo) = temp_repo("stash");
+    fs::write(d.join("a.py"), "x = 1\n").unwrap();
+    let files = vec!["a.py".to_string()];
+    repo.commit("first", &files, false, &files).unwrap();
+    fs::write(d.join("a.py"), "x = 2\n").unwrap();
+    fs::write(d.join("new.py"), "n = 1\n").unwrap();
+    repo.stash_push("my work", true).unwrap();
+    assert_eq!(fs::read_to_string(d.join("a.py")).unwrap(), "x = 1\n");
+    assert!(!d.join("new.py").exists());
+    let list = repo.stash_list().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "stash@{0}");
+    assert!(list[0].message.contains("my work"), "{}", list[0].message);
+    let changed = repo.stash_files("stash@{0}").unwrap();
+    let mut paths: Vec<&str> = changed.iter().map(|c| c.path.as_str()).collect();
+    paths.sort();
+    assert_eq!(paths, vec!["a.py", "new.py"]);
+    let a = changed.iter().find(|c| c.path == "a.py").unwrap();
+    assert_eq!(repo.stash_file_versions("stash@{0}", a), ("x = 1\n".to_string(), "x = 2\n".to_string()));
+    repo.stash_apply("stash@{0}", false).unwrap();
+    assert_eq!(fs::read_to_string(d.join("a.py")).unwrap(), "x = 2\n");
+    assert_eq!(repo.stash_list().unwrap().len(), 1, "apply keeps the stash");
+    repo.stash_drop("stash@{0}").unwrap();
+    assert!(repo.stash_list().unwrap().is_empty());
+    let _ = fs::remove_dir_all(&d);
+}
