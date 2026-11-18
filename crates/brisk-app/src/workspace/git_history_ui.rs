@@ -139,14 +139,33 @@ impl Workspace {
         let Some(d) = self.history() else { return };
         let Some(c) = d.commits.get(i.min(d.commits.len().saturating_sub(1))) else { return };
         d.selected = i.min(d.commits.len() - 1);
-        d.patch = match (d.line_patches.get(d.selected), repo) {
-            (Some(p), _) => p.clone(),
+        match (d.line_patches.get(d.selected), repo) {
+            (Some(p), _) => d.patch = p.clone(),
             (None, Some(repo)) => {
-                let path = repo.path_in_commit(&c.hash, &d.rel);
-                repo.file_patch(&c.hash, &path).unwrap_or_else(|e| e.to_string())
+                // `git log --follow` + `git show` per row: off the UI thread, so holding ↓ in a
+                // long history scrolls instead of freezing. A stale answer (the selection moved
+                // on meanwhile) is dropped.
+                let (hash, rel, sel) = (c.hash.clone(), d.rel.clone(), d.selected);
+                d.patch = "Loading…".into();
+                let task = cx.background_executor().spawn(async move {
+                    let path = repo.path_in_commit(&hash, &rel);
+                    repo.file_patch(&hash, &path).unwrap_or_else(|e| e.to_string())
+                });
+                cx.spawn(async move |this, cx| {
+                    let patch = task.await;
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(d) = this.history() {
+                            if d.selected == sel {
+                                d.patch = patch;
+                                cx.notify();
+                            }
+                        }
+                    });
+                })
+                .detach();
             }
-            _ => String::new(),
-        };
+            _ => d.patch = String::new(),
+        }
         cx.notify();
     }
 
@@ -157,10 +176,18 @@ impl Workspace {
         let (hash, rel) = (c.hash.clone(), d.rel.clone());
         let first = c.parents.is_empty();
         let Some(g) = self.git.as_mut() else { return };
-        let path = g.repo.path_in_commit(&hash, &rel);
+        let repo = g.repo.clone();
         g.dialog = None;
         let status = if first { FileStatus::Added } else { FileStatus::Modified };
-        self.show_commit_diff(&hash, &FileChange { path, old_path: None, status }, window, cx);
+        // The file's name in that commit (`git log --follow`) off the UI thread.
+        let h = hash.clone();
+        let task = cx.background_executor().spawn(async move { repo.path_in_commit(&h, &rel) });
+        cx.spawn_in(window, async move |this, cx| {
+            let path = task.await;
+            let _ = this.update_in(cx, |this, window, cx| this.show_commit_diff(&hash, &FileChange { path, old_path: None, status }, window, cx));
+        })
+        .detach();
+        cx.notify();
     }
 
     /// The selected commit's version against the local file (Show Diff with Working Tree).
@@ -169,10 +196,17 @@ impl Workspace {
         let Some(c) = d.commits.get(d.selected) else { return };
         let (hash, rel) = (c.hash.clone(), d.rel.clone());
         let Some(g) = self.git.as_mut() else { return };
-        let path = g.repo.path_in_commit(&hash, &rel);
+        let repo = g.repo.clone();
         g.dialog = None;
         let short = hash[..hash.len().min(8)].to_string();
-        self.compare_with_rev(&rel, &hash, &path, &short, window, cx);
+        let (h, r) = (hash.clone(), rel.clone());
+        let task = cx.background_executor().spawn(async move { repo.path_in_commit(&h, &r) });
+        cx.spawn_in(window, async move |this, cx| {
+            let path = task.await;
+            let _ = this.update_in(cx, |this, window, cx| this.compare_with_rev(&rel, &hash, &path, &short, window, cx));
+        })
+        .detach();
+        cx.notify();
     }
 
     pub(super) fn history_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {

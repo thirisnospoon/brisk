@@ -1583,7 +1583,7 @@ impl Workspace {
         p.selected = p.selected.min(p.items.len().saturating_sub(1));
     }
 
-    fn popup_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn popup_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
         let Some(p) = self.popup.as_mut() else { return };
         match k.key.as_str() {

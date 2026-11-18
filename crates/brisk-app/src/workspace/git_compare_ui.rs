@@ -27,20 +27,31 @@ impl Workspace {
     /// the right.
     pub(super) fn compare_with_rev(&mut self, rel: &str, rev: &str, path_in_rev: &str, label: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
-        let left = match repo.file_at(rev, path_in_rev) {
-            Ok(Some(t)) => t,
-            Ok(None) => {
-                self.show_toast(format!("{} does not exist in {label}", file_name(path_in_rev)), false, cx);
-                String::new()
-            }
-            Err(e) => return self.show_toast(format!("Cannot read {path_in_rev} in {label}: {e}"), true, cx),
-        };
         let abs = repo.abs(rel);
         let right = self.working_text(rel, cx);
         let title = format!("{} ({label} ↔ Local)", file_name(rel));
-        let (label, rel) = (label.to_string(), rel.to_string());
-        let view = cx.new(|cx| DiffView::new(title, Some(abs), label, &left, format!("Local: {rel}"), &right, cx));
-        self.open_diff(view, window, cx);
+        let (label, rel, rev, path_in_rev) = (label.to_string(), rel.to_string(), rev.to_string(), path_in_rev.to_string());
+        // `git show rev:path` off the UI thread.
+        let task = cx.background_executor().spawn({
+            let (rev, path_in_rev) = (rev.clone(), path_in_rev.clone());
+            async move { repo.file_at(&rev, &path_in_rev) }
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let res = task.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let left = match res {
+                    Ok(Some(t)) => t,
+                    Ok(None) => {
+                        this.show_toast(format!("{} does not exist in {label}", file_name(&path_in_rev)), false, cx);
+                        String::new()
+                    }
+                    Err(e) => return this.show_toast(format!("Cannot read {path_in_rev} in {label}: {e}"), true, cx),
+                };
+                let view = cx.new(|cx| DiffView::new(title, Some(abs), label, &left, format!("Local: {rel}"), &right, cx));
+                this.open_diff(view, window, cx);
+            });
+        })
+        .detach();
     }
 
     /// Compare with Branch…: the branches (but the current one) in a menu at `pos`.

@@ -131,6 +131,61 @@ impl Workspace {
             wait(1500).await;
             phase("git init + status + Commit/Git windows");
 
+            // 2b. Git Branches popup with 400 branches: open it and walk 60 rows down.
+            let root2 = root.clone();
+            let made = bg
+                .spawn(async move {
+                    let git = |args: &[&str]| {
+                        let mut c = std::process::Command::new("git");
+                        c.arg("-C").arg(&root2).args(args).env("GIT_TERMINAL_PROMPT", "0");
+                        #[cfg(windows)]
+                        {
+                            use std::os::windows::process::CommandExt;
+                            c.creation_flags(0x0800_0000);
+                        }
+                        c.output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    };
+                    git(&["add", "app/pkg000"])?;
+                    git(&["-c", "user.name=smoke", "-c", "user.email=smoke@example.invalid", "commit", "-qm", "first"])?;
+                    let head = git(&["rev-parse", "HEAD"])?;
+                    // Refs written directly: 400 `git branch` processes take a minute on Windows.
+                    let heads = root2.join(".git/refs/heads/feature");
+                    std::fs::create_dir_all(&heads).ok()?;
+                    for i in 0..400 {
+                        std::fs::write(heads.join(format!("topic-{i:03}")), format!("{head}\n")).ok()?;
+                    }
+                    Some(())
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| this.refresh_git(cx));
+            for _ in 0..100 {
+                wait(100).await;
+                if this.update(cx, |this, _| this.git.as_ref().map_or(0, |g| g.branches.len())).unwrap_or(0) > 400 {
+                    break;
+                }
+            }
+            stall::reset();
+            let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::Branches, window, cx));
+            wait(500).await;
+            for _ in 0..60 {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let ev = gpui::KeyDownEvent { keystroke: gpui::Keystroke::parse("down").unwrap(), is_held: false };
+                    this.popup_key(&ev, window, cx);
+                    cx.notify();
+                });
+                wait(16).await;
+            }
+            let shown = this.update(cx, |this, _| this.popup.as_ref().map(|p| (p.items.len(), p.selected))).ok().flatten();
+            eprintln!("smoke-hang: branches popup (made: {}): items and selection {shown:?}", made.is_some());
+            if hold {
+                return; // leave the popup open for a screenshot
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                let ev = gpui::KeyDownEvent { keystroke: gpui::Keystroke::parse("escape").unwrap(), is_held: false };
+                this.popup_key(&ev, window, cx);
+            });
+            phase("Git Branches popup, 400 branches, 60 × Down");
+
             // 3. Find in Files.
             let _ = this.update_in(cx, |this, window, cx| {
                 this.find.set_query_for_smoke("needle");

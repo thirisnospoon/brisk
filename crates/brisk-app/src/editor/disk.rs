@@ -131,10 +131,14 @@ impl Editor {
     /// Compare with the disk and react; cheap (one metadata call) when nothing changed.
     pub fn disk_check(&mut self) -> DiskCheck {
         let Some(p) = self.path.clone() else { return DiskCheck::Same };
-        if self.read_error.is_some() {
+        self.disk_check_at(stamp(&p))
+    }
+
+    /// `disk_check` with the file's stamp taken already (off the UI thread by the disk poll).
+    pub fn disk_check_at(&mut self, now: Stamp) -> DiskCheck {
+        if self.path.is_none() || self.read_error.is_some() {
             return DiskCheck::Same;
         }
-        let now = stamp(&p);
         if now == self.disk_stamp {
             return DiskCheck::Same;
         }

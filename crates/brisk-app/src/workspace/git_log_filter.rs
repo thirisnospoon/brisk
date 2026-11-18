@@ -150,9 +150,19 @@ impl Workspace {
     }
 
     fn author_filter_menu(&mut self, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+        // Listing authors walks the whole history: do it off the UI thread, then open the menu.
+        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        let task = cx.background_executor().spawn(async move { repo.authors().unwrap_or_default() });
+        cx.spawn(async move |this, cx| {
+            let authors = task.await;
+            let _ = this.update(cx, |this, cx| this.author_filter_menu_with(pos, authors, cx));
+        })
+        .detach();
+    }
+
+    fn author_filter_menu_with(&mut self, pos: gpui::Point<gpui::Pixels>, authors: Vec<String>, cx: &mut Context<Self>) {
         let Some(g) = self.git.as_ref() else { return };
         let cur = g.filter.query.author.clone();
-        let authors = g.repo.authors().unwrap_or_default();
         let item = |label: String, value: Option<String>, on: bool| Entry::Item {
             label: if on { format!("✓ {label}") } else { format!("   {label}") },
             shortcut: String::new(),

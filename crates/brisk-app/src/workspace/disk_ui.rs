@@ -1,11 +1,13 @@
 //! Keeping the window in step with the disk: open files changed by other programs reload (or
 //! show a conflict banner when they have unsaved edits), deleted files close their tabs, and
 //! expanded Project view folders pick up added and removed files. Polling, about every 1.5 s:
-//! one metadata call per open file and per expanded folder.
+//! one metadata call per open file and per expanded folder, made off the UI thread together
+//! with the re-read of the folders that changed (an `npm install` or a `git checkout` can put
+//! tens of thousands of files in one folder); the UI thread only applies the result.
 
 use super::Workspace;
-use crate::editor::DiskCheck;
-use gpui::{Context, Window};
+use crate::editor::{DiskCheck, Editor};
+use gpui::{Context, Entity, Window};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
@@ -20,27 +22,85 @@ fn dir_mtime(p: &std::path::Path) -> Option<SystemTime> {
     std::fs::metadata(p).ok()?.modified().ok()
 }
 
+fn file_stamp(p: &std::path::Path) -> Option<(SystemTime, u64)> {
+    let m = std::fs::metadata(p).ok()?;
+    Some((m.modified().ok()?, m.len()))
+}
+
+/// What the UI thread hands the background poll: open files and expanded folders.
+struct Snapshot {
+    editors: Vec<(Entity<Editor>, PathBuf)>,
+    dirs: Vec<PathBuf>,
+    stamps: HashMap<PathBuf, Option<SystemTime>>,
+}
+
+/// What the background poll hands back.
+struct Polled {
+    editors: Vec<(Entity<Editor>, Option<(SystemTime, u64)>)>,
+    stamps: HashMap<PathBuf, Option<SystemTime>>,
+    /// Changed folders (outermost ones) and the listings of them and their expanded subfolders.
+    changed: Vec<PathBuf>,
+    listings: HashMap<PathBuf, Vec<brisk_project::Entry>>,
+}
+
+impl Snapshot {
+    fn poll(self) -> Polled {
+        let editors = self.editors.into_iter().map(|(e, p)| (e, file_stamp(&p))).collect();
+        let mut stamps = HashMap::with_capacity(self.dirs.len());
+        let mut changed: Vec<PathBuf> = Vec::new();
+        for p in &self.dirs {
+            let now = dir_mtime(p);
+            if matches!(self.stamps.get(p), Some(old) if *old != now) {
+                changed.push(p.clone());
+            }
+            stamps.insert(p.clone(), now);
+        }
+        // Outermost first; a folder inside a changed one is re-read with it.
+        changed.sort_by_key(|p| p.components().count());
+        let mut outer: Vec<PathBuf> = Vec::new();
+        for p in changed {
+            if !outer.iter().any(|o| p.starts_with(o)) {
+                outer.push(p);
+            }
+        }
+        let listings = self
+            .dirs
+            .iter()
+            .filter(|d| outer.iter().any(|o| d.starts_with(o)))
+            .map(|d| (d.clone(), brisk_project::read_entries(d)))
+            .collect();
+        Polled { editors, stamps, changed: outer, listings }
+    }
+}
+
 impl Workspace {
     pub(super) fn start_disk_poll(&self, window: &mut Window, cx: &mut Context<Self>) {
         let bg = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| loop {
             bg.timer(POLL).await;
-            if this.update_in(cx, |this, window, cx| this.poll_disk(window, cx)).is_err() {
+            let Ok(snap) = this.update(cx, |this, cx| this.disk_snapshot(cx)) else { break };
+            let polled = bg.spawn(async move { snap.poll() }).await;
+            if this.update_in(cx, |this, window, cx| this.apply_disk_poll(polled, window, cx)).is_err() {
                 break;
             }
         })
         .detach();
     }
 
-    pub(super) fn poll_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        crate::stall::note("disk poll");
+    fn disk_snapshot(&mut self, cx: &mut Context<Self>) -> Snapshot {
+        let editors = self.editors().filter_map(|e| Some((e.clone(), e.read(cx).path.clone()?))).collect();
+        let dirs = self.tree.nodes.iter().filter(|n| n.is_dir && n.expanded && n.children.is_some()).map(|n| n.path.clone()).collect();
+        Snapshot { editors, dirs, stamps: self.dir_stamps.0.clone() }
+    }
+
+    fn apply_disk_poll(&mut self, polled: Polled, window: &mut Window, cx: &mut Context<Self>) {
+        crate::stall::note("disk poll: apply");
         // Open files.
         let mut gone = Vec::new();
         let mut reloaded = false;
-        let eds: Vec<_> = self.editors().cloned().collect();
-        for e in &eds {
+        for (e, now) in &polled.editors {
             let r = e.update(cx, |e, cx| {
-                let r = e.disk_check();
+                let r = e.disk_check_at(*now);
                 if r != DiskCheck::Same {
                     cx.notify();
                 }
@@ -61,39 +121,22 @@ impl Workspace {
             self.symbols.stale = true;
         }
 
-        // Expanded folders in the Project view.
-        let watched: Vec<(usize, PathBuf)> = self
-            .tree
-            .nodes
-            .iter()
-            .enumerate()
-            .filter(|(_, n)| n.is_dir && n.expanded && n.children.is_some())
-            .map(|(i, n)| (i, n.path.clone()))
-            .collect();
-        let mut changed = Vec::new();
-        let mut seen = HashMap::with_capacity(watched.len());
-        for (id, p) in watched {
-            let now = dir_mtime(&p);
-            match self.dir_stamps.0.get(&p) {
-                Some(old) if *old != now => changed.push(id),
-                _ => {}
-            }
-            seen.insert(p, now);
-        }
-        self.dir_stamps.0 = seen;
-        if !changed.is_empty() {
-            // Reload deepest first: reloading a parent rebuilds its children's ids.
-            let mut paths: Vec<PathBuf> = changed.iter().map(|&i| self.tree.nodes[i].path.clone()).collect();
-            paths.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
-            for p in paths {
+        // Expanded folders in the Project view, from the listings read in the background (a
+        // folder expanded or collapsed meanwhile is read here or skipped).
+        self.dir_stamps.0 = polled.stamps;
+        let changed = !polled.changed.is_empty();
+        if changed {
+            let mut listings = polled.listings;
+            for p in polled.changed {
                 if let Some(id) = self.tree.find(&p) {
-                    self.tree.reload(id);
+                    let pre = listings.extract_if(|d, _| d.starts_with(&p)).collect();
+                    self.tree.reload_with(id, pre);
                 }
             }
             self.reindex_files(cx);
             self.refresh_git(cx);
         }
-        if reloaded || !changed.is_empty() {
+        if reloaded || changed {
             cx.notify();
         }
     }

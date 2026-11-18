@@ -45,6 +45,32 @@ pub struct ProjectTree {
     pub nodes: Vec<Node>,
     rows: Vec<Row>,
     rows_dirty: bool,
+    /// Folder listings read off the UI thread, used by the next `load_children` of that folder.
+    prefetched: std::collections::HashMap<PathBuf, Vec<Entry>>,
+}
+
+/// One folder entry: (name, path, is_dir).
+pub type Entry = (String, PathBuf, bool);
+
+/// A folder's visible entries, folders first, then case-insensitive name (as PyCharm shows
+/// them). Plain filesystem work, safe to call off the UI thread.
+pub fn read_entries(dir: &Path) -> Vec<Entry> {
+    let mut entries: Vec<Entry> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    if is_hidden(&name) {
+                        return None;
+                    }
+                    let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                    Some((name, e.path(), is_dir))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    entries.sort_by_cached_key(|e| (!e.2, e.0.to_lowercase()));
+    entries
 }
 
 impl ProjectTree {
@@ -63,6 +89,7 @@ impl ProjectTree {
             }],
             rows: Vec::new(),
             rows_dirty: true,
+            prefetched: Default::default(),
         };
         t.expand(0);
         t
@@ -79,22 +106,7 @@ impl ProjectTree {
         let dir = self.nodes[id].path.clone();
         let depth = self.nodes[id].depth + 1;
         let parent_excluded = self.nodes[id].excluded;
-        let mut entries: Vec<(String, PathBuf, bool)> = std::fs::read_dir(&dir)
-            .map(|rd| {
-                rd.filter_map(|e| e.ok())
-                    .filter_map(|e| {
-                        let name = e.file_name().to_string_lossy().into_owned();
-                        if is_hidden(&name) {
-                            return None;
-                        }
-                        let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                        Some((name, e.path(), is_dir))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        // Folders first, then case-insensitive name — like PyCharm.
-        entries.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
+        let entries = self.prefetched.remove(&dir).unwrap_or_else(|| read_entries(&dir));
         let mut ids = Vec::with_capacity(entries.len());
         for (name, path, is_dir) in entries {
             let excluded = parent_excluded || (is_dir && is_excluded_dir(&name));
@@ -153,6 +165,14 @@ impl ProjectTree {
             cur = *self.nodes[cur].children.as_ref()?.iter().find(|&&c| self.nodes[c].name == name)?;
         }
         Some(cur)
+    }
+
+    /// `reload` with folder listings already read (by `read_entries` off the UI thread); a
+    /// folder missing from `pre` is read here.
+    pub fn reload_with(&mut self, id: NodeId, pre: std::collections::HashMap<PathBuf, Vec<Entry>>) {
+        self.prefetched = pre;
+        self.reload(id);
+        self.prefetched.clear();
     }
 
     /// Re-read a folder after files changed in it, keeping its expanded subfolders expanded.

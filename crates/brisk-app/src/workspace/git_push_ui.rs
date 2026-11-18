@@ -51,8 +51,22 @@ impl Workspace {
         let Some(o) = &d.outgoing else { return cx.notify() };
         if let Some(c) = o.commits.get(i.min(o.commits.len().saturating_sub(1))) {
             let hash = c.hash.clone();
-            d.selected = i.min(o.commits.len() - 1);
-            d.files = repo.and_then(|r| r.commit_files(&hash).ok()).unwrap_or_default();
+            let sel = i.min(o.commits.len() - 1);
+            d.selected = sel;
+            // `git show --name-status` per row: off the UI thread; a stale answer is dropped.
+            if let Some(repo) = repo {
+                let task = cx.background_executor().spawn(async move { repo.commit_files(&hash).unwrap_or_default() });
+                cx.spawn(async move |this, cx| {
+                    let files = task.await;
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(d) = this.push_dialog().filter(|d| d.selected == sel) {
+                            d.files = files;
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
+            }
         }
         cx.notify();
     }

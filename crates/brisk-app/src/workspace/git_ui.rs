@@ -584,34 +584,56 @@ impl Workspace {
         let Some(g) = &self.git else { return };
         let abs = g.repo.abs(&c.path);
         let base_path = c.old_path.clone().unwrap_or_else(|| c.path.clone());
-        let left = match c.status {
-            FileStatus::Untracked | FileStatus::Added => String::new(),
-            _ => g.repo.file_at("HEAD", &base_path).ok().flatten().unwrap_or_default(),
-        };
-        let right = self
+        let open = self
             .editors()
             .find(|e| e.read(cx).path.as_deref().is_some_and(|p| g.repo.rel(p).as_deref() == Some(c.path.as_str())))
-            .map(|e| e.read(cx).text_string())
-            .or_else(|| std::fs::read_to_string(&abs).ok().map(|s| s.replace("\r\n", "\n")))
-            .unwrap_or_default();
-        let name = file_name(&c.path).to_string();
-        let view = cx.new(|cx| DiffView::new(format!("{name} (HEAD ↔ Local)"), Some(abs), format!("HEAD: {base_path}"), &left, "Your version".into(), &right, cx));
-        self.open_diff(view, window, cx);
+            .map(|e| e.read(cx).text_string());
+        let (repo, status, name) = (g.repo.clone(), c.status, file_name(&c.path).to_string());
+        // `git show HEAD:<file>` and the disk read off the UI thread.
+        let abs2 = abs.clone();
+        let base2 = base_path.clone();
+        let task = cx.background_executor().spawn(async move {
+            let left = match status {
+                FileStatus::Untracked | FileStatus::Added => String::new(),
+                _ => repo.file_at("HEAD", &base2).ok().flatten().unwrap_or_default(),
+            };
+            let right = open.or_else(|| std::fs::read_to_string(&abs2).ok().map(|s| s.replace("\r\n", "\n"))).unwrap_or_default();
+            (left, right)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let (left, right) = task.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let view = cx.new(|cx| DiffView::new(format!("{name} (HEAD ↔ Local)"), Some(abs), format!("HEAD: {base_path}"), &left, "Your version".into(), &right, cx));
+                this.open_diff(view, window, cx);
+            });
+        })
+        .detach();
     }
 
     pub(super) fn show_commit_diff(&mut self, hash: &str, c: &FileChange, window: &mut Window, cx: &mut Context<Self>) {
         let Some(g) = &self.git else { return };
-        let short = &hash[..hash.len().min(8)];
+        let short = hash[..hash.len().min(8)].to_string();
         let base_path = c.old_path.clone().unwrap_or_else(|| c.path.clone());
-        let left = if c.status == FileStatus::Added { String::new() } else { g.repo.file_at(&format!("{hash}^"), &base_path).ok().flatten().unwrap_or_default() };
-        let right = if c.status == FileStatus::Deleted { String::new() } else { g.repo.file_at(hash, &c.path).ok().flatten().unwrap_or_default() };
+        let (repo, hash, c) = (g.repo.clone(), hash.to_string(), c.clone());
         let name = file_name(&c.path).to_string();
         let abs = g.repo.abs(&c.path);
         let title = format!("{name} ({short})");
         // A new file (the root commit too) has no left side: no "hash^" label there.
         let left_label = if c.status == FileStatus::Added { String::new() } else { format!("{short}^") };
-        let view = cx.new(|cx| DiffView::new(title, Some(abs), left_label, &left, short.to_string(), &right, cx));
-        self.open_diff(view, window, cx);
+        // Two `git show` calls off the UI thread.
+        let task = cx.background_executor().spawn(async move {
+            let left = if c.status == FileStatus::Added { String::new() } else { repo.file_at(&format!("{hash}^"), &base_path).ok().flatten().unwrap_or_default() };
+            let right = if c.status == FileStatus::Deleted { String::new() } else { repo.file_at(&hash, &c.path).ok().flatten().unwrap_or_default() };
+            (left, right)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let (left, right) = task.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let view = cx.new(|cx| DiffView::new(title, Some(abs), left_label, &left, short, &right, cx));
+                this.open_diff(view, window, cx);
+            });
+        })
+        .detach();
     }
 
     fn select_log(&mut self, i: usize, cx: &mut Context<Self>) {

@@ -55,14 +55,36 @@ impl Workspace {
 
     /// Unstash Changes…: the stash list, the newest selected.
     pub(super) fn open_unstash(&mut self, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_ref() else { return };
-        let entries = g.repo.stash_list().unwrap_or_default();
-        if entries.is_empty() {
-            self.set_stash_dialog(None, cx);
-            return self.show_toast("There are no stashes".into(), false, cx);
-        }
-        let files = g.repo.stash_files(&entries[0].name).unwrap_or_default();
-        self.set_stash_dialog(Some(StashDialog::List { entries, selected: 0, files }), cx);
+        self.open_unstash_at(0, None, cx);
+    }
+
+    /// The stash list with row `keep` selected; `drop` is dropped first. The git calls run
+    /// off the UI thread.
+    fn open_unstash_at(&mut self, keep: usize, drop: Option<String>, cx: &mut Context<Self>) {
+        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        let task = cx.background_executor().spawn(async move {
+            let dropped = drop.map(|name| repo.stash_drop(&name).map(|_| name.clone()).map_err(|e| format!("Cannot drop {name}: {e}")));
+            let entries = repo.stash_list().unwrap_or_default();
+            let keep = keep.min(entries.len().saturating_sub(1));
+            let files = entries.get(keep).map(|e| repo.stash_files(&e.name).unwrap_or_default()).unwrap_or_default();
+            (dropped, entries, keep, files)
+        });
+        cx.spawn(async move |this, cx| {
+            let (dropped, entries, selected, files) = task.await;
+            let _ = this.update(cx, |this, cx| {
+                match dropped {
+                    Some(Ok(name)) => this.status = format!("Dropped {name}"),
+                    Some(Err(e)) => this.show_toast(e, true, cx),
+                    None => {}
+                }
+                if entries.is_empty() {
+                    this.set_stash_dialog(None, cx);
+                    return this.show_toast("There are no stashes".into(), false, cx);
+                }
+                this.set_stash_dialog(Some(StashDialog::List { entries, selected, files }), cx);
+            });
+        })
+        .detach();
     }
 
     fn stash_select(&mut self, i: usize, cx: &mut Context<Self>) {
@@ -71,7 +93,21 @@ impl Workspace {
             let i = i.min(entries.len().saturating_sub(1));
             if *selected != i || files.is_empty() {
                 *selected = i;
-                *files = repo.stash_files(&entries[i].name).unwrap_or_default();
+                files.clear();
+                let name = entries[i].name.clone();
+                let task = cx.background_executor().spawn(async move { repo.stash_files(&name).unwrap_or_default() });
+                cx.spawn(async move |this, cx| {
+                    let got = task.await;
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(StashDialog::List { selected, files, .. }) = this.stash_dialog() {
+                            if *selected == i {
+                                *files = got;
+                                cx.notify();
+                            }
+                        }
+                    });
+                })
+                .detach();
             }
         }
         cx.notify();
@@ -104,23 +140,12 @@ impl Workspace {
 
     pub(super) fn stash_drop(&mut self, cx: &mut Context<Self>) {
         let Some(name) = self.selected_stash() else { return };
-        let Some(g) = self.git.as_ref() else { return };
-        match g.repo.stash_drop(&name) {
-            Ok(_) => self.status = format!("Dropped {name}"),
-            Err(e) => self.show_toast(format!("Cannot drop {name}: {e}"), true, cx),
-        }
         // The list stays open on the next stash (or closes when none is left).
         let keep = match self.stash_dialog() {
             Some(StashDialog::List { selected, .. }) => *selected,
             _ => 0,
         };
-        self.open_unstash(cx);
-        if matches!(self.stash_dialog(), Some(StashDialog::List { .. })) {
-            if let Some(StashDialog::List { files, .. }) = self.stash_dialog() {
-                files.clear();
-            }
-            self.stash_select(keep, cx);
-        }
+        self.open_unstash_at(keep, Some(name), cx);
     }
 
     /// The diff of one file of the selected stash: the commit it was made on vs the stash.
@@ -128,14 +153,21 @@ impl Workspace {
         let Some(name) = self.selected_stash() else { return };
         let Some(StashDialog::List { files, .. }) = self.stash_dialog() else { return };
         let Some(c) = files.get(fi).cloned() else { return };
-        let Some(g) = self.git.as_ref() else { return };
-        let (left, right) = g.repo.stash_file_versions(&name, &c);
-        let abs = g.repo.abs(&c.path);
+        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        let abs = repo.abs(&c.path);
         let title = format!("{} ({name})", file_name(&c.path));
-        let view = cx.new(|cx| DiffView::new(title, Some(abs), format!("{name}^"), &left, name.clone(), &right, cx));
         // The tab shows behind the modal otherwise.
         self.set_stash_dialog(None, cx);
-        self.open_diff(view, window, cx);
+        let n = name.clone();
+        let task = cx.background_executor().spawn(async move { repo.stash_file_versions(&n, &c) });
+        cx.spawn_in(window, async move |this, cx| {
+            let (left, right) = task.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let view = cx.new(|cx| DiffView::new(title, Some(abs), format!("{name}^"), &left, name.clone(), &right, cx));
+                this.open_diff(view, window, cx);
+            });
+        })
+        .detach();
     }
 
     pub(super) fn stash_dialog_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {

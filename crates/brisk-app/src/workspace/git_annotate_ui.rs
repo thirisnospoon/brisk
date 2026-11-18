@@ -89,13 +89,19 @@ impl Workspace {
     pub(super) fn show_annotation_commit(&mut self, ed: Entity<Editor>, hash: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(rel) = self.annotate_target(&ed, cx) else { return };
         let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
-        // The file may have had another name in that commit.
-        let path = repo.path_in_commit(&hash, &rel);
-        let change = repo
-            .commit_files(&hash)
-            .ok()
-            .and_then(|v| v.into_iter().find(|c| c.path == path))
-            .unwrap_or(FileChange { path, old_path: None, status: FileStatus::Modified });
-        self.show_commit_diff(&hash, &change, window, cx);
+        // The file may have had another name in that commit (`git log --follow`): off the UI thread.
+        let h = hash.clone();
+        let task = cx.background_executor().spawn(async move {
+            let path = repo.path_in_commit(&h, &rel);
+            repo.commit_files(&h)
+                .ok()
+                .and_then(|v| v.into_iter().find(|c| c.path == path))
+                .unwrap_or(FileChange { path, old_path: None, status: FileStatus::Modified })
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let change = task.await;
+            let _ = this.update_in(cx, |this, window, cx| this.show_commit_diff(&hash, &change, window, cx));
+        })
+        .detach();
     }
 }

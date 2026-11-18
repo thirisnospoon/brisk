@@ -177,12 +177,25 @@ impl Workspace {
     /// Merge…: the three-pane dialog for the selected file.
     pub(super) fn conflicts_merge(&mut self, cx: &mut Context<Self>) {
         let Some(rel) = self.selected_conflicts().pop() else { return };
-        let Some(g) = self.git.as_mut() else { return };
-        match g.repo.conflict_versions(&rel) {
-            Ok(v) => g.dialog = Some(GitDialog::Merge(MergeDialog::new(rel, v))),
-            Err(e) => self.show_toast(format!("Cannot read the versions of {rel}: {e}"), true, cx),
-        }
-        cx.notify();
+        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        // Base / yours / theirs (three `git show`s) off the UI thread.
+        let r = rel.clone();
+        let task = cx.background_executor().spawn(async move { repo.conflict_versions(&r) });
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            let _ = this.update(cx, |this, cx| {
+                match res {
+                    Ok(v) => {
+                        if let Some(g) = this.git.as_mut() {
+                            g.dialog = Some(GitDialog::Merge(MergeDialog::new(rel, v)));
+                        }
+                    }
+                    Err(e) => this.show_toast(format!("Cannot read the versions of {rel}: {e}"), true, cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Merge dialog Apply: write the result, `git add` it, back to the Conflicts list.
