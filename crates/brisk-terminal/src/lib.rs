@@ -467,6 +467,13 @@ impl Session {
         term.scroll_display(Scroll::Bottom);
     }
 
+    /// (lines scrolled back from the bottom, screen lines, lines above the screen).
+    pub fn scroll_pos(&self) -> (usize, usize, usize) {
+        let term = self.term.lock();
+        let g = term.grid();
+        (g.display_offset(), g.screen_lines(), g.history_size())
+    }
+
     /// Lines kept above the screen; at [`RUN_HISTORY_LINES`] the oldest output is being dropped.
     pub fn history_lines(&self) -> usize {
         self.term.lock().grid().history_size()

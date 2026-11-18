@@ -23,6 +23,7 @@ mod coverage;
 mod profile;
 mod todo_scan;
 mod terminal_view;
+mod scrollbar;
 mod settings;
 mod theme;
 mod workspace;

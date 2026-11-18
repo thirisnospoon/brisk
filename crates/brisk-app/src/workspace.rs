@@ -39,6 +39,7 @@ mod complete_smoke;
 mod big_smoke;
 mod local_refs;
 mod mouse_smoke;
+mod bars_smoke;
 mod scope_smoke;
 mod lsp_ui;
 mod main_menu;
@@ -306,6 +307,7 @@ pub struct Workspace {
     tree_selected: Option<NodeId>,
     tree_scroll: UniformListScrollHandle,
     popup_scroll: UniformListScrollHandle,
+    tree_bar: crate::scrollbar::BarState,
     files: Option<Arc<FileList>>,
     tabs: Vec<Tab>,
     active: Option<usize>,
@@ -420,6 +422,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_TEMPLATES").is_some() {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.templates_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_BARS").is_some() {
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.bars_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_MOUSE").is_some() {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.mouse_smoke(window, cx));
@@ -677,6 +682,7 @@ impl Workspace {
             tree_selected: Some(0),
             tree_scroll: UniformListScrollHandle::new(),
             popup_scroll: UniformListScrollHandle::new(),
+            tree_bar: Default::default(),
             files: None,
             tabs: Vec::new(),
             tab_scroll: [gpui::ScrollHandle::new(), gpui::ScrollHandle::new()],
@@ -1923,7 +1929,7 @@ impl Workspace {
             .flex_col()
             .size_full()
             .child(Self::panel_header("Project"))
-            .child(
+            .child(div().relative().flex_1().min_h_0().flex().flex_col().child(
                 uniform_list(
                     "project-tree",
                     n,
@@ -1984,7 +1990,7 @@ impl Workspace {
                 )
                 .track_scroll(self.tree_scroll.clone())
                 .flex_1(),
-            )
+            ).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&self.tree_scroll), self.tree_bar.clone())))
     }
 
     fn render_structure(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
