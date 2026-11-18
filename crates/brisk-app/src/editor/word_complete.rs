@@ -101,7 +101,8 @@ impl Editor {
         let caret = self.buffer.primary().head;
         let after_dot = start > 0 && self.buffer.rope().char(start - 1) == '.';
         let items = word_items(&self.buffer.text(), start, caret, after_dot);
-        if items.is_empty() {
+        // After a dot the list may still hold postfix items (`.if`, `.not`, ...).
+        if items.is_empty() && !after_dot {
             return false;
         }
         self.show_completion_list(items, start, false, cx);

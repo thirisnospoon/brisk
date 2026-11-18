@@ -28,12 +28,15 @@ mod marks;
 mod lsp;
 mod inlay;
 mod middle_click;
+mod postfix;
+mod quick_def;
 mod word_complete;
 mod doc_view;
 mod scroll;
 pub mod templates;
 pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
+pub use quick_def::definition_source;
 
 pub fn line_height() -> f32 {
     crate::settings::line_height()
