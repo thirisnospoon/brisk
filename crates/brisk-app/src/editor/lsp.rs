@@ -166,7 +166,8 @@ impl Editor {
             return;
         };
         let mut ranked: Vec<(u8, usize)> = c.items.iter().enumerate().filter_map(|(i, it)| matches(&it.label, &prefix).map(|r| (r, i))).collect();
-        ranked.sort_by_key(|&(r, i)| (r, i));
+        // Names already in scope before auto-imports of the same match quality (PyCharm).
+        ranked.sort_by_key(|&(r, i)| (r, !c.items[i].extra.is_empty(), i));
         let shown: Vec<usize> = ranked.into_iter().map(|(_, i)| i).collect();
         // A single exact match needs no list.
         let exact_only = shown.len() == 1 && c.items[shown[0]].label == prefix;

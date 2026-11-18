@@ -543,7 +543,8 @@ fn exe(name: &str) -> String {
     }
 }
 
-/// A tool installed next to a Python interpreter (`.venv\Scripts\ty.exe`), or on PATH.
+/// A tool installed next to a Python interpreter (`.venv\Scripts\ty.exe`); with `None`, on
+/// PATH, else the copy bundled with Brisk.
 pub fn find_tool(name: &str, python: Option<&Path>) -> Option<PathBuf> {
     if let Some(dir) = python.and_then(Path::parent) {
         for p in [dir.join(exe(name)), dir.join("Scripts").join(exe(name))] {
@@ -552,8 +553,11 @@ pub fn find_tool(name: &str, python: Option<&Path>) -> Option<PathBuf> {
             }
         }
     }
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|d| d.join(exe(name))).find(|p| p.is_file())
+    if python.is_some() {
+        return None;
+    }
+    let on_path = std::env::var_os("PATH").and_then(|path| std::env::split_paths(&path).map(|d| d.join(exe(name))).find(|p| p.is_file()));
+    on_path.or_else(|| brisk_lint::bundled_tool(name))
 }
 
 fn text_doc(path: &Path) -> Value {

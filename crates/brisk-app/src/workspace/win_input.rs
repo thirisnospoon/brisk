@@ -8,6 +8,8 @@ pub(super) enum Mouse {
     Up,
     RightDown,
     RightUp,
+    MiddleDown,
+    MiddleUp,
 }
 
 /// Post one mouse message at window coordinates in physical pixels; `held`: left button down.
@@ -45,9 +47,12 @@ pub(super) fn post(kind: Mouse, x: f32, y: f32, held: bool) {
             Mouse::Up => 0x0202,   // WM_LBUTTONUP
             Mouse::RightDown => 0x0204,
             Mouse::RightUp => 0x0205,
+            Mouse::MiddleDown => 0x0207, // WM_MBUTTONDOWN
+            Mouse::MiddleUp => 0x0208,
         };
         let buttons = match kind {
             Mouse::RightDown => 2, // MK_RBUTTON
+            Mouse::MiddleDown => 0x10, // MK_MBUTTON
             _ if held => 1,        // MK_LBUTTON
             _ => 0,
         };
@@ -63,6 +68,12 @@ pub(super) fn click(x: f32, y: f32) {
     post(Mouse::Move, x, y, false);
     post(Mouse::Down, x, y, true);
     post(Mouse::Up, x, y, false);
+}
+
+pub(super) fn middle_click(x: f32, y: f32) {
+    post(Mouse::Move, x, y, false);
+    post(Mouse::MiddleDown, x, y, false);
+    post(Mouse::MiddleUp, x, y, false);
 }
 
 pub(super) fn right_click(x: f32, y: f32) {

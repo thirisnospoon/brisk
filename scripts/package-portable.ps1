@@ -22,6 +22,10 @@ Copy-Item 'README.md' $dir
 # The debugger: debugpy next to brisk.exe (lib\debugpy), used when the project's Python has none.
 & (Join-Path $PSScriptRoot 'fetch-debugpy.ps1')
 Copy-Item -Recurse (Join-Path $root 'vendor\debugpy-lib') (Join-Path $dir 'lib')
+# Code insight: ty (completion, navigation, type checks) and ruff (lint, format) in lib\, used
+# when neither the project interpreter nor PATH has them.
+& (Join-Path $PSScriptRoot 'fetch-tools.ps1')
+foreach ($t in 'ty', 'ruff') { Copy-Item (Join-Path $root "vendor\tools\$t.exe") (Join-Path $dir 'lib') }
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 [IO.File]::WriteAllText((Join-Path $dir 'portable'),
     "This file switches Brisk to portable mode: settings, database consoles and saved passwords`r`n" +

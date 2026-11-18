@@ -24,6 +24,7 @@ mod git_smoke;
 mod git_ui;
 mod history_ui;
 mod intel_smoke;
+mod complete_smoke;
 mod lsp_ui;
 mod main_menu;
 mod menu_ui;
@@ -335,6 +336,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_TEMPLATES").is_some() {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.templates_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_COMPLETE").is_some() {
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.complete_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_INTEL").is_some() {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.intel_smoke(window, cx));
