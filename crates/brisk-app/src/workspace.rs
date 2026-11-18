@@ -20,6 +20,7 @@ mod run_config_ui;
 mod run_ui;
 mod settings_ui;
 mod tabs_ui;
+mod templates_ui;
 mod win_input;
 
 use crate::diff_view::DiffView;
@@ -305,6 +306,9 @@ impl Workspace {
         if let Some(f) = std::env::var_os("BRISK_SMOKE_LINT") {
             let f = PathBuf::from(f);
             cx.defer_in(window, move |this: &mut Self, window, cx| this.lint_smoke(f, window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_TEMPLATES").is_some() {
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.templates_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_INTEL").is_some() {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.intel_smoke(window, cx));
@@ -975,6 +979,7 @@ impl Workspace {
             A::ToggleProblemsWindow => self.toggle_problems(window, cx),
             A::NextError | A::PreviousError => self.goto_problem(action == A::NextError, window, cx),
             A::ShowIntentionActions => self.show_intentions(window, cx),
+            A::SurroundWith | A::InsertLiveTemplate => self.template_action(action, window, cx),
             A::ToggleGitWindow => {
                 self.toggle_bottom(BottomTool::Git, window, cx);
                 if self.bottom == Some(BottomTool::Git) {
@@ -1894,7 +1899,7 @@ impl Workspace {
             PopupKind::RunConfigs(true) => ("Run", "Type to filter"),
             PopupKind::RunConfigs(false) => ("Run Configurations", "Type to filter"),
             PopupKind::Interpreters => ("Python Interpreter", "Type to filter"),
-            PopupKind::Intentions => ("Context Actions", "Type to filter"),
+            PopupKind::Intentions => (self.problems.intents_title.unwrap_or("Context Actions"), "Type to filter"),
             PopupKind::Rename => ("Rename", "New name"),
             PopupKind::Projects => ("Projects", "Type to filter"),
             PopupKind::OpenWhere => ("Open Project", "Type to filter"),
