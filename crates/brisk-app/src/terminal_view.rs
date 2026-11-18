@@ -764,7 +764,7 @@ sys.exit(r)";
 
     fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .h(px(34.))
+            .h(px(crate::ui_kit::header_h()))
             .flex()
             .items_center()
             .gap(px(2.))

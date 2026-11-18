@@ -84,6 +84,28 @@ pub fn island(d: Div) -> Div {
         .child(div().absolute().bottom_0().right_0().child(cap("island-br")))
 }
 
+/// Height of a tool window's header row (Islands: 32, Classic: 34).
+pub fn header_h() -> f32 {
+    if crate::theme::islands() { 32. } else { 34. }
+}
+
+/// An empty tool window or editor: the message centered; in Islands with a muted icon above.
+pub fn empty_state(icon: &'static str, text: impl Into<gpui::SharedString>) -> Div {
+    div()
+        .flex_1()
+        .size_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(10.))
+        .px(px(16.))
+        .text_size(px(13.))
+        .text_color(Theme::text_muted())
+        .when(crate::theme::islands(), |d| d.child(crate::icons::icon(icon, 32., Theme::text_dim().opacity(0.7))))
+        .child(div().max_w(px(460.)).text_center().child(text.into()))
+}
+
 /// Popups, menus, dialogs and notices: in Islands, radius 10 and a soft two-layer shadow;
 /// in Classic, the usual large shadow (the element keeps its own radius).
 pub fn floating<E: Styled>(e: E) -> E {

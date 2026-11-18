@@ -1026,7 +1026,7 @@ impl Workspace {
         };
         let shortcut = |a: Action| self.resolver.keymap().shortcut_label(a).unwrap_or_default();
         let header = div()
-            .h(px(34.))
+            .h(px(crate::ui_kit::header_h()))
             .flex()
             .items_center()
             .px(px(12.))

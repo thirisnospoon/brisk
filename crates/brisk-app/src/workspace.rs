@@ -1909,7 +1909,7 @@ impl Workspace {
 
     fn panel_header(title: &str) -> impl IntoElement {
         div()
-            .h(px(34.))
+            .h(px(crate::ui_kit::header_h()))
             .flex()
             .items_center()
             .px(px(12.))
@@ -2038,7 +2038,11 @@ impl Workspace {
             .flex_col()
             .size_full()
             .child(Self::panel_header(title))
-            .child(div().px(px(12.)).text_size(px(13.)).text_color(Theme::text_muted()).child(body.to_string()))
+            .map(|d| if crate::theme::islands() {
+                d.child(crate::ui_kit::empty_state("list-todo", body.to_string()))
+            } else {
+                d.child(div().px(px(12.)).text_size(px(13.)).text_color(Theme::text_muted()).child(body.to_string()))
+            })
             .into_any_element()
     }
 
@@ -2208,6 +2212,7 @@ impl Workspace {
             .bg(Theme::editor_bg())
             .font_family(ui_font())
             .text_size(px(13.))
+            .when(crate::theme::islands(), |d| d.flex_col().gap(px(20.)).child(crate::icons::icon("file-text", 40., Theme::text_dim().opacity(0.6))))
             .child(
                 div()
                     .flex()
