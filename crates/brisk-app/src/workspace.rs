@@ -1869,6 +1869,9 @@ impl Workspace {
                     .id(("tab", i))
                     .h(px(36.))
                     .flex_shrink_0()
+                    // Long names are cut with an ellipsis, as in PyCharm, so one tab cannot
+                    // take the whole strip.
+                    .max_w(px(260.))
                     .whitespace_nowrap()
                     .flex()
                     .items_center()
@@ -1896,13 +1899,14 @@ impl Workspace {
                         cx.stop_propagation();
                         this.tab_menu(second, i, e.position, window, cx);
                     }))
-                    .child(div().text_color(color).child(icon))
-                    .child(div().text_color(name_color).child(title))
-                    .when(dirty, |d| d.child(div().text_color(Theme::text_muted()).child("•")))
+                    .child(div().flex_shrink_0().text_color(color).child(icon))
+                    .child(div().min_w_0().overflow_hidden().text_ellipsis().text_color(name_color).child(title))
+                    .when(dirty, |d| d.child(div().flex_shrink_0().text_color(Theme::text_muted()).child("•")))
                     .when(pinned, |d| {
                         d.child(
                             div()
                                 .id(("tab-pin", i))
+                                .flex_shrink_0()
                                 .w(px(16.))
                                 .h(px(16.))
                                 .flex()
@@ -1926,6 +1930,7 @@ impl Workspace {
                     .when(!pinned, |d| d.child(
                         div()
                             .id(("tab-close", i))
+                            .flex_shrink_0()
                             .w(px(16.))
                             .h(px(16.))
                             .flex()
