@@ -9,7 +9,7 @@ pub mod envfile;
 pub mod web;
 pub mod django;
 
-pub use config::{compound_names, import_idea, load, save, BeforeStep, OnStart, RunConfig, RunFile, RunKind, CONFIG_FILE, MAX_TEMPORARY};
+pub use config::{compound_names, import_idea, load, save, BeforeStep, OnStart, RunConfig, RunFile, RunKind, CONFIG_FILE, MAX_TEMPORARY, TEMPLATE_KINDS};
 pub use pytest::{is_test_file, split_nodeid, TestFeed, TestStatus, TestTree};
 pub use interp::{discover_all, probe, project_venvs, venv_python, InterpKind, Interpreter};
 pub use links::{find_links, find_urls, Link};
@@ -41,6 +41,28 @@ impl Command {
             }
         }
         s
+    }
+
+    /// "Open in Terminal": one line for the project terminal that runs this command — into
+    /// the working directory, with the run's variables (PATH and the venv's are the
+    /// terminal's own), then the program. PowerShell on Windows, a POSIX shell elsewhere.
+    pub fn shell_line(&self, powershell: bool) -> String {
+        let q = |s: &str| if powershell { format!("'{}'", s.replace('\'', "''")) } else { format!("'{}'", s.replace('\'', "'\\''")) };
+        let mut env: Vec<(&String, &String)> = self.env.iter().filter(|(k, _)| !matches!(k.to_ascii_uppercase().as_str(), "PATH" | "VIRTUAL_ENV")).collect();
+        env.sort();
+        let program = q(&self.program.display().to_string());
+        let args: Vec<String> = self.args.iter().map(|a| q(a)).collect();
+        let cwd = q(&self.cwd.display().to_string());
+        if powershell {
+            let mut s = format!("Set-Location -LiteralPath {cwd}; ");
+            for (k, v) in env {
+                s.push_str(&format!("$env:{k}={}; ", q(v)));
+            }
+            format!("{s}& {program} {}", args.join(" ")).trim_end().to_string()
+        } else {
+            let vars: Vec<String> = env.iter().map(|(k, v)| format!("{k}={}", q(v))).collect();
+            format!("cd {cwd} && {} {program} {}", vars.join(" "), args.join(" ")).replace("  ", " ").trim_end().to_string()
+        }
     }
 
     pub fn to_std(&self) -> std::process::Command {
@@ -134,6 +156,9 @@ pub fn build(root: &Path, cfg: &RunConfig, python: &Path) -> Command {
     }
     if cfg.kind == RunKind::Pytest {
         return build_pytest(root, cfg, python, args);
+    }
+    if cfg.python_console {
+        args.push("-i".into());
     }
     if cfg.module {
         args.push("-m".into());

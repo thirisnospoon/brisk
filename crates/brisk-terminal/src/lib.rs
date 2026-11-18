@@ -252,10 +252,34 @@ impl Session {
         cell_h: u16,
         on_event: impl Fn(TermEvent) + Send + Sync + 'static,
     ) -> std::io::Result<Self> {
+        Self::spawn_pty(opts, cols, rows, cell_w, cell_h, 10_000, "", on_event)
+    }
+
+    /// A Run process through a pseudo-terminal (PyCharm's "Emulate terminal in output
+    /// console"): like [`Session::spawn_process`], `header` (the command line) comes first.
+    pub fn spawn_process_pty(opts: SpawnOptions, header: &str, cols: usize, rows: usize, on_event: impl Fn(TermEvent) + Send + Sync + 'static) -> std::io::Result<Self> {
+        Self::spawn_pty(opts, cols, rows, 8, 16, RUN_HISTORY_LINES, header, on_event)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_pty(
+        opts: SpawnOptions,
+        cols: usize,
+        rows: usize,
+        cell_w: u16,
+        cell_h: u16,
+        history: usize,
+        header: &str,
+        on_event: impl Fn(TermEvent) + Send + Sync + 'static,
+    ) -> std::io::Result<Self> {
         let size = Size { cols: cols.max(2), rows: rows.max(1) };
         let listener = Listener { callback: Arc::new(on_event), sender: Arc::new(OnceLock::new()) };
-        let config = Config { scrolling_history: 10_000, ..Config::default() };
+        let config = Config { scrolling_history: history, ..Config::default() };
         let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
+        if !header.is_empty() {
+            let mut p: alacritty_terminal::vte::ansi::Processor = alacritty_terminal::vte::ansi::Processor::new();
+            p.advance(&mut *term.lock(), format!("{header}\r\n").as_bytes());
+        }
 
         let pty_opts = Options {
             shell: opts.shell.map(|(p, a)| Shell::new(p, a)),

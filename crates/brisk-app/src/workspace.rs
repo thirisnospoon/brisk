@@ -9,6 +9,9 @@ mod db_ui;
 mod services_ui;
 mod pin_smoke;
 mod multi_smoke;
+mod pycon_smoke;
+mod run_tpl_smoke;
+mod run_term_smoke;
 mod debug_ui;
 mod disk_ui;
 mod edit2_smoke;
@@ -448,6 +451,15 @@ impl Workspace {
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
         }
+        if std::env::var_os("BRISK_SMOKE_RUNTPL").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.run_tpl_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_RUNTERM").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.run_term_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_PYCON").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.pycon_smoke(window, cx));
+        }
         if std::env::var_os("BRISK_SMOKE_MULTI").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.multi_smoke(window, cx));
         }
@@ -857,7 +869,7 @@ impl Workspace {
     }
 
     /// Alt+F12, PyCharm semantics: open+focus; if open but unfocused, focus; if focused, hide.
-    fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.bottom == Some(BottomTool::Terminal) && self.terminal_focused(window, cx) {
             self.bottom = None;
             self.focus_editor(window, cx);

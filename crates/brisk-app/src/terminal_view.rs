@@ -72,6 +72,8 @@ pub enum RunEvent {
     Finished { name: String, code: Option<i32>, tests: Option<TestsOutcome> },
     /// The Rerun button: the workspace saves files first, then calls [`TerminalPanel::rerun`].
     RerunRequested,
+    /// "Open in Terminal": run this command in the project terminal.
+    OpenInTerminal(brisk_run::Command),
     /// "Rerun Failed Tests": then [`TerminalPanel::rerun_failed`].
     RerunFailedRequested,
 }
@@ -246,9 +248,24 @@ impl TerminalPanel {
         } else {
             None
         };
-        let session = Session::spawn_process(spawn.to_std(), &cmd.display(), cols, rows, move |e| {
+        let on_event = move |e| {
             let _ = tx.unbounded_send((id, e));
-        })
+        };
+        let session = if cfg.emulate_terminal {
+            // ConPTY drops the last output of a process that exits at once (the pipe closes
+            // before it flushes): the interpreter runs the program as a child, waits for it,
+            // gives the console a moment, then exits with its code.
+            const WRAP: &str = "import subprocess, sys, time
+r = subprocess.call(sys.argv[1:])
+time.sleep(0.3)
+sys.exit(r)";
+            let mut args = vec!["-c".to_string(), WRAP.to_string(), spawn.program.display().to_string()];
+            args.extend(spawn.args.iter().cloned());
+            let opts = brisk_terminal::SpawnOptions { shell: Some((spawn.program.display().to_string(), args)), cwd: Some(spawn.cwd.clone()), env: spawn.env.clone() };
+            Session::spawn_process_pty(opts, &cmd.display(), cols, rows, on_event)
+        } else {
+            Session::spawn_process(spawn.to_std(), &cmd.display(), cols, rows, on_event)
+        }
         .map_err(|e| format!("Cannot run {}: {e}", cmd.program.display()))?;
         let name = cfg.name.clone();
         // "Allow multiple instances": a running tab of the configuration stays.
@@ -321,6 +338,20 @@ impl TerminalPanel {
     /// The active Run tab's configuration and command (what Rerun starts again).
     pub fn active_run(&self) -> Option<(brisk_run::RunConfig, brisk_run::Command, u64)> {
         self.tabs.get(self.active).and_then(|t| t.run.as_ref().map(|r| (r.cfg.clone(), r.cmd.clone(), t.id)))
+    }
+
+    /// "Copy command line" (Run toolbar): the active run's command, as its header shows it.
+    pub fn copy_command_line(&self, cx: &mut Context<Self>) {
+        if let Some((_, cmd, _)) = self.active_run() {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(cmd.display()));
+        }
+    }
+
+    /// "Open in Terminal" (Run toolbar): asks the workspace to run the command in the terminal.
+    pub fn open_in_terminal(&self, cx: &mut Context<Self>) {
+        if let Some((_, cmd, _)) = self.active_run() {
+            cx.emit(RunEvent::OpenInTerminal(cmd));
+        }
     }
 
     /// Pin Tab / Unpin Tab on the active Run tab; returns whether it is pinned now.
@@ -769,6 +800,8 @@ impl TerminalPanel {
                 })),
             )
             .child(div().w(px(18.)).h(px(1.)).my(px(3.)).bg(Theme::divider()))
+            .child(button("run-copy-cmd", "⧉", Theme::text_muted()).tooltip(tip("Copy command line")).on_click(cx.listener(|this, _, _, cx| this.copy_command_line(cx))))
+            .child(button("run-open-term", "›_", Theme::text_muted()).tooltip(tip("Open in Terminal")).on_click(cx.listener(|this, _, _, cx| this.open_in_terminal(cx))))
             .child(toggle("run-pin", "📌", self.active_pinned()).tooltip(tip("Pin Tab: the next run opens a new tab")).child(pin_track()).on_click(cx.listener(|this, _, _, cx| {
                 this.toggle_pin();
                 cx.notify();
