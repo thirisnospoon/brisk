@@ -27,6 +27,8 @@ mod fold;
 mod marks;
 mod lsp;
 mod inlay;
+mod middle_click;
+mod word_complete;
 mod doc_view;
 mod scroll;
 pub mod templates;
@@ -1231,6 +1233,7 @@ impl Render for Editor {
             .cursor(gpui::CursorStyle::IBeam)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_down))
+            .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_middle_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))

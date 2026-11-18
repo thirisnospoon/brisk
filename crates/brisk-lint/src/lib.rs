@@ -147,8 +147,21 @@ fn exe(name: &str) -> String {
     }
 }
 
+/// A tool shipped with Brisk: `lib/<name>.exe` next to the executable (the portable
+/// package), or `vendor/tools/<name>.exe` above it (development builds; see
+/// scripts/fetch-tools.ps1).
+pub fn bundled_tool(name: &str) -> Option<PathBuf> {
+    let exe_path = std::env::current_exe().ok()?;
+    let dir = exe_path.parent()?;
+    let p = dir.join("lib").join(exe(name));
+    if p.is_file() {
+        return Some(p);
+    }
+    dir.ancestors().map(|a| a.join("vendor").join("tools").join(exe(name))).find(|p| p.is_file())
+}
+
 /// ruff the way PyCharm's ruff integration finds it: next to the project interpreter (its
-/// virtualenv or Scripts folder), then on `PATH`.
+/// virtualenv or Scripts folder), then on `PATH`; `None` also tries the bundled copy.
 pub fn find_ruff(python: Option<&Path>) -> Option<PathBuf> {
     if let Some(dir) = python.and_then(Path::parent) {
         let p = dir.join(exe("ruff"));
@@ -161,8 +174,11 @@ pub fn find_ruff(python: Option<&Path>) -> Option<PathBuf> {
             return Some(p);
         }
     }
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|d| d.join(exe("ruff"))).find(|p| p.is_file())
+    if python.is_some() {
+        return None;
+    }
+    let on_path = std::env::var_os("PATH").and_then(|path| std::env::split_paths(&path).map(|d| d.join(exe("ruff"))).find(|p| p.is_file()));
+    on_path.or_else(|| bundled_tool("ruff"))
 }
 
 fn command(ruff: &Path, root: &Path) -> Command {

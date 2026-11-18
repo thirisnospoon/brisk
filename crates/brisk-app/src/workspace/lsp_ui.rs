@@ -42,7 +42,8 @@ impl Workspace {
     /// ty next to the project interpreter, else next to any other Python found, else on PATH.
     fn ty_tool(&self) -> Option<PathBuf> {
         if let Some(p) = std::env::var_os("BRISK_TY") {
-            return Some(PathBuf::from(p));
+            // Smokes point it at a missing file to run without ty.
+            return Some(PathBuf::from(p)).filter(|p| p.is_file());
         }
         let project = self.runs.interpreter(&self.root).map(|i| i.path);
         let others = self.runs.venvs.iter().chain(self.runs.all.iter().flatten()).map(|i| i.path.clone());
@@ -65,6 +66,9 @@ impl Workspace {
         }
         let Some(tool) = self.ty_tool() else {
             self.lsp.state = TyState::Missing;
+            let msg = "Code insight is off: ty not found. Completion offers words from the file; for types, navigation and quick fixes run `pip install ty` in the project interpreter";
+            self.status = msg.into();
+            self.show_toast(msg.into(), false, cx);
             return;
         };
         self.lsp.state = TyState::Starting;
@@ -310,9 +314,10 @@ impl Workspace {
         use crate::editor::EditorEvent as E;
         match *ev {
             E::Typed(c) => {
-                if !ed.read(cx).is_python() || self.lsp.state != TyState::Ready {
+                if !ed.read(cx).is_python() {
                     return;
                 }
+                let ready = self.lsp.state == TyState::Ready;
                 let (open, sig_open, word, requery) = {
                     let e = ed.read(cx);
                     let (line, col) = e.caret_line_col();
@@ -322,10 +327,10 @@ impl Workspace {
                     let in_comment = prefix.contains('#');
                     (e.completion_open() || in_comment, e.signature_open(), word, e.completion_needs_requery() && !in_comment)
                 };
-                if c == '(' || (c == ',' && sig_open) {
+                if ready && (c == '(' || (c == ',' && sig_open)) {
                     self.parameter_info(ed.clone(), cx);
                 }
-                if is_ident(c) && requery {
+                if ready && is_ident(c) && requery {
                     self.complete(ed, false, cx);
                     return;
                 }
@@ -357,7 +362,15 @@ impl Workspace {
     /// Ctrl+B / Ctrl+Click; on the declaration itself it shows usages (PyCharm's
     /// "Go to Declaration or Usages"). Ctrl+Shift+B goes to the type's declaration.
     fn goto_declaration(&mut self, ed: Entity<Editor>, at: Option<usize>, type_def: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else { return self.no_ty("Go to Declaration") };
+        let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else {
+            // No ty: a `def`, `class` or first assignment of the name in this file.
+            let found = ed.read(cx).local_declaration(at.unwrap_or_else(|| ed.read(cx).buffer.primary().head));
+            match (found, ed.read(cx).path.clone()) {
+                (Some((line, col)), Some(path)) if !type_def => self.navigate_to(NavPos { path, line, col }, window, cx),
+                _ => self.no_ty("Go to Declaration"),
+            }
+            return;
+        };
         let p = Self::pos_in(&ed, at, p, cx);
         let fut = if type_def { futures::future::Either::Left(ty.type_definition(&path, p)) } else { futures::future::Either::Right(ty.definition(&path, p)) };
         cx.spawn_in(window, async move |this, cx| {
@@ -429,8 +442,11 @@ impl Workspace {
     /// Ctrl+Space (`explicit`), or automatically while typing an identifier or after `.`.
     fn complete(&mut self, ed: Entity<Editor>, explicit: bool, cx: &mut Context<Self>) {
         let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else {
-            if explicit {
-                self.no_ty("Code completion");
+            // No ty (yet): words of the file, keywords and builtins.
+            self.nav.completion_gen += 1;
+            let shown = ed.update(cx, |e, cx| e.show_word_completion(cx));
+            if explicit && !shown {
+                self.status = "No suggestions".into();
             }
             return;
         };
@@ -439,6 +455,23 @@ impl Workspace {
         self.nav.completion_gen += 1;
         let my = self.nav.completion_gen;
         let fut = ty.completion_list(&path, p);
+        // ty's first answers can take seconds while it indexes: show the words of the file
+        // meanwhile; ty's list replaces them when it comes.
+        let timer = cx.background_executor().timer(std::time::Duration::from_millis(400));
+        let ed2 = ed.clone();
+        cx.spawn(async move |this, cx| {
+            timer.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.nav.completion_gen == my {
+                    ed2.update(cx, |e, cx| {
+                        if !e.completion_open() && e.word_start_before_caret() == start {
+                            e.show_word_completion(cx);
+                        }
+                    });
+                }
+            });
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
             let res = fut.await;
             let _ = this.update(cx, |this, cx| {
