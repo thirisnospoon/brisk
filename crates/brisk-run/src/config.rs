@@ -124,12 +124,32 @@ pub enum RunKind {
     /// PyCharm's Django tests: `python <target> test <parameters>` (labels and options).
     #[serde(rename = "djangotests")]
     DjangoTests,
+    /// PyCharm's Unittests: `python -m unittest <names>`; `target` like pytest's
+    /// (`tests/test_x.py::TestA::test_b`, a folder, or empty for discovery).
+    Unittest,
+    /// PyCharm's Doctests: `python -m doctest <files>`.
+    Doctest,
 }
 
 impl RunKind {
     fn is_python(&self) -> bool {
         *self == RunKind::Python
     }
+
+    /// A test runner with a test tree in the Run window.
+    pub fn is_tests(&self) -> bool {
+        matches!(self, RunKind::Pytest | RunKind::Unittest | RunKind::Doctest)
+    }
+}
+
+/// PyCharm's "Default test runner" (Python Integrated Tools): what Ctrl+Shift+F10 and the
+/// gutter's run icons use for test files. `None` in the run file is Autodetect: pytest when
+/// the interpreter has it, else unittest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TestRunner {
+    Pytest,
+    Unittest,
 }
 
 /// Quote a pytest target that contains spaces, so it survives [`crate::split_args`].
@@ -152,15 +172,26 @@ impl RunConfig {
     /// (`scope` is the node path, e.g. `["TestA", "test_b"]`), named like PyCharm does:
     /// "pytest in tests", "pytest in test_x.py", "pytest for test_x.TestA.test_b".
     pub fn for_tests(root: &Path, path: &Path, scope: &[String]) -> Self {
+        Self::for_tests_with(root, path, scope, RunKind::Pytest)
+    }
+
+    /// A context test configuration with the given runner (pytest, unittest or doctest),
+    /// named as PyCharm does: "pytest in test_x.py", "Unittests for test_x.TestA.test_b".
+    pub fn for_tests_with(root: &Path, path: &Path, scope: &[String], kind: RunKind) -> Self {
         let rel = crate::relativize(root, path);
         let file_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| rel.clone());
         let stem = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let (name, target) = if scope.is_empty() {
-            (format!("pytest in {file_name}"), rel)
-        } else {
-            (format!("pytest for {stem}.{}", scope.join(".")), format!("{rel}::{}", scope.join("::")))
+        let runner = match kind {
+            RunKind::Unittest => "Unittests",
+            RunKind::Doctest => "Doctests",
+            _ => "pytest",
         };
-        RunConfig { name, kind: RunKind::Pytest, target: quote_target(target), temporary: true, ..Default::default() }
+        let (name, target) = if scope.is_empty() {
+            (format!("{runner} in {file_name}"), rel)
+        } else {
+            (format!("{runner} for {stem}.{}", scope.join(".")), format!("{rel}::{}", scope.join("::")))
+        };
+        RunConfig { name, kind, target: quote_target(target), temporary: true, ..Default::default() }
     }
 }
 
@@ -178,6 +209,9 @@ pub struct RunFile {
     /// (one per kind; name and target unused).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub templates: Vec<RunConfig>,
+    /// Default test runner; `None` is Autodetect.
+    #[serde(default, rename = "testRunner", skip_serializing_if = "Option::is_none")]
+    pub test_runner: Option<TestRunner>,
 }
 
 /// The kinds with a configuration template, and the template's name.
@@ -384,6 +418,8 @@ fn parse_node(root: &Path, node: roxmltree::Node, template: bool) -> Option<RunC
         }
         (Some("PythonConfigurationType"), _) => RunKind::Python,
         (Some("tests"), Some("py.test")) => RunKind::Pytest,
+        (Some("tests"), Some("Unittests")) => RunKind::Unittest,
+        (Some("tests"), Some("Doctests")) => RunKind::Doctest,
         (Some("Python.FastAPI"), _) => RunKind::FastApi,
         (Some("Python.FlaskServer"), _) => RunKind::Flask,
         (Some("Python.DjangoServer"), _) => RunKind::Django,
@@ -471,7 +507,7 @@ fn parse_node(root: &Path, node: roxmltree::Node, template: bool) -> Option<RunC
         }
         return server_configuration(root, c, web);
     }
-    if kind == RunKind::Pytest {
+    if kind.is_tests() {
         c.parameters = extra.join(" ");
         let t = test_target.replace("$PROJECT_DIR$/", "").replace("$PROJECT_DIR$", "");
         c.target = quote_target(match target_type.as_str() {
@@ -605,5 +641,24 @@ pub fn import_idea(root: &Path) -> RunFile {
         }
         f.selected = selected.filter(|s| f.get(s).is_some());
     }
+    f.test_runner = idea_test_runner(root);
     f
+}
+
+/// PyCharm's Default test runner, kept in the project's `.idea/*.iml`:
+/// `<component name="TestRunnerService"><option name="PROJECT_TEST_RUNNER" value="py.test"/>`.
+pub fn idea_test_runner(root: &Path) -> Option<TestRunner> {
+    let files = std::fs::read_dir(root.join(".idea")).ok()?;
+    for p in files.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "iml")) {
+        let Ok(xml) = std::fs::read_to_string(&p) else { continue };
+        let Ok(doc) = roxmltree::Document::parse(&xml) else { continue };
+        let service = doc.descendants().find(|n| n.has_tag_name("component") && n.attribute("name") == Some("TestRunnerService"));
+        let value = service.and_then(|s| s.children().find(|n| n.has_tag_name("option") && n.attribute("name") == Some("PROJECT_TEST_RUNNER"))).and_then(|o| o.attribute("value"));
+        match value {
+            Some("py.test" | "pytest") => return Some(TestRunner::Pytest),
+            Some("Unittests" | "unittest") => return Some(TestRunner::Unittest),
+            _ => {}
+        }
+    }
+    None
 }

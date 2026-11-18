@@ -279,6 +279,51 @@ impl TerminalPanel {
         Ok(())
     }
 
+    /// The temporary configuration that runs node `i` of the active tab's tree on its own
+    /// (a test, one parameter set, a class, a module), like PyCharm's Run on a tree node.
+    pub fn node_config(&self, i: usize) -> Option<brisk_run::RunConfig> {
+        let r = self.tabs.get(self.active)?.run.as_ref()?;
+        let t = r.tests.as_ref()?;
+        let f = t.tree();
+        let n = f.tree.nodes.get(i)?;
+        if i == 0 {
+            return Some(r.cfg.clone());
+        }
+        let parts = brisk_run::split_nodeid(&n.id);
+        let mut file = n.file.clone().or_else(|| f.tree.rootdir.as_ref().map(|d| d.join(parts[0])))?;
+        if !file.is_absolute() {
+            file = r.cmd.cwd.join(file);
+        }
+        // A parameter group's id is `file::test_x`; a parameter set's `file::test_x[2]`.
+        let scope: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+        let mut cfg = brisk_run::RunConfig::for_tests_with(&self.root, &file, &scope, r.cfg.kind);
+        cfg.working_directory = brisk_run::relativize(&self.root, &r.cmd.cwd);
+        cfg.interpreter = r.cfg.interpreter.clone();
+        cfg.env = r.cfg.env.clone();
+        cfg.env_files = r.cfg.env_files.clone();
+        cfg.interpreter_options = r.cfg.interpreter_options.clone();
+        Some(cfg)
+    }
+
+    /// ▶ on a tree node (and Ctrl+Shift+F10 in the tree): run just that node.
+    pub fn run_node(&mut self, i: usize, cx: &mut Context<Self>) -> bool {
+        match self.node_config(i) {
+            Some(cfg) => {
+                cx.emit(RunEvent::RunTests(Box::new(cfg)));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Select the tree node named `name` (smoke tests).
+    pub fn select_test_named(&mut self, name: &str) -> Option<usize> {
+        let t = self.tests_mut()?;
+        let i = t.tree().tree.nodes.iter().position(|n| n.name == name)?;
+        t.select(i);
+        Some(i)
+    }
+
     /// "Rerun Failed Tests": the same configuration limited to the failed nodes, from the
     /// same working directory.
     pub fn rerun_failed(&mut self) -> Result<Option<String>, String> {
@@ -299,6 +344,10 @@ impl TerminalPanel {
 
     /// Up/Down/Left/Right/Enter/F4 in the test tree. `None`: not a tree key.
     pub(super) fn tests_key(&mut self, key: &str, mods: gpui::Modifiers, cx: &mut Context<Self>) -> Option<bool> {
+        if key == "f10" && mods.control && mods.shift && !mods.alt {
+            let sel = self.tests()?.selected;
+            return Some(self.run_node(sel, cx));
+        }
         if mods.control || mods.alt || mods.platform {
             return None;
         }
@@ -449,8 +498,10 @@ impl TerminalPanel {
                                 let arrow = if n.children.is_empty() { " " } else if t.collapsed.contains(&i) { "▸" } else { "▾" };
                                 let done = matches!(n.status, TestStatus::Passed | TestStatus::Failed | TestStatus::Error | TestStatus::Skipped);
                                 let dur = (done && n.duration > 0.0).then(|| brisk_run::pytest::format_duration(n.duration));
+                                let sel = i == t.selected;
                                 div()
                                     .id(("test-row", i))
+                                    .group("test-row")
                                     .h(px(ROW_H))
                                     .w_full()
                                     .flex()
@@ -476,6 +527,26 @@ impl TerminalPanel {
                                     .child(icon)
                                     .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_color(Theme::text()).child(n.name.clone()))
                                     .when_some(dur, |d, s| d.child(div().text_size(px(11.)).text_color(Theme::text_dim()).child(s)))
+                                    .child(
+                                        // ▶: run this node alone (shown on the selected row and on hover).
+                                        div()
+                                            .id(("test-run", i))
+                                            .w(px(16.))
+                                            .flex()
+                                            .justify_center()
+                                            .rounded(px(3.))
+                                            .text_size(px(11.))
+                                            .text_color(if sel { rgb(0x5fb865).into() } else { gpui::transparent_black() })
+                                            .group_hover("test-row", |s| s.text_color(rgb(0x5fb865)))
+                                            .hover(|s| s.bg(Theme::hover_row()))
+                                            .active(|s| s.bg(Theme::press()))
+                                            .tooltip(move |_, cx| cx.new(|_| crate::workspace::Tip("Run this node (Ctrl+Shift+F10)".into())).into())
+                                            .child("▶")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                this.run_node(i, cx);
+                                            })),
+                                    )
                                     .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
                                         window.focus(&this.focus);
                                         let open = e.click_count() >= 2;

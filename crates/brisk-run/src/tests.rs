@@ -447,6 +447,93 @@ fn pytest_real_run() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// unittest and doctest through Brisk's runner: the commands stay `-m unittest` /
+/// `-m doctest`, the tree is the pytest one, Rerun Failed narrows to dotted names.
+#[test]
+fn unittest_and_doctest_real_runs() {
+    let root = tmp("unittest");
+    let Some(py) = discover_all(&root).into_iter().next() else { return };
+    std::fs::create_dir_all(root.join("tests")).unwrap();
+    std::fs::write(root.join("tests/__init__.py"), "").unwrap();
+    std::fs::write(
+        root.join("tests/test_u.py"),
+        "import unittest\n\nclass TestA(unittest.TestCase):\n    def test_ok(self):\n        print('hi')\n\n    def test_bad(self):\n        self.assertEqual(1, 2)\n\n    @unittest.skip('later')\n    def test_skip(self):\n        pass\n\n    def test_sub(self):\n        for i in range(3):\n            with self.subTest(i=i):\n                self.assertNotEqual(i, 1)\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("tests/test_broken.py"), "import nope_missing_module\n").unwrap();
+    std::fs::write(root.join("mathx.py"), "def double(x):\n    \"\"\"\n    >>> double(2)\n    4\n    >>> double(3)\n    7\n    \"\"\"\n    return x * 2\n\ndef half(x):\n    \"\"\"\n    >>> half(4)\n    2.0\n    \"\"\"\n    return x / 2\n").unwrap();
+    let run = |cfg: &RunConfig| {
+        let cmd = build(&root, cfg, &py.path);
+        let mut spawn = cmd.clone();
+        let events = pytest::attach_runner(&mut spawn, cfg.kind).unwrap();
+        let out = spawn.to_std().output().unwrap();
+        let mut feed = TestFeed::new(events);
+        feed.poll();
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        (feed, cmd, spawn, text)
+    };
+    // The folder: discovery, a broken module, a failure, a skip and a failed subtest.
+    let cfg = RunConfig { name: "u".into(), kind: RunKind::Unittest, target: "tests".into(), ..Default::default() };
+    let (feed, cmd, spawn, text) = run(&cfg);
+    assert_eq!(cmd.args, ["-m", "unittest", "discover"], "{text}");
+    assert_eq!(spawn.args[..2], ["-m", "brisk_unittest"]);
+    assert_eq!(cmd.cwd, root.join("tests"));
+    let t = &feed.tree;
+    let names: Vec<String> = t.rows(&Default::default()).iter().map(|&i| format!("{}{}", " ".repeat(t.nodes[i].depth), t.nodes[i].name)).collect();
+    assert!(names.contains(&"  TestA".to_string()) && names.contains(&"   test_ok".to_string()), "{names:?}\n{text}");
+    let c = t.counts();
+    // The broken module counts as a failure, as in the pytest tree.
+    assert_eq!((c.passed, c.failed, c.skipped), (1, 3, 1), "{names:?}\n{text}");
+    assert!(t.nodes.iter().any(|n| n.name == "test_broken" && n.status == TestStatus::Error && n.message.contains("nope_missing_module")), "{names:?}\n{text}");
+    let bad = t.nodes.iter().find(|n| n.name == "test_bad").unwrap();
+    assert_eq!((bad.status, bad.line), (TestStatus::Failed, Some(7)));
+    assert!(bad.message.contains("AssertionError: 1 != 2"), "{}", bad.message);
+    assert!(t.nodes.iter().any(|n| n.name == "test_sub" && n.status == TestStatus::Failed && n.message.contains("(i=1)")));
+    assert!(text.contains("FAILED"), "{text}");
+    assert_eq!(t.done, Some(1));
+
+    // Rerun Failed: dotted names relative to the same folder.
+    let failed = t.failed_targets();
+    let again = RunConfig { target: failed.iter().filter(|f| f.contains("TestA")).map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(" "), working_directory: relativize(&root, &cmd.cwd), ..cfg.clone() };
+    let (feed2, cmd2, _, text2) = run(&again);
+    let mut tail = cmd2.args[2..].to_vec();
+    tail.sort();
+    assert_eq!(tail, ["test_u.TestA.test_bad", "test_u.TestA.test_sub"]);
+    assert_eq!(feed2.tree.counts().total, 2, "{text2}");
+
+    // Doctest: the file's examples, one failing.
+    let d = RunConfig { name: "d".into(), kind: RunKind::Doctest, target: "mathx.py".into(), ..Default::default() };
+    let (feed3, cmd3, spawn3, text3) = run(&d);
+    assert_eq!(cmd3.args, ["-m", "doctest", "mathx.py"]);
+    assert_eq!(spawn3.args[..3], ["-m", "brisk_unittest", "--doctest"]);
+    let t3 = &feed3.tree;
+    let c3 = t3.counts();
+    assert_eq!((c3.total, c3.passed, c3.failed), (2, 1, 1), "{text3}");
+    let dbl = t3.nodes.iter().find(|n| n.name == "mathx.double").expect("doctest node");
+    assert!(dbl.message.contains("Expected:") && dbl.message.contains("7"), "{}", dbl.message);
+    assert_eq!(dbl.line, Some(2));
+    // One doctest by name.
+    let (feed4, _, _, text4) = run(&RunConfig { target: "mathx.py::mathx.half".into(), ..d.clone() });
+    assert_eq!((feed4.tree.counts().total, feed4.tree.counts().passed), (1, 1), "{text4}");
+
+    // Context configurations and PyCharm's settings.
+    let u = RunConfig::for_tests_with(&root, &root.join("tests/test_u.py"), &["TestA".into(), "test_ok".into()], RunKind::Unittest);
+    assert_eq!((u.name.as_str(), u.target.as_str()), ("Unittests for test_u.TestA.test_ok", "tests/test_u.py::TestA::test_ok"));
+    assert_eq!(build(&root, &u, &py.path).args, ["-m", "unittest", "test_u.TestA.test_ok"]);
+    std::fs::create_dir_all(root.join(".idea")).unwrap();
+    std::fs::write(root.join(".idea/p.iml"), r#"<module><component name="TestRunnerService"><option name="PROJECT_TEST_RUNNER" value="Unittests" /></component></module>"#).unwrap();
+    assert_eq!(crate::idea_test_runner(&root), Some(crate::TestRunner::Unittest));
+    let xml = r#"<project><component name="RunManager"><configuration name="ut" type="tests" factoryName="Unittests"><option name="_new_additionalArguments" value="&quot;-v&quot;" /><option name="_new_target" value="&quot;$PROJECT_DIR$/tests&quot;" /><option name="_new_targetType" value="&quot;PATH&quot;" /></configuration><configuration name="dt" type="tests" factoryName="Doctests"><option name="_new_target" value="&quot;$PROJECT_DIR$/mathx.py&quot;" /><option name="_new_targetType" value="&quot;PATH&quot;" /></configuration></component></project>"#;
+    std::fs::write(root.join(".idea/workspace.xml"), xml).unwrap();
+    let f = crate::import_idea(&root);
+    let got: Vec<_> = f.configurations.iter().map(|c| (c.name.as_str(), c.kind, c.target.as_str(), c.parameters.as_str())).collect();
+    assert_eq!(got, [("ut", RunKind::Unittest, "tests", "-v"), ("dt", RunKind::Doctest, "mathx.py", "")]);
+    assert_eq!(f.test_runner, Some(crate::TestRunner::Unittest));
+    let json = serde_json::to_string(&f).unwrap();
+    assert!(json.contains("\"testRunner\":\"unittest\"") && json.contains("\"type\":\"unittest\""), "{json}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn compound_members_expand_nested_and_skip_cycles() {
     let c = |name: &str, kind: RunKind, target: &str| RunConfig { name: name.into(), kind, target: target.into(), ..Default::default() };

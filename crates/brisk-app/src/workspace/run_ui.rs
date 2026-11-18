@@ -21,6 +21,14 @@ pub(super) struct Runs {
     pub dialog: Option<super::run_config_ui::RunDialog>,
     /// "Stop and Rerun" was picked for this configuration: start it without asking again.
     pub stop_confirmed: Option<String>,
+    /// `run.json` as last read or written (modified time, size): Shift+F10 parses it again
+    /// only when it changed on disk.
+    stamp: Option<(std::time::SystemTime, u64)>,
+}
+
+fn run_file_stamp(root: &Path) -> Option<(std::time::SystemTime, u64)> {
+    let m = std::fs::metadata(root.join(brisk_run::CONFIG_FILE)).ok()?;
+    Some((m.modified().ok()?, m.len()))
 }
 
 impl Runs {
@@ -30,7 +38,7 @@ impl Runs {
         if imported > 0 {
             let _ = brisk_run::save(root, &file);
         }
-        (Runs { file, venvs: brisk_run::project_venvs(root), all: None, panel: None, dialog: None, stop_confirmed: None }, imported)
+        (Runs { file, venvs: brisk_run::project_venvs(root), all: None, panel: None, dialog: None, stop_confirmed: None, stamp: run_file_stamp(root) }, imported)
     }
 
     fn known(&self) -> impl Iterator<Item = &Interpreter> {
@@ -86,17 +94,25 @@ impl Workspace {
     }
 
     pub(super) fn reload_runs(&mut self) {
+        let stamp = run_file_stamp(&self.root);
+        if stamp.is_some() && stamp == self.runs.stamp {
+            return;
+        }
         if let Ok(s) = std::fs::read_to_string(self.root.join(brisk_run::CONFIG_FILE)) {
             match serde_json::from_str::<RunFile>(&s) {
-                Ok(f) => self.runs.file = f,
+                Ok(f) => {
+                    self.runs.file = f;
+                    self.runs.stamp = stamp;
+                }
                 Err(e) => self.status = format!("{}: {e}", brisk_run::CONFIG_FILE),
             }
         }
     }
 
     pub(super) fn save_runs(&mut self) {
-        if let Err(e) = brisk_run::save(&self.root, &self.runs.file) {
-            self.status = format!("Cannot save {}: {e}", brisk_run::CONFIG_FILE);
+        match brisk_run::save(&self.root, &self.runs.file) {
+            Ok(()) => self.runs.stamp = run_file_stamp(&self.root),
+            Err(e) => self.status = format!("Cannot save {}: {e}", brisk_run::CONFIG_FILE),
         }
     }
 
@@ -159,6 +175,15 @@ impl Workspace {
                 }
             }
             RunEvent::RerunRequested => this.rerun_active(window, cx),
+            RunEvent::RunTests(cfg) => {
+                // A temporary configuration, as Ctrl+Shift+F10 makes.
+                this.reload_runs();
+                let name = this.runs.file.use_for_file((**cfg).clone());
+                this.save_runs();
+                if let Some(c) = this.runs.file.get(&name).cloned() {
+                    this.run_config(c, window, cx);
+                }
+            }
             RunEvent::OpenInTerminal(cmd) => this.open_in_terminal(cmd, window, cx),
         })
         .detach();
@@ -174,14 +199,32 @@ impl Workspace {
         }
     }
 
+    /// The Default test runner: the project's choice, else (Autodetect) pytest when the
+    /// project interpreter has it and unittest when it doesn't.
+    pub(super) fn default_test_kind(&self) -> RunKind {
+        match self.runs.file.test_runner {
+            Some(brisk_run::TestRunner::Pytest) => RunKind::Pytest,
+            Some(brisk_run::TestRunner::Unittest) => RunKind::Unittest,
+            None => {
+                let missing = self.runs.interpreter(&self.root).is_some_and(|i| brisk_run::pytest::has_package(&i.path, "pytest") == Some(false));
+                if missing {
+                    RunKind::Unittest
+                } else {
+                    RunKind::Pytest
+                }
+            }
+        }
+    }
+
     /// What Ctrl+Shift+F10 runs, like PyCharm's context configuration: the file selected in
     /// the Project view when it has focus (a folder runs pytest in it), else the active
     /// editor. Test files run with pytest, narrowed to the test or class at the caret.
     pub(super) fn context_config(&self, window: &Window, cx: &mut gpui::App) -> Option<RunConfig> {
         let is_py = |p: &Path| p.extension().is_some_and(|e| e == "py" || e == "pyw");
+        let tests = self.default_test_kind();
         let for_path = |p: &Path, scope: &[String]| {
             if brisk_run::is_test_file(p) {
-                RunConfig::for_tests(&self.root, p, scope)
+                RunConfig::for_tests_with(&self.root, p, scope, tests)
             } else if let Some(c) = web_config(&self.root, p) {
                 c
             } else {
@@ -191,7 +234,7 @@ impl Workspace {
         if self.tree_focus.is_focused(window) {
             if let Some(n) = self.tree_selected.and_then(|id| self.tree.nodes.get(id)) {
                 if n.is_dir {
-                    return Some(RunConfig::for_tests(&self.root, &n.path, &[]));
+                    return Some(RunConfig::for_tests_with(&self.root, &n.path, &[], tests));
                 }
                 if is_py(&n.path) {
                     return Some(for_path(&n.path, &[]));
@@ -449,6 +492,8 @@ impl Workspace {
                 for c in self.runs.file.configurations.iter().filter(|c| c.name.to_lowercase().contains(&ql)) {
                     let mut detail = match (c.kind, c.module) {
                         (RunKind::Pytest, _) => format!("pytest {}", c.target),
+                        (RunKind::Unittest, _) => format!("unittest {}", c.target),
+                        (RunKind::Doctest, _) => format!("doctest {}", c.target),
                         (RunKind::Compound, _) => format!("compound: {}", brisk_run::compound_names(&c.target).join(", ")),
                         (RunKind::FastApi, _) => format!("uvicorn {}", c.target),
                         (RunKind::Flask, _) => format!("flask --app {} run", c.target),
