@@ -106,6 +106,15 @@ fn real_ty() {
 }
 
 #[test]
+fn merged_edits() {
+    let e = |l: usize, a: usize, b: usize, t: &str| Edit { start: Pos { line: l, col: a }, end: Pos { line: l, col: b }, content: t.into() };
+    let a = PathBuf::from("a.py");
+    // `import pkg.util`: renaming the package and its module both touch the same name.
+    let merged = merge_file_edits(vec![(a.clone(), vec![e(0, 7, 10, "lib")]), (a.clone(), vec![e(0, 7, 15, "lib.util"), e(2, 0, 3, "lib")]), (PathBuf::from("b.py"), vec![])]);
+    assert_eq!(merged, vec![(a, vec![e(0, 7, 15, "lib.util"), e(2, 0, 3, "lib")])]);
+}
+
+#[test]
 fn markdown_inline() {
     // What ty sends for `defaultdict`: entities, escapes, hard breaks.
     let d = parse_doc_text("defaultdict(default\\_factory=None, /, [...]) --&gt; dict  \n  \nIn \\_\\_getitem\\_\\_ only.", false);

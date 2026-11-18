@@ -628,7 +628,7 @@ impl Workspace {
         }
         let fut = ty.will_rename_files(&[(src.to_path_buf(), target.to_path_buf())]);
         let timeout = cx.background_executor().timer(std::time::Duration::from_secs(3));
-        let target = target.to_path_buf();
+        let (src, target) = (src.to_path_buf(), target.to_path_buf());
         cx.spawn_in(window, async move |this, cx| {
             use futures::FutureExt;
             let edits = match futures::future::select(fut.boxed(), timeout.boxed()).await {
@@ -636,6 +636,12 @@ impl Workspace {
                 _ => Vec::new(),
             };
             let _ = this.update_in(cx, |this, window, cx| {
+                let mut edits = brisk_lsp::merge_file_edits(edits);
+                // ty 0.0.104 answers every folder rename, and any module moved to another
+                // folder, with nothing: update the imports ourselves then.
+                if edits.is_empty() {
+                    edits = this.module_rename_edits(&src, &target, cx);
+                }
                 this.lsp.moved = Some(edits);
                 this.run_file_op(target, window, cx);
             });
@@ -659,6 +665,15 @@ impl Workspace {
             .collect();
         if let Some(ty) = &self.lsp.ty {
             ty.did_rename_files(&[(src.to_path_buf(), target.to_path_buf())]);
+            // A moved folder: name every module that left and arrived, as ty does not watch
+            // the disk and may not expand a folder rename itself.
+            if target.is_dir() {
+                let arrived = python_files_under(target);
+                let mut left: Vec<PathBuf> = arrived.iter().filter_map(|f| Some(src.join(f.strip_prefix(target).ok()?))).collect();
+                // The folder itself too: ty then drops everything it had under it.
+                left.push(src.to_path_buf());
+                ty.files_created_deleted(&arrived, &left);
+            }
         }
         if edits.is_empty() {
             return;
@@ -670,6 +685,50 @@ impl Workspace {
             self.show_toast(format!("Could not update imports: {}", failed.join("; ")), true, cx);
         }
     }
+}
+
+impl Workspace {
+    /// Import updates for moving `src` to `target`, found by Brisk in the project's Python
+    /// files (open ones with their unsaved text): `from`/`import` lines and `old.attr` uses.
+    fn module_rename_edits(&self, src: &Path, target: &Path, cx: &gpui::App) -> Vec<brisk_lsp::FileEdits> {
+        let (Some(old), Some(new)) = (brisk_lsp::module_name(&self.root, src), brisk_lsp::module_name(&self.root, target)) else { return Vec::new() };
+        if old == new {
+            return Vec::new();
+        }
+        let open: HashMap<PathBuf, String> = self.editors().filter_map(|e| Some((e.read(cx).path.clone()?, e.read(cx).text_string()))).collect();
+        python_files_under(&self.root)
+            .into_iter()
+            .filter_map(|f| {
+                let text = open.get(&f).cloned().or_else(|| std::fs::read_to_string(&f).ok())?;
+                let edits = brisk_lsp::rename_module_refs(&text, &old, &new);
+                (!edits.is_empty()).then_some((f, edits))
+            })
+            .collect()
+    }
+}
+
+/// `.py` / `.pyi` files under `dir`, skipping hidden folders (`.venv`, `.git`) and caches.
+fn python_files_under(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().into_owned();
+            match e.file_type() {
+                Ok(t) if t.is_dir() => {
+                    if !name.starts_with('.') && name != "__pycache__" && name != "node_modules" {
+                        stack.push(p);
+                    }
+                }
+                Ok(_) if name.ends_with(".py") || name.ends_with(".pyi") => out.push(p),
+                _ => {}
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 // --- Smoke test ----------------------------------------------------------------------
