@@ -154,6 +154,8 @@ pub struct Debug {
     pub exc_raised: bool,
     pub exc_uncaught: bool,
     pub bp_dialog: Option<BpDialog>,
+    /// Mute Breakpoints: none are sent (exception breakpoints neither); for this window only.
+    pub muted: bool,
 }
 
 impl Debug {
@@ -183,12 +185,16 @@ impl Debug {
             exc_raised: load_exc(root).0,
             exc_uncaught: load_exc(root).1,
             bp_dialog: None,
+            muted: false,
         }
     }
 
     /// debugpy's exception filters for setExceptionBreakpoints.
     pub fn exception_filters(&self) -> Vec<&'static str> {
         let mut v = Vec::new();
+        if self.muted {
+            return v;
+        }
         if self.exc_raised {
             v.push("raised");
         }
@@ -599,10 +605,32 @@ impl Workspace {
             return;
         }
         self.debug.stored.retain(|b| b.path != p);
+        let muted = self.debug.muted;
         ed.update(cx, |e, cx| {
             e.set_breakpoints(&mine);
+            e.set_breakpoints_muted(muted);
             cx.notify();
         });
+    }
+
+    /// Mute Breakpoints: grey them in every editor and take them all out of a running session.
+    pub(super) fn toggle_mute_breakpoints(&mut self, cx: &mut Context<Self>) {
+        self.debug.muted = !self.debug.muted;
+        let muted = self.debug.muted;
+        for ed in self.editors().cloned().collect::<Vec<_>>() {
+            ed.update(cx, |e, cx| {
+                e.set_breakpoints_muted(muted);
+                cx.notify();
+            });
+        }
+        for (p, _) in self.all_breakpoints(cx) {
+            self.send_breakpoints(&p, cx);
+        }
+        if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) {
+            self.debug_request("setExceptionBreakpoints", json!({"filters": self.debug.exception_filters()}));
+        }
+        self.status = if muted { "Breakpoints muted".into() } else { "Breakpoints unmuted".into() };
+        cx.notify();
     }
 
     /// An editor closes: keep its breakpoints.
@@ -625,7 +653,7 @@ impl Workspace {
         let mut v: Vec<SourceBreakpoint> = self
             .all_breakpoints(cx)
             .into_iter()
-            .filter(|(p, _)| p == path)
+            .filter(|(p, _)| p == path && !self.debug.muted)
             .flat_map(|(_, l)| l.into_iter().filter(|(_, b)| b.enabled).map(|(line, b)| SourceBreakpoint { line, condition: b.condition }))
             .collect();
         if let Some((p, l)) = self.debug.session.as_ref().and_then(|s| s.temp.clone()) {
@@ -1094,6 +1122,7 @@ impl Workspace {
         match action {
             A::ToggleBreakpoint => self.toggle_breakpoint_here(window, cx),
             A::ViewBreakpoints => self.open_bp_dialog(cx),
+            A::MuteBreakpoints => self.toggle_mute_breakpoints(cx),
             A::Debug => {
                 self.reload_runs();
                 let cfg = self.runs.file.selected_config().cloned().or_else(|| self.context_config(window, cx));
@@ -2021,6 +2050,25 @@ impl Workspace {
             .child(tool("dbg-eval", "=", "Evaluate Expression  Alt+F8", paused, Theme::accent(), Action::EvaluateExpression, cx))
             .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(Theme::divider()))
             .child(tool("dbg-bps", "●", "View Breakpoints  Ctrl+Shift+F8", true, Theme::breakpoint(), Action::ViewBreakpoints, cx))
+            .child(
+                // Mute Breakpoints: a crossed-out dot, pressed while on.
+                div()
+                    .id("dbg-mute")
+                    .w(px(26.))
+                    .h(px(24.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(5.))
+                    .cursor_pointer()
+                    .when(d.muted, |x| x.bg(Theme::press()))
+                    .hover(|s| s.bg(Theme::hover_row()))
+                    .active(|s| s.bg(Theme::press()))
+                    .text_color(if d.muted { Theme::text_dim() } else { Theme::breakpoint() })
+                    .child(div().relative().child("●").child(div().absolute().top(px(8.)).left(px(-2.)).w(px(14.)).h(px(1.5)).bg(Theme::text_muted())))
+                    .tooltip(|_, cx| cx.new(|_| super::Tip("Mute Breakpoints".into())).into())
+                    .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::MuteBreakpoints, w, cx))),
+            )
             .child(div().pl(px(10.)).text_size(px(12.)).text_color(Theme::text_muted()).child(title));
         let tab = |id: &'static str, label: &'static str, t: DebugTab, cur: DebugTab, cx: &mut Context<Self>| {
             div()
@@ -2400,9 +2448,10 @@ impl Workspace {
                             .map(|e| e.read(cx).breakpoint_list().into_iter().map(|(l, b)| format!("{}{}", l + 1, b.condition.map(|c| format!(" if {c}")).unwrap_or_default())).collect())
                             .unwrap_or_default();
                         format!(
-                            "state={:?} top={:?} bps={bps:?} popup={} bpdlg={} tab={:?} sel={:?} edit={:?} watches={:?}",
+                            "state={:?} top={:?} bps={bps:?} muted={} popup={} bpdlg={} tab={:?} sel={:?} edit={:?} watches={:?}",
                             t.debug.state(),
                             t.debug.frames.first().map(|f| f.line + 1),
+                            t.debug.muted,
                             t.popup.is_some(),
                             t.debug.bp_dialog.as_ref().map_or("closed".to_string(), |d| format!("open(sel {} editing {})", d.sel, d.editing)),
                             t.debug.tab,

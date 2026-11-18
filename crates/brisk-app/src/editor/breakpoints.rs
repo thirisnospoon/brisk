@@ -26,6 +26,8 @@ pub struct Breakpoints {
     version: u64,
     /// Inline values of a stop: (buffer version they were made for, line → "a: 1, b: 2").
     inline: Option<(u64, HashMap<usize, String>)>,
+    /// Mute Breakpoints: all are drawn grey (the debugger gets none).
+    muted: bool,
 }
 
 impl Editor {
@@ -69,6 +71,14 @@ impl Editor {
         marks.dedup_by_key(|m| m.0);
         self.breakpoints.marks = marks;
         self.breakpoints.version = self.buffer.version();
+    }
+
+    pub fn set_breakpoints_muted(&mut self, muted: bool) {
+        self.breakpoints.muted = muted;
+    }
+
+    pub fn breakpoints_muted(&self) -> bool {
+        self.breakpoints.muted
     }
 
     /// Values shown after the ends of lines while the debugger is paused in this file.

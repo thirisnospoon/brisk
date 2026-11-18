@@ -204,6 +204,7 @@ actions! {
     EditRunConfigurations => "Edit Configurations", "Run";
     ToggleBreakpoint => "Toggle Line Breakpoint", "Run";
     ViewBreakpoints => "View Breakpoints", "Run";
+    MuteBreakpoints => "Mute Breakpoints", "Run";
     StepOver => "Step Over", "Run";
     StepInto => "Step Into", "Run";
     StepOut => "Step Out", "Run";
