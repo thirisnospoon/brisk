@@ -586,7 +586,7 @@ fn process_lines() -> String {
 }
 
 /// `python [opts] (-m module | script) args` → what debugpy launches.
-fn launch_for(cmd: &brisk_run::Command) -> Launch {
+pub(super) fn launch_for(cmd: &brisk_run::Command) -> Launch {
     let mut l = Launch { python: cmd.program.clone(), cwd: cmd.cwd.clone(), just_my_code: true, ..Default::default() };
     let mut it = cmd.args.iter();
     while let Some(a) = it.next() {
@@ -1371,6 +1371,9 @@ impl Workspace {
         };
         // pytest runs as `-m pytest <targets>` (a file, a folder or `file::test`); without the
         // Run window's reporting plugin its output is plain text in the console.
+        if !self.env_files_ok(&cfg, cx) {
+            return;
+        }
         let cmd = brisk_run::build(&self.root, &cfg, &python);
         let launch = launch_for(&cmd);
         self.debug.cwd = launch.cwd.clone();

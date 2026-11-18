@@ -64,6 +64,7 @@ pub fn parse(root: &Path, text: &str) -> Option<Parsed> {
             // PyCharm's Run Anything runs in the project root.
             working_directory: root.display().to_string(),
             env: Default::default(),
+            env_files: String::new(),
             interpreter: None,
             temporary: false,
         })

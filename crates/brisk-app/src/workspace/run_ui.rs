@@ -207,8 +207,22 @@ impl Workspace {
             self.show_toast(format!("pytest is not installed in {label}: run `pip install pytest` in the Terminal"), true, cx);
             return;
         }
+        if !self.env_files_ok(&cfg, cx) {
+            return;
+        }
         let cmd = brisk_run::build(&self.root, &cfg, &python);
         self.run_command(cfg, cmd, window, cx);
+    }
+
+    /// A configuration's `.env` files must be readable (PyCharm refuses to start otherwise).
+    pub(super) fn env_files_ok(&mut self, cfg: &RunConfig, cx: &mut Context<Self>) -> bool {
+        match brisk_run::envfile::load(&self.root, cfg) {
+            Ok(_) => true,
+            Err(e) => {
+                self.show_toast(format!("'{}': {e}", cfg.name), true, cx);
+                false
+            }
+        }
     }
 
     /// Start a prepared process in the Run window (a tab named after `cfg`).

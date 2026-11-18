@@ -36,6 +36,10 @@ pub struct RunConfig {
     pub working_directory: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// PyCharm's "Paths to .env files": `;`-separated, relative to the project or absolute;
+    /// `env` overrides their variables.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub env_files: String,
     /// Interpreter for this configuration only; `None` uses the project interpreter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interpreter: Option<String>,
@@ -219,6 +223,7 @@ fn parse_configuration(root: &Path, node: roxmltree::Node) -> Option<RunConfig> 
                     "PARAMETERS" => c.parameters = v,
                     "INTERPRETER_OPTIONS" => c.interpreter_options = v,
                     "WORKING_DIRECTORY" => c.working_directory = v,
+                    "ENV_FILES" => c.env_files = v.replace("$PROJECT_DIR$/", ""),
                     "SDK_HOME" => sdk = v,
                     "IS_MODULE_SDK" => module_sdk = v != "false",
                     "_new_target" => test_target = unquote(&v),

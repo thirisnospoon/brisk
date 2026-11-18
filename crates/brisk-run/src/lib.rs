@@ -5,6 +5,7 @@ mod config;
 mod interp;
 mod links;
 pub mod pytest;
+pub mod envfile;
 
 pub use config::{import_idea, load, save, RunConfig, RunFile, RunKind, CONFIG_FILE, MAX_TEMPORARY};
 pub use pytest::{is_test_file, split_nodeid, TestFeed, TestStatus, TestTree};
@@ -184,6 +185,11 @@ fn finish(root: &Path, cfg: &RunConfig, python: &Path, args: Vec<String>, cwd: P
         let bin = python.parent().unwrap_or(&venv);
         env.insert("PATH".into(), format!("{}{sep}{}", bin.display(), std::env::var("PATH").unwrap_or_default()));
         env.insert("VIRTUAL_ENV".into(), venv.display().to_string());
+    }
+    // .env files first, the configuration's own variables over them (a missing file is
+    // reported before the run by `envfile::load`).
+    for (k, v) in envfile::load(root, cfg).unwrap_or_default() {
+        env.insert(k, v);
     }
     for (k, v) in &cfg.env {
         env.insert(k.clone(), v.clone());

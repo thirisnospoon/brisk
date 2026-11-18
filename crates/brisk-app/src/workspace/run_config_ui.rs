@@ -19,6 +19,7 @@ pub enum Field {
     InterpreterOptions,
     WorkingDirectory,
     Env,
+    EnvFiles,
     Interpreter,
     Temporary,
 }
@@ -133,7 +134,7 @@ fn fields(kind: Kind, temporary: bool) -> Vec<Field> {
     if kind == Kind::Pytest {
         v.push(F::Keywords);
     }
-    v.extend([F::Parameters, F::InterpreterOptions, F::WorkingDirectory, F::Env, F::Interpreter]);
+    v.extend([F::Parameters, F::InterpreterOptions, F::WorkingDirectory, F::Env, F::EnvFiles, F::Interpreter]);
     if temporary {
         v.push(F::Temporary);
     }
@@ -154,6 +155,7 @@ fn label(f: Field, kind: Kind) -> &'static str {
         Field::InterpreterOptions => "Interpreter options:",
         Field::WorkingDirectory => "Working directory:",
         Field::Env => "Environment:",
+        Field::EnvFiles => "Paths to .env files:",
         Field::Interpreter => "Interpreter:",
         Field::Temporary => "Temporary:",
     }
@@ -196,6 +198,7 @@ impl RunDialog {
             Field::InterpreterOptions => &mut d.cfg.interpreter_options,
             Field::WorkingDirectory => &mut d.cfg.working_directory,
             Field::Env => &mut d.env,
+            Field::EnvFiles => &mut d.cfg.env_files,
             Field::Interpreter => d.cfg.interpreter.get_or_insert_with(String::new),
             Field::Kind | Field::Temporary => return None,
         })
@@ -211,6 +214,7 @@ impl RunDialog {
             Field::InterpreterOptions => &d.cfg.interpreter_options,
             Field::WorkingDirectory => &d.cfg.working_directory,
             Field::Env => &d.env,
+            Field::EnvFiles => &d.cfg.env_files,
             Field::Interpreter => return d.cfg.interpreter.as_deref().map_or(0, |s| s.chars().count()),
             Field::Kind | Field::Temporary => return 0,
         };
@@ -450,7 +454,7 @@ impl Workspace {
             "v" if m.control && text => {
                 if let Some(t) = cx.read_from_clipboard().and_then(|c| c.text()) {
                     // Environment: pasted lines become `;`-separated entries.
-                    let t = if d.field == Field::Env { t.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join(";") } else { t.lines().next().unwrap_or("").to_string() };
+                    let t = if matches!(d.field, Field::Env | Field::EnvFiles) { t.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join(";") } else { t.lines().next().unwrap_or("").to_string() };
                     d.insert(&t);
                 }
             }
@@ -628,6 +632,7 @@ impl Workspace {
                             Field::InterpreterOptions => dr.cfg.interpreter_options.clone(),
                             Field::WorkingDirectory => dr.cfg.working_directory.clone(),
                             Field::Env => dr.env.clone(),
+                            Field::EnvFiles => dr.cfg.env_files.clone(),
                             Field::Interpreter => dr.cfg.interpreter.clone().unwrap_or_default(),
                             _ => String::new(),
                         };
@@ -638,7 +643,8 @@ impl Workspace {
                                 Kind::Pytest => "tests, tests/test_x.py::test_y (empty: everything)".to_string(),
                             },
                             Field::WorkingDirectory => if kind == Kind::Script { "the script's folder".into() } else { "the project root".into() },
-                            Field::Env => "KEY=VALUE;KEY2=VALUE2".into(),
+                            Field::Env => "KEY=VALUE;KEY2=VALUE2 (wins over .env files)".into(),
+                            Field::EnvFiles => ".env;config/dev.env (KEY=VALUE lines)".into(),
                             Field::Interpreter => format!("project default: {project_interp}"),
                             Field::Keywords => "e.g. slow and not network".into(),
                             _ => String::new(),
@@ -771,6 +777,70 @@ impl Workspace {
 
     /// `BRISK_SMOKE_RUNCFG=1`: open the dialog, add a module and a pytest configuration
     /// by typing, copy, reorder, remove, fail validation, save, and read run.json back.
+    /// BRISK_SMOKE_ENVFILE=1 on an empty folder: writes `show_env.py` and `.env`, types a
+    /// configuration with Environment `B=explicit` and `.env` in Paths to .env files, runs it
+    /// (A and C from the file, B from the form), checks the debug launch environment and that
+    /// a missing .env file stops the run with a message.
+    pub(super) fn envfile_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let root = self.root.clone();
+        let _ = std::fs::write(root.join("show_env.py"), "import os\nprint('env:', ' '.join(k + '=' + os.environ.get(k, '-') for k in 'ABC'))\n");
+        let _ = std::fs::write(root.join(".env"), "# demo\nA=from-file\nB=from-file\nC=\"${A}-x\"\n");
+        self.dispatch(brisk_keymap::Action::EditRunConfigurations, window, cx);
+        self.smoke_press("alt-insert", window, cx);
+        self.rc_type("envdemo", window, cx);
+        self.smoke_press("tab tab", window, cx); // Target
+        self.rc_type("show_env.py", window, cx);
+        self.smoke_press("tab tab tab tab", window, cx); // Environment
+        self.rc_type("B=explicit", window, cx);
+        self.smoke_press("tab", window, cx); // Paths to .env files
+        let field = self.runs.dialog.as_ref().map(|d| d.field);
+        self.rc_type(".env", window, cx);
+        self.smoke_press("enter", window, cx);
+        let cfg = brisk_run::load(&root).0.get("envdemo").cloned();
+        eprintln!("smoke-envfile: field {field:?}, saved env {:?} envFiles {:?}", cfg.as_ref().map(|c| c.env.clone()), cfg.as_ref().map(|c| c.env_files.clone()));
+        let Some(cfg) = cfg else {
+            cx.quit();
+            return;
+        };
+        let launch = super::debug_ui::launch_for(&brisk_run::build(&root, &cfg, std::path::Path::new("python")));
+        let get = |k: &str| launch.env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        eprintln!("smoke-envfile: debug launch env A={:?} B={:?} C={:?}", get("A"), get("B"), get("C"));
+        cx.spawn_in(window, async move |this, cx| {
+            let bg = cx.background_executor().clone();
+            let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
+            for _ in 0..100 {
+                pause(100).await;
+                if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
+                    break;
+                }
+            }
+            let _ = this.update_in(cx, |this, window, cx| this.run_config(cfg.clone(), window, cx));
+            let expect = "env: A=from-file B=explicit C=from-file-x";
+            let output = |t: &Workspace, cx: &gpui::App| t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default();
+            for _ in 0..300 {
+                pause(100).await;
+                if this.update(cx, |t, cx| output(t, cx).contains(expect)).unwrap_or(false) {
+                    break;
+                }
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                let out = output(this, cx);
+                eprintln!("smoke-envfile: run output has {expect:?}: {}", out.contains(expect));
+                if !out.contains(expect) {
+                    eprintln!("smoke-envfile: output was {:?}", out.chars().take(500).collect::<String>());
+                }
+                let tabs = this.runs.panel.as_ref().map(|p| p.read(cx).run_tab_names().len()).unwrap_or(0);
+                let missing = RunConfig { name: "missing".into(), env_files: "missing.env".into(), ..cfg.clone() };
+                this.toast = None;
+                this.run_config(missing, window, cx);
+                let after = this.runs.panel.as_ref().map(|p| p.read(cx).run_tab_names().len()).unwrap_or(0);
+                eprintln!("smoke-envfile: missing .env -> toast {:?}, run tabs {tabs} -> {after}", this.toast.as_ref().map(|t| t.0.clone()));
+                cx.quit();
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn run_dialog_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let show = |this: &Self| {
             let d = this.runs.dialog.as_ref();
