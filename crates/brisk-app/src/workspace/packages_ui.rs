@@ -273,39 +273,10 @@ impl Workspace {
         let Some(p) = &self.packages else { return div().into_any_element() };
         let visible = p.visible(cx);
         let busy = p.busy.is_some();
-        let button = |id: &'static str, label: &'static str, on: bool, primary: bool| {
-            div()
-                .id(id)
-                .flex_shrink_0()
-                .h(px(24.))
-                .px(px(10.))
-                .flex()
-                .items_center()
-                .rounded(px(5.))
-                .text_size(px(12.5))
-                .when(primary && on, |d| d.bg(Theme::accent()).text_color(gpui::white()))
-                .when(!primary || !on, |d| d.border_1().border_color(Theme::border()))
-                .when(!on, |d| d.text_color(Theme::text_dim()))
-                .when(on, |d| d.cursor_pointer().hover(|s| s.opacity(0.9)).active(|s| s.bg(Theme::press())))
-                .child(label)
-        };
+        use crate::ui_kit::{self, CONTROL_H};
         let input = |e: &Entity<Editor>, w: f32, hint: &'static str, cx: &gpui::App| {
-            let empty = e.read(cx).buffer.len_chars() == 0;
             let focused = e.read(cx).focus_handle(cx).is_focused(window);
-            div()
-                .relative()
-                .flex_shrink_0()
-                .w(px(w))
-                .h(px(24.))
-                .px(px(6.))
-                .pt(px(3.))
-                .rounded(px(5.))
-                .border_1()
-                .border_color(if focused { Theme::accent() } else { Theme::border() })
-                .bg(Theme::bg())
-                .overflow_hidden()
-                .child(e.clone())
-                .when(empty && !focused, |d| d.child(div().absolute().top(px(3.)).left(px(7.)).text_size(px(12.5)).text_color(Theme::text_dim()).child(hint)))
+            ui_kit::editor_field(e, hint, focused, false, CONTROL_H, cx).w(px(w))
         };
         let tool = p.tool.as_ref().map(|t| t.label()).unwrap_or("pip");
         let interp = p.python.as_ref().map(|x| x.display().to_string()).unwrap_or_else(|| "<No interpreter>".into());
@@ -316,23 +287,23 @@ impl Workspace {
             .items_center()
             .gap(px(6.))
             .px(px(8.))
-            .h(px(34.))
+            .h(px(CONTROL_H + 10.))
             .border_b_1()
             .border_color(Theme::divider())
             .child(input(&p.filter, 200., "Filter packages", cx))
             .child(
-                button("pkg-refresh", "↻", !p.loading && !busy, false)
+                ui_kit::icon_button("pkg-refresh", "rotate-cw", !p.loading && !busy)
                     .tooltip(|_, cx| cx.new(|_| super::Tip("Reload the list".into())).into())
                     .on_click(cx.listener(|this, _, _, cx| this.refresh_packages(cx))),
             )
-            .child(div().w(px(1.)).h(px(18.)).mx(px(4.)).bg(Theme::divider()))
+            .child(div().w(px(1.)).h(px(18.)).mx(px(2.)).bg(Theme::divider()))
             .child(input(&p.name, 180., "Package name", cx))
-            .child(input(&p.version, 130., "Version (optional)", cx))
-            .child(button("pkg-install", "Install", !busy, true).on_click(cx.listener(|this, _, _, cx| {
+            .child(input(&p.version, 160., "Version (optional)", cx))
+            .child(ui_kit::button("pkg-install", "Install", !busy, true).on_click(cx.listener(|this, _, _, cx| {
                 this.install_package(cx);
                 cx.notify();
             })))
-            .child(button("pkg-uninstall", "Uninstall", can_uninstall, false).on_click(cx.listener(move |this, _, _, cx| {
+            .child(ui_kit::button("pkg-uninstall", "Uninstall", can_uninstall, false).on_click(cx.listener(move |this, _, _, cx| {
                 if can_uninstall {
                     this.ask_uninstall(cx);
                     cx.notify();
@@ -352,11 +323,11 @@ impl Workspace {
                     .border_color(Theme::divider())
                     .child(div().text_color(Theme::warning()).child("⚠"))
                     .child(format!("Uninstall {} {} from this interpreter?", pk.name, pk.version))
-                    .child(button("pkg-confirm", "Uninstall", true, true).on_click(cx.listener(|this, _, _, cx| {
+                    .child(ui_kit::button("pkg-confirm", "Uninstall", true, true).on_click(cx.listener(|this, _, _, cx| {
                         this.confirm_uninstall(true, cx);
                         cx.notify();
                     })))
-                    .child(button("pkg-cancel", "Cancel", true, false).on_click(cx.listener(|this, _, _, cx| {
+                    .child(ui_kit::button("pkg-cancel", "Cancel", true, false).on_click(cx.listener(|this, _, _, cx| {
                         this.confirm_uninstall(false, cx);
                         cx.notify();
                     })))

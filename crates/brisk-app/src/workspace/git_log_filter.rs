@@ -172,22 +172,13 @@ impl Workspace {
         let Some(g) = self.git.as_ref() else { return div().into_any_element() };
         let q = &g.filter.query;
         let focused_hint = q.text.is_empty();
-        let field = div()
+        let h = crate::ui_kit::COMPACT_H;
+        let field = crate::ui_kit::input_frame(false, false, h)
             .id("log-filter-text")
             .w(px(220.))
-            .h(px(22.))
-            .px(px(6.))
-            .flex()
-            .items_center()
-            .gap(px(4.))
-            .rounded(px(4.))
-            .border_1()
-            .border_color(Theme::divider())
-            .bg(Theme::editor_bg())
-            .child(div().text_color(Theme::text_dim()).child("⌕"))
-            .child(div().relative().flex_1().min_w_0().h(px(18.)).overflow_hidden().child(g.filter.field.clone()).when(focused_hint, |d| {
-                d.child(div().absolute().top_0().left_0().text_color(Theme::text_dim()).text_size(px(12.)).child("Text or hash"))
-            }));
+            .pl(px(6.))
+            .child(crate::icons::icon("search", 14., Theme::text_dim()))
+            .child(crate::ui_kit::editor_slot(&g.filter.field, "Text or hash", focused_hint, h - 2.));
         let chip = |id: &'static str, label: String, active: bool| {
             div()
                 .id(id)

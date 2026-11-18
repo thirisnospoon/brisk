@@ -1312,7 +1312,8 @@ impl Render for Editor {
             .size_full()
             .flex()
             .flex_col()
-            .bg(Theme::editor_bg())
+            // A one-line field takes its look (background, border) from the input around it.
+            .when(!self.is_field, |d| d.bg(Theme::editor_bg()))
             // Completion, Quick Doc and Parameter Info close on a click anywhere outside the editor.
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 if this.close_insight() | this.caret_tip.take().is_some() {
@@ -1656,6 +1657,7 @@ impl Element for EditorElement {
         let text_left = bounds.left() + pp.gutter_w + px(8.);
         let text_x = text_left - px(ed.scroll_x);
         let exec_line = ed.exec_line;
+        let is_field = ed.is_field;
         let exec_ghost = ed.exec_drag_target();
         let ann_x0 = bounds.left() + ed.annotation_left();
         let ann_w = ed.annotation_width(pp.char_w) - px(6.);
@@ -1677,8 +1679,8 @@ impl Element for EditorElement {
         // Compute geometry first (borrows the editor), then paint (needs &mut App).
         let mut under: Vec<gpui::PaintQuad> = Vec::new();
         let mut carets: Vec<gpui::PaintQuad> = Vec::new();
-        // Current line.
-        if b.selections.iter().all(|s| s.is_empty()) {
+        // Current line (not in a one-line field).
+        if !ed.is_field && b.selections.iter().all(|s| s.is_empty()) {
             for s in &b.selections {
                 let (l, _) = b.pos_to_line_col(s.head);
                 if idx_of(l).is_some() {
@@ -1897,7 +1899,9 @@ impl Element for EditorElement {
                 window.paint_underline(o, w, &gpui::UnderlineStyle { color: Some(color), thickness: px(1.), wavy: true });
             }
             // Gutter (painted over text so horizontal overflow never covers line numbers).
-            window.paint_quad(fill(Bounds::new(bounds.origin, size(text_left - bounds.left() - px(2.), bounds.size.height)), Theme::editor_bg()));
+            if !is_field {
+                window.paint_quad(fill(Bounds::new(bounds.origin, size(text_left - bounds.left() - px(2.), bounds.size.height)), Theme::editor_bg()));
+            }
             if !pp.annotations.is_empty() {
                 // Newer lines get a stronger tint, like PyCharm's annotation colors.
                 for (i, label, age) in &pp.annotations {
