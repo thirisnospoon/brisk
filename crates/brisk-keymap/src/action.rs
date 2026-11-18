@@ -237,6 +237,12 @@ actions! {
     RefreshDatabase => "Refresh Database", "Database";
     Disconnect => "Disconnect", "Database";
 
+    // Python tools
+    TogglePythonConsole => "Python Console", "Tools";
+    RerunPythonConsole => "Rerun Python Console", "Python Console";
+    StopPythonConsole => "Stop Python Console", "Python Console";
+    ClearPythonConsole => "Clear Python Console", "Python Console";
+
     // Tool windows
     ToggleDatabaseWindow => "Database", "Tool Windows";
     ToggleProjectWindow => "Project", "Tool Windows";

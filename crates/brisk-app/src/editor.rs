@@ -397,6 +397,12 @@ impl Editor {
         }
     }
 
+    /// Highlighting for a pathless editor (the Python Console input).
+    pub fn set_language(&mut self, lang: Option<Lang>) {
+        self.syntax = lang.map(SyntaxTree::new);
+        self.parsed_version = u64::MAX;
+    }
+
     pub fn title(&self) -> String {
         self.path
             .as_ref()

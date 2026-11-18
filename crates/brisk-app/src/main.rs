@@ -10,6 +10,7 @@ mod editor;
 mod editorconfig;
 mod keys;
 mod local_history;
+mod py_console;
 mod terminal_view;
 mod settings;
 mod theme;

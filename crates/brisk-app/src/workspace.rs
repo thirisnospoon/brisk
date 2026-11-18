@@ -2,6 +2,7 @@
 //! All shortcuts go through brisk-keymap's PyCharm keymap.
 
 mod bookmarks_ui;
+mod console_ui;
 mod db_ui;
 mod debug_ui;
 mod disk_ui;
@@ -66,6 +67,7 @@ pub enum BottomTool {
     Git,
     Services,
     Find,
+    PythonConsole,
 }
 
 impl BottomTool {
@@ -78,6 +80,7 @@ impl BottomTool {
             BottomTool::Git => "Git",
             BottomTool::Services => "Services",
             BottomTool::Find => "Find",
+            BottomTool::PythonConsole => "Python Console",
         }
     }
     fn stage(self) -> &'static str {
@@ -89,6 +92,7 @@ impl BottomTool {
             BottomTool::Git => "",
             BottomTool::Services => "Stage 5: Docker and databases.",
             BottomTool::Find => "",
+            BottomTool::PythonConsole => "",
         }
     }
 }
@@ -268,6 +272,8 @@ pub struct Workspace {
     find: find_ui::Find,
     db: db_ui::Db,
     debug: debug_ui::Debug,
+    /// Created on first open of the Python Console.
+    pyc: Option<console_ui::PyConsole>,
     /// The breakpoint whose condition the popup edits.
     debug_edit: Option<(Entity<Editor>, usize)>,
     settings_dialog: Option<settings_ui::SettingsDialog>,
@@ -363,6 +369,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNCFG").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_dialog_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_PYCONSOLE").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.python_console_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_GITX").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.gitx_smoke(window, cx));
@@ -495,6 +504,7 @@ impl Workspace {
             find: find_ui::Find::new(),
             db,
             debug,
+            pyc: None,
             debug_edit: None,
             recent: Vec::new(),
             bookmarks: saved_bookmarks,
@@ -549,7 +559,8 @@ impl Workspace {
             }
         }
         let git_fields = self.git.as_ref().map(|g| [g.message.clone(), g.filter.field.clone()]).into_iter().flatten();
-        git_fields.into_iter().find(|m| m.read(cx).focus_handle(cx).is_focused(window))
+        let console = self.pyc.as_ref().map(|p| p.input.clone());
+        git_fields.chain(console).find(|m| m.read(cx).focus_handle(cx).is_focused(window))
     }
 
     fn save_all(&mut self, cx: &mut Context<Self>) {
@@ -857,6 +868,10 @@ impl Workspace {
             cx.stop_propagation();
             return;
         }
+        if self.python_console_key(e, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
         if self.git_pre_key(e, window, cx) {
             cx.stop_propagation();
             return;
@@ -920,7 +935,7 @@ impl Workspace {
             A::ToggleGitWindow, A::ToggleCommitWindow, A::ToggleTerminalWindow, A::HideAllToolWindows,
             A::HideActiveToolWindow, A::FindAction, A::Settings, A::Run, A::Debug, A::RunContext,
             A::DebugContext, A::Stop, A::FindInFiles, A::SaveAll, A::ToggleDatabaseWindow, A::Rerun,
-            A::SelectRunConfiguration,
+            A::SelectRunConfiguration, A::TogglePythonConsole,
         ];
         let Some(term) = term else { return };
         let k = &e.keystroke;
@@ -1007,6 +1022,8 @@ impl Workspace {
                     self.refresh_git(cx);
                 }
             }
+            A::TogglePythonConsole => self.toggle_python_console(window, cx),
+            A::RerunPythonConsole | A::StopPythonConsole | A::ClearPythonConsole => self.python_console_action(action, window, cx),
             A::ToggleServicesWindow => {
                 self.toggle_bottom(BottomTool::Services, window, cx);
                 if self.bottom == Some(BottomTool::Services) {
@@ -1532,6 +1549,7 @@ impl Workspace {
             .child(self.stripe_button("st-structure", "≡", "Structure", self.left == Some(LeftTool::Structure), Action::ToggleStructureWindow, cx))
             .child(self.stripe_button("st-bookmarks", "☆", "Bookmarks", self.left == Some(LeftTool::Bookmarks), Action::ToggleBookmarksWindow, cx))
             .child(div().flex_1())
+            .child(self.stripe_button("st-pyconsole", "≫", "Python Console", self.bottom == Some(BottomTool::PythonConsole), Action::TogglePythonConsole, cx))
             .child(self.stripe_button("st-services", "⚙", "Services", self.bottom == Some(BottomTool::Services), Action::ToggleServicesWindow, cx))
             .child(self.stripe_button("st-run", "▶", "Run", self.bottom == Some(BottomTool::Run), Action::ToggleRunWindow, cx))
             .child(self.stripe_button("st-terminal", "›_", "Terminal", self.bottom == Some(BottomTool::Terminal), Action::ToggleTerminalWindow, cx))
@@ -2170,7 +2188,7 @@ impl Render for Workspace {
         let bottom_h = match self.bottom {
             Some(BottomTool::Git) => 320.,
             Some(BottomTool::Services) => 280.,
-            Some(BottomTool::Debug) => 300.,
+            Some(BottomTool::Debug) | Some(BottomTool::PythonConsole) => 300.,
             _ => 240.,
         };
         let right = self.db.open.then(|| self.render_database(cx));
@@ -2182,6 +2200,7 @@ impl Render for Workspace {
             (BottomTool::Problems, _) => self.render_problems(cx),
             (BottomTool::Debug, _) => self.render_debug(window, cx),
             (BottomTool::Services, _) => self.render_services(cx),
+            (BottomTool::PythonConsole, _) => self.render_python_console(window, cx),
             _ => Self::render_placeholder(b.title(), b.stage()),
         });
         let center = self.render_editor_area(cx);
