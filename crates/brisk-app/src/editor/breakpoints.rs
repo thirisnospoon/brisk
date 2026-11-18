@@ -2,6 +2,7 @@
 //! paused debugger. Breakpoints follow edits like bookmarks.
 
 use super::{Editor, EditorEvent};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Breakpoint {
@@ -15,6 +16,8 @@ pub struct Breakpoints {
     /// (char position of the line start, breakpoint).
     marks: Vec<(usize, Breakpoint)>,
     version: u64,
+    /// Inline values of a stop: (buffer version they were made for, line → "a: 1, b: 2").
+    inline: Option<(u64, HashMap<usize, String>)>,
 }
 
 impl Editor {
@@ -24,7 +27,8 @@ impl Editor {
             return;
         }
         let marks = self.breakpoints_mapped();
-        self.breakpoints = Breakpoints { marks: marks.into_iter().map(|(l, b)| (self.buffer.line_start(l), b)).collect(), version: v };
+        self.breakpoints.marks = marks.into_iter().map(|(l, b)| (self.buffer.line_start(l), b)).collect();
+        self.breakpoints.version = v;
     }
 
     /// (line, breakpoint), following edits made since the last sync.
@@ -55,7 +59,26 @@ impl Editor {
         let mut marks: Vec<(usize, Breakpoint)> = v.iter().filter(|(l, _)| *l < n).map(|(l, b)| (self.buffer.line_start(*l), b.clone())).collect();
         marks.sort_by_key(|m| m.0);
         marks.dedup_by_key(|m| m.0);
-        self.breakpoints = Breakpoints { marks, version: self.buffer.version() };
+        self.breakpoints.marks = marks;
+        self.breakpoints.version = self.buffer.version();
+    }
+
+    /// Values shown after the ends of lines while the debugger is paused in this file.
+    pub fn set_inline_values(&mut self, values: HashMap<usize, String>) {
+        self.breakpoints.inline = Some((self.buffer.version(), values));
+    }
+
+    pub fn clear_inline_values(&mut self) -> bool {
+        self.breakpoints.inline.take().is_some()
+    }
+
+    /// The inline value of `line`, while the text is what the debugger stopped on.
+    pub fn inline_value(&self, line: usize) -> Option<&str> {
+        let (v, m) = self.breakpoints.inline.as_ref()?;
+        if *v != self.buffer.version() {
+            return None;
+        }
+        m.get(&line).map(String::as_str)
     }
 
     /// Ctrl+F8 / a click on the line number: add or remove the breakpoint on `line`.

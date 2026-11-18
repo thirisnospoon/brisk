@@ -317,6 +317,78 @@ fn python_order(stack: &str) -> String {
     frames.concat().join("\n")
 }
 
+/// Names used on a line of Python: identifiers outside strings and comments, not after a dot.
+fn line_names(line: &str) -> Vec<&str> {
+    let b = line.as_bytes();
+    let mut out: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c == b'#' {
+            break;
+        }
+        if c == b'"' || c == b'\'' {
+            // Skip the string (prefixes like f"" leave their letter as a word: harmless).
+            let q = c;
+            i += 1;
+            while i < b.len() && b[i] != q {
+                i += if b[i] == b'\\' { 2 } else { 1 };
+            }
+            i += 1;
+            continue;
+        }
+        if c.is_ascii_alphabetic() || c == b'_' {
+            let s = i;
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                i += 1;
+            }
+            let after_dot = line[..s].trim_end().ends_with('.');
+            let w = &line[s..i];
+            if !after_dot && !out.contains(&w) {
+                out.push(w);
+            }
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// PyCharm's inline values: for the lines of the current function up to the stop line,
+/// `name: value` of the frame's variables used there. `lines` are the file's lines.
+fn inline_values(lines: &[String], stop: usize, vars: &[Variable]) -> std::collections::HashMap<usize, String> {
+    let mut out = std::collections::HashMap::new();
+    let Some(cur) = lines.get(stop) else { return out };
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let cur_indent = indent(cur);
+    // The function's `def` above the stop line (module level: up to 50 lines back).
+    let start = (0..=stop)
+        .rev()
+        .find(|&i| {
+            let t = lines[i].trim_start();
+            (t.starts_with("def ") || t.starts_with("async def ")) && indent(&lines[i]) < cur_indent.max(1)
+        })
+        .unwrap_or(stop.saturating_sub(50))
+        .max(stop.saturating_sub(300));
+    for (i, l) in lines.iter().enumerate().take(stop + 1).skip(start) {
+        let shown: Vec<String> = line_names(l)
+            .into_iter()
+            .filter_map(|n| vars.iter().find(|v| v.name == n))
+            .map(|v| {
+                let mut val: String = v.value.chars().take(60).collect();
+                if v.value.chars().count() > 60 {
+                    val.push('…');
+                }
+                format!("{}: {val}", v.name)
+            })
+            .collect();
+        if !shown.is_empty() {
+            out.insert(i, shown.join(", "));
+        }
+    }
+    out
+}
+
 /// `python [opts] (-m module | script) args` → what debugpy launches.
 fn launch_for(cmd: &brisk_run::Command) -> Launch {
     let mut l = Launch { python: cmd.program.clone(), cwd: cmd.cwd.clone(), just_my_code: true, ..Default::default() };
@@ -669,6 +741,7 @@ impl Workspace {
             if e.read(cx).path.as_ref().is_some_and(|p| marked.contains(p)) || e.read(cx).exec_line.is_some() {
                 e.update(cx, |e, cx| {
                     e.exec_line = None;
+                    e.clear_inline_values();
                     cx.notify();
                 });
             }
@@ -984,6 +1057,8 @@ impl Workspace {
         let Some(s) = &self.debug.session else { return };
         let rx = s.client.request("scopes", json!({"frameId": f.id}));
         let client = s.client.clone();
+        let frame_path = f.path.clone();
+        let frame_line = f.line;
         cx.spawn(async move |this, cx| {
             let Ok(Ok(v)) = rx.await else { return };
             let scopes = brisk_dap::parse_scopes(&v);
@@ -1005,6 +1080,16 @@ impl Workspace {
                 let n = this.debug.watch_len();
                 this.debug.vars.truncate(n);
                 this.debug.vars.extend(rows);
+                if let (Some(p), Some(vars)) = (frame_path.as_ref(), first.as_ref()) {
+                    if let Some(ed) = this.editors().find(|e| e.read(cx).path.as_ref() == Some(p)).cloned() {
+                        let lines: Vec<String> = (0..=frame_line.min(ed.read(cx).buffer.len_lines().saturating_sub(1))).map(|l| ed.read(cx).buffer.line(l)).collect();
+                        let values = inline_values(&lines, frame_line, vars);
+                        ed.update(cx, |e, cx| {
+                            e.set_inline_values(values);
+                            cx.notify();
+                        });
+                    }
+                }
                 cx.notify();
             });
         })
@@ -1767,6 +1852,8 @@ impl Workspace {
                 let exec = t.active_editor().and_then(|e| e.read(cx).exec_line).map(|l| l + 1);
                 eprintln!("smoke-debug: paused={ok} frames={f:?} exec_line={exec:?}");
                 eprintln!("smoke-debug: variables {v:?}");
+                let inl: Vec<String> = t.active_editor().map(|e| (0..12).filter_map(|l| e.read(cx).inline_value(l).map(|v| format!("{}: {v}", l + 1))).collect()).unwrap_or_default();
+                eprintln!("smoke-debug: inline values {inl:?}");
             });
             if std::env::var_os("BRISK_SMOKE_DEBUG_HOLD").is_some() {
                 // Screenshots: stay paused at the first breakpoint.
@@ -1915,6 +2002,8 @@ impl Workspace {
             let _ = this.update_in(cx, |t, _, cx| {
                 let out: Vec<String> = t.debug.console.iter().filter(|(_, k)| matches!(k, Line::Out | Line::Info)).map(|(l, _)| l.trim_end().to_string()).collect();
                 let exec = t.active_editor().and_then(|e| e.read(cx).exec_line);
+                let inl = t.active_editor().map(|e| (0..12).any(|l| e.read(cx).inline_value(l).is_some()));
+                eprintln!("smoke-debug: inline values left after the end -> {inl:?}");
                 eprintln!("smoke-debug: finished={ended} exec_line={exec:?} console tail {:?}", out.iter().rev().take(3).collect::<Vec<_>>());
                 eprintln!("smoke-debug: stored -> {}", std::fs::read_to_string(store_path()).map(|s| s.contains("dbg_main.py")).unwrap_or(false));
             });
@@ -1998,6 +2087,20 @@ impl Workspace {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn inline_values_of_a_function() {
+        let lines: Vec<String> = ["x = 1", "def main(n):", "    items = [n, 2]  # n", "    s = \"items\"", "    total = add(items[0], obj.items)"].map(String::from).to_vec();
+        let var = |n: &str, v: &str| Variable { name: n.into(), value: v.into(), type_name: String::new(), reference: 0 };
+        let vars = [var("n", "5"), var("items", "[5, 2]"), var("x", "1")];
+        let v = inline_values(&lines, 4, &vars);
+        // From the def line on; not inside strings, comments, or after a dot.
+        assert_eq!(v.get(&1).map(String::as_str), Some("n: 5"));
+        assert_eq!(v.get(&2).map(String::as_str), Some("items: [5, 2], n: 5"));
+        assert_eq!(v.get(&3), None);
+        assert_eq!(v.get(&4).map(String::as_str), Some("items: [5, 2]"));
+        assert_eq!(v.get(&0), None);
+    }
 
     #[test]
     fn traceback_in_python_order() {

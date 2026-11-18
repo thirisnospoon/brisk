@@ -1359,6 +1359,8 @@ struct Prepaint {
     breakpoint_marks: Vec<(usize, bool, Option<bool>)>,
     /// Blame annotations on screen: (row index, label, age).
     annotations: Vec<(usize, ShapedLine, f32)>,
+    /// Debugger values after line ends: (row index, "name: value, …").
+    inline_vals: Vec<(usize, ShapedLine)>,
     gutter_w: Pixels,
     char_w: Pixels,
     marks: marks::CaretMarks,
@@ -1453,6 +1455,7 @@ impl Element for EditorElement {
         let mut lines = Vec::with_capacity(rows.len());
         let mut numbers = Vec::with_capacity(rows.len());
         let mut fold_marks = Vec::new();
+        let mut inline_vals = Vec::new();
         let mut si = 0;
         for (ri, &l) in rows.iter().enumerate() {
             let folded = ed.is_folded_header(l);
@@ -1495,6 +1498,10 @@ impl Element for EditorElement {
             }
             let (text, runs) = ed.line_with_inlays(l, text, runs, |len| TextRun { background_color: Some(Theme::hover_row()), ..run(len, Theme::text_dim()) });
             lines.push(window.text_system().shape_line(SharedString::from(text), font_size, &runs, None));
+            if let Some(v) = ed.inline_value(l) {
+                let r = TextRun { font: gpui::Font { style: gpui::FontStyle::Italic, ..run(0, Theme::text_dim()).font }, ..run(v.len(), Theme::text_dim()) };
+                inline_vals.push((ri, window.text_system().shape_line(SharedString::from(v.to_string()), font_size, &[r], None)));
+            }
 
             if !ed.show_gutter {
                 continue;
@@ -1534,7 +1541,7 @@ impl Element for EditorElement {
                 }
             }
         }
-        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, annotations, gutter_w, char_w, marks }
+        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, annotations, inline_vals, gutter_w, char_w, marks }
     }
 
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), pp: &mut Prepaint, window: &mut Window, cx: &mut App) {
@@ -1756,6 +1763,11 @@ impl Element for EditorElement {
             }
             for (line, y) in pp.lines.iter().zip(&line_ys) {
                 let _ = line.paint(point(text_x, *y), lh, window, cx);
+            }
+            for (i, v) in &pp.inline_vals {
+                if let (Some(line), Some(y)) = (pp.lines.get(*i), line_ys.get(*i)) {
+                    let _ = v.paint(point(text_x + line.width + pp.char_w * 3., *y), lh, window, cx);
+                }
             }
             for (q, at) in folded_boxes {
                 window.paint_quad(q);
