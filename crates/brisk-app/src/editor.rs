@@ -1355,8 +1355,8 @@ struct Prepaint {
     placeholder: ShapedLine,
     /// Bookmarks on screen: (row index, mnemonic shaped).
     bookmark_marks: Vec<(usize, Option<ShapedLine>)>,
-    /// Breakpoints on screen: (row index, has a condition, verified by the debugger).
-    breakpoint_marks: Vec<(usize, bool, Option<bool>)>,
+    /// Breakpoints on screen: (row index, has a condition, verified by the debugger, enabled).
+    breakpoint_marks: Vec<(usize, bool, Option<bool>, bool)>,
     /// Blame annotations on screen: (row index, label, age).
     annotations: Vec<(usize, ShapedLine, f32)>,
     /// Debugger values after line ends: (row index, "name: value, …").
@@ -1527,7 +1527,7 @@ impl Element for EditorElement {
         if ed.show_gutter {
             for (line, bp) in ed.breakpoint_list() {
                 if let Ok(i) = rows.binary_search(&line) {
-                    breakpoint_marks.push((i, bp.condition.is_some(), bp.verified));
+                    breakpoint_marks.push((i, bp.condition.is_some(), bp.verified, bp.enabled));
                 }
             }
         }
@@ -1790,13 +1790,15 @@ impl Element for EditorElement {
                 let x = bounds.left() + pp.gutter_w - px(30.) - n.width;
                 let _ = n.paint(point(x, *y), lh, window, cx);
             }
-            for &(i, conditional, verified) in &pp.breakpoint_marks {
+            for &(i, conditional, verified, enabled) in &pp.breakpoint_marks {
                 // A red circle over the line number (hollow when the debugger cannot stop there).
                 let y = line_ys[i];
                 let d = (lh - px(6.)).min(px(13.));
                 let x = bounds.left() + pp.gutter_w - px(30.) - d - px(1.);
                 let circle = Bounds::new(point(x, y + (lh - d) / 2.), size(d, d));
-                if verified == Some(false) {
+                if !enabled {
+                    window.paint_quad(gpui::outline(circle, Theme::text_dim(), gpui::BorderStyle::Solid).corner_radii(d / 2.));
+                } else if verified == Some(false) {
                     window.paint_quad(gpui::outline(circle, Theme::breakpoint(), gpui::BorderStyle::Solid).corner_radii(d / 2.));
                 } else {
                     window.paint_quad(fill(circle, Theme::breakpoint()).corner_radii(d / 2.));

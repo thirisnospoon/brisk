@@ -9,7 +9,7 @@ use crate::editor::Editor;
 use crate::theme::{Theme, MONO_FONT};
 use brisk_dap::{Client, Event, Frame, Launch, SourceBreakpoint, Variable};
 use brisk_keymap::Action;
-use brisk_run::{RunConfig, RunKind};
+use brisk_run::RunConfig;
 use futures::StreamExt;
 use gpui::prelude::*;
 use gpui::{div, px, Context, Entity, FocusHandle, ScrollHandle, Task, Window};
@@ -22,6 +22,26 @@ pub struct StoredBp {
     pub path: PathBuf,
     pub line: usize,
     pub condition: Option<String>,
+    pub enabled: bool,
+}
+
+impl StoredBp {
+    fn breakpoint(&self) -> Breakpoint {
+        Breakpoint { enabled: self.enabled, ..Breakpoint::new(self.condition.clone()) }
+    }
+}
+
+/// View Breakpoints (Ctrl+Shift+F8).
+pub struct BpDialog {
+    pub sel: usize,
+}
+
+/// A row of View Breakpoints.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BpRow {
+    Raised,
+    Uncaught,
+    Line(PathBuf, usize, Breakpoint),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,6 +148,10 @@ pub struct Debug {
     pub pending: bool,
     /// Bumped by every start and stop: a start that finishes late is dropped.
     gen: u64,
+    /// Python Exception Breakpoint: stop on raised (even handled) / uncaught exceptions.
+    pub exc_raised: bool,
+    pub exc_uncaught: bool,
+    pub bp_dialog: Option<BpDialog>,
 }
 
 impl Debug {
@@ -154,7 +178,22 @@ impl Debug {
             last: None,
             pending: false,
             gen: 0,
+            exc_raised: load_exc(root).0,
+            exc_uncaught: load_exc(root).1,
+            bp_dialog: None,
         }
+    }
+
+    /// debugpy's exception filters for setExceptionBreakpoints.
+    pub fn exception_filters(&self) -> Vec<&'static str> {
+        let mut v = Vec::new();
+        if self.exc_raised {
+            v.push("raised");
+        }
+        if self.exc_uncaught {
+            v.push("uncaught");
+        }
+        v
     }
 
     /// A session is starting, running or paused (Stop applies).
@@ -262,9 +301,35 @@ fn load(root: &Path) -> Vec<StoredBp> {
                 path: root.join(b.get("path")?.as_str()?),
                 line: b.get("line")?.as_u64()? as usize,
                 condition: b.get("condition").and_then(Value::as_str).map(str::to_string),
+                enabled: b.get("enabled").and_then(Value::as_bool).unwrap_or(true),
             })
         })
         .collect()
+}
+
+fn exc_path() -> PathBuf {
+    brisk_db::config_dir().join("exception_breakpoints.json")
+}
+
+/// (on raised, on uncaught) for the project; PyCharm's default stops on uncaught only.
+fn load_exc(root: &Path) -> (bool, bool) {
+    let v = std::fs::read_to_string(exc_path()).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    let p = v.as_ref().and_then(|v| v.get(root.to_string_lossy().to_lowercase()));
+    let get = |k: &str, d: bool| p.and_then(|p| p.get(k)).and_then(Value::as_bool).unwrap_or(d);
+    (get("raised", false), get("uncaught", true))
+}
+
+fn save_exc(root: &Path, raised: bool, uncaught: bool) {
+    let path = exc_path();
+    let mut all: serde_json::Map<String, Value> =
+        std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default();
+    all.insert(root.to_string_lossy().to_lowercase(), json!({"raised": raised, "uncaught": uncaught}));
+    if let Some(d) = path.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    if let Ok(s) = serde_json::to_string_pretty(&Value::Object(all)) {
+        let _ = std::fs::write(path, s);
+    }
 }
 
 fn watches_path() -> PathBuf {
@@ -436,7 +501,7 @@ impl Workspace {
             if open.contains(&b.path) {
                 continue;
             }
-            let bp = (b.line, Breakpoint { condition: b.condition.clone(), verified: None });
+            let bp = (b.line, b.breakpoint());
             match out.iter_mut().find(|(p, _)| *p == b.path) {
                 Some((_, v)) => v.push(bp),
                 None => out.push((b.path.clone(), vec![bp])),
@@ -454,7 +519,7 @@ impl Workspace {
         for (p, bps) in self.all_breakpoints(cx) {
             let rel = p.strip_prefix(&self.root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
             for (line, b) in bps {
-                list.push(json!({"path": rel, "line": line, "condition": b.condition}));
+                list.push(json!({"path": rel, "line": line, "condition": b.condition, "enabled": b.enabled}));
             }
         }
         let key = self.root.to_string_lossy().to_lowercase();
@@ -475,7 +540,7 @@ impl Workspace {
     pub(super) fn adopt_breakpoints(&mut self, ed: &Entity<Editor>, cx: &mut Context<Self>) {
         let Some(p) = ed.read(cx).path.clone() else { return };
         let mine: Vec<(usize, Breakpoint)> =
-            self.debug.stored.iter().filter(|b| b.path == p).map(|b| (b.line, Breakpoint { condition: b.condition.clone(), verified: None })).collect();
+            self.debug.stored.iter().filter(|b| b.path == p).map(|b| (b.line, b.breakpoint())).collect();
         if mine.is_empty() {
             return;
         }
@@ -491,7 +556,7 @@ impl Workspace {
         let Some(p) = ed.read(cx).path.clone() else { return };
         let list = ed.read(cx).breakpoint_list();
         self.debug.stored.retain(|b| b.path != p);
-        self.debug.stored.extend(list.into_iter().map(|(line, b)| StoredBp { path: p.clone(), line, condition: b.condition }));
+        self.debug.stored.extend(list.into_iter().map(|(line, b)| StoredBp { path: p.clone(), line, condition: b.condition, enabled: b.enabled }));
     }
 
     /// A breakpoint changed in an editor: save, and tell a running debugger.
@@ -507,7 +572,7 @@ impl Workspace {
             .all_breakpoints(cx)
             .into_iter()
             .filter(|(p, _)| p == path)
-            .flat_map(|(_, l)| l.into_iter().map(|(line, b)| SourceBreakpoint { line, condition: b.condition }))
+            .flat_map(|(_, l)| l.into_iter().filter(|(_, b)| b.enabled).map(|(line, b)| SourceBreakpoint { line, condition: b.condition }))
             .collect();
         if let Some((p, l)) = self.debug.session.as_ref().and_then(|s| s.temp.clone()) {
             if p == path && !v.iter().any(|b| b.line == l) {
@@ -588,21 +653,359 @@ impl Workspace {
         self.focus_editor(window, cx);
     }
 
-    /// Ctrl+Shift+F8: all breakpoints; Enter goes there.
-    pub(super) fn breakpoint_items(&self, q: &str, cx: &gpui::App) -> Vec<PopupItem> {
-        let ql = q.trim().to_lowercase();
-        let mut v = Vec::new();
+    // --- View Breakpoints dialog -------------------------------------------------------
+
+    pub(super) fn bp_rows(&self, cx: &gpui::App) -> Vec<BpRow> {
+        let mut v = vec![BpRow::Raised, BpRow::Uncaught];
         for (p, bps) in self.all_breakpoints(cx) {
-            let rel = p.strip_prefix(&self.root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
-            for (line, b) in bps {
-                let label = format!("{rel}:{}", line + 1);
-                let detail = b.condition.clone().map(|c| format!("if {c}")).unwrap_or_default();
-                if ql.is_empty() || label.to_lowercase().contains(&ql) || detail.to_lowercase().contains(&ql) {
-                    v.push(PopupItem { label, detail, hint: String::new(), target: Target::Bookmark(p.clone(), line) });
+            v.extend(bps.into_iter().map(|(l, b)| BpRow::Line(p.clone(), l, b)));
+        }
+        v
+    }
+
+    pub(super) fn open_bp_dialog(&mut self, cx: &mut Context<Self>) {
+        // The first line breakpoint is selected, as in PyCharm.
+        let sel = if self.bp_rows(cx).len() > 2 { 2 } else { 0 };
+        self.debug.bp_dialog = Some(BpDialog { sel });
+        cx.notify();
+    }
+
+    fn bp_editor(&self, path: &Path, cx: &gpui::App) -> Option<Entity<Editor>> {
+        self.editors().find(|e| e.read(cx).path.as_deref() == Some(path)).cloned()
+    }
+
+    /// A stored (not open) breakpoint changed: save, tell the debugger.
+    fn stored_bp_changed(&mut self, path: &Path, cx: &mut Context<Self>) {
+        self.persist_breakpoints(cx);
+        self.send_breakpoints(path, cx);
+        cx.notify();
+    }
+
+    pub(super) fn bp_set_enabled(&mut self, path: &Path, line: usize, on: bool, cx: &mut Context<Self>) {
+        match self.bp_editor(path, cx) {
+            Some(ed) => ed.update(cx, |e, cx| e.set_breakpoint_enabled(line, on, cx)),
+            None => {
+                if let Some(b) = self.debug.stored.iter_mut().find(|b| b.path == path && b.line == line) {
+                    b.enabled = on;
+                }
+                self.stored_bp_changed(path, cx);
+            }
+        }
+    }
+
+    pub(super) fn bp_set_condition(&mut self, path: &Path, line: usize, cond: Option<String>, cx: &mut Context<Self>) {
+        let cond = cond.filter(|c| !c.trim().is_empty());
+        match self.bp_editor(path, cx) {
+            Some(ed) => ed.update(cx, |e, cx| e.set_breakpoint_condition(line, cond, cx)),
+            None => {
+                if let Some(b) = self.debug.stored.iter_mut().find(|b| b.path == path && b.line == line) {
+                    b.condition = cond;
+                }
+                self.stored_bp_changed(path, cx);
+            }
+        }
+    }
+
+    pub(super) fn bp_remove(&mut self, path: &Path, line: usize, cx: &mut Context<Self>) {
+        match self.bp_editor(path, cx) {
+            Some(ed) => {
+                if ed.read(cx).breakpoint_list().iter().any(|(l, _)| *l == line) {
+                    ed.update(cx, |e, cx| e.toggle_breakpoint(line, cx));
+                }
+            }
+            None => {
+                self.debug.stored.retain(|b| !(b.path == path && b.line == line));
+                self.stored_bp_changed(path, cx);
+            }
+        }
+    }
+
+    /// The Python Exception Breakpoint checkboxes.
+    pub(super) fn set_exception_breakpoints(&mut self, raised: bool, uncaught: bool, cx: &mut Context<Self>) {
+        self.debug.exc_raised = raised;
+        self.debug.exc_uncaught = uncaught;
+        save_exc(&self.root, raised, uncaught);
+        if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) {
+            self.debug_request("setExceptionBreakpoints", json!({"filters": self.debug.exception_filters()}));
+        }
+        cx.notify();
+    }
+
+    /// Space / a click on the checkbox.
+    fn bp_toggle_row(&mut self, row: &BpRow, cx: &mut Context<Self>) {
+        let (r, u) = (self.debug.exc_raised, self.debug.exc_uncaught);
+        match row {
+            BpRow::Raised => self.set_exception_breakpoints(!r, u, cx),
+            BpRow::Uncaught => self.set_exception_breakpoints(r, !u, cx),
+            BpRow::Line(p, l, b) => self.bp_set_enabled(p, *l, !b.enabled, cx),
+        }
+    }
+
+    /// Enter / a double click: the breakpoint's line in the editor.
+    fn bp_go_to(&mut self, row: &BpRow, window: &mut Window, cx: &mut Context<Self>) {
+        let BpRow::Line(p, l, _) = row else { return };
+        self.debug.bp_dialog = None;
+        self.open_file(p, window, cx);
+        if let Some(ed) = self.active_editor().cloned() {
+            ed.update(cx, |e, cx| e.go_to_line(*l, cx));
+        }
+        self.focus_editor(window, cx);
+        cx.notify();
+    }
+
+    pub(super) fn bp_dialog_key(&mut self, e: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let rows = self.bp_rows(cx);
+        let Some(d) = self.debug.bp_dialog.as_mut() else { return };
+        d.sel = d.sel.min(rows.len().saturating_sub(1));
+        let sel = d.sel;
+        let row = rows.get(sel).cloned();
+        let k = &e.keystroke;
+        if k.modifiers.control || k.modifiers.alt || k.modifiers.platform {
+            if k.key == "f8" && k.modifiers.control && k.modifiers.shift {
+                self.debug.bp_dialog = None;
+            }
+            cx.notify();
+            return;
+        }
+        match k.key.as_str() {
+            "escape" => self.debug.bp_dialog = None,
+            "up" => d.sel = sel.saturating_sub(1),
+            "down" => d.sel = (sel + 1).min(rows.len().saturating_sub(1)),
+            "space" => {
+                if let Some(r) = row {
+                    self.bp_toggle_row(&r, cx);
+                }
+            }
+            "enter" | "f4" => {
+                if let Some(r) = row {
+                    self.bp_go_to(&r, window, cx);
+                }
+            }
+            "delete" => {
+                if let Some(BpRow::Line(p, l, _)) = row {
+                    self.bp_remove(&p, l, cx);
+                }
+            }
+            "backspace" => {
+                if let Some(BpRow::Line(p, l, b)) = row {
+                    let mut c = b.condition.unwrap_or_default();
+                    c.pop();
+                    self.bp_set_condition(&p, l, Some(c), cx);
+                }
+            }
+            _ => {
+                // Typing edits the selected breakpoint's condition.
+                if let (Some(BpRow::Line(p, l, b)), Some(t)) = (row, k.key_char.as_deref().filter(|t| !t.chars().any(char::is_control))) {
+                    let mut c = b.condition.unwrap_or_default();
+                    c.push_str(t);
+                    self.bp_set_condition(&p, l, Some(c), cx);
                 }
             }
         }
-        v
+        cx.notify();
+    }
+
+    pub(super) fn render_bp_dialog(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let sel = self.debug.bp_dialog.as_ref()?.sel;
+        let rows = self.bp_rows(cx);
+        let sel = sel.min(rows.len().saturating_sub(1));
+        let check = |on: bool| {
+            div()
+                .size(px(14.))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(3.))
+                .border_1()
+                .border_color(if on { Theme::accent() } else { Theme::text_dim() })
+                .when(on, |x| x.bg(Theme::accent()).text_color(gpui::white()).text_size(px(10.)).child("✓"))
+        };
+        let group = |label: &'static str| div().px(px(8.)).pt(px(6.)).pb(px(2.)).text_size(px(11.)).text_color(Theme::text_dim()).child(label);
+        let mut list: Vec<gpui::AnyElement> = vec![group("PYTHON EXCEPTION BREAKPOINTS").into_any_element()];
+        for (i, r) in rows.iter().enumerate() {
+            if i == 2 {
+                list.push(group("PYTHON LINE BREAKPOINTS").into_any_element());
+            }
+            let (on, label, detail) = match r {
+                BpRow::Raised => (self.debug.exc_raised, "On raised exceptions".to_string(), "even when handled".to_string()),
+                BpRow::Uncaught => (self.debug.exc_uncaught, "On uncaught exceptions".to_string(), String::new()),
+                BpRow::Line(p, l, b) => {
+                    let rel = p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/");
+                    (b.enabled, format!("{rel}:{}", l + 1), b.condition.clone().map(|c| format!("if {c}")).unwrap_or_default())
+                }
+            };
+            let row = r.clone();
+            let row2 = r.clone();
+            let selected = i == sel;
+            list.push(
+                div()
+                    .id(("bp-row", i))
+                    .h(px(24.))
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .cursor_pointer()
+                    .when(selected, |x| x.bg(Theme::selection_row()))
+                    .when(!selected, |x| x.hover(|s| s.bg(Theme::hover_row())))
+                    .child(
+                        div().id(("bp-check", i)).child(check(on)).on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.bp_toggle_row(&row, cx);
+                        })),
+                    )
+                    .child(div().text_color(if on { Theme::text() } else { Theme::text_muted() }).whitespace_nowrap().child(label))
+                    .child(div().text_color(Theme::text_dim()).whitespace_nowrap().overflow_hidden().child(detail))
+                    .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, w, cx| {
+                        if let Some(d) = this.debug.bp_dialog.as_mut() {
+                            d.sel = i;
+                        }
+                        if ev.click_count() >= 2 {
+                            this.bp_go_to(&row2, w, cx);
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            );
+        }
+        let button = |id: &'static str, label: &'static str, primary: bool, on: bool| {
+            div()
+                .id(id)
+                .px(px(14.))
+                .h(px(28.))
+                .flex()
+                .items_center()
+                .rounded(px(5.))
+                .when(!on, |b| b.text_color(Theme::text_dim()).border_1().border_color(Theme::divider()))
+                .when(on, |b| b.cursor_pointer().active(|s| s.bg(Theme::press())))
+                .when(on && primary, |b| b.bg(Theme::accent()).text_color(gpui::white()))
+                .when(on && !primary, |b| b.border_1().border_color(Theme::divider()).hover(|st| st.bg(Theme::hover_row())))
+                .child(label)
+        };
+        let cur = rows.get(sel).cloned();
+        let details: gpui::AnyElement = match &cur {
+            Some(BpRow::Line(p, l, b)) => {
+                let cond = b.condition.clone().unwrap_or_default();
+                let (p2, l2) = (p.clone(), *l);
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(format!("{}:{}", p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), l + 1)))
+                    .child(
+                        div().id("bp-enabled").flex().items_center().gap(px(8.)).cursor_pointer().child(check(b.enabled)).child("Enabled").on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(BpRow::Line(p, l, b)) = this.bp_rows(cx).into_iter().find(|r| matches!(r, BpRow::Line(p, l, _) if *p == p2 && *l == l2)) {
+                                this.bp_set_enabled(&p, l, !b.enabled, cx);
+                            }
+                        })),
+                    )
+                    .child(div().text_color(Theme::text_muted()).child("Condition (type to edit):"))
+                    .child(
+                        div()
+                            .h(px(28.))
+                            .px(px(8.))
+                            .flex()
+                            .items_center()
+                            .rounded(px(5.))
+                            .border_1()
+                            .border_color(Theme::accent())
+                            .bg(Theme::editor_bg())
+                            .font_family(MONO_FONT)
+                            .child(cond)
+                            .child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret())),
+                    )
+                    .child(div().text_size(px(12.)).text_color(Theme::text_dim()).child("A Python expression: the debugger stops only when it is true. Empty: always."))
+                    .into_any_element()
+            }
+            Some(BpRow::Raised) => div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("On raised exceptions"))
+                .child(div().text_color(Theme::text_muted()).child("Stop wherever an exception is raised, even if a try block handles it (debugpy filter \"raised\")."))
+                .into_any_element(),
+            Some(BpRow::Uncaught) => div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("On uncaught exceptions"))
+                .child(div().text_color(Theme::text_muted()).child("Stop where an exception nothing handles is raised (debugpy filter \"uncaught\")."))
+                .into_any_element(),
+            None => div().into_any_element(),
+        };
+        let is_line = matches!(cur, Some(BpRow::Line(..)));
+        let (cur_rm, cur_go) = (cur.clone(), cur.clone());
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .flex()
+                .justify_center()
+                .items_start()
+                .pt(px(70.))
+                .occlude()
+                .child(
+                    div()
+                        .id("bp-dialog")
+                        .w(px(760.))
+                        .flex()
+                        .flex_col()
+                        .p(px(16.))
+                        .gap(px(10.))
+                        .bg(Theme::panel())
+                        .border_1()
+                        .border_color(Theme::divider())
+                        .rounded(px(10.))
+                        .shadow_lg()
+                        .text_size(px(13.))
+                        .text_color(Theme::text())
+                        .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("Breakpoints"))
+                        .child(
+                            div()
+                                .flex()
+                                .h(px(320.))
+                                .gap(px(12.))
+                                .child(
+                                    div()
+                                        .id("bp-list")
+                                        .w(px(380.))
+                                        .flex_shrink_0()
+                                        .overflow_y_scroll()
+                                        .border_1()
+                                        .border_color(Theme::divider())
+                                        .rounded(px(6.))
+                                        .bg(Theme::editor_bg())
+                                        .children(list),
+                                )
+                                .child(div().flex_1().min_w_0().child(details)),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(div().flex_1().text_size(px(12.)).text_color(Theme::text_dim()).child("Space: enable/disable · Delete: remove · Enter: go to · Esc: close"))
+                                .child(button("bp-remove", "Remove", false, is_line).on_click(cx.listener(move |this, _, _, cx| {
+                                    if let Some(BpRow::Line(p, l, _)) = cur_rm.clone() {
+                                        this.bp_remove(&p, l, cx);
+                                    }
+                                })))
+                                .child(button("bp-goto", "Go to", false, is_line).on_click(cx.listener(move |this, _, w, cx| {
+                                    if let Some(r) = cur_go.clone() {
+                                        this.bp_go_to(&r, w, cx);
+                                    }
+                                })))
+                                .child(button("bp-done", "Done", true, true).on_click(cx.listener(|this, _, _, cx| {
+                                    this.debug.bp_dialog = None;
+                                    cx.notify();
+                                }))),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 
     // --- Session ----------------------------------------------------------------------
@@ -611,10 +1014,7 @@ impl Workspace {
         use Action as A;
         match action {
             A::ToggleBreakpoint => self.toggle_breakpoint_here(window, cx),
-            A::ViewBreakpoints => {
-                self.structure = self.breakpoint_items("", cx);
-                self.open_popup(PopupKind::Breakpoints);
-            }
+            A::ViewBreakpoints => self.open_bp_dialog(cx),
             A::Debug => {
                 self.reload_runs();
                 let cfg = self.runs.file.selected_config().cloned().or_else(|| self.context_config(window, cx));
@@ -771,7 +1171,8 @@ impl Workspace {
         self.status = "Pausing…".into();
     }
 
-    fn start_debug(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
+    /// Debug a configuration (also pytest ones: a file, a folder or `file::test`).
+    pub(super) fn start_debug(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
         self.save_all(cx);
         if self.debug.is_live() {
             self.stop_debug(cx);
@@ -785,11 +1186,9 @@ impl Workspace {
             self.show_toast("No Python interpreter configured: create a .venv or install Python".into(), true, cx);
             return;
         };
-        let mut cmd = brisk_run::build(&self.root, &cfg, &python);
-        if cfg.kind == RunKind::Pytest {
-            // No live test tree while debugging: plain pytest output in the console.
-            cmd.args.retain(|a| a != "-p");
-        }
+        // pytest runs as `-m pytest <targets>` (a file, a folder or `file::test`); without the
+        // Run window's reporting plugin its output is plain text in the console.
+        let cmd = brisk_run::build(&self.root, &cfg, &python);
         let launch = launch_for(&cmd);
         self.debug.cwd = launch.cwd.clone();
         self.debug.exception = None;
@@ -917,7 +1316,7 @@ impl Workspace {
                 for (p, _) in self.all_breakpoints(cx) {
                     self.send_breakpoints(&p, cx);
                 }
-                self.debug_request("setExceptionBreakpoints", json!({"filters": ["uncaught"]}));
+                self.debug_request("setExceptionBreakpoints", json!({"filters": self.debug.exception_filters()}));
                 self.debug_request("configurationDone", json!({}));
                 if let Some(s) = self.debug.session.as_mut() {
                     s.state = State::Running;
@@ -2071,8 +2470,110 @@ impl Workspace {
                 t.dispatch(Action::Stop, w, cx);
             });
             until!(|s: Option<State>| s == Some(State::Ended));
-            let _ = this.update_in(cx, |t, _, cx| {
+            // A new session reached a stop or its end (the previous one is Ended too).
+            macro_rules! settled {
+                () => {{
+                    let mut st = None;
+                    for _ in 0..300 {
+                        wait(100).await;
+                        let (pending, s) = this.update(cx, |t, _| (t.debug.pending, t.debug.state())).unwrap_or((false, None));
+                        if !pending && matches!(s, Some(State::Paused(_) | State::Ended)) {
+                            st = s;
+                            break;
+                        }
+                    }
+                    st
+                }};
+            }
+            // View Breakpoints: a disabled breakpoint is skipped; "on raised" stops on a handled exception.
+            let raise = dir.join("dbg_raise.py");
+            let _ = std::fs::write(&raise, "def f():\n    try:\n        raise ValueError(\"handled\")\n    except ValueError:\n        pass\n    x = 1\n    return x\n\n\nf()\n");
+            let _ = this.update_in(cx, |t, w, cx| {
                 eprintln!("smoke-debug: after stop exception={:?}", t.debug.exception);
+                t.open_file(&raise, w, cx);
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.toggle_breakpoint(5, cx));
+                }
+                t.dispatch(Action::ViewBreakpoints, w, cx);
+                let rows: Vec<String> = t
+                    .bp_rows(cx)
+                    .iter()
+                    .map(|r| match r {
+                        BpRow::Raised => format!("raised={}", t.debug.exc_raised),
+                        BpRow::Uncaught => format!("uncaught={}", t.debug.exc_uncaught),
+                        BpRow::Line(p, l, b) => format!("{}:{} enabled={}", p.file_name().unwrap_or_default().to_string_lossy(), l + 1, b.enabled),
+                    })
+                    .collect();
+                eprintln!("smoke-debug: view breakpoints open={} rows {rows:?}", t.debug.bp_dialog.is_some());
+                t.bp_set_enabled(&raise, 5, false, cx);
+                t.set_exception_breakpoints(false, true, cx);
+                let sent = t.source_breakpoints(&raise, cx).len();
+                let shown = t.active_editor().map(|e| e.read(cx).breakpoint_list().into_iter().map(|(l, b)| (l + 1, b.enabled)).collect::<Vec<_>>());
+                eprintln!("smoke-debug: disabled -> editor {shown:?}, sent to debugpy {sent}");
+                t.debug.bp_dialog = None;
+                t.dispatch(Action::DebugContext, w, cx);
+            });
+            let s1 = settled!();
+            let _ = this.update_in(cx, |t, w, cx| {
+                eprintln!("smoke-debug: disabled bp + raised off -> {s1:?}");
+                t.set_exception_breakpoints(true, true, cx);
+                t.dispatch(Action::DebugContext, w, cx);
+            });
+            let s2 = settled!();
+            wait(800).await;
+            let _ = this.update_in(cx, |t, w, cx| {
+                let saved = std::fs::read_to_string(exc_path()).unwrap_or_default().replace(char::is_whitespace, "");
+                eprintln!(
+                    "smoke-debug: raised on -> {s2:?} at {:?} header={:?} saved={}",
+                    t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)),
+                    t.debug.exception,
+                    saved.contains("\"raised\":true")
+                );
+                t.dispatch(Action::Stop, w, cx);
+                t.set_exception_breakpoints(false, true, cx);
+                t.bp_set_condition(&raise, 5, Some("x > 0".into()), cx);
+                let c = t.bp_rows(cx).into_iter().find_map(|r| match r {
+                    BpRow::Line(_, 5, b) => Some((b.condition, b.enabled)),
+                    _ => None,
+                });
+                t.bp_remove(&raise, 5, cx);
+                eprintln!("smoke-debug: condition {c:?}; after remove rows={}", t.bp_rows(cx).len());
+            });
+            until!(|s: Option<State>| s == Some(State::Ended));
+            // pytest: one test (caret inside it), then the whole file; a breakpoint in the test.
+            let test = dir.join("test_dbg_calc.py");
+            let _ = std::fs::write(&test, "def double(x):\n    return x * 2\n\n\ndef test_double():\n    value = double(21)\n    assert value == 42\n\n\ndef test_other():\n    assert double(1) == 2\n");
+            for (caret, what) in [(5usize, "one test"), (0, "file")] {
+                let _ = this.update_in(cx, |t, w, cx| {
+                    t.open_file(&test, w, cx);
+                    if let Some(ed) = t.active_editor().cloned() {
+                        ed.update(cx, |e, cx| {
+                            if !e.breakpoint_list().iter().any(|(l, _)| *l == 6) {
+                                e.toggle_breakpoint(6, cx);
+                            }
+                            e.go_to_line(caret, cx);
+                        });
+                    }
+                    t.dispatch(Action::DebugContext, w, cx);
+                });
+                let s = settled!();
+                wait(800).await;
+                let _ = this.update_in(cx, |t, w, cx| {
+                    let cmd = t.debug.console.first().map(|(l, _)| l.trim_end().rsplit(' ').take(2).collect::<Vec<_>>().join(" ")).unwrap_or_default();
+                    let value = t.debug.vars.iter().find(|r| r.var.name == "value").map(|r| r.var.value.clone());
+                    eprintln!("smoke-debug: pytest {what}: {s:?} at {:?} value={value:?} cmd tail {cmd:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                    t.dispatch(Action::Resume, w, cx);
+                });
+                until!(|s: Option<State>| s == Some(State::Ended));
+                wait(300).await;
+                let _ = this.update_in(cx, |t, _, _| {
+                    let summary = t.debug.console.iter().rev().map(|(l, _)| l.trim()).find(|l| l.contains("passed") || l.contains("failed"));
+                    eprintln!("smoke-debug: pytest {what} result {summary:?}");
+                });
+            }
+            let _ = this.update_in(cx, |_, _, cx| {
+                let _ = std::fs::remove_file(&raise);
+                let _ = std::fs::remove_file(&test);
                 let _ = std::fs::remove_file(&exc);
                 let _ = std::fs::remove_file(&spin);
                 eprintln!("smoke-debug: done");

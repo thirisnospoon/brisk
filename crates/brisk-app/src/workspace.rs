@@ -141,8 +141,6 @@ enum PopupKind {
     LocalHistory,
     /// A breakpoint's condition.
     BreakpointCondition,
-    /// View Breakpoints.
-    Breakpoints,
 }
 
 #[derive(Clone)]
@@ -849,6 +847,11 @@ impl Workspace {
             cx.stop_propagation();
             return;
         }
+        if self.debug.bp_dialog.is_some() {
+            self.bp_dialog_key(e, window, cx);
+            cx.stop_propagation();
+            return;
+        }
         if self.settings_dialog.is_some() {
             self.settings_key(e, window, cx);
             cx.stop_propagation();
@@ -1343,7 +1346,6 @@ impl Workspace {
             PopupKind::BookmarkMnemonic => self.mnemonic_items(&q),
             PopupKind::PasteHistory => clip_items(&q),
             PopupKind::BreakpointCondition => self.condition_items(&q),
-            PopupKind::Breakpoints => self.structure_items(&q),
             PopupKind::SearchEverywhere(SeTab::Actions) | PopupKind::FindAction => self.action_items(&q, 50),
             PopupKind::RecentFiles => {
                 let ql = q.to_lowercase();
@@ -2058,7 +2060,6 @@ impl Workspace {
             PopupKind::PasteHistory => ("Paste from History", "Type to filter"),
             PopupKind::LocalHistory => ("Local History", "Enter: show diff · Ctrl+Enter: revert"),
             PopupKind::BreakpointCondition => ("Breakpoint Condition", "Python expression, e.g. i == 3"),
-            PopupKind::Breakpoints => ("Breakpoints", "Type to filter"),
             PopupKind::FileName | PopupKind::FileDelete => match &self.file_op {
                 Some(op) => (op.title(), op.placeholder()),
                 None => ("", ""),
@@ -2370,6 +2371,7 @@ impl Render for Workspace {
             .children(self.render_find_popup(cx).map(|e| fade_in("find-in", e, 110)))
             .children(self.render_ds_dialog(cx).map(|e| fade_in("ds-in", e, 110)))
             .children(self.render_settings(cx).map(|e| fade_in("settings-in", e, 110)))
+            .children(self.render_bp_dialog(cx).map(|e| fade_in("bp-dialog-in", e, 110)))
             .children(self.render_run_dialog(cx).map(|e| fade_in("run-dialog-in", e, 110)))
             .children(self.render_git_dialog(cx).map(|e| fade_in("git-dialog-in", e, 110)))
             .children(self.render_menu(viewport, cx).map(|e| fade_in("menu-in", e, 90)))

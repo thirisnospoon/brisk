@@ -9,6 +9,14 @@ pub struct Breakpoint {
     pub condition: Option<String>,
     /// What the debugger said: None until a session reports, Some(false) = never stops.
     pub verified: Option<bool>,
+    /// Disabled in View Breakpoints: kept, drawn grey, not sent to the debugger.
+    pub enabled: bool,
+}
+
+impl Breakpoint {
+    pub fn new(condition: Option<String>) -> Self {
+        Self { condition, verified: None, enabled: true }
+    }
 }
 
 #[derive(Default)]
@@ -91,7 +99,7 @@ impl Editor {
                 false
             }
             None => {
-                self.breakpoints.marks.push((at, Breakpoint { condition: None, verified: None }));
+                self.breakpoints.marks.push((at, Breakpoint::new(None)));
                 self.breakpoints.marks.sort_by_key(|m| m.0);
                 true
             }
@@ -109,7 +117,7 @@ impl Editor {
         match self.breakpoints.marks.iter_mut().find(|m| m.0 == at) {
             Some(m) => m.1.condition = condition,
             None => {
-                self.breakpoints.marks.push((at, Breakpoint { condition, verified: None }));
+                self.breakpoints.marks.push((at, Breakpoint::new(condition)));
                 self.breakpoints.marks.sort_by_key(|m| m.0);
             }
         }
@@ -117,10 +125,24 @@ impl Editor {
         cx.notify();
     }
 
+    /// Enable or disable the breakpoint on `line` (View Breakpoints).
+    pub fn set_breakpoint_enabled(&mut self, line: usize, enabled: bool, cx: &mut gpui::Context<Self>) {
+        self.sync_breakpoints();
+        let at = self.buffer.line_start(line.min(self.buffer.len_lines().saturating_sub(1)));
+        if let Some(m) = self.breakpoints.marks.iter_mut().find(|m| m.0 == at) {
+            m.1.enabled = enabled;
+            if !enabled {
+                m.1.verified = None;
+            }
+            cx.emit(EditorEvent::BreakpointsChanged);
+            cx.notify();
+        }
+    }
+
     /// What the debugger reported, in the order of `breakpoint_list`.
     pub fn set_breakpoints_verified(&mut self, verified: &[Option<usize>]) {
         self.sync_breakpoints();
-        for (m, v) in self.breakpoints.marks.iter_mut().zip(verified) {
+        for (m, v) in self.breakpoints.marks.iter_mut().filter(|m| m.1.enabled).zip(verified) {
             m.1.verified = Some(v.is_some());
         }
     }
