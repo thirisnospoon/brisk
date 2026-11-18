@@ -207,6 +207,8 @@ actions! {
     Resume => "Resume Program", "Run";
     RunToCursor => "Run to Cursor", "Run";
     EvaluateExpression => "Evaluate Expression", "Run";
+    PauseProgram => "Pause Program", "Run";
+    RerunDebug => "Rerun Debug Session", "Run";
 
     // VCS
     Commit => "Commit", "Git";
