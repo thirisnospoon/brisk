@@ -2471,7 +2471,7 @@ impl Render for Workspace {
                     .when_some(left, |d, panel| {
                         d.child(
                             div().w(px(300.)).h_full().flex_shrink_0().flex().bg(Theme::panel()).border_r_1().border_color(Theme::border())
-                                .child(div().flex_1().min_w_0().h_full().child(panel))
+                                .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-left-in", panel)))
                                 .child(self.hide_column(ToolSide::Left, cx)),
                         )
                     })
@@ -2485,7 +2485,7 @@ impl Render for Workspace {
                             .when_some(bottom, |d, panel| {
                                 d.child(
                                     div().h(px(bottom_h)).flex_shrink_0().flex().bg(Theme::panel()).border_t_1().border_color(Theme::divider())
-                                        .child(div().flex_1().min_w_0().h_full().child(panel))
+                                        .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-bottom-in", panel)))
                                         .child(self.hide_column(ToolSide::Bottom, cx)),
                                 )
                             }),
@@ -2493,7 +2493,7 @@ impl Render for Workspace {
                     .when_some(right, |d, panel| {
                         d.child(
                             div().w(px(320.)).h_full().flex_shrink_0().flex().bg(Theme::panel()).border_l_1().border_color(Theme::border())
-                                .child(div().flex_1().min_w_0().h_full().child(panel))
+                                .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-right-in", panel)))
                                 .child(self.hide_column(ToolSide::Right, cx)),
                         )
                     })
@@ -2533,16 +2533,28 @@ impl ToolSide {
     }
 }
 
-/// Overlays (popups, menus, dialogs, toasts) fade in over `ms` instead of popping up.
+/// Overlays (popups, menus, dialogs, toasts) fade in over `ms` instead of popping up, and
+/// settle the last few pixels upward: short enough never to hold up the next keystroke.
 fn fade_in(id: &'static str, e: impl IntoElement, ms: u64) -> impl IntoElement {
     use gpui::{Animation, AnimationExt};
+    // Toasts and balloons rise a little more than popups and menus.
+    let rise = if ms >= 160 { 8. } else if ms >= 110 { 4. } else { 2. };
     div()
         .absolute()
-        .top_0()
         .left_0()
         .size_full()
         .child(e)
-        .with_animation(id, Animation::new(std::time::Duration::from_millis(ms)).with_easing(gpui::ease_out_quint()), |d, t| d.opacity(t))
+        .with_animation(id, Animation::new(std::time::Duration::from_millis(ms)).with_easing(gpui::ease_out_quint()), move |d, t| {
+            d.opacity(t).top(px((1. - t) * rise))
+        })
+}
+
+/// A tool window fades in when it opens (no slide: the editor next to it must not move twice).
+fn panel_in(id: &'static str, e: impl IntoElement) -> impl IntoElement {
+    use gpui::{Animation, AnimationExt};
+    div().size_full().child(e).with_animation(id, Animation::new(std::time::Duration::from_millis(120)).with_easing(gpui::ease_out_quint()), |d, t| {
+        d.opacity(0.35 + 0.65 * t)
+    })
 }
 
 impl Workspace {
