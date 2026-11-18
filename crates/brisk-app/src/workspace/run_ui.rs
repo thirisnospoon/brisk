@@ -522,7 +522,7 @@ impl Workspace {
 }
 
 impl Workspace {
-    /// `BRISK_SMOKE_RUNWIN=1` (on a scratch project): writes `ask.py` (input()), `main.py`,
+    /// `BRISK_SMOKE_RUNWIN=1` (on an empty folder): writes `ask.py` (input()), `main.py`,
     /// `sleep.py` and `w1.py`…`w5.py` into the project root and checks stdin,
     /// save-before-run, tabs, toggles, Clear All and saving a temporary configuration.
     pub(super) fn run_window_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
