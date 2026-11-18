@@ -4,7 +4,7 @@
 //! With `BRISK_SMOKE_INTEL_HOLD=1` it stops with Quick Documentation (Ctrl+Q) open on
 //! `defaultdict`; with `BRISK_SMOKE_INTEL_HOLD=list`, with the completion list and its preview;
 //! with `BRISK_SMOKE_INTEL_HOLD=dumps`, with Quick Documentation on `json.dumps` (prose
-//! with inline code); with `=usages`, at the end with the Find Usages tree open.
+//! with inline code); with `=usages` or `=inlay`, with the Find Usages tree or inlay hints.
 
 use super::{Target, Workspace};
 use gpui::{AsyncWindowContext, Context, WeakEntity, Window};
@@ -281,6 +281,41 @@ impl Workspace {
                 this.find_window_key(&ks, window, cx);
             });
             if hold.as_deref() == Some("usages") {
+                eprintln!("smoke-intel: holding");
+                return;
+            }
+            // Inlay hints: inferred types and parameter names inside the lines.
+            let _ = this.update_in(cx, |this, window, cx| {
+                let f = this.root.join("hints.py");
+                let _ = std::fs::write(&f, "def f(a: int, b: str = 'x') -> list[int]:
+    return [a]
+
+x = f(1, b='y')
+y = [i * 2 for i in x]
+");
+                this.reindex_files(cx);
+                this.open_file(&f, window, cx);
+            });
+            wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| !e.read(cx).inlay_labels(3).is_empty())).await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(ed) = this.active_editor().cloned() else { return };
+                let labels: Vec<Vec<String>> = (3..5).map(|l| ed.read(cx).inlay_labels(l)).collect();
+                eprintln!("smoke-intel: inlay hints lines 4-5 {labels:?}");
+                // The text is untouched, and typing hides a line's hints until ty answers again.
+                eprintln!("smoke-intel: inlay text unchanged: {}", ed.read(cx).buffer.line(3) == "x = f(1, b='y')");
+                ed.update(cx, |e, cx| {
+                    e.buffer.set_caret(e.buffer.line_start(3) + 1, false);
+                    e.type_for_smoke("x", cx);
+                });
+                eprintln!("smoke-intel: after typing, line 4 hints {:?}", ed.read(cx).inlay_labels(3));
+            });
+            pause(1500).await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(ed) = this.active_editor().cloned() else { return };
+                eprintln!("smoke-intel: after ty's check, line 4 hints {:?}", ed.read(cx).inlay_labels(3));
+                ed.update(cx, |e, _| e.buffer.undo());
+            });
+            if hold.as_deref() == Some("inlay") {
                 eprintln!("smoke-intel: holding");
                 return;
             }

@@ -145,7 +145,20 @@ impl Workspace {
         self.ensure_ty(cx);
         let Some(ty) = self.ty_sync(&path, version, text) else { return };
         let fut = ty.diagnostics(&path);
+        // Inlay hints for the whole file, with the same text.
+        let hints = ty.inlay_hints(&path, 0..text.lines().count() + 1);
         let epoch = self.lsp.epoch;
+        let hint_ed = ed.clone();
+        cx.spawn(async move |_, cx| {
+            if let Ok(h) = hints.await {
+                let _ = hint_ed.update(cx, |e, cx| {
+                    if e.set_inlay_hints(version, h) {
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
             let res = fut.await;
             let _ = this.update(cx, |this, cx| {

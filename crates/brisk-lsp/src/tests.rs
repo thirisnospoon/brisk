@@ -106,6 +106,17 @@ fn real_ty() {
 }
 
 #[test]
+fn inlay_hints() {
+    let v = json!([
+        {"kind": 2, "label": [{"value": "b"}, {"value": "="}], "position": {"line": 3, "character": 9}},
+        {"kind": 1, "label": [{"value": ": "}, {"value": "list", "location": {}}, {"value": "[int]"}], "position": {"line": 3, "character": 1}},
+        {"label": "x", "position": {"line": 0, "character": 0}, "paddingRight": true}
+    ]);
+    let h = parse_inlay_hints(&v);
+    assert_eq!(h.iter().map(|h| (h.pos.line, h.pos.col, h.label.as_str(), h.parameter)).collect::<Vec<_>>(), [(0, 0, "x ", false), (3, 1, ": list[int]", false), (3, 9, "b=", true)]);
+}
+
+#[test]
 fn merged_edits() {
     let e = |l: usize, a: usize, b: usize, t: &str| Edit { start: Pos { line: l, col: a }, end: Pos { line: l, col: b }, content: t.into() };
     let a = PathBuf::from("a.py");

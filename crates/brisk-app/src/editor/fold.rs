@@ -319,7 +319,7 @@ impl Editor {
             let Some(l) = self.layout.as_ref() else { return false };
             let text = self.buffer.line(line);
             let end_x = match l.shaped(line) {
-                Some(s) => l.text_x + s.x_for_index(text.len()),
+                Some(s) => l.text_x + s.x_for_index(self.display_byte(line, &text, text.len() + 1) - 1),
                 None => l.text_x + l.char_w * text.chars().count() as f32,
             };
             if p.x >= end_x + l.char_w * 0.5 && p.x <= end_x + l.char_w * 5. {

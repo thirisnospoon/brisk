@@ -284,6 +284,41 @@ fn location(v: &Value) -> Option<Location> {
     Some(Location { path: uri_to_path(uri)?, start: pos(&range["start"]), end: pos(&range["end"]) })
 }
 
+/// An inlay hint: an inferred type after a name (`: list[int]`) or a parameter name before
+/// an argument (`a=`), drawn inside the line without being part of the text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InlayHint {
+    pub pos: Pos,
+    pub label: String,
+    /// A parameter-name hint (LSP kind 2); otherwise a type hint.
+    pub parameter: bool,
+}
+
+/// `textDocument/inlayHint` reply: labels may be a string or label parts.
+pub fn parse_inlay_hints(v: &Value) -> Vec<InlayHint> {
+    let Some(items) = v.as_array() else { return Vec::new() };
+    let mut out: Vec<InlayHint> = items
+        .iter()
+        .filter_map(|h| {
+            let label = match &h["label"] {
+                Value::String(s) => s.clone(),
+                Value::Array(parts) => parts.iter().filter_map(|p| p["value"].as_str()).collect(),
+                _ => return None,
+            };
+            let mut label = label;
+            if h["paddingLeft"].as_bool() == Some(true) {
+                label.insert(0, ' ');
+            }
+            if h["paddingRight"].as_bool() == Some(true) {
+                label.push(' ');
+            }
+            (!label.trim().is_empty()).then(|| InlayHint { pos: pos(&h["position"]), label, parameter: h["kind"].as_u64() == Some(2) })
+        })
+        .collect();
+    out.sort_by_key(|h| h.pos);
+    out
+}
+
 pub fn parse_locations(v: &Value) -> Vec<Location> {
     match v {
         Value::Array(a) => a.iter().filter_map(location).collect(),
@@ -567,6 +602,7 @@ impl Ty {
                 "synchronization": {"didSave": false},
                 "diagnostic": {"dynamicRegistration": false},
                 "hover": {"contentFormat": ["markdown", "plaintext"]},
+                "inlayHint": {},
                 "completion": {"completionItem": {"snippetSupport": false, "documentationFormat": ["markdown", "plaintext"]}},
                 "codeAction": {"codeActionLiteralSupport": {"codeActionKind": {"valueSet": ["", "quickfix", "source", "source.organizeImports", "source.fixAll"]}}, "isPreferredSupport": true},
                 "signatureHelp": {"signatureInformation": {"parameterInformation": {"labelOffsetSupport": true}}},
@@ -623,6 +659,12 @@ impl Ty {
 
     pub fn did_close(&self, path: &Path) {
         self.client.notify("textDocument/didClose", json!({"textDocument": text_doc(path)}));
+    }
+
+    /// Inlay hints for lines `lines` of the document.
+    pub fn inlay_hints(&self, path: &Path, lines: std::ops::Range<usize>) -> impl Future<Output = Result<Vec<InlayHint>, String>> + Send + 'static {
+        let range = json!({"start": {"line": lines.start, "character": 0}, "end": {"line": lines.end, "character": 0}});
+        call(self.client.request("textDocument/inlayHint", json!({"textDocument": text_doc(path), "range": range})), parse_inlay_hints)
     }
 
     pub fn diagnostics(&self, path: &Path) -> impl Future<Output = Result<Vec<Diagnostic>, String>> + Send + 'static {
