@@ -12,13 +12,35 @@ use gpui::{div, px, Context, Entity, FocusHandle, Focusable, KeyDownEvent, Scrol
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Kind {
     Out,
     Err,
-    /// Echo of the code that ran.
-    Input,
     Info,
+    /// Echo of the code that ran (">>> " / "... " and the line), with Python highlights
+    /// relative to the line's text.
+    Code(Vec<(std::ops::Range<usize>, brisk_syntax::Highlight)>),
+}
+
+/// The ran code as echo lines with their Python highlights.
+fn echo_lines(code: &str) -> Vec<(String, Kind)> {
+    let mut tree = brisk_syntax::SyntaxTree::new(brisk_syntax::Lang::Python);
+    tree.parse(code);
+    let spans = tree.highlights(code, 0..code.len());
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (i, l) in code.split('\n').enumerate() {
+        let end = start + l.len();
+        const PREFIX: usize = 4;
+        let hl = spans
+            .iter()
+            .filter(|s| s.range.start < end && s.range.end > start)
+            .map(|s| (s.range.start.max(start) - start + PREFIX..s.range.end.min(end) - start + PREFIX, s.kind))
+            .collect();
+        out.push((format!("{} {l}\n", if i == 0 { ">>>" } else { "..." }), Kind::Code(hl)));
+        start = end + 1;
+    }
+    out
 }
 
 pub struct PyConsole {
@@ -38,6 +60,8 @@ pub struct PyConsole {
     /// The prompt of a pending `input()` call.
     pub waiting_input: Option<String>,
     pub history: Vec<String>,
+    /// Commands sent so far: Stop's fallback kill checks it is still the same command.
+    runs: u64,
     /// Position while walking the history, and the unsent text it replaced.
     hist_pos: Option<usize>,
     draft: String,
@@ -66,6 +90,7 @@ impl PyConsole {
             checking: None,
             waiting_input: None,
             history: Vec::new(),
+            runs: 0,
             hist_pos: None,
             draft: String::new(),
             scroll: ScrollHandle::new(),
@@ -82,14 +107,14 @@ impl PyConsole {
         if let Some(first) = parts.next() {
             match self.lines.last_mut() {
                 Some((last, k)) if *k == kind && !last.ends_with('\n') && matches!(kind, Kind::Out | Kind::Err) => last.push_str(first),
-                _ => self.lines.push((first.to_string(), kind)),
+                _ => self.lines.push((first.to_string(), kind.clone())),
             }
         }
         for p in parts {
             if let Some((last, _)) = self.lines.last_mut() {
                 last.push('\n');
             }
-            self.lines.push((p.to_string(), kind));
+            self.lines.push((p.to_string(), kind.clone()));
         }
         // A trailing newline leaves an empty open line; drop it so the next chunk starts fresh.
         if text.ends_with('\n') {
@@ -222,9 +247,8 @@ impl Workspace {
 
     fn python_console_run(&mut self, code: String, cx: &mut Context<Self>) {
         let Some(p) = self.pyc.as_mut() else { return };
-        for (i, l) in code.lines().enumerate() {
-            p.lines.push((format!("{} {l}\n", if i == 0 { ">>>" } else { "..." }), Kind::Input));
-        }
+        p.lines.extend(echo_lines(&code));
+        p.runs += 1;
         p.scroll.scroll_to_bottom();
         if p.history.last() != Some(&code) {
             p.history.push(code.clone());
@@ -269,7 +293,7 @@ impl Workspace {
             return;
         }
         if text.trim().is_empty() {
-            p.lines.push((">>>\n".into(), Kind::Input));
+            p.lines.push((">>> \n".into(), Kind::Code(Vec::new())));
             p.scroll.scroll_to_bottom();
             return;
         }
@@ -345,10 +369,36 @@ impl Workspace {
             "up" if plain && !completion && line == 0 => return self.python_console_history(true, cx),
             "down" if plain && !completion && line == last_line => return self.python_console_history(false, cx),
             "escape" if plain && !completion => self.focus_editor(window, cx),
+            "c" if m.control && !m.alt && !m.shift && p.busy => self.python_console_interrupt(cx),
             _ => return false,
         }
         cx.notify();
         true
+    }
+
+    /// Ctrl+C / Stop while a command runs: KeyboardInterrupt in it, the session and its
+    /// variables stay. If the command is still running 1.5 s later, the process is killed.
+    fn python_console_interrupt(&mut self, cx: &mut Context<Self>) {
+        let Some(p) = self.pyc.as_mut() else { return };
+        let Some(c) = p.console.as_mut() else { return };
+        if c.interrupt().is_err() {
+            return;
+        }
+        let (gen, runs) = (p.generation, p.runs);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(1500)).await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(p) = this.pyc.as_mut().filter(|p| p.generation == gen && p.runs == runs && p.busy) else { return };
+                if let Some(mut c) = p.console.take() {
+                    c.kill();
+                }
+                p.busy = false;
+                p.waiting_input = None;
+                p.info("The command did not stop on KeyboardInterrupt; the console process was killed. Rerun to start a new one.");
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub(super) fn python_console_action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
@@ -362,6 +412,7 @@ impl Workspace {
                 }
                 self.start_python_console(cx);
             }
+            Action::StopPythonConsole if self.pyc.as_ref().is_some_and(|p| p.busy && p.running()) => self.python_console_interrupt(cx),
             Action::StopPythonConsole => {
                 if let Some(p) = self.pyc.as_mut() {
                     if let Some(mut c) = p.console.take() {
@@ -444,13 +495,18 @@ impl Workspace {
             .font_family(MONO_FONT)
             .text_size(px(12.5))
             .children(p.lines.iter().map(|(t, k)| {
+                let text = t.trim_end_matches('\n').to_string();
                 let color = match k {
                     Kind::Out => Theme::text(),
                     Kind::Err => Theme::error(),
                     Kind::Info => Theme::text_muted(),
-                    Kind::Input => Theme::accent(),
+                    Kind::Code(hl) => {
+                        let mut styles: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = vec![(0..3.min(text.len()), gpui::HighlightStyle { color: Some(Theme::accent()), ..Default::default() })];
+                        styles.extend(hl.iter().filter(|(r, _)| r.end <= text.len()).map(|(r, h)| (r.clone(), gpui::HighlightStyle { color: Some(Theme::syntax(*h)), ..Default::default() })));
+                        return div().text_color(Theme::text()).child(gpui::StyledText::new(text).with_highlights(styles)).into_any_element();
+                    }
                 };
-                div().text_color(color).child(t.trim_end_matches('\n').to_string())
+                div().text_color(color).child(text).into_any_element()
             }));
         let focused = p.input.read(cx).focus_handle(cx).is_focused(window);
         let n_lines = p.input.read(cx).buffer.len_lines().clamp(1, 6);
@@ -583,11 +639,32 @@ impl Workspace {
                     until_idle!();
                 }
             }
+            // An endless loop, then Ctrl+C: KeyboardInterrupt, the session and variables stay.
+            for s in ["import time", "enter", "while True: time.sleep(0.05)", "enter"] {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    if s == "enter" {
+                        this.smoke_press(s, window, cx)
+                    } else {
+                        this.smoke_type(s, window, cx)
+                    }
+                });
+                pause(60).await;
+                until_idle!();
+            }
+            let _ = this.update_in(cx, |this, window, cx| this.smoke_press("enter", window, cx));
+            pause(800).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                eprintln!("smoke-pyconsole: loop running busy {}", this.pyc.as_ref().unwrap().busy);
+                this.smoke_press("ctrl-c", window, cx);
+            });
+            until_idle!();
             let _ = this.update_in(cx, |this, window, cx| {
                 let p = this.pyc.as_ref().unwrap();
+                eprintln!("smoke-pyconsole: after ctrl-c busy {} running {} vars {}", p.busy, p.running(), p.vars.len());
                 eprintln!("smoke-pyconsole: version {:?}", p.version);
                 for (l, k) in &p.lines {
-                    eprintln!("smoke-pyconsole: {k:?} {}", l.trim_end());
+                    let k = if let Kind::Code(hl) = k { format!("Code[{} spans]", hl.len()) } else { format!("{k:?}") };
+                    eprintln!("smoke-pyconsole: {k} {}", l.trim_end());
                 }
                 eprintln!("smoke-pyconsole: vars {:?}", p.vars.iter().map(|v| format!("{}:{}={}", v.name, v.ty, v.value)).collect::<Vec<_>>());
                 this.smoke_press("up up", window, cx);

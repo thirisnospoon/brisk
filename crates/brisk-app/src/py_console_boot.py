@@ -2,6 +2,7 @@
 #   {"op": "run", "code": "..."}    run a statement block (the last expression is echoed)
 #   {"op": "check", "code": "..."}  is the code a complete statement?
 #   {"op": "input", "text": "..."}  a line for a pending input() call
+#   {"op": "interrupt"}             KeyboardInterrupt in the running code (the session stays)
 # Replies and events go to stdout as "\x1e<kind> <json>\n"; anything else on stdout is the
 # program's own output. stderr from Python code is sent in-band as "err" events so it keeps
 # its order with stdout.
@@ -16,6 +17,9 @@ import builtins  # noqa: E402
 import codeop  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
+import queue  # noqa: E402
+import signal  # noqa: E402
+import threading  # noqa: E402
 import traceback  # noqa: E402
 import types  # noqa: E402
 
@@ -52,22 +56,64 @@ class _Err:
 sys.stderr = _Err()
 
 
-def _input(prompt=""):
-    sys.stdout.flush()
-    _send("input", str(prompt))
-    while True:
-        line = _stdin.readline()
-        if not line:
-            raise EOFError
+# Requests are read by a thread so that "interrupt" arrives while code runs; the rest go
+# through this queue (None: stdin closed).
+_requests = queue.Queue()
+_busy = threading.Event()
+
+
+def _reader():
+    for line in _stdin:
         try:
             req = json.loads(line)
         except ValueError:
             continue
+        if req.get("op") == "interrupt":
+            if _busy.is_set():
+                # The C-level handler also wakes time.sleep() and blocking waits.
+                signal.raise_signal(signal.SIGINT)
+            continue
+        _requests.put(req)
+    _requests.put(None)
+
+
+def _next_request():
+    # A timeout keeps the wait interruptible on Windows.
+    while True:
+        try:
+            return _requests.get(timeout=0.2)
+        except queue.Empty:
+            pass
+
+
+def _input(prompt=""):
+    sys.stdout.flush()
+    _send("input", str(prompt))
+    while True:
+        req = _next_request()
+        if req is None:
+            raise EOFError
         if req.get("op") == "input":
             return req.get("text", "")
 
 
 builtins.input = _input
+
+
+class _Quitter:
+    # site's exit() closes sys.stdin first, which would wait for the reader thread's lock.
+    def __init__(self, name):
+        self.name = name
+
+    def __repr__(self):
+        return "Use %s() to end the console" % self.name
+
+    def __call__(self, code=None):
+        raise SystemExit(code)
+
+
+builtins.exit = _Quitter("exit")
+builtins.quit = _Quitter("quit")
 ns = {"__name__": "__main__", "__builtins__": builtins}
 
 
@@ -118,15 +164,16 @@ def _run(src):
 
 
 def _main():
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    threading.Thread(target=_reader, daemon=True).start()
     _send("ready", {"version": sys.version.split()[0], "executable": sys.executable})
     while True:
-        line = _stdin.readline()
-        if not line:
-            break
         try:
-            req = json.loads(line)
-        except ValueError:
-            continue
+            req = _next_request()
+        except KeyboardInterrupt:
+            continue  # a late interrupt after the command ended
+        if req is None:
+            break
         op = req.get("op")
         if op == "check":
             src = req.get("code", "")
@@ -137,13 +184,23 @@ def _main():
                 complete = True  # running it shows the error
             _send("check", {"complete": complete})
         elif op == "run":
+            _busy.set()
             try:
                 _run(req.get("code", ""))
             except SystemExit:
+                _busy.clear()
                 _send("done", {"vars": _variables(), "exit": True})
                 break
+            except KeyboardInterrupt:
+                # Raised outside the user's code (between bytecodes of _run itself).
+                print("KeyboardInterrupt", file=sys.stderr)
+            finally:
+                _busy.clear()
             sys.stdout.flush()
             _send("done", {"vars": _variables()})
 
 
 _main()
+# The reader thread holds stdin's lock: a normal shutdown would wait for it forever.
+sys.stdout.flush()
+os._exit(0)

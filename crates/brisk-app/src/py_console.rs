@@ -92,6 +92,11 @@ impl Console {
         self.send(serde_json::json!({ "op": "input", "text": text }))
     }
 
+    /// KeyboardInterrupt in the running command; the namespace stays.
+    pub fn interrupt(&mut self) -> std::io::Result<()> {
+        self.send(serde_json::json!({ "op": "interrupt" }))
+    }
+
     /// Events that arrived since the last call; `Exited` once the process is gone.
     pub fn events(&mut self) -> Vec<Event> {
         let mut v: Vec<Event> = self.rx.try_iter().collect();
@@ -274,6 +279,25 @@ mod tests {
         let evs = wait(&mut c, |e| matches!(e, Event::Done { .. }));
         let Some(Event::Done { vars, .. }) = evs.last() else { panic!() };
         assert!(vars.iter().any(|v| v.name == "name" && v.value == "'Bob'"), "{vars:?}");
+        // Interrupt a sleeping loop: KeyboardInterrupt, and the session keeps its variables.
+        c.run("import time\nfor k in range(100):\n    time.sleep(0.1)").unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        let t0 = Instant::now();
+        c.interrupt().unwrap();
+        let evs = wait(&mut c, |e| matches!(e, Event::Done { .. }));
+        assert!(t0.elapsed() < Duration::from_secs(2), "interrupt took {:?}", t0.elapsed());
+        assert!(text(&evs, true).contains("KeyboardInterrupt"), "{evs:?}");
+        let Some(Event::Done { vars, .. }) = evs.last() else { panic!() };
+        assert!(vars.iter().any(|v| v.name == "name"), "{vars:?}");
+        // A blocking input() is interrupted too.
+        c.run("input()").unwrap();
+        wait(&mut c, |e| matches!(e, Event::Input(_)));
+        c.interrupt().unwrap();
+        let evs = wait(&mut c, |e| matches!(e, Event::Done { .. }));
+        assert!(text(&evs, true).contains("KeyboardInterrupt"), "{evs:?}");
+        c.run("x").unwrap();
+        let evs = wait(&mut c, |e| matches!(e, Event::Done { .. }));
+        assert_eq!(text(&evs, false), "41\n");
         c.run("exit()").unwrap();
         wait(&mut c, |e| matches!(e, Event::Exited(_)));
     }
