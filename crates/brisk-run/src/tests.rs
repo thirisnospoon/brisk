@@ -30,6 +30,19 @@ fn links() {
     assert!(find_links("time 12:30 ok").is_empty());
 }
 
+/// "Open in Terminal" lines quote everything and leave PATH to the terminal.
+#[test]
+fn shell_line_for_the_terminal() {
+    let cmd = Command {
+        program: PathBuf::from(r"C:\venv\python.exe"),
+        args: vec!["app.py".into(), "a b".into(), "it's".into()],
+        cwd: PathBuf::from(r"C:\p r"),
+        env: [("PATH".to_string(), "x".to_string()), ("B".into(), "2".into()), ("A".into(), "o'k".into())].into_iter().collect(),
+    };
+    assert_eq!(cmd.shell_line(true), r"Set-Location -LiteralPath 'C:\p r'; $env:A='o''k'; $env:B='2'; & 'C:\venv\python.exe' 'app.py' 'a b' 'it''s'");
+    assert_eq!(cmd.shell_line(false), r"cd 'C:\p r' && A='o'\''k' B='2' 'C:\venv\python.exe' 'app.py' 'a b' 'it'\''s'");
+}
+
 #[test]
 fn args() {
     assert_eq!(split_args(r#"-v --name "a b" x\"y "" end"#), ["-v", "--name", "a b", "x\"y", "", "end"]);

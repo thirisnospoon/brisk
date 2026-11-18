@@ -151,6 +151,7 @@ impl Workspace {
                 }
             }
             RunEvent::RerunRequested => this.rerun_active(window, cx),
+            RunEvent::OpenInTerminal(cmd) => this.open_in_terminal(cmd, window, cx),
         })
         .detach();
         self.runs.panel = Some(p.clone());
@@ -264,6 +265,28 @@ impl Workspace {
         }
         self.runs.stop_confirmed = Some(cfg.name.clone());
         self.run_config(cfg, window, cx);
+    }
+
+    /// "Open in Terminal" (Run window): the command in a new project terminal tab.
+    pub(super) fn open_in_terminal(&mut self, cmd: &brisk_run::Command, window: &mut Window, cx: &mut Context<Self>) {
+        let line = cmd.shell_line(cfg!(windows));
+        match self.terminal.clone().filter(|t| !t.read(cx).is_empty()) {
+            Some(t) => {
+                t.update(cx, |t, cx| {
+                    t.new_tab();
+                    cx.notify();
+                });
+                self.bottom = Some(BottomTool::Terminal);
+                window.focus(&t.read(cx).focus_handle(cx));
+            }
+            None => self.toggle_terminal(window, cx),
+        }
+        // The shell reads it once it has started.
+        if let Some(t) = &self.terminal {
+            t.read(cx).type_line(&line);
+        }
+        self.status = "Opened the run's command line in the Terminal".into();
+        cx.notify();
     }
 
     /// Rerun (Ctrl+F5 / ↻): the active tab's command again, after its Before launch steps.

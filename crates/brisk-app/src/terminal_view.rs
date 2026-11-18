@@ -72,6 +72,8 @@ pub enum RunEvent {
     Finished { name: String, code: Option<i32>, tests: Option<TestsOutcome> },
     /// The Rerun button: the workspace saves files first, then calls [`TerminalPanel::rerun`].
     RerunRequested,
+    /// "Open in Terminal": run this command in the project terminal.
+    OpenInTerminal(brisk_run::Command),
     /// "Rerun Failed Tests": then [`TerminalPanel::rerun_failed`].
     RerunFailedRequested,
 }
@@ -336,6 +338,20 @@ sys.exit(r)";
     /// The active Run tab's configuration and command (what Rerun starts again).
     pub fn active_run(&self) -> Option<(brisk_run::RunConfig, brisk_run::Command, u64)> {
         self.tabs.get(self.active).and_then(|t| t.run.as_ref().map(|r| (r.cfg.clone(), r.cmd.clone(), t.id)))
+    }
+
+    /// "Copy command line" (Run toolbar): the active run's command, as its header shows it.
+    pub fn copy_command_line(&self, cx: &mut Context<Self>) {
+        if let Some((_, cmd, _)) = self.active_run() {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(cmd.display()));
+        }
+    }
+
+    /// "Open in Terminal" (Run toolbar): asks the workspace to run the command in the terminal.
+    pub fn open_in_terminal(&self, cx: &mut Context<Self>) {
+        if let Some((_, cmd, _)) = self.active_run() {
+            cx.emit(RunEvent::OpenInTerminal(cmd));
+        }
     }
 
     /// Pin Tab / Unpin Tab on the active Run tab; returns whether it is pinned now.
@@ -784,6 +800,8 @@ impl TerminalPanel {
                 })),
             )
             .child(div().w(px(18.)).h(px(1.)).my(px(3.)).bg(Theme::divider()))
+            .child(button("run-copy-cmd", "⧉", Theme::text_muted()).tooltip(tip("Copy command line")).on_click(cx.listener(|this, _, _, cx| this.copy_command_line(cx))))
+            .child(button("run-open-term", "›_", Theme::text_muted()).tooltip(tip("Open in Terminal")).on_click(cx.listener(|this, _, _, cx| this.open_in_terminal(cx))))
             .child(toggle("run-pin", "📌", self.active_pinned()).tooltip(tip("Pin Tab: the next run opens a new tab")).child(pin_track()).on_click(cx.listener(|this, _, _, cx| {
                 this.toggle_pin();
                 cx.notify();
