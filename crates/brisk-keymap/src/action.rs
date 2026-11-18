@@ -220,6 +220,10 @@ actions! {
     ShowDiff => "Show Diff", "Git";
     RollbackChanges => "Rollback", "Git";
     Annotate => "Annotate with Git Blame", "Git";
+    ResolveConflicts => "Resolve Conflicts", "Git";
+    StashChanges => "Stash Changes", "Git";
+    UnstashChanges => "Unstash Changes", "Git";
+    ShowFileHistory => "Show History", "Git";
     ShowLocalHistory => "Show Local History", "Git";
 
     // Database

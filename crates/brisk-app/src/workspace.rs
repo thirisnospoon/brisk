@@ -10,6 +10,8 @@ mod edit_smoke;
 mod files_ui;
 mod find_ui;
 mod git_annotate_ui;
+mod git_merge_ui;
+mod git_stash_ui;
 mod git_smoke;
 mod git_ui;
 mod history_ui;
@@ -795,6 +797,11 @@ impl Workspace {
             cx.stop_propagation();
             return;
         }
+        if self.git_dialog_open() {
+            self.git_dialog_key(e, window, cx);
+            cx.stop_propagation();
+            return;
+        }
         if self.runs.dialog.is_some() {
             self.run_dialog_key(e, window, cx);
             cx.stop_propagation();
@@ -971,7 +978,7 @@ impl Workspace {
                     self.refresh_git(cx);
                 }
             }
-            A::Commit | A::Push | A::UpdateProject | A::VcsQuickList | A::Branches | A::ShowDiff | A::RollbackChanges | A::Annotate => {
+            A::Commit | A::Push | A::UpdateProject | A::VcsQuickList | A::Branches | A::ShowDiff | A::RollbackChanges | A::Annotate | A::ResolveConflicts | A::StashChanges | A::UnstashChanges | A::ShowFileHistory => {
                 self.git_action(action, window, cx)
             }
             A::ToggleStructureWindow => self.toggle_left(LeftTool::Structure, window, cx),
@@ -2212,6 +2219,7 @@ impl Render for Workspace {
             .children(self.render_ds_dialog(cx).map(|e| fade_in("ds-in", e, 110)))
             .children(self.render_settings(cx).map(|e| fade_in("settings-in", e, 110)))
             .children(self.render_run_dialog(cx).map(|e| fade_in("run-dialog-in", e, 110)))
+            .children(self.render_git_dialog(cx).map(|e| fade_in("git-dialog-in", e, 110)))
             .children(self.render_menu(viewport, cx).map(|e| fade_in("menu-in", e, 90)))
     }
 }

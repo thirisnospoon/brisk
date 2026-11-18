@@ -26,7 +26,7 @@ pub struct Details {
 
 pub struct Git {
     pub repo: Repo,
-    status: Status,
+    pub(super) status: Status,
     by_path: HashMap<String, FileStatus>,
     branches: Vec<Branch>,
     log: Vec<Commit>,
@@ -46,6 +46,10 @@ pub struct Git {
     amend: bool,
     head_seen: Option<String>,
     loaded: bool,
+    /// Conflicts, Merge Revisions, Stash dialogs.
+    pub dialog: Option<super::git_merge_ui::GitDialog>,
+    /// Conflicted files at the last refresh: the Conflicts dialog opens when they appear.
+    conflicts_seen: usize,
 }
 
 impl Git {
@@ -71,6 +75,8 @@ impl Git {
             amend: false,
             head_seen: None,
             loaded: false,
+            dialog: None,
+            conflicts_seen: 0,
         }
     }
 
@@ -117,16 +123,16 @@ pub fn status_color(s: FileStatus) -> Hsla {
     }
 }
 
-fn file_name(rel: &str) -> &str {
+pub(super) fn file_name(rel: &str) -> &str {
     rel.rsplit('/').next().unwrap_or(rel)
 }
 
-fn dir_name(rel: &str) -> &str {
+pub(super) fn dir_name(rel: &str) -> &str {
     rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("")
 }
 
 /// "5 minutes ago" for recent commits, otherwise a UTC date (no tz database needed).
-fn fmt_time(t: i64) -> String {
+pub(super) fn fmt_time(t: i64) -> String {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let d = now - t;
     if (0..60).contains(&d) {
@@ -247,6 +253,15 @@ impl Workspace {
             }
         }
         self.refresh_annotations(head_changed, cx);
+        // New conflicts (a merge, pull or rebase stopped): show them, like PyCharm.
+        if let Some(g) = self.git.as_mut() {
+            let n = g.status.changes.iter().filter(|c| c.status == FileStatus::Conflict).count();
+            let appeared = n > 0 && g.conflicts_seen == 0;
+            g.conflicts_seen = n;
+            if appeared && g.dialog.is_none() {
+                self.open_conflicts(cx);
+            }
+        }
         if self.git.as_ref().is_some_and(|g| g.log_selected.is_none() && !g.log.is_empty()) {
             self.select_log(0, cx);
         }
@@ -288,7 +303,7 @@ impl Workspace {
     }
 
     /// Run a git operation in the background, then notify, reload files and refresh state.
-    fn git_op(
+    pub(super) fn git_op(
         &mut self,
         title: &'static str,
         op: impl FnOnce(&Repo) -> brisk_git::Result<String> + Send + 'static,
@@ -409,6 +424,8 @@ impl Workspace {
                     self.show_change_diff(&c, window, cx);
                 }
             }
+            A::ResolveConflicts => self.open_conflicts(cx),
+            A::StashChanges | A::UnstashChanges | A::ShowFileHistory => self.git_more_action(action, window, cx),
             A::Annotate => match self.active_editor().cloned() {
                 Some(ed) => self.toggle_annotate(ed, cx),
                 None => self.status = "Annotate: open a file first".into(),
@@ -602,7 +619,7 @@ impl Workspace {
             }
             PopupKind::VcsOperations => {
                 use Action as A;
-                [A::Commit, A::Push, A::UpdateProject, A::Branches, A::ShowDiff, A::RollbackChanges, A::ToggleGitWindow, A::ToggleCommitWindow]
+                [A::Commit, A::Push, A::UpdateProject, A::Branches, A::ShowDiff, A::RollbackChanges, A::Annotate, A::ShowFileHistory, A::ResolveConflicts, A::StashChanges, A::UnstashChanges, A::ToggleGitWindow, A::ToggleCommitWindow]
                     .into_iter()
                     .filter(|a| a.info().title.to_lowercase().contains(&ql))
                     .map(|a| PopupItem {

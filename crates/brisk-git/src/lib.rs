@@ -6,9 +6,13 @@
 mod blame;
 mod diff;
 mod graph;
+mod merge;
+mod stash;
 
 pub use blame::{parse_blame, BlameLine};
 pub use diff::{align, line_changes, AlignedRow, LineChange, LineChangeKind, RowKind};
+pub use stash::StashEntry;
+pub use merge::{lines_of, merge3, Chunk, ConflictVersions};
 pub use graph::{layout, GraphRow, Segment};
 
 use std::collections::HashMap;
