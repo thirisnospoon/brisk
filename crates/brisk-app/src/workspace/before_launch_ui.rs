@@ -2,6 +2,7 @@
 //! after another, each in its own Run tab; a non-zero exit (or Stop) cancels the launch.
 
 use super::Workspace;
+use brisk_keymap::Action;
 use brisk_run::{BeforeStep, RunConfig};
 use gpui::{Context, Window};
 use std::collections::VecDeque;
@@ -14,6 +15,8 @@ pub enum Then {
     Debug,
     Coverage(PathBuf),
     Profile,
+    /// Rerun: the tab's own command (coverage / profile wrapping included).
+    Rerun(brisk_run::Command),
 }
 
 pub struct Chain {
@@ -68,6 +71,7 @@ impl Workspace {
                 Then::Debug => self.start_debug(cfg, window, cx),
                 Then::Coverage(python) => self.start_coverage_run(cfg, python, window, cx),
                 Then::Profile => self.profile_config(cfg, window, cx),
+                Then::Rerun(cmd) => self.run_command(cfg, cmd, window, cx),
             }
             // A launch refused before it got to `before_launch` must not skip the next one.
             self.before_passed = None;
@@ -181,6 +185,24 @@ impl Workspace {
                 let out = this.runs.panel.as_ref().map(|p| p.read(cx).active_text()).flatten().unwrap_or_default();
                 let line = out.lines().find(|l| l.contains("app sees")).unwrap_or("-").to_string();
                 eprintln!("smoke-before: after chain -> tabs {:?}, app output {line:?}", tabs(this, cx));
+            });
+            // Rerun (Ctrl+F5) on the app tab runs the Before launch steps again.
+            let _ = std::fs::remove_file(root.join("prep.txt"));
+            let _ = std::fs::remove_file(root.join("cmd.txt"));
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.dispatch(Action::Rerun, window, cx);
+                eprintln!("smoke-before: rerun app -> chain {}, status {:?}", this.before.is_some(), this.status);
+            });
+            for _ in 0..200 {
+                pause(100).await;
+                if this.update(cx, |t, cx| t.before.is_none() && !tabs(t, cx).iter().any(|(_, r)| *r)).unwrap_or(false) {
+                    break;
+                }
+            }
+            let _ = this.update(cx, |this, cx| {
+                let out = this.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default();
+                let line = out.lines().find(|l| l.contains("app sees")).unwrap_or("-").to_string();
+                eprintln!("smoke-before: after rerun -> files {} {}, app output {line:?}", root.join("prep.txt").exists(), root.join("cmd.txt").exists());
             });
             let _ = this.update_in(cx, start("bad"));
             for _ in 0..100 {

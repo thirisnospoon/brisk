@@ -276,15 +276,11 @@ impl TerminalPanel {
         self.session().map(|s| s.size().0).unwrap_or(0)
     }
 
-    /// Ctrl+F5 in the Run window: run the active tab's command again.
-    pub fn rerun(&mut self) -> Result<Option<String>, String> {
-        let Some(r) = self.tabs.get(self.active).and_then(|t| t.run.as_ref()) else { return Ok(None) };
-        let (name, cfg, cmd) = (r.name.clone(), r.cfg.clone(), r.cmd.clone());
-        self.run(cfg, cmd)?;
-        Ok(Some(name))
+    /// The active Run tab's configuration and command (what Rerun starts again).
+    pub fn active_run(&self) -> Option<(brisk_run::RunConfig, brisk_run::Command)> {
+        self.tabs.get(self.active).and_then(|t| t.run.as_ref()).map(|r| (r.cfg.clone(), r.cmd.clone()))
     }
 
-    /// Ctrl+F2: stop the active tab's process (or any running one).
     /// Stop every running process (smoke tests).
     pub fn stop_all(&mut self) {
         for t in self.tabs.iter().filter(|t| t.run.as_ref().is_some_and(|r| r.running)) {
@@ -292,6 +288,7 @@ impl TerminalPanel {
         }
     }
 
+    /// Ctrl+F2: stop the active tab's process (or any running one).
     pub fn stop(&mut self) -> bool {
         let running = |t: &&Tab| t.run.as_ref().is_some_and(|r| r.running);
         let pick = self.tabs.get(self.active).filter(running).or_else(|| self.tabs.iter().find(running));

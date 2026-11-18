@@ -148,15 +148,7 @@ impl Workspace {
                     Err(e) => this.show_toast(e, true, cx),
                 }
             }
-            RunEvent::RerunRequested => {
-                this.save_all(cx);
-                if let Err(e) = panel.update(cx, |p, cx| {
-                    cx.notify();
-                    p.rerun()
-                }) {
-                    this.show_toast(e, true, cx);
-                }
-            }
+            RunEvent::RerunRequested => this.rerun_active(window, cx),
         })
         .detach();
         self.runs.panel = Some(p.clone());
@@ -241,6 +233,16 @@ impl Workspace {
         self.run_command(cfg, cmd, window, cx);
     }
 
+    /// Rerun (Ctrl+F5 / ↻): the active tab's command again, after its Before launch steps.
+    pub(super) fn rerun_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((cfg, cmd)) = self.runs.panel.as_ref().and_then(|p| p.read(cx).active_run()) else { return };
+        self.save_all(cx);
+        if self.before_launch(&cfg, before_launch_ui::Then::Rerun(cmd.clone()), window, cx) {
+            return;
+        }
+        self.run_command(cfg, cmd, window, cx);
+    }
+
     /// A Compound: every member starts in its own Run tab.
     fn run_compound(&mut self, cfg: &RunConfig, window: &mut Window, cx: &mut Context<Self>) {
         let members = match self.runs.file.compound_members(cfg) {
@@ -319,17 +321,7 @@ impl Workspace {
                     self.run_config(cfg, window, cx);
                 }
             }
-            A::Rerun => {
-                if let Some(p) = self.runs.panel.clone() {
-                    self.save_all(cx);
-                    if let Err(e) = p.update(cx, |p, cx| {
-                        cx.notify();
-                        p.rerun()
-                    }) {
-                        self.show_toast(e, true, cx);
-                    }
-                }
-            }
+            A::Rerun => self.rerun_active(window, cx),
             A::Stop => {
                 let stopped = self.runs.panel.as_ref().is_some_and(|p| p.update(cx, |p, cx| {
                     cx.notify();
