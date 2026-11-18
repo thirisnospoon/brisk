@@ -1,0 +1,75 @@
+param([string]$Exe, [string]$Project, [string]$File, [string]$AppData, [string]$OutDir, [string]$Steps)
+# Starts brisk paused at the first breakpoint (BRISK_SMOKE_DEBUG_HOLD), then runs $Steps against
+# its own window with posted mouse messages: "shot:name; click:x,y; dbl:x,y; rclick:x,y; key:vk; wait:ms".
+# Coordinates are client pixels of brisk's window. stderr goes to $OutDir\log.txt.
+# Example (1750x1125 client, 100% scale; find positions on a "shot:" first): add a breakpoint on
+# line 10 by its number, right click the one on line 7, Esc, Step Over, Stop:
+#   -Steps "shot:0; click:463,332; rclick:463,257; key:27; click:601,737; wait:2000; click:553,737; shot:1"
+Add-Type -AssemblyName System.Drawing
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class W {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint f);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public struct RECT { public int L, T, R, B; }
+  public struct POINT { public int X, Y; }
+}
+"@
+[void][W]::SetProcessDPIAware()
+$env:APPDATA = $AppData
+$env:BRISK_SMOKE_DEBUG = $File
+$env:BRISK_SMOKE_DEBUG_HOLD = "1"
+New-Item -ItemType Directory -Force $OutDir | Out-Null
+$log = Join-Path $OutDir "log.txt"
+$p = Start-Process -FilePath $Exe -ArgumentList "`"$Project`"" -PassThru -RedirectStandardError $log
+$h = [IntPtr]0
+for ($i = 0; $i -lt 60 -and $h -eq [IntPtr]0; $i++) { Start-Sleep -Milliseconds 500; $p.Refresh(); $h = $p.MainWindowHandle }
+if ($h -eq [IntPtr]0) { Stop-Process -Id $p.Id -Force; throw "no window" }
+for ($i = 0; $i -lt 120; $i++) {
+  Start-Sleep -Milliseconds 500
+  if ((Get-Content $log -Raw -ErrorAction SilentlyContinue) -match "smoke-hold: state=Some\(Paused") { break }
+}
+Start-Sleep -Milliseconds 1500
+
+function Shot($name) {
+  $r = New-Object W+RECT
+  [void][W]::GetWindowRect($h, [ref]$r)
+  $w = $r.R - $r.L; $hh = $r.B - $r.T
+  $bmp = New-Object System.Drawing.Bitmap $w, $hh
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $dc = $g.GetHdc()
+  [void][W]::PrintWindow($h, $dc, 3)
+  $g.ReleaseHdc($dc)
+  $bmp.Save((Join-Path $OutDir "$name.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+  $g.Dispose(); $bmp.Dispose()
+}
+function L($x, $y) { [IntPtr](($y -shl 16) -bor ($x -band 0xffff)) }
+function MMove($x, $y) { [void][W]::PostMessage($h, 0x200, [IntPtr]0, (L $x $y)) }
+function Click($x, $y) { MMove $x $y; Start-Sleep -Milliseconds 60; [void][W]::PostMessage($h, 0x201, [IntPtr]1, (L $x $y)); Start-Sleep -Milliseconds 60; [void][W]::PostMessage($h, 0x202, [IntPtr]0, (L $x $y)) }
+function RClick($x, $y) { MMove $x $y; Start-Sleep -Milliseconds 60; [void][W]::PostMessage($h, 0x204, [IntPtr]2, (L $x $y)); Start-Sleep -Milliseconds 60; [void][W]::PostMessage($h, 0x205, [IntPtr]0, (L $x $y)) }
+function Mark($text) { Add-Content (Join-Path $OutDir "steps.txt") ("{0:HH:mm:ss.fff} {1}" -f (Get-Date), $text) }
+
+$c = New-Object W+RECT
+[void][W]::GetClientRect($h, [ref]$c)
+Mark "client $($c.R)x$($c.B)"
+foreach ($s in ($Steps -split ';')) {
+  $s = $s.Trim(); if (-not $s) { continue }
+  $k, $v = $s -split ':', 2
+  Mark $s
+  switch ($k) {
+    'shot' { Shot $v }
+    'wait' { Start-Sleep -Milliseconds ([int]$v) }
+    'click' { $x, $y = $v -split ','; Click ([int]$x) ([int]$y) }
+    'dbl' { $x, $y = $v -split ','; Click ([int]$x) ([int]$y); Start-Sleep -Milliseconds 30; Click ([int]$x) ([int]$y) }
+    'rclick' { $x, $y = $v -split ','; RClick ([int]$x) ([int]$y) }
+    'key' { [void][W]::PostMessage($h, 0x100, [IntPtr]([int]$v), [IntPtr]1); Start-Sleep -Milliseconds 40; [void][W]::PostMessage($h, 0x101, [IntPtr]([int]$v), [IntPtr]0xC0000001) }
+  }
+  Start-Sleep -Milliseconds 300
+}
+Stop-Process -Id $p.Id -Force
+Get-Content $log | Select-String "smoke-hold|smoke-debug: paused"

@@ -1774,8 +1774,35 @@ impl Workspace {
                     if let Some(i) = t.debug.vars.iter().position(|r| r.var.name == "items") {
                         t.toggle_var(i, cx);
                     }
+                    t.add_watch("len(items)".into(), cx);
                 });
-                return;
+                // Print what changes, for a driver that clicks the window (mouse checks).
+                let mut last = String::new();
+                loop {
+                    wait(250).await;
+                    let Ok(now) = this.update(cx, |t, cx| {
+                        let bps: Vec<String> = t
+                            .active_editor()
+                            .map(|e| e.read(cx).breakpoint_list().into_iter().map(|(l, b)| format!("{}{}", l + 1, b.condition.map(|c| format!(" if {c}")).unwrap_or_default())).collect())
+                            .unwrap_or_default();
+                        format!(
+                            "state={:?} top={:?} bps={bps:?} popup={} tab={:?} sel={:?} edit={:?} watches={:?}",
+                            t.debug.state(),
+                            t.debug.frames.first().map(|f| f.line + 1),
+                            t.popup.is_some(),
+                            t.debug.tab,
+                            t.debug.sel.and_then(|s| t.debug.vars.get(s)).map(|r| r.var.name.clone()),
+                            t.debug.edit.as_ref().map(|e| e.target),
+                            t.debug.watches,
+                        )
+                    }) else {
+                        return;
+                    };
+                    if now != last {
+                        eprintln!("smoke-hold: {now}");
+                        last = now;
+                    }
+                }
             }
             // Expand a list variable.
             let _ = this.update_in(cx, |t, _, cx| {
