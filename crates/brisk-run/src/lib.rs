@@ -7,7 +7,7 @@ mod links;
 pub mod pytest;
 pub mod envfile;
 
-pub use config::{compound_names, import_idea, load, save, RunConfig, RunFile, RunKind, CONFIG_FILE, MAX_TEMPORARY};
+pub use config::{compound_names, import_idea, load, save, BeforeStep, RunConfig, RunFile, RunKind, CONFIG_FILE, MAX_TEMPORARY};
 pub use pytest::{is_test_file, split_nodeid, TestFeed, TestStatus, TestTree};
 pub use interp::{discover_all, probe, project_venvs, venv_python, InterpKind, Interpreter};
 pub use links::{find_links, Link};
@@ -109,6 +109,14 @@ pub fn split_args(s: &str) -> Vec<String> {
 
 /// Build the process for a configuration, like PyCharm's Python run configuration:
 /// unbuffered UTF-8 output, project root on `PYTHONPATH`, the virtualenv first on `PATH`.
+/// A Before launch command line through the shell (`cmd /C` on Windows, `sh -c` elsewhere),
+/// in the configuration's working directory and environment (so `pip` is the venv's).
+pub fn shell_command(root: &Path, cfg: &RunConfig, python: &Path, line: &str) -> Command {
+    let base = build(root, &RunConfig { kind: RunKind::Python, ..cfg.clone() }, python);
+    let (program, flag) = if cfg!(windows) { ("cmd.exe", "/C") } else { ("sh", "-c") };
+    Command { program: program.into(), args: vec![flag.into(), line.to_string()], cwd: base.cwd, env: base.env }
+}
+
 pub fn build(root: &Path, cfg: &RunConfig, python: &Path) -> Command {
     let mut args = split_args(&cfg.interpreter_options);
     if cfg.kind == RunKind::Pytest {

@@ -40,6 +40,7 @@ mod run_anything_ui;
 mod terminal_env_ui;
 mod coverage_ui;
 mod profile_ui;
+mod before_launch_ui;
 mod templates_ui;
 mod win_input;
 
@@ -316,6 +317,10 @@ pub struct Workspace {
     profile: Option<profile_ui::ProfileView>,
     /// A profiled run whose stats come when its tab finishes.
     prof_pending: Option<profile_ui::Pending>,
+    /// Before launch steps in progress.
+    before: Option<before_launch_ui::Chain>,
+    /// The configuration whose Before launch just passed (its launch skips the check once).
+    before_passed: Option<String>,
     /// pytest results per file for the run icons in the gutter.
     test_marks: run_marks_ui::TestMarks,
     /// Created on first open of Python Packages.
@@ -423,6 +428,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_BEFORE").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.before_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_PROFILE").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.profile_smoke(window, cx));
@@ -594,6 +602,8 @@ impl Workspace {
             cov_offer: None,
             profile: None,
             prof_pending: None,
+            before: None,
+            before_passed: None,
             test_marks: Default::default(),
             packages: None,
             todo: None,

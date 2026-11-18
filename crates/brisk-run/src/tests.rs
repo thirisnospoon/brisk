@@ -414,3 +414,33 @@ fn imports_pycharm_compound() {
     assert_eq!(cfgs.len(), 1);
     assert_eq!((cfgs[0].kind, cfgs[0].target.as_str()), (RunKind::Compound, "server;client"));
 }
+
+#[test]
+fn before_launch_steps_and_import() {
+    let c = |name: &str, kind: RunKind, target: &str| RunConfig { name: name.into(), kind, target: target.into(), ..Default::default() };
+    let mut app = c("app", RunKind::Python, "app.py");
+    app.before_run = "migrate; tests".into();
+    app.before_command = " pip install -e . ".into();
+    let f = RunFile { configurations: vec![c("migrate", RunKind::Python, "migrate.py"), c("tests", RunKind::Pytest, ""), c("both", RunKind::Compound, "migrate;tests"), app.clone()], ..Default::default() };
+    let steps = f.before_steps(&app).unwrap();
+    let shown: Vec<String> = steps.iter().map(|s| match s { BeforeStep::Run(c) => c.name.clone(), BeforeStep::Command(l) => format!("$ {l}") }).collect();
+    assert_eq!(shown, vec!["migrate", "tests", "$ pip install -e ."]);
+    for (bad, why) in [("nope", "does not exist"), ("app", "itself"), ("both", "Compound")] {
+        let cfg = RunConfig { before_run: bad.into(), before_command: String::new(), ..app.clone() };
+        assert!(f.before_steps(&cfg).unwrap_err().contains(why), "{bad}");
+    }
+    let cmd = shell_command(Path::new("/p"), &app, Path::new("/usr/bin/python3"), "pip install -e .");
+    assert_eq!(cmd.args.last().map(String::as_str), Some("pip install -e ."));
+    assert_eq!(cmd.env.get("PYTHONUNBUFFERED").map(String::as_str), Some("1"));
+    let xml = r#"<project><component name="RunManager">
+  <configuration name="app" type="PythonConfigurationType" factoryName="Python">
+    <option name="SCRIPT_NAME" value="$PROJECT_DIR$/app.py" />
+    <method v="2">
+      <option name="RunConfigurationTask" enabled="true" run_configuration_name="migrate" run_configuration_type="PythonConfigurationType" />
+      <option name="RunConfigurationTask" enabled="false" run_configuration_name="off" run_configuration_type="PythonConfigurationType" />
+    </method>
+  </configuration>
+</component></project>"#;
+    let (cfgs, _) = super::config::configurations_in(Path::new("/p"), xml, "RunManager");
+    assert_eq!(cfgs[0].before_run, "migrate");
+}

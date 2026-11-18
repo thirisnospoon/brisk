@@ -67,6 +67,7 @@ pub fn parse(root: &Path, text: &str) -> Option<Parsed> {
             env_files: String::new(),
             interpreter: None,
             temporary: false,
+            ..Default::default()
         })
     };
     let rest = &tokens[1..];

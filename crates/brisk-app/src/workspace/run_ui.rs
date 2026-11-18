@@ -2,6 +2,7 @@
 //! tool window (Alt+4) and PyCharm's Shift+F10 / Ctrl+Shift+F10 / Ctrl+F5 / Ctrl+F2.
 
 use super::{BottomTool, PopupItem, PopupKind, Target, Workspace};
+use super::before_launch_ui;
 use crate::terminal_view::{RunEvent, TerminalPanel};
 use brisk_keymap::Action;
 use brisk_run::{InterpKind, Interpreter, RunConfig, RunFile, RunKind};
@@ -120,6 +121,7 @@ impl Workspace {
                     (None, Some(c)) => format!("'{name}' finished with exit code {c}"),
                     (None, None) => format!("'{name}' terminated"),
                 };
+                this.before_finished(name, *code, window, cx);
                 // PyCharm shows a balloon for failed tests when the Run window is hidden.
                 if let Some(t) = tests.as_ref().filter(|t| t.failed && this.bottom != Some(BottomTool::Run)) {
                     this.show_toast(t.summary.clone(), true, cx);
@@ -196,6 +198,9 @@ impl Workspace {
     pub(super) fn run_config(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
         if cfg.kind == RunKind::Compound {
             self.run_compound(&cfg, window, cx);
+            return;
+        }
+        if self.before_launch(&cfg, before_launch_ui::Then::Run, window, cx) {
             return;
         }
         self.save_all(cx);

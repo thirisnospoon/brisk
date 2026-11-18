@@ -1361,6 +1361,9 @@ impl Workspace {
             self.show_toast(format!("'{}' is a Compound: run it, or debug its configurations one at a time", cfg.name), true, cx);
             return;
         }
+        if self.before_launch(&cfg, super::before_launch_ui::Then::Debug, window, cx) {
+            return;
+        }
         self.save_all(cx);
         if self.debug.is_live() {
             self.stop_debug(cx);

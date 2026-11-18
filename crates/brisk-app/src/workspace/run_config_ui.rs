@@ -21,6 +21,8 @@ pub enum Field {
     Env,
     EnvFiles,
     Interpreter,
+    BeforeRun,
+    BeforeCommand,
     Temporary,
 }
 
@@ -145,7 +147,7 @@ fn fields(kind: Kind, temporary: bool) -> Vec<Field> {
     if kind == Kind::Pytest {
         v.push(F::Keywords);
     }
-    v.extend([F::Parameters, F::InterpreterOptions, F::WorkingDirectory, F::Env, F::EnvFiles, F::Interpreter]);
+    v.extend([F::Parameters, F::InterpreterOptions, F::WorkingDirectory, F::Env, F::EnvFiles, F::Interpreter, F::BeforeRun, F::BeforeCommand]);
     if temporary {
         v.push(F::Temporary);
     }
@@ -169,6 +171,8 @@ fn label(f: Field, kind: Kind) -> &'static str {
         Field::Env => "Environment:",
         Field::EnvFiles => "Paths to .env files:",
         Field::Interpreter => "Interpreter:",
+        Field::BeforeRun => "Before launch, run:",
+        Field::BeforeCommand => "Before launch, command:",
         Field::Temporary => "Temporary:",
     }
 }
@@ -211,6 +215,8 @@ impl RunDialog {
             Field::WorkingDirectory => &mut d.cfg.working_directory,
             Field::Env => &mut d.env,
             Field::EnvFiles => &mut d.cfg.env_files,
+            Field::BeforeRun => &mut d.cfg.before_run,
+            Field::BeforeCommand => &mut d.cfg.before_command,
             Field::Interpreter => d.cfg.interpreter.get_or_insert_with(String::new),
             Field::Kind | Field::Temporary => return None,
         })
@@ -227,6 +233,8 @@ impl RunDialog {
             Field::WorkingDirectory => &d.cfg.working_directory,
             Field::Env => &d.env,
             Field::EnvFiles => &d.cfg.env_files,
+            Field::BeforeRun => &d.cfg.before_run,
+            Field::BeforeCommand => &d.cfg.before_command,
             Field::Interpreter => return d.cfg.interpreter.as_deref().map_or(0, |s| s.chars().count()),
             Field::Kind | Field::Temporary => return 0,
         };
@@ -365,6 +373,15 @@ impl RunDialog {
                     return Err((i, Field::Target, format!("'{}': '{n}' is {why}", c.name)));
                 }
             }
+            for n in brisk_run::compound_names(&c.before_run) {
+                let why = match cfgs.iter().find(|o| o.name == n) {
+                    _ if n == c.name => "itself",
+                    None => "a configuration that does not exist",
+                    Some(o) if o.kind == RunKind::Compound => "a Compound (pick its configurations)",
+                    Some(_) => continue,
+                };
+                return Err((i, Field::BeforeRun, format!("'{}': before launch, '{n}' is {why}", c.name)));
+            }
             if c.kind == RunKind::Python && c.target.trim().is_empty() {
                 let what = if c.module { "Module name" } else { "Script path" };
                 return Err((i, Field::Target, format!("'{}': {what} is empty", c.name)));
@@ -477,7 +494,7 @@ impl Workspace {
             "v" if m.control && text => {
                 if let Some(t) = cx.read_from_clipboard().and_then(|c| c.text()) {
                     // Environment: pasted lines become `;`-separated entries.
-                    let t = if matches!(d.field, Field::Env | Field::EnvFiles) { t.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join(";") } else { t.lines().next().unwrap_or("").to_string() };
+                    let t = if matches!(d.field, Field::Env | Field::EnvFiles | Field::BeforeRun) { t.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join(";") } else { t.lines().next().unwrap_or("").to_string() };
                     d.insert(&t);
                 }
             }
@@ -658,6 +675,8 @@ impl Workspace {
                             Field::WorkingDirectory => dr.cfg.working_directory.clone(),
                             Field::Env => dr.env.clone(),
                             Field::EnvFiles => dr.cfg.env_files.clone(),
+                            Field::BeforeRun => dr.cfg.before_run.clone(),
+                            Field::BeforeCommand => dr.cfg.before_command.clone(),
                             Field::Interpreter => dr.cfg.interpreter.clone().unwrap_or_default(),
                             _ => String::new(),
                         };
@@ -671,6 +690,8 @@ impl Workspace {
                             Field::WorkingDirectory => if kind == Kind::Script { "the script's folder".into() } else { "the project root".into() },
                             Field::Env => "KEY=VALUE;KEY2=VALUE2 (wins over .env files)".into(),
                             Field::EnvFiles => ".env;config/dev.env (KEY=VALUE lines)".into(),
+                            Field::BeforeRun => "migrate;build (configurations, in order; a failure stops)".into(),
+                            Field::BeforeCommand => "e.g. pip install -e . (shell, in the working directory)".into(),
                             Field::Interpreter => format!("project default: {project_interp}"),
                             Field::Keywords => "e.g. slow and not network".into(),
                             _ => String::new(),

@@ -59,6 +59,10 @@ impl Workspace {
             self.status = "Nothing to profile: open a Python file or select a configuration".into();
             return;
         };
+        self.profile_config(cfg, window, cx);
+    }
+
+    pub(super) fn profile_config(&mut self, cfg: brisk_run::RunConfig, window: &mut Window, cx: &mut Context<Self>) {
         if cfg.kind == RunKind::Compound {
             self.show_toast(format!("'{}' is a Compound: profile its configurations one at a time", cfg.name), true, cx);
             return;
@@ -67,6 +71,9 @@ impl Workspace {
             self.show_toast("No Python interpreter configured: create a .venv or install Python".into(), true, cx);
             return;
         };
+        if self.before_launch(&cfg, super::before_launch_ui::Then::Profile, window, cx) {
+            return;
+        }
         self.save_all(cx);
         if !self.env_files_ok(&cfg, cx) {
             return;

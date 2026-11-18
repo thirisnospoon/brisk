@@ -69,7 +69,10 @@ impl Workspace {
         }
     }
 
-    fn start_coverage_run(&mut self, cfg: RunConfig, python: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn start_coverage_run(&mut self, cfg: RunConfig, python: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if self.before_launch(&cfg, super::before_launch_ui::Then::Coverage(python.clone()), window, cx) {
+            return;
+        }
         self.save_all(cx);
         if !self.env_files_ok(&cfg, cx) {
             return;

@@ -43,6 +43,14 @@ pub struct RunConfig {
     /// Interpreter for this configuration only; `None` uses the project interpreter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interpreter: Option<String>,
+    /// Before launch: configurations run first, one after another (`;`-separated names);
+    /// each must exit with 0 or the launch stops.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub before_run: String,
+    /// Before launch: a shell command run after `before_run`, in the working directory and
+    /// with the configuration's environment; a non-zero exit stops the launch.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub before_command: String,
     /// Created by Ctrl+Shift+F10 from a file; replaced after [`MAX_TEMPORARY`].
     #[serde(default, skip_serializing_if = "is_false")]
     pub temporary: bool,
@@ -141,6 +149,27 @@ impl RunFile {
         Ok(out)
     }
 
+    /// What runs before `cfg` starts, in order. An error names a configuration that does
+    /// not exist, is `cfg` itself or is a Compound (it never finishes as one process).
+    pub fn before_steps(&self, cfg: &RunConfig) -> Result<Vec<BeforeStep>, String> {
+        let mut out = Vec::new();
+        for name in compound_names(&cfg.before_run) {
+            let c = self.get(&name).ok_or_else(|| format!("'{}' runs '{name}' before launch, which does not exist", cfg.name))?;
+            if c.name == cfg.name {
+                return Err(format!("'{}' runs itself before launch", cfg.name));
+            }
+            if c.kind == RunKind::Compound {
+                return Err(format!("'{}' runs the Compound '{name}' before launch: pick its configurations instead", cfg.name));
+            }
+            out.push(BeforeStep::Run(c.clone()));
+        }
+        let line = cfg.before_command.trim();
+        if !line.is_empty() {
+            out.push(BeforeStep::Command(line.to_string()));
+        }
+        Ok(out)
+    }
+
     pub fn selected_config(&self) -> Option<&RunConfig> {
         self.selected.as_deref().and_then(|n| self.get(n))
     }
@@ -169,13 +198,22 @@ impl RunFile {
     }
 }
 
-/// Load `.brisk/run.json`, or import from `.idea` when it does not exist yet.
-/// Returns the file and the number of imported configurations.
-/// The member names of a compound's `target`.
+/// One Before launch step.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BeforeStep {
+    /// Another configuration, in its own Run tab.
+    Run(RunConfig),
+    /// A shell command line.
+    Command(String),
+}
+
+/// The member names of a compound's `target` (and of `before_run`).
 pub fn compound_names(target: &str) -> Vec<String> {
     target.split(';').map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).collect()
 }
 
+/// Load `.brisk/run.json`, or import from `.idea` when it does not exist yet.
+/// Returns the file and the number of imported configurations.
 pub fn load(root: &Path) -> (RunFile, usize) {
     if let Ok(s) = std::fs::read_to_string(root.join(CONFIG_FILE)) {
         if let Ok(f) = serde_json::from_str::<RunFile>(&s) {
@@ -272,6 +310,15 @@ fn parse_configuration(root: &Path, node: roxmltree::Node) -> Option<RunConfig> 
                     }
                     _ => {}
                 }
+            }
+            // Before launch: <method v="2"><option name="RunConfigurationTask" run_configuration_name="X"/></method>
+            "method" => {
+                let names: Vec<&str> = ch
+                    .children()
+                    .filter(|n| n.has_tag_name("option") && n.attribute("name") == Some("RunConfigurationTask") && n.attribute("enabled") != Some("false"))
+                    .filter_map(|n| n.attribute("run_configuration_name"))
+                    .collect();
+                c.before_run = names.join(";");
             }
             "envs" => {
                 for e in ch.children().filter(|n| n.has_tag_name("env")) {
