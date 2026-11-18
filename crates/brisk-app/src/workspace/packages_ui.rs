@@ -298,7 +298,7 @@ impl Workspace {
             )
             .child(div().w(px(1.)).h(px(18.)).mx(px(2.)).bg(Theme::divider()))
             .child(input(&p.name, 180., "Package name", cx))
-            .child(input(&p.version, 160., "Version (optional)", cx))
+            .child(input(&p.version, 160., "Version", cx))
             .child(ui_kit::button("pkg-install", "Install", !busy, true).on_click(cx.listener(|this, _, _, cx| {
                 this.install_package(cx);
                 cx.notify();

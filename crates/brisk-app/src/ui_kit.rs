@@ -4,13 +4,15 @@
 use gpui::{div, px, prelude::*, Div, Entity, Stateful};
 
 use crate::editor::Editor;
-use crate::theme::{mono_font, Theme};
+use crate::theme::{ui_font, Theme};
 
 /// Inputs and buttons in dialogs and tool window toolbars.
 pub const CONTROL_H: f32 = 28.;
 /// Inputs in thin bars (the editor's Find bar, the Git log filter).
 pub const COMPACT_H: f32 = 26.;
 pub const RADIUS: f32 = 5.;
+/// Text size of one-line fields (typed text and placeholder), in the UI font.
+pub const FIELD_TEXT: f32 = 13.;
 
 /// The frame every text input shares: border (accent when focused, red when the value is
 /// wrong), background, radius and a vertically centered row.
@@ -50,8 +52,8 @@ pub fn editor_slot(e: &Entity<Editor>, placeholder: &'static str, show_placehold
                     .flex()
                     .items_center()
                     .whitespace_nowrap()
-                    .font_family(mono_font())
-                    .text_size(px(crate::settings::font_size()))
+                    .font_family(ui_font())
+                    .text_size(px(FIELD_TEXT))
                     .text_color(Theme::text_dim())
                     .child(placeholder),
             )

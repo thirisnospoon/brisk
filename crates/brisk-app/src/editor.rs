@@ -1481,8 +1481,10 @@ impl Element for EditorElement {
     }
 
     fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), window: &mut Window, cx: &mut App) -> Prepaint {
-        let font_size = px(crate::settings::font_size());
-        let mono = font(crate::settings::editor_font());
+        // One-line fields (filters, names, find) use the UI font like the rest of the chrome.
+        let is_field = self.editor.read(cx).is_field;
+        let font_size = px(if is_field { crate::ui_kit::FIELD_TEXT } else { crate::settings::font_size() });
+        let mono = font(if is_field { crate::theme::ui_font().to_string() } else { crate::settings::editor_font() });
         let run = |len: usize, color: gpui::Hsla| TextRun { len, font: mono.clone(), color, background_color: None, underline: None, strikethrough: None };
 
         let headers = self.editor.update(cx, |ed, cx| {
