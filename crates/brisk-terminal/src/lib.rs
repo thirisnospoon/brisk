@@ -148,6 +148,42 @@ pub struct CellView {
     pub selected: bool,
 }
 
+/// A search match on one grid row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Found {
+    /// Grid line: negative in the history, `0..rows` on the screen (as `display_offset` 0).
+    pub line: i32,
+    /// Columns of the match.
+    pub cols: std::ops::Range<usize>,
+    /// The whole row, trailing blanks trimmed.
+    pub text: String,
+}
+
+/// Matches of `needle` in rows given as `(line, [(column, char)])` (case-insensitive unless
+/// `case`); a match does not span rows.
+pub fn find_in_rows(rows: impl IntoIterator<Item = (i32, Vec<(usize, char)>)>, needle: &str, case: bool) -> Vec<Found> {
+    let fold = |c: char| if case { c } else { c.to_lowercase().next().unwrap_or(c) };
+    let pat: Vec<char> = needle.chars().map(fold).collect();
+    let mut out = Vec::new();
+    if pat.is_empty() {
+        return out;
+    }
+    for (line, cells) in rows {
+        let chars: Vec<char> = cells.iter().map(|&(_, c)| fold(c)).collect();
+        let mut i = 0;
+        while i + pat.len() <= chars.len() {
+            if chars[i..i + pat.len()] == pat[..] {
+                let text: String = cells.iter().map(|&(_, c)| c).collect::<String>().trim_end().to_string();
+                out.push(Found { line, cols: cells[i].0..cells[i + pat.len() - 1].0 + 1, text });
+                i += pat.len();
+            } else {
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     pub cols: usize,
@@ -362,6 +398,36 @@ impl Session {
         out.trim_end().to_string()
     }
 
+    /// Matches of `needle` in the whole buffer (history and screen), top to bottom.
+    pub fn find(&self, needle: &str, case: bool) -> Vec<Found> {
+        let term = self.term.lock();
+        let grid = term.grid();
+        let top = -(grid.history_size() as i32);
+        let rows = (top..grid.screen_lines() as i32).map(|l| {
+            let row = &grid[Line(l)];
+            let cells = (0..grid.columns()).filter_map(|c| {
+                let cell = &row[Column(c)];
+                (!cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)).then_some((c, cell.c))
+            });
+            (l, cells.collect())
+        });
+        find_in_rows(rows, needle, case)
+    }
+
+    /// Scroll so that grid `line` is visible (centered when it was off screen).
+    pub fn scroll_to(&self, line: i32) {
+        let mut term = self.term.lock();
+        let (offset, rows, history) = {
+            let g = term.grid();
+            (g.display_offset() as i32, g.screen_lines() as i32, g.history_size() as i32)
+        };
+        if line >= -offset && line < rows - offset {
+            return;
+        }
+        let target = (rows / 2 - line).clamp(0, history);
+        term.scroll_display(Scroll::Delta(target - offset));
+    }
+
     pub fn shutdown(&self) {
         match &self.io {
             Io::Pty(tx) => {
@@ -554,6 +620,20 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn finds_in_rows() {
+        let row = |l: i32, t: &str| (l, t.chars().enumerate().collect::<Vec<_>>());
+        // A wide char: its spacer column is missing from the row.
+        let wide = (2, vec![(0, '日'), (2, 'E'), (3, 'r'), (4, 'r')]);
+        let rows = vec![row(-1, "Error: x  error"), row(0, "ok"), wide];
+        let f = find_in_rows(rows.clone(), "error", false);
+        assert_eq!(f.iter().map(|f| (f.line, f.cols.clone())).collect::<Vec<_>>(), vec![(-1, 0..5), (-1, 10..15)]);
+        assert_eq!(f[0].text, "Error: x  error");
+        assert_eq!(find_in_rows(rows.clone(), "Error", true).len(), 1);
+        assert_eq!(find_in_rows(rows.clone(), "err", false).last().map(|f| (f.line, f.cols.clone())), Some((2, 2..5)));
+        assert!(find_in_rows(rows, "", false).is_empty());
+    }
 
     /// Spawns a real shell, runs a command and reads it back from the grid.
     #[test]

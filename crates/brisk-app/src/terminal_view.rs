@@ -13,6 +13,7 @@ use gpui::{
 use std::path::PathBuf;
 
 mod tests_view;
+mod console_find;
 pub use tests_view::TestsOutcome;
 
 const CELL_H: f32 = 18.0;
@@ -91,6 +92,8 @@ pub struct TerminalPanel {
     pub scroll_to_end: bool,
     /// Soft wrap off: first visible column.
     h_scroll: usize,
+    /// Ctrl+F in the Run console.
+    search: console_find::ConsoleSearch,
 }
 
 #[derive(Clone, Copy)]
@@ -165,6 +168,9 @@ impl TerminalPanel {
                             }
                             TermEvent::Wakeup | TermEvent::Bell => {}
                         }
+                        if this.search.open {
+                            this.search.dirty = true;
+                        }
                     }
                     cx.notify();
                 });
@@ -190,6 +196,7 @@ impl TerminalPanel {
             soft_wrap: true,
             scroll_to_end: true,
             h_scroll: 0,
+            search: Default::default(),
         }
     }
 
@@ -425,6 +432,14 @@ impl TerminalPanel {
     pub fn key(&mut self, k: &gpui::Keystroke, cx: &mut Context<Self>) -> bool {
         let m = k.modifiers;
         let key = k.key.to_ascii_lowercase();
+        if self.run_mode && m.control && !m.shift && !m.alt && key == "f" {
+            self.open_search();
+            cx.notify();
+            return true;
+        }
+        if self.search.open && self.search_key(k, cx) {
+            return true;
+        }
         // Tab management, PyCharm terminal shortcuts.
         match (m.control, m.shift, m.alt, key.as_str()) {
             (true, true, false, "t") if !self.run_mode => {
@@ -488,6 +503,7 @@ impl TerminalPanel {
 
     fn on_mouse_down(&mut self, e: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus);
+        self.search.focused = false;
         let Some((row, col, _)) = self.cell_at(e.position) else { return };
         if self.run_mode && e.click_count == 1 {
             if let Some((path, line)) = self.link_at(row, col) {
@@ -739,11 +755,15 @@ impl Render for TerminalPanel {
                 .when_some(self.tests(), |d, t| d.child(self.render_tests_tree(t, cx)))
                 .when_some(self.tests().filter(|t| t.shows_details()), |d, t| d.child(self.render_test_details(t, cx)))
                 .when(!self.tests().is_some_and(|t| t.shows_details()), |d| d.child(
+                div().flex_1().min_w_0().h_full().flex().flex_col()
+                .when(self.search.open, |d| d.child(self.render_search_bar(cx)))
+                .when(self.search.open && self.search.filter, |d| d.child(self.render_filtered(cx)))
+                .when(!(self.search.open && self.search.filter), |d| d.child(
                 div()
                     .id("terminal-grid")
                     .flex_1()
                     .min_w_0()
-                    .h_full()
+                    .min_h_0()
                     .mx(px(8.))
                     .mb(px(4.))
                     .cursor(gpui::CursorStyle::IBeam)
@@ -753,7 +773,7 @@ impl Render for TerminalPanel {
                     .on_scroll_wheel(cx.listener(Self::on_scroll))
                     .when_some(self.error.clone(), |d, e| d.child(div().text_color(rgb(0xf05d5d)).child(e)))
                     .child(TerminalElement { panel: cx.entity() }),
-            ))))
+            ))))))
     }
 }
 
@@ -803,7 +823,9 @@ impl Element for TerminalElement {
         let rows = (f32::from(bounds.size.height) / CELL_H).floor().max(1.0) as usize;
         let mut h_off = 0;
 
+        let mut marks: Vec<(i32, std::ops::Range<usize>, bool)> = Vec::new();
         let snap: Option<(Snapshot, bool)> = self.panel.update(cx, |p, _| {
+
             p.grid = Some(GridGeom { bounds, cell_w });
             let run_mode = p.run_mode;
             let nowrap = run_mode && !p.soft_wrap;
@@ -812,6 +834,12 @@ impl Element for TerminalElement {
             h_off = p.h_scroll;
             let tab = p.tabs.get_mut(p.active)?;
             tab.session.resize(cols, rows, f32::from(cell_w) as u16, CELL_H as u16);
+            // After the resize: it re-wraps rows and moves lines into the history.
+            p.refresh_search();
+            if p.search.open {
+                marks = p.search.found.iter().enumerate().map(|(i, f)| (f.line, f.cols.clone(), i == p.search.current)).collect();
+            }
+            let tab = p.tabs.get(p.active)?;
             Some((tab.session.snapshot(), run_mode))
         });
         let Some((mut snap, run_mode)) = snap else { return Prepaint { rects: vec![], texts: vec![], cursor: None } };
@@ -835,6 +863,15 @@ impl Element for TerminalElement {
         let mut rects = Vec::new();
         let mut texts = Vec::new();
         let x_at = |c: usize| bounds.left() + cell_w * (c as f32 - h_off as f32);
+        // Find matches on screen, under the text.
+        for (line, cols, current) in marks {
+            let r = line + snap.display_offset as i32;
+            if r >= 0 && (r as usize) < snap.rows {
+                let y = bounds.top() + px(r as f32 * CELL_H);
+                let color = if current { Theme::search_current() } else { Theme::search_hit() };
+                rects.push(fill(Bounds::from_corners(point(x_at(cols.start), y), point(x_at(cols.end), y + px(CELL_H))), color));
+            }
+        }
         for r in 0..snap.rows {
             let y = bounds.top() + px(r as f32 * CELL_H);
             let row = &snap.cells[r * snap.cols..(r + 1) * snap.cols];

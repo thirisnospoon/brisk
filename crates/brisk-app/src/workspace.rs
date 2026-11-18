@@ -42,6 +42,7 @@ mod coverage_ui;
 mod profile_ui;
 mod before_launch_ui;
 mod web_smoke;
+mod console_find_smoke;
 mod templates_ui;
 mod win_input;
 
@@ -431,6 +432,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNMARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_marks_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_CONSOLEFIND").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.console_find_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_WEB").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.web_smoke(window, cx));
@@ -1066,7 +1070,7 @@ impl Workspace {
         let Some(term) = term else { return };
         let k = &e.keystroke;
         let plain_esc = k.key == "escape" && !k.modifiers.shift && !k.modifiers.control && !k.modifiers.alt;
-        if plain_esc && !term.read(cx).alt_screen() {
+        if plain_esc && !term.read(cx).alt_screen() && !term.read(cx).search_open() {
             self.focus_editor(window, cx);
             cx.notify();
             return;
