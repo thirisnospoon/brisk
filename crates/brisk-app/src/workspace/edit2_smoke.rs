@@ -263,8 +263,17 @@ impl Workspace {
         eprintln!("smoke-edit2: split down -> {}", self.panes_for_smoke(cx));
         self.dispatch(Action::CloseTab, window, cx);
         eprintln!("smoke-edit2: close the only tab of a group -> {}", self.panes_for_smoke(cx));
+        // Pin: the pinned tab moves first and survives Close Other / Close All.
+        for f in ["stage2.py", "messy.py"] {
+            self.open_file(&self.root.join(f), window, cx);
+        }
+        self.dispatch(Action::PinTab, window, cx);
+        eprintln!("smoke-edit2: pin messy.py -> {} pinned={}", self.panes_for_smoke(cx), self.pinned_count());
         self.dispatch(Action::CloseAllTabs, window, cx);
-        eprintln!("smoke-edit2: close all -> {:?}", self.panes_for_smoke(cx));
+        eprintln!("smoke-edit2: close all keeps the pinned tab -> {}", self.panes_for_smoke(cx));
+        self.dispatch(Action::PinTab, window, cx);
+        self.dispatch(Action::CloseAllTabs, window, cx);
+        eprintln!("smoke-edit2: unpinned, close all -> {:?}", self.panes_for_smoke(cx));
         eprintln!("smoke-edit2: done");
         cx.quit();
     }

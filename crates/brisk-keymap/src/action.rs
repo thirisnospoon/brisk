@@ -176,6 +176,7 @@ actions! {
     CloseTabsToRight => "Close Tabs to the Right", "File";
     CloseTabsToLeft => "Close Tabs to the Left", "File";
     ReopenClosedTab => "Reopen Closed Tab", "File";
+    PinTab => "Pin Tab", "File";
     SplitVertically => "Split Right", "Window";
     SplitHorizontally => "Split Down", "Window";
     Unsplit => "Unsplit", "Window";

@@ -132,6 +132,14 @@ pub enum Tab {
 }
 
 impl Tab {
+    fn entity_id(&self) -> gpui::EntityId {
+        match self {
+            Tab::Editor(e) => e.entity_id(),
+            Tab::Diff(d) => d.entity_id(),
+            Tab::Grid(g) => g.entity_id(),
+        }
+    }
+
     fn focus(&self, cx: &App) -> FocusHandle {
         match self {
             Tab::Editor(e) => e.read(cx).focus_handle(cx),
@@ -262,6 +270,8 @@ pub struct Workspace {
     split: Option<tabs_ui::Split>,
     /// Recently closed files (Reopen Closed Tab).
     closed: Vec<PathBuf>,
+    /// Pinned tabs (both groups): kept first and spared by Close Other / All / Left / Right.
+    pinned: std::collections::HashSet<gpui::EntityId>,
     /// Expanded folders' modification times (the disk poll).
     dir_stamps: disk_ui::DirStamps,
     left: Option<LeftTool>,
@@ -475,6 +485,7 @@ impl Workspace {
             structure: Vec::new(),
             split: None,
             closed: Vec::new(),
+            pinned: Default::default(),
             dir_stamps: Default::default(),
             left: Some(LeftTool::Project),
             bottom: None,
@@ -595,7 +606,7 @@ impl Workspace {
     }
 
     fn add_tab(&mut self, tab: Tab) {
-        let insert_at = self.active.map(|i| i + 1).unwrap_or(self.tabs.len()).min(self.tabs.len());
+        let insert_at = self.active.map(|i| i + 1).unwrap_or(self.tabs.len()).min(self.tabs.len()).max(self.pinned_count());
         self.tabs.insert(insert_at, tab);
         self.active = Some(insert_at);
     }
@@ -1009,7 +1020,7 @@ impl Workspace {
             A::ToggleBookmark | A::ToggleBookmarkWithMnemonic | A::ShowBookmarks | A::FileStructurePopup => {
                 self.bookmark_action(action, window, cx);
             }
-            A::CloseOtherTabs | A::CloseAllTabs | A::CloseTabsToRight | A::CloseTabsToLeft | A::ReopenClosedTab | A::SplitVertically
+            A::CloseOtherTabs | A::CloseAllTabs | A::CloseTabsToRight | A::CloseTabsToLeft | A::ReopenClosedTab | A::PinTab | A::SplitVertically
             | A::SplitHorizontally | A::Unsplit | A::MoveToOppositeGroup | A::NextSplitter => {
                 self.tab_action(action, window, cx);
             }
@@ -1704,6 +1715,7 @@ impl Workspace {
                     Tab::Grid(g) => (g.read(cx).title.clone(), "▦", gpui::rgb(0x6c9be8).into(), None, false),
                 };
                 let name_color = name_color.unwrap_or(if active { Theme::text() } else { Theme::text_muted() });
+                let pinned = self.pinned.contains(&t.entity_id());
                 div()
                     .id(("tab", i))
                     .h(px(36.))
@@ -1738,7 +1750,31 @@ impl Workspace {
                     .child(div().text_color(color).child(icon))
                     .child(div().text_color(name_color).child(title))
                     .when(dirty, |d| d.child(div().text_color(Theme::text_muted()).child("•")))
-                    .child(
+                    .when(pinned, |d| {
+                        d.child(
+                            div()
+                                .id(("tab-pin", i))
+                                .w(px(16.))
+                                .h(px(16.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(4.))
+                                .text_size(px(11.))
+                                .text_color(Theme::accent())
+                                .hover(|s| s.bg(Theme::press()))
+                                .tooltip(|_, cx| cx.new(|_| Tip("Unpin Tab".into())).into())
+                                .child("⚲")
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.focus_pane(second, window, cx);
+                                    this.active = Some(i);
+                                    this.tab_action(Action::PinTab, window, cx);
+                                })),
+                        )
+                    })
+                    .when(!pinned, |d| d.child(
                         div()
                             .id(("tab-close", i))
                             .w(px(16.))
@@ -1757,7 +1793,7 @@ impl Workspace {
                                 this.focus_pane(second, window, cx);
                                 this.close_tab(i, window, cx);
                             })),
-                    )
+                    ))
             }))
     }
 

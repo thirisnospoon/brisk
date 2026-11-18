@@ -141,11 +141,18 @@ impl Workspace {
     }
 
     /// Close the tabs of the current group for which `pick(index)` is true.
+    /// Tabs at the start of the strip that are pinned.
+    pub(super) fn pinned_count(&self) -> usize {
+        self.tabs.iter().take_while(|t| self.pinned.contains(&t.entity_id())).count()
+    }
+
+    /// Close the picked tabs of the focused group; pinned tabs stay (as in PyCharm).
     fn close_where(&mut self, pick: impl Fn(usize) -> bool, window: &mut Window, cx: &mut Context<Self>) {
         let n = self.tabs.len();
         let had_split = self.split.is_some();
+        let pins: Vec<bool> = self.tabs.iter().map(|t| self.pinned.contains(&t.entity_id())).collect();
         for j in (0..n).rev() {
-            if pick(j) && j < self.tabs.len() {
+            if pick(j) && !pins[j] && j < self.tabs.len() {
                 self.close_tab(j, window, cx);
                 // The group closed: what is left belongs to the other one.
                 if had_split && self.split.is_none() {
@@ -178,6 +185,21 @@ impl Workspace {
             }
             A::CloseTabsToRight => self.close_where(|j| cur.is_some_and(|c| j > c), window, cx),
             A::CloseTabsToLeft => self.close_where(|j| cur.is_some_and(|c| j < c), window, cx),
+            A::PinTab => {
+                let Some(i) = cur.filter(|&i| i < self.tabs.len()) else { return true };
+                let id = self.tabs[i].entity_id();
+                let tab = self.tabs.remove(i);
+                let pin = !self.pinned.remove(&id);
+                if pin {
+                    self.pinned.insert(id);
+                }
+                // Pinned tabs come first; a newly pinned tab goes last among them, an unpinned
+                // one first after them.
+                let at = self.pinned_count();
+                self.tabs.insert(at, tab);
+                self.active = Some(at);
+                self.status = if pin { "Tab pinned" } else { "Tab unpinned" }.into();
+            }
             A::ReopenClosedTab => {
                 while let Some(p) = self.closed.pop() {
                     if p.is_file() {
@@ -209,6 +231,13 @@ impl Workspace {
         let n = self.tabs.len();
         let split = self.split.is_some();
         let mut v = vec![
+            self.action_entry(
+                if self.tabs.get(i).is_some_and(|t| self.pinned.contains(&t.entity_id())) { "Unpin Tab" } else { "Pin Tab" },
+                Action::PinTab,
+                true,
+                false,
+            ),
+            Entry::Separator,
             self.action_entry("Close", Action::CloseTab, true, false),
             self.action_entry("Close Other Tabs", Action::CloseOtherTabs, n > 1, false),
             self.action_entry("Close All Tabs", Action::CloseAllTabs, true, false),
