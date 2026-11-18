@@ -22,6 +22,8 @@ pub struct Completion {
     pub top: usize,
     /// Char position where the completed word starts.
     pub start: usize,
+    /// The server sent only part of the matches: ask again as the prefix grows.
+    pub incomplete: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -45,6 +47,8 @@ pub struct Insight {
     hover_gen: u64,
     /// Char position of the word the mouse rests on.
     hover_word: Option<usize>,
+    /// Word start of an incomplete list that closed because nothing matched any more.
+    requery: Option<usize>,
 }
 
 fn is_ident(c: char) -> bool {
@@ -78,15 +82,39 @@ fn matches(label: &str, prefix: &str) -> Option<u8> {
 /// One-letter kind badge and its color, like PyCharm's completion icons.
 fn kind_badge(kind: u32) -> (&'static str, u32) {
     match kind {
-        2 | 3 | 4 => ("f", 0xc77dbb),
+        // Method, function, constructor.
+        2 => ("m", 0xc77dbb),
+        3 | 4 => ("f", 0xc77dbb),
+        // Field, property.
         5 | 10 => ("p", 0xcf8e6d),
-        6 => ("v", 0x6aab73),
-        7 | 22 | 25 => ("c", 0x56a8f5),
-        9 => ("m", 0x8c8c8c),
+        6 | 12 => ("v", 0x6aab73),
+        7 | 22 => ("c", 0x56a8f5),
+        8 => ("I", 0x56a8f5),
+        13 | 20 => ("e", 0x56a8f5),
+        25 => ("T", 0x56a8f5),
+        9 | 19 => ("▣", 0x8c8c8c),
         14 => ("k", 0xcf8e6d),
         21 => ("C", 0x6aab73),
+        15 => ("s", 0x8c8c8c),
         _ => ("·", 0x8c8c8c),
     }
+}
+
+/// Char ranges of `edits` (line/column) mapped to char positions, plus how much the text
+/// before `before` grows: auto-import lines land above the completed word.
+fn extra_ranges(e: &Editor, edits: &[brisk_lint::Edit], before: usize) -> (Vec<(std::ops::Range<usize>, String)>, isize) {
+    let mut shift = 0isize;
+    let ranges = edits
+        .iter()
+        .map(|x| {
+            let r = e.pos_of(x.start)..e.pos_of(x.end).max(e.pos_of(x.start));
+            if r.end <= before {
+                shift += x.content.chars().count() as isize - r.len() as isize;
+            }
+            (r, x.content.clone())
+        })
+        .collect();
+    (ranges, shift)
 }
 
 impl Editor {
@@ -111,14 +139,23 @@ impl Editor {
     }
 
     /// Completion results for the word starting at `start`.
-    pub fn show_completion(&mut self, items: Vec<CompletionItem>, start: usize, cx: &mut Context<Self>) {
-        self.insight.completion = Some(Completion { items, shown: Vec::new(), selected: 0, top: 0, start });
+    pub fn show_completion_list(&mut self, items: Vec<CompletionItem>, start: usize, incomplete: bool, cx: &mut Context<Self>) {
+        self.insight.requery = None;
+        self.insight.completion = Some(Completion { items, shown: Vec::new(), selected: 0, top: 0, start, incomplete });
         self.refilter_completion();
         cx.notify();
     }
 
     pub fn completion_open(&self) -> bool {
         self.insight.completion.is_some()
+    }
+
+    /// Typing more of the word should ask the server again (its list was incomplete).
+    pub fn completion_needs_requery(&self) -> bool {
+        match &self.insight.completion {
+            Some(c) => c.incomplete,
+            None => self.insight.requery.is_some_and(|s| s == self.word_start_before_caret()),
+        }
     }
 
     /// Re-match the list against what is typed now; closes it when nothing matches.
@@ -134,6 +171,9 @@ impl Editor {
         // A single exact match needs no list.
         let exact_only = shown.len() == 1 && c.items[shown[0]].label == prefix;
         if shown.is_empty() || exact_only {
+            if shown.is_empty() && c.incomplete {
+                self.insight.requery = Some(c.start);
+            }
             self.insight.completion = None;
             return;
         }
@@ -189,10 +229,15 @@ impl Editor {
         let in_import = matches!(line_text.trim_start().split_whitespace().next(), Some("import" | "from"));
         let call = matches!(item.kind, 2 | 3 | 4) && next != Some('(') && !in_import;
         let text = if call { format!("{}()", item.insert) } else { item.insert.clone() };
-        self.buffer.replace_ranges(vec![(c.start..end, text)]);
+        // The import line of an auto-import item goes in the same undo step.
+        let (mut edits, shift) = extra_ranges(self, &item.extra, c.start);
+        edits.retain(|(r, _)| r.end <= c.start || r.start >= end);
+        edits.push((c.start..end, text));
+        self.buffer.replace_ranges(edits);
+        let start = (c.start as isize + shift).max(0) as usize;
+        let p = start + item.insert.chars().count() + usize::from(call);
+        self.buffer.set_caret(p, false);
         if call {
-            let p = c.start + item.insert.chars().count() + 1;
-            self.buffer.set_caret(p, false);
             cx.emit(EditorEvent::Typed('('));
         }
         self.ensure_caret_visible();
@@ -217,10 +262,11 @@ impl Editor {
 
     /// Smoke tests: what the code-insight popups show.
     pub fn insight_summary(&self) -> String {
-        let c = self.insight.completion.as_ref().map(|c| c.shown.iter().take(5).map(|&i| c.items[i].label.clone()).collect::<Vec<_>>());
+        let c = self.insight.completion.as_ref().map(|c| c.shown.iter().take(5).map(|&i| if c.items[i].extra.is_empty() { c.items[i].label.clone() } else { format!("{} [{}]", c.items[i].label, c.items[i].detail) }).collect::<Vec<_>>());
         let d = self.insight.doc.as_ref().map(|d| d.blocks.len());
         let s = self.insight.signature.as_ref().map(|s| (s.label.clone(), s.active));
-        format!("completion {c:?}, doc blocks {d:?}, signature {s:?}")
+        let preview = self.insight.completion.as_ref().and_then(|c| c.shown.get(c.selected).map(|&i| c.items[i].doc.trim().chars().count())).filter(|&n| n > 0);
+        format!("completion {c:?}, preview {preview:?} chars, doc blocks {d:?}, signature {s:?}")
     }
 
     pub fn signature_open(&self) -> bool {
@@ -246,6 +292,7 @@ impl Editor {
 
     /// Escape: close the topmost code-insight popup. Returns false when none was open.
     pub fn close_insight(&mut self) -> bool {
+        self.insight.requery = None;
         if self.insight.completion.take().is_some() || self.insight.doc.take().is_some() || self.insight.signature.take().is_some() {
             return true;
         }
@@ -360,6 +407,34 @@ impl Editor {
                             cx.notify();
                         }))
                 });
+                // Documentation of the selected item, beside the list (PyCharm's preview).
+                let doc = c.shown.get(c.selected).map(|&i| c.items[i].doc.trim()).filter(|d| !d.is_empty());
+                if let Some(doc) = doc {
+                    let lines: Vec<String> = doc.lines().take(14).map(|l| if l.is_empty() { " ".to_string() } else { l.to_string() }).collect();
+                    out.push(
+                        gpui::div()
+                            .id("completion-doc")
+                            .absolute()
+                            .left(rel.x.max(px(0.)) + px(444.))
+                            .top(rel.y)
+                            .w(px(380.))
+                            .max_h(px(VISIBLE.min(c.shown.len()).max(6) as f32 * ROW_H + 4.))
+                            .overflow_hidden()
+                            .px(px(10.))
+                            .py(px(6.))
+                            .rounded(px(5.))
+                            .border_1()
+                            .border_color(Theme::divider())
+                            .bg(Theme::panel())
+                            .shadow_lg()
+                            .text_size(px(12.5))
+                            .text_color(Theme::text_muted())
+                            .cursor(gpui::CursorStyle::Arrow)
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .children(lines.into_iter().map(|l| gpui::div().child(l)))
+                            .into_any_element(),
+                    );
+                }
                 out.push(
                     gpui::div()
                         .id("completion-list")

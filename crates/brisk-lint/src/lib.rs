@@ -19,7 +19,7 @@ pub enum Severity {
 
 /// A position: 0-based line and 0-based column in characters (Unicode scalar values, the
 /// unit ruff reports and the editor's rope uses).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pos {
     pub line: usize,
     pub col: usize,
@@ -251,6 +251,43 @@ pub fn format_text(ruff: &Path, root: &Path, file: &Path, text: &str, lines: Opt
 /// Optimize Imports: drop unused imports and sort them (ruff rules F401 and I001).
 pub fn optimize_imports(ruff: &Path, root: &Path, file: &Path, text: &str) -> Result<String, String> {
     fix_all(ruff, root, file, text, Some("F401,I001"))
+}
+
+/// What Optimize Imports did, compared by import statements: "Removed 2 unused imports,
+/// sorted the rest", "Imports sorted", "Imports are already optimized".
+pub fn imports_summary(before: &str, after: &str) -> String {
+    fn names(t: &str) -> usize {
+        // Count imported names: `import a, b` is 2, `from x import (a, b)` is 2.
+        let mut n = 0;
+        let mut in_paren = false;
+        for l in t.lines() {
+            let s = l.split('#').next().unwrap_or("").trim();
+            if in_paren {
+                n += s.trim_end_matches(')').split(',').filter(|p| !p.trim().is_empty()).count();
+                in_paren = !s.contains(')');
+                continue;
+            }
+            if let Some(rest) = s.strip_prefix("import ") {
+                n += rest.split(',').count();
+            } else if s.starts_with("from ") {
+                if let Some((_, rest)) = s.split_once(" import ") {
+                    let rest = rest.trim().trim_start_matches('(');
+                    n += rest.trim_end_matches(')').split(',').filter(|p| !p.trim().is_empty()).count();
+                    in_paren = s.contains('(') && !s.contains(')');
+                }
+            }
+        }
+        n
+    }
+    let (b, a) = (before.replace("\r\n", "\n"), after.replace("\r\n", "\n"));
+    if a == b {
+        return "Imports are already optimized".into();
+    }
+    match names(&b).saturating_sub(names(&a)) {
+        0 => "Imports sorted".into(),
+        1 => "Removed 1 unused import; imports sorted".into(),
+        n => format!("Removed {n} unused imports; imports sorted"),
+    }
 }
 
 /// Apply edits to text (positions refer to the original text). Used by tests and as the

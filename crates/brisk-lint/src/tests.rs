@@ -1,5 +1,14 @@
 use super::*;
 
+#[test]
+fn optimize_imports_summary() {
+    let before = "import sys, os\nfrom typing import (\n    Any,\n    List,\n)\nimport json\n\nprint(os, Any)\n";
+    let after = "import os\nfrom typing import Any\n\nprint(os, Any)\n";
+    assert_eq!(imports_summary(before, after), "Removed 3 unused imports; imports sorted");
+    assert_eq!(imports_summary("import b\nimport a\n", "import a\nimport b\n"), "Imports sorted");
+    assert_eq!(imports_summary("import a\n", "import a\n"), "Imports are already optimized");
+}
+
 const SAMPLE: &str = r#"[
   {"cell": null, "code": "F401", "end_location": {"column": 10, "row": 1}, "filename": "C:/p/a.py",
    "fix": {"applicability": "safe", "edits": [{"content": "", "end_location": {"column": 1, "row": 2}, "location": {"column": 1, "row": 1}}], "message": "Remove unused import: `os`"},

@@ -11,6 +11,7 @@ mod files_ui;
 mod find_ui;
 mod git_ui;
 mod history_ui;
+mod intel_smoke;
 mod lsp_ui;
 mod menu_ui;
 mod problems_ui;
@@ -287,6 +288,9 @@ impl Workspace {
         if let Some(f) = std::env::var_os("BRISK_SMOKE_LINT") {
             let f = PathBuf::from(f);
             cx.defer_in(window, move |this: &mut Self, window, cx| this.lint_smoke(f, window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_INTEL").is_some() {
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.intel_smoke(window, cx));
         }
         if let Some(f) = std::env::var_os("BRISK_SMOKE_LSP") {
             let f = PathBuf::from(f);

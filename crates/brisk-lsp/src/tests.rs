@@ -23,6 +23,9 @@ fn parsing() {
     let c = parse_completion(&json!({"isIncomplete": true, "items": [{"label": "path", "kind": 9, "sortText": "1"}, {"label": "PathLike", "kind": 7, "sortText": " 0", "detail": "<class 'PathLike'>"}]}));
     assert_eq!(c.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["PathLike", "path"]);
     assert_eq!(c[0].insert, "PathLike");
+    let a = parse_code_actions(&json!([{"title": "import collections.defaultdict", "isPreferred": true, "kind": "quickfix", "edit": {"changes": {path_to_uri(Path::new("/a.py")): [{"newText": "from collections import defaultdict\n", "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}}]}}}, {"title": "cmd", "command": "x"}]));
+    assert_eq!(a.len(), 1);
+    assert_eq!((a[0].title.as_str(), a[0].preferred, a[0].edits[0].1[0].content.as_str()), ("import collections.defaultdict", true, "from collections import defaultdict\n"));
     let d = parse_diagnostics(Path::new("a.py"), &json!({"items": [{"code": "invalid-assignment", "message": "bad", "severity": 1, "range": {"start": {"line": 2, "character": 9}, "end": {"line": 2, "character": 18}}}]}));
     assert_eq!((d[0].severity, d[0].start, d[0].title()), (Severity::Error, Pos { line: 2, col: 9 }, "bad (invalid-assignment)".to_string()));
 }
@@ -76,6 +79,28 @@ fn real_ty() {
     assert_eq!(files.len(), 2, "{edits:?}");
     let new_main = brisk_lint::apply_edits(&text2, &edits.iter().find(|(p, _)| *p == main).unwrap().1);
     assert!(new_main.starts_with("from pkg.util import plus\n\nx: str = plus(1, 2)\ns = 'привет'; print(plus(3, 4))"), "{new_main}");
+    // Alt+Enter on an unresolved name: auto-import; the diagnostic comes back from ty.
+    let text3 = "import os\n\nx = defaultdict(list)\n";
+    t.did_change(&main, 3, text3);
+    let d = futures::executor::block_on(t.diagnostics(&main)).unwrap();
+    let un: Vec<_> = d.iter().filter(|d| d.code == "unresolved-reference").cloned().collect();
+    assert_eq!(un.len(), 1, "{d:?}");
+    let acts = futures::executor::block_on(t.code_actions(&main, un[0].start, un[0].end, &un)).unwrap();
+    let imp = acts.iter().find(|a| a.title.contains("collections")).unwrap_or_else(|| panic!("{acts:?}"));
+    let fixed = brisk_lint::apply_edits(text3, &imp.edits[0].1);
+    assert!(fixed.contains("from collections import defaultdict\n"), "{fixed}");
+    // Auto-import completion carries the import line.
+    let text4 = "import os\n\nOrderedD";
+    t.did_change(&main, 4, text4);
+    let c = futures::executor::block_on(t.completion(&main, Pos { line: 2, col: 8 })).unwrap();
+    let od = c.iter().find(|c| c.detail == "collections").unwrap_or_else(|| panic!("{c:?}"));
+    assert_eq!((od.label.as_str(), od.insert.as_str(), od.extra[0].content.as_str()), ("OrderedDict", "OrderedDict", "from collections import OrderedDict\n"));
+    // Moving a module updates the imports of it.
+    let text5 = "from pkg.util import add\nimport pkg.util\n";
+    t.did_change(&main, 5, text5);
+    let moved = futures::executor::block_on(t.will_rename_files(&[(util.clone(), root.join("pkg").join("tools.py"))])).unwrap();
+    let m = moved.iter().find(|(p, _)| *p == main).unwrap_or_else(|| panic!("{moved:?}"));
+    assert_eq!(brisk_lint::apply_edits(text5, &m.1), "from pkg.tools import add\nimport pkg.tools\n");
     drop(t);
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -298,17 +298,21 @@ impl Workspace {
                 if !ed.read(cx).is_python() || self.lsp.state != TyState::Ready {
                     return;
                 }
-                let (open, sig_open, word) = {
+                let (open, sig_open, word, requery) = {
                     let e = ed.read(cx);
                     let (line, col) = e.caret_line_col();
                     let prefix: String = e.buffer.line(line).chars().take(col).collect();
                     let start = e.word_start_before_caret();
                     let word: String = e.buffer.rope().slice(start..e.buffer.primary().head).to_string();
                     let in_comment = prefix.contains('#');
-                    (e.completion_open() || in_comment, e.signature_open(), word)
+                    (e.completion_open() || in_comment, e.signature_open(), word, e.completion_needs_requery() && !in_comment)
                 };
                 if c == '(' || (c == ',' && sig_open) {
                     self.parameter_info(ed.clone(), cx);
+                }
+                if is_ident(c) && requery {
+                    self.complete(ed, false, cx);
+                    return;
                 }
                 if open {
                     return;
@@ -418,7 +422,7 @@ impl Workspace {
         let start = ed.read(cx).word_start_before_caret();
         self.nav.completion_gen += 1;
         let my = self.nav.completion_gen;
-        let fut = ty.completion(&path, p);
+        let fut = ty.completion_list(&path, p);
         cx.spawn(async move |this, cx| {
             let res = fut.await;
             let _ = this.update(cx, |this, cx| {
@@ -426,10 +430,10 @@ impl Workspace {
                     return;
                 }
                 match res {
-                    Ok(items) if !items.is_empty() => ed.update(cx, |e, cx| {
+                    Ok((items, incomplete)) if !items.is_empty() => ed.update(cx, |e, cx| {
                         // Still typing the same word?
                         if e.word_start_before_caret() == start {
-                            e.show_completion(items, start, cx);
+                            e.show_completion_list(items, start, incomplete, cx);
                         }
                     }),
                     Ok(_) if explicit => {
