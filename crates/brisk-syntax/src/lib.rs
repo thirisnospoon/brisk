@@ -8,7 +8,7 @@ pub use sql::highlight_sql;
 use std::ops::Range;
 use std::path::Path;
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Language, Parser, Query, QueryCursor, Tree};
+use tree_sitter::{InputEdit, Language, Parser, Point, Query, QueryCursor, Tree};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Highlight {
@@ -216,6 +216,19 @@ pub struct SyntaxTree {
     query: Query,
     names: Vec<Option<Highlight>>,
     tree: Option<Tree>,
+    /// The text `tree` was parsed from: the next parse diffs against it and reparses only
+    /// the changed region (a full parse of a 50k-line file takes seconds).
+    parsed: String,
+    /// `tree` is the previous tree, edited to `parsed` but not reparsed (see `parse_within`).
+    stale: bool,
+}
+
+/// A complete parse with its own parser (for a background thread), reusing `old` edited to
+/// `text` when given.
+pub fn parse_full(lang: Lang, text: &str, old: Option<&Tree>) -> Option<Tree> {
+    let mut parser = Parser::new();
+    parser.set_language(&lang.ts()).ok()?;
+    parser.parse(text, old)
 }
 
 /// A highlighted span, in **byte** offsets of the source text.
@@ -232,17 +245,80 @@ impl SyntaxTree {
         let src = format!("{}\n{}", lang.highlights_query(), lang.extra_query());
         let query = Query::new(&lang.ts(), &src).expect("bad highlight query");
         let names = query.capture_names().iter().map(|n| classify(n)).collect();
-        Self { lang, parser, query, names, tree: None }
+        Self { lang, parser, query, names, tree: None, parsed: String::new(), stale: false }
     }
 
     pub fn lang(&self) -> Lang {
         self.lang
     }
 
-    /// Full reparse. Incremental `edit()` comes with the LSP/indexer work; tree-sitter reparses
-    /// a 10k-line file in a few milliseconds anyway.
+    /// Reparses only what changed since the previous parse (the old tree is edited by the
+    /// diff of the two texts, so any kind of change works: several carets, Undo, Replace All,
+    /// a reload from disk).
     pub fn parse(&mut self, text: &str) {
-        self.tree = self.parser.parse(text, None);
+        self.parse_within(text, None);
+    }
+
+    /// Like `parse`, but gives up after `budget`. Error recovery can take seconds in a large
+    /// file (an unclosed bracket turns the rest of it into one error). Then the old tree,
+    /// edited to the new positions, stays in place: highlights shift with the text but may be
+    /// stale around the change, and `is_stale()` is true until a parse completes (for example
+    /// `parse_full` on a background thread, handed back through `adopt`).
+    pub fn parse_within(&mut self, text: &str, budget: Option<std::time::Duration>) {
+        let old = match self.tree.take() {
+            Some(mut tree) if !self.parsed.is_empty() || self.stale => {
+                if self.parsed == text {
+                    self.tree = Some(tree);
+                    return;
+                }
+                tree.edit(&text_edit(&self.parsed, text));
+                Some(tree)
+            }
+            _ => None,
+        };
+        let parsed = match budget {
+            None => self.parser.parse(text, old.as_ref()),
+            Some(budget) => {
+                let start = std::time::Instant::now();
+                let mut cancel = |_: &tree_sitter::ParseState| start.elapsed() > budget;
+                let bytes = text.as_bytes();
+                let options = tree_sitter::ParseOptions::new().progress_callback(&mut cancel);
+                let tree = self.parser.parse_with_options(&mut |i, _| &bytes[i.min(bytes.len())..], old.as_ref(), Some(options));
+                // An aborted parse leaves state behind; the next one must start over.
+                if tree.is_none() {
+                    self.parser.reset();
+                }
+                tree
+            }
+        };
+        self.stale = parsed.is_none() && old.is_some();
+        self.tree = parsed.or(old);
+        self.parsed.clear();
+        self.parsed.push_str(text);
+    }
+
+    /// The last parse ran out of its budget; the tree is the previous one, shifted.
+    pub fn is_stale(&self) -> bool {
+        self.stale
+    }
+
+    /// What a background `parse_full` needs: the current text and tree.
+    pub fn stale_job(&self) -> Option<(Lang, String, Tree)> {
+        if !self.stale {
+            return None;
+        }
+        Some((self.lang, self.parsed.clone(), self.tree.clone()?))
+    }
+
+    /// Installs a tree that `parse_full` built for `text`. If the text changed meanwhile, the
+    /// tree is edited to the current text and stays stale (a newer job follows).
+    pub fn adopt(&mut self, text: &str, mut tree: Tree) {
+        if text != self.parsed {
+            tree.edit(&text_edit(text, &self.parsed));
+        } else {
+            self.stale = false;
+        }
+        self.tree = Some(tree);
     }
 
     pub fn tree(&self) -> Option<&Tree> {
@@ -659,5 +735,132 @@ class A:
         assert_eq!(o.len(), 2);
         assert_eq!((o[0].name.as_str(), o[0].kind), ("User", OutlineKind::Class));
         assert_eq!((o[1].name.as_str(), o[1].kind, o[1].depth), ("name", OutlineKind::Method, 1));
+    }
+}
+
+/// The single edit that turns `old` into `new`: the common prefix and suffix stay, the
+/// middle changed. Byte offsets; rows and columns as tree-sitter counts them.
+fn text_edit(old: &str, new: &str) -> InputEdit {
+    let (o, n) = (old.as_bytes(), new.as_bytes());
+    let mut prefix = o.iter().zip(n).take_while(|(a, b)| a == b).count();
+    // Keep the edit on character boundaries.
+    while prefix > 0 && !(old.is_char_boundary(prefix) && new.is_char_boundary(prefix)) {
+        prefix -= 1;
+    }
+    let max_suffix = o.len().min(n.len()) - prefix;
+    let mut suffix = o.iter().rev().zip(n.iter().rev()).take(max_suffix).take_while(|(a, b)| a == b).count();
+    while suffix > 0 && !(old.is_char_boundary(o.len() - suffix) && new.is_char_boundary(n.len() - suffix)) {
+        suffix -= 1;
+    }
+    let point = |s: &[u8], at: usize| {
+        let row = s[..at].iter().filter(|&&c| c == b'\n').count();
+        let col = at - s[..at].iter().rposition(|&c| c == b'\n').map_or(0, |p| p + 1);
+        Point { row, column: col }
+    };
+    InputEdit {
+        start_byte: prefix,
+        old_end_byte: o.len() - suffix,
+        new_end_byte: n.len() - suffix,
+        start_position: point(n, prefix),
+        old_end_position: point(o, o.len() - suffix),
+        new_end_position: point(n, n.len() - suffix),
+    }
+}
+
+#[cfg(test)]
+mod incremental_tests {
+    use super::*;
+
+    #[test]
+    fn incremental_parse_any_change_matches_full() {
+        // Whatever made the change (several carets, Undo of a big block, Replace All, a reload
+        // from disk), the parser sees old text -> new text and one InputEdit over the span
+        // between the first and last difference. Tree and highlights must equal a full parse.
+        let base: String = (0..300).map(|i| format!("def f{i}(a, b=1):\n    \"\"\"Doc {i}.\"\"\"\n    return a + b  # c{i}\n\n")).collect();
+        let check = |inc: &mut SyntaxTree, text: &str| {
+            inc.parse(text);
+            let mut full = SyntaxTree::new(Lang::Python);
+            full.parse(text);
+            assert_eq!(inc.tree().unwrap().root_node().to_sexp(), full.tree().unwrap().root_node().to_sexp());
+            assert_eq!(inc.highlights(text, 0..text.len()), full.highlights(text, 0..text.len()));
+        };
+        let mut inc = SyntaxTree::new(Lang::Python);
+        inc.parse(&base);
+        // Multiple carets far apart: the same insertion at three distant places.
+        let mut multi = base.clone();
+        for line in [1100, 600, 3] {
+            let at = multi.match_indices('\n').nth(line).unwrap().0;
+            multi.insert_str(at, " or x");
+        }
+        check(&mut inc, &multi);
+        // Replace All: every `return` becomes `yield`.
+        let replaced = multi.replace("return", "yield");
+        check(&mut inc, &replaced);
+        // Undo of a big block: back to the original.
+        check(&mut inc, &base);
+        // Delete a large block, then a reload from disk with entirely different text.
+        let cut = format!("{}{}", &base[..2000], &base[9000..]);
+        check(&mut inc, &cut);
+        check(&mut inc, "class A:\n    x = 'é ü'\n");
+        // A non-ASCII edit inside a string (the edit must stay on character boundaries).
+        check(&mut inc, "class A:\n    x = 'é ö'\n");
+        check(&mut inc, "");
+        check(&mut inc, &base);
+    }
+
+    #[test]
+    fn over_budget_parse_stays_stale_until_adopted() {
+        let base: String = (0..2000).map(|i| format!("def f{i}(a):\n    return a\n\n")).collect();
+        let full = |text: &str| {
+            let mut f = SyntaxTree::new(Lang::Python);
+            f.parse(text);
+            f.tree().unwrap().root_node().to_sexp()
+        };
+        let mut inc = SyntaxTree::new(Lang::Python);
+        inc.parse(&base);
+        // An unclosed bracket near the top, with a zero budget: the parse gives up.
+        let mut text = base.clone();
+        text.insert_str(20, "(");
+        inc.parse_within(&text, Some(std::time::Duration::ZERO));
+        assert!(inc.is_stale());
+        // Further edits on a stale tree accumulate; the background parse catches up.
+        text.insert_str(5000, "x = 1\n");
+        inc.parse_within(&text, Some(std::time::Duration::ZERO));
+        let (lang, job_text, tree) = inc.stale_job().unwrap();
+        let built = parse_full(lang, &job_text, Some(&tree)).unwrap();
+        // The text changed while it ran: adopted but still stale.
+        text.insert_str(9000, "y = 2\n");
+        inc.parse_within(&text, Some(std::time::Duration::ZERO));
+        inc.adopt(&job_text, built);
+        assert!(inc.is_stale());
+        let (lang, job_text, tree) = inc.stale_job().unwrap();
+        inc.adopt(&job_text, parse_full(lang, &job_text, Some(&tree)).unwrap());
+        assert!(!inc.is_stale());
+        assert_eq!(inc.tree().unwrap().root_node().to_sexp(), full(&text));
+        // And a normal parse afterwards is incremental and correct again.
+        text.insert_str(20, ")");
+        inc.parse_within(&text, Some(std::time::Duration::from_secs(10)));
+        assert!(!inc.is_stale());
+        assert_eq!(inc.tree().unwrap().root_node().to_sexp(), full(&text));
+    }
+
+    #[test]
+    fn incremental_parse_matches_full() {
+        let mut inc = SyntaxTree::new(Lang::Python);
+        let mut text = String::from("def f(a):\n    return a\n\nx = f(1)\n");
+        inc.parse(&text);
+        for (at, ins) in [(14, "1 + "), (0, "import os\n"), (5, "")] {
+            text.insert_str(at, ins);
+            inc.parse(&text);
+            let mut full = SyntaxTree::new(Lang::Python);
+            full.parse(&text);
+            assert_eq!(inc.tree().unwrap().root_node().to_sexp(), full.tree().unwrap().root_node().to_sexp());
+        }
+        // Deleting text.
+        text.replace_range(0..10, "");
+        inc.parse(&text);
+        let mut full = SyntaxTree::new(Lang::Python);
+        full.parse(&text);
+        assert_eq!(inc.tree().unwrap().root_node().to_sexp(), full.tree().unwrap().root_node().to_sexp());
     }
 }

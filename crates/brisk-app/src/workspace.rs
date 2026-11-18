@@ -25,6 +25,7 @@ mod git_ui;
 mod history_ui;
 mod intel_smoke;
 mod complete_smoke;
+mod big_smoke;
 mod lsp_ui;
 mod main_menu;
 mod menu_ui;
@@ -381,6 +382,10 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_TEMPLATES").is_some() {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.templates_smoke(window, cx));
+        }
+        if let Some(f) = std::env::var_os("BRISK_SMOKE_BIG") {
+            let f = PathBuf::from(f);
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.big_smoke(f, window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_COMPLETE").is_some() {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.complete_smoke(window, cx));
@@ -742,6 +747,11 @@ impl Workspace {
             self.watch_editor(&ed, window, cx);
             self.adopt_bookmarks(&ed, cx);
             self.adopt_breakpoints(&ed, cx);
+            if ed.read(cx).is_big() {
+                let msg = format!("Large file ({} lines): inlay hints are off; fold markers and completion words update lazily", ed.read(cx).buffer.len_lines());
+                self.status = msg.clone();
+                self.show_toast(msg, false, cx);
+            }
             self.add_tab(Tab::Editor(ed));
         }
         if let Some(e) = self.active_editor() {
@@ -2592,3 +2602,4 @@ fn clip_items(q: &str) -> Vec<PopupItem> {
         })
         .collect()
 }
+

@@ -19,7 +19,7 @@ impl Editor {
     /// Longest line in chars, cached per buffer version.
     pub(super) fn refresh_line_extent(&mut self) {
         let v = self.buffer.version();
-        if self.max_line.0 != v {
+        if self.max_line.0 != v && !(self.max_line.0 != u64::MAX && self.defer_extent()) {
             let n = self.buffer.len_lines();
             let longest = (0..n).map(|l| self.buffer.line_len(l)).max().unwrap_or(0);
             self.max_line = (v, longest);

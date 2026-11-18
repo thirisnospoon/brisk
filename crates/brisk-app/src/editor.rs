@@ -29,6 +29,9 @@ mod marks;
 mod lsp;
 mod inlay;
 mod middle_click;
+mod big;
+mod extract;
+mod local_sig;
 mod postfix;
 mod quick_def;
 mod word_complete;
@@ -78,6 +81,7 @@ pub struct Editor {
     smooth_task: Option<gpui::Task<()>>,
     /// (buffer version, longest line in chars): the horizontal scroll range.
     max_line: (u64, usize),
+    big: big::BigFile,
     /// A scrollbar thumb being dragged.
     drag: Option<scroll::Drag>,
     /// Pointer position during a selection drag (drives auto-scroll past the edges).
@@ -261,6 +265,7 @@ impl Editor {
             smooth: None,
             smooth_task: None,
             max_line: (u64::MAX, 0),
+            big: Default::default(),
             drag: None,
             drag_pos: None,
             autoscrolling: false,
@@ -324,6 +329,7 @@ impl Editor {
             smooth: None,
             smooth_task: None,
             max_line: (u64::MAX, 0),
+            big: Default::default(),
             drag: None,
             drag_pos: None,
             autoscrolling: false,
@@ -450,8 +456,9 @@ impl Editor {
             return;
         }
         let text = self.text().to_string();
+        let budget = self.is_big().then_some(big::PARSE_BUDGET);
         if let Some(s) = &mut self.syntax {
-            s.parse(&text);
+            s.parse_within(&text, budget);
         }
         self.parsed_version = v;
     }
@@ -1427,18 +1434,20 @@ impl Element for EditorElement {
         let mono = font(crate::settings::editor_font());
         let run = |len: usize, color: gpui::Hsla| TextRun { len, font: mono.clone(), color, background_color: None, underline: None, strikethrough: None };
 
-        let headers = self.editor.update(cx, |ed, _| {
+        let headers = self.editor.update(cx, |ed, cx| {
             ed.reparse();
+            ed.background_parse(cx);
             ed.refresh_vcs();
             ed.refresh_line_extent();
             ed.sync_folds();
             ed.sync_bookmarks();
             ed.run_marks();
-            if ed.show_gutter {
+            let h = if ed.show_gutter {
                 ed.fold_headers()
             } else {
                 Vec::new()
-            }
+            };
+            h
         });
         let ed = self.editor.read(cx);
         let b = &ed.buffer;

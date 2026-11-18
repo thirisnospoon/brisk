@@ -141,7 +141,7 @@ impl Workspace {
                     if let Some(ed) = this.active_editor().cloned() {
                         ed.update(cx, |e, cx| {
                             while e.close_insight() {}
-                            e.select_on_line(line, 23..23, cx);
+                            e.select_on_line(line, 22..22, cx);
                         });
                     }
                     this.smoke_press("ctrl-p", window, cx);
@@ -166,6 +166,50 @@ impl Workspace {
                     eprintln!("smoke-complete: holding");
                     return;
                 }
+                // Extract Variable (Ctrl+Alt+V) on `order.total_price`, used twice: replace all,
+                // then type the new name over all the carets. Then Surround With (Ctrl+Alt+T).
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let Some(ed) = this.active_editor().cloned() else { return };
+                    ed.update(cx, |e, cx| {
+                        while e.close_insight() {}
+                        let at = e.buffer.line_start(line);
+                        e.buffer.set_caret(at, false);
+                        e.buffer.insert("first = order.total_price * 2\nsecond = order.total_price * 3\n");
+                        e.select_on_line(line, 8..25, cx);
+                    });
+                    this.smoke_press("ctrl-alt-v", window, cx);
+                    let labels: Vec<String> = this.problems.intents.iter().map(|i| i.label.clone()).collect();
+                    eprintln!("smoke-complete: Ctrl+Alt+V -> {:?} {labels:?}", this.problems.intents_title);
+                    let all = this.problems.intents.iter().find(|i| i.label.starts_with("Replace all")).map(|i| i.target.clone());
+                    this.popup = None;
+                    if let Some(super::Target::Intention(i)) = all {
+                        this.apply_intent(*i, window, cx);
+                    }
+                    let t = ed.read(cx).text_string();
+                    let lines: Vec<&str> = t.lines().skip(line).take(3).collect();
+                    eprintln!("smoke-complete: extracted -> {lines:?}, {} carets", ed.read(cx).buffer.selections.len());
+                    ed.update(cx, |e, cx| e.type_for_smoke("price", cx));
+                    let t = ed.read(cx).text_string();
+                    let lines: Vec<&str> = t.lines().skip(line).take(3).collect();
+                    eprintln!("smoke-complete: renamed in place -> {lines:?}");
+                    // Surround the two uses with try / except.
+                    ed.update(cx, |e, cx| {
+                        let a = e.buffer.line_start(line + 1);
+                        let b = e.buffer.line_start(line + 3);
+                        e.buffer.selections = vec![brisk_text::Selection { anchor: a, head: b, goal_col: None }];
+                        cx.notify();
+                    });
+                    this.smoke_press("ctrl-alt-t", window, cx);
+                    let pick = this.problems.intents.iter().find(|i| i.label == "try / except").map(|i| i.target.clone());
+                    this.popup = None;
+                    if let Some(super::Target::Intention(i)) = pick {
+                        this.apply_intent(*i, window, cx);
+                    }
+                    let t = ed.read(cx).text_string();
+                    let lines: Vec<&str> = t.lines().skip(line + 1).take(5).collect();
+                    eprintln!("smoke-complete: Surround With try / except -> {lines:?}");
+                    this.smoke_press("escape", window, cx);
+                });
             }
             // Middle click on `compute_total` in `value = compute_total([1, 2])`.
             let line = this
@@ -181,12 +225,32 @@ impl Workspace {
                 .ok()
                 .flatten()
                 .unwrap_or(10);
-            pause(300).await;
-            let p = this.update(cx, |this, cx| this.active_editor().and_then(|e| e.read(cx).char_point(line, 10))).ok().flatten();
+            // With ty, its check after the edits above adds inlay hints (`value: int`) that move
+            // the text: wait for them, or the click lands on what the hint pushed under it.
+            let ty_on = this.update(cx, |this, _| this.lsp.ty.is_some()).unwrap_or(false);
+            if ty_on {
+                wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| !e.read(cx).inlay_labels(line).is_empty())).await;
+            }
+            // Wait for the (smooth) scroll to the line to settle: the point must stop moving.
+            let mut p = None;
+            for _ in 0..20 {
+                pause(150).await;
+                let now = this.update(cx, |this, cx| this.active_editor().and_then(|e| e.read(cx).char_point(line, 10))).ok().flatten();
+                if now.is_some() && now == p {
+                    break;
+                }
+                p = now;
+            }
             let Some(p) = p else {
                 eprintln!("smoke-complete: line 11 is not on screen");
                 return;
             };
+            let _ = this.update(cx, |this, cx| {
+                if let Some(e) = this.active_editor() {
+                    let e = e.read(cx);
+                    eprintln!("smoke-complete: middle click target line {line} {:?} at {p:?}, caret {:?}", e.buffer.line(line), e.caret_line_col());
+                }
+            });
             let (x, y) = (f32::from(p.x) * scale, f32::from(p.y) * scale);
             super::win_input::post(super::win_input::Mouse::Move, x, y, false);
             pause(150).await;

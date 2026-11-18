@@ -96,6 +96,11 @@ impl Editor {
         text_byte(self.hints_on(line, text), text.len(), shown)
     }
 
+    /// Lines that have hints: for smokes.
+    pub fn inlay_line_count(&self) -> usize {
+        self.inlays.lines.len()
+    }
+
     /// Hints shown on `line`, as text: for smokes.
     pub fn inlay_labels(&self, line: usize) -> Vec<String> {
         let text = self.buffer.line(line);

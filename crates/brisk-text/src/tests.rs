@@ -99,6 +99,36 @@ fn comment_toggle() {
 }
 
 #[test]
+fn comment_toggle_blank_lines_and_partial_selection() {
+    // Blank lines inside the selection stay as they are, both ways.
+    let mut b = buf("def f():\n\n    return 1\n");
+    b.select_all();
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "# def f():\n\n#     return 1\n");
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "def f():\n\n    return 1\n");
+    // Selection ending at column 0 of the next line leaves that line alone.
+    let mut b = buf("a = 1\nb = 2\nc = 3");
+    b.selections = vec![Selection { anchor: 0, head: 12, goal_col: None }];
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "# a = 1\n# b = 2\nc = 3");
+    // Only blank lines: they get the marker (PyCharm does the same).
+    let mut b = buf("x\n\n\ny");
+    b.selections = vec![Selection { anchor: 2, head: 4, goal_col: None }];
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "x\n# \n# \ny");
+    // Mixed: some commented, some not -> all get commented; "#x" without a space uncomments.
+    let mut b = buf("#x\ny");
+    b.select_all();
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "# #x\n# y");
+    let mut b = buf("#x\n#y");
+    b.select_all();
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "x\ny");
+}
+
+#[test]
 fn multi_caret_insert() {
     let mut b = buf("a\nb\nc");
     b.selections = vec![Selection::caret(1), Selection::caret(3), Selection::caret(5)];
