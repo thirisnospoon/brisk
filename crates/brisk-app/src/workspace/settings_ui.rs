@@ -136,6 +136,24 @@ impl Workspace {
                 cx.notify();
             })))
             .into_any_element();
+        // UI style: the setting; BRISK_DESIGN, when it names a style, wins (and says so).
+        let forced = crate::theme::islands_override();
+        let style = div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(chip(("set-style", 0), !s.islands, "Classic".into()).on_click(cx.listener(|this, _, w, cx| {
+                this.settings_edit(|s| s.islands = false, w);
+                cx.notify();
+            })))
+            .child(chip(("set-style", 1), s.islands, "Islands".into()).on_click(cx.listener(|this, _, w, cx| {
+                this.settings_edit(|s| s.islands = true, w);
+                cx.notify();
+            })))
+            .when_some(forced, |d, on| {
+                d.child(div().pl(px(6.)).text_size(px(11.5)).text_color(Theme::text_dim()).child(format!("BRISK_DESIGN sets {} for this run", if on { "Islands" } else { "Classic" })))
+            })
+            .into_any_element();
         let fonts = div()
             .flex()
             .flex_wrap()
@@ -230,6 +248,7 @@ impl Workspace {
                         .child(div().font_weight(gpui::FontWeight::SEMIBOLD).pb(px(8.)).child("Settings"))
                         .child(div().text_size(px(11.)).text_color(Theme::text_dim()).pb(px(2.)).child("APPEARANCE"))
                         .child(row("Theme", theme))
+                        .child(row("UI style", style))
                         .child(div().text_size(px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › FONT"))
                         .child(row("Font", fonts))
                         .child(row("Size", size))
@@ -273,8 +292,10 @@ impl Workspace {
         self.dispatch(Action::Settings, window, cx);
         self.settings_edit(|s| s.inlay_hints = false, window);
         eprintln!("smoke-settings: inlay hints off (live) -> {}", settings::inlay_hints());
+        self.settings_edit(|s| s.islands = true, window);
+        eprintln!("smoke-settings: ui style islands (live) -> islands={}", crate::theme::islands());
         self.smoke_press("escape", window, cx);
-        eprintln!("smoke-settings: escape -> inlay hints {}", settings::inlay_hints());
+        eprintln!("smoke-settings: escape -> inlay hints {} islands={}", settings::inlay_hints(), crate::theme::islands());
         self.dispatch(Action::Settings, window, cx);
         let font = self.settings_dialog.as_ref().and_then(|d| d.fonts.last().cloned()).unwrap_or_default();
         self.settings_edit(|s| {

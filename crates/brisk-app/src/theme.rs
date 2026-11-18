@@ -149,11 +149,27 @@ fn design() -> u8 {
     })
 }
 
-/// The "Islands" layout (`BRISK_DESIGN=islands`): tool windows and the editor are rounded
-/// panels with gaps between them on a darker frame, and editor tabs are pills.
+/// The "Islands" layout: tool windows and the editor are rounded panels with gaps between
+/// them on a darker frame, and editor tabs are pills. The UI style setting picks it (live);
+/// `BRISK_DESIGN=islands` or `=classic` overrides the setting.
 pub fn islands() -> bool {
-    static I: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *I.get_or_init(|| std::env::var("BRISK_DESIGN").unwrap_or_default().split(',').any(|p| p.trim() == "islands"))
+    islands_override().unwrap_or_else(crate::settings::islands)
+}
+
+/// The UI style forced by `BRISK_DESIGN` ("islands" / "classic"), if any.
+pub fn islands_override() -> Option<bool> {
+    static I: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    *I.get_or_init(|| {
+        let v = std::env::var("BRISK_DESIGN").unwrap_or_default();
+        let parts: Vec<&str> = v.split(',').map(str::trim).collect();
+        if parts.contains(&"islands") {
+            Some(true)
+        } else if parts.contains(&"classic") {
+            Some(false)
+        } else {
+            None
+        }
+    })
 }
 
 /// A UI color: the design variant's, else the theme's.

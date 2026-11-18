@@ -19,16 +19,19 @@ pub struct Settings {
     pub line_spacing: f32,
     /// Inlay hints (inferred types, parameter names) in the editor.
     pub inlay_hints: bool,
+    /// UI style: "Islands" (rounded panels on a darker frame) instead of "Classic".
+    pub islands: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true }
+        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false }
     }
 }
 
 static LIGHT: AtomicBool = AtomicBool::new(false);
 static INLAY_HINTS: AtomicBool = AtomicBool::new(true);
+static ISLANDS: AtomicBool = AtomicBool::new(false);
 /// The font size in use (the setting, or a zoomed size: Alt+Shift+. / Ctrl+wheel).
 static FONT_SIZE: AtomicU32 = AtomicU32::new(0);
 static SPACING: AtomicU32 = AtomicU32::new(0);
@@ -62,6 +65,9 @@ pub fn load() -> Settings {
             if let Some(b) = v.get("inlay_hints").and_then(|t| t.as_bool()) {
                 s.inlay_hints = b;
             }
+            if let Some(t) = v.get("ui_style").and_then(|t| t.as_str()) {
+                s.islands = t == "islands";
+            }
         }
     }
     apply(&s);
@@ -72,6 +78,7 @@ pub fn load() -> Settings {
 pub fn apply(s: &Settings) {
     LIGHT.store(s.light, Ordering::Relaxed);
     INLAY_HINTS.store(s.inlay_hints, Ordering::Relaxed);
+    ISLANDS.store(s.islands, Ordering::Relaxed);
     FONT_SIZE.store(s.font_size.to_bits(), Ordering::Relaxed);
     SPACING.store(s.line_spacing.to_bits(), Ordering::Relaxed);
     if let Ok(mut c) = CURRENT.write() {
@@ -86,6 +93,7 @@ pub fn save(s: &Settings) -> std::io::Result<()> {
         "font_size": (s.font_size as f64 * 10.0).round() / 10.0,
         "line_spacing": (s.line_spacing as f64 * 10.0).round() / 10.0,
         "inlay_hints": s.inlay_hints,
+        "ui_style": if s.islands { "islands" } else { "classic" },
     });
     let p = path();
     if let Some(d) = p.parent() {
@@ -96,6 +104,11 @@ pub fn save(s: &Settings) -> std::io::Result<()> {
 
 pub fn is_light() -> bool {
     LIGHT.load(Ordering::Relaxed)
+}
+
+/// The UI style setting (`theme::islands()` is what is in effect: BRISK_DESIGN overrides it).
+pub fn islands() -> bool {
+    ISLANDS.load(Ordering::Relaxed)
 }
 
 pub fn inlay_hints() -> bool {
