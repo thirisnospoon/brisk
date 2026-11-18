@@ -114,6 +114,7 @@ impl Workspace {
 
     /// Watch a newly opened editor: check it now and again after each pause in typing.
     pub(super) fn watch_editor(&mut self, ed: &Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
+        self.push_test_results(ed, cx);
         cx.observe(ed, |this: &mut Self, ed, cx| {
             let v = ed.read(cx).buffer.version();
             if ed.read(cx).lint_sent != v && ed.read(cx).is_python() {
@@ -132,6 +133,7 @@ impl Workspace {
             EditorEvent::BreakpointsChanged => this.breakpoints_changed(ed.clone(), cx),
             EditorEvent::EditBreakpoint(line) => this.edit_breakpoint(ed.clone(), *line, cx),
             EditorEvent::GutterMenu(at) => this.open_gutter_menu(ed.clone(), *at, cx),
+            EditorEvent::RunMark(line, at) => this.run_mark_menu(ed.clone(), *line, *at, cx),
             EditorEvent::ShowCommit(hash) => this.show_annotation_commit(ed.clone(), hash.clone(), window, cx),
             ev => this.lsp_editor_event(ed.clone(), ev, window, cx),
         })

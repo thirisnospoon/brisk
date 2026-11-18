@@ -340,7 +340,7 @@ impl Workspace {
             }
             E::HoverDoc(pos, at) => self.quick_doc(ed, Some((pos, at)), cx),
             E::CtrlClick(pos) => self.goto_declaration(ed, Some(pos), false, window, cx),
-            E::ShowProblems | E::ContextMenu(_) | E::BreakpointsChanged | E::EditBreakpoint(_) | E::GutterMenu(_) | E::ShowCommit(_) => {}
+            E::ShowProblems | E::ContextMenu(_) | E::BreakpointsChanged | E::EditBreakpoint(_) | E::GutterMenu(_) | E::ShowCommit(_) | E::RunMark(..) => {}
         }
     }
 

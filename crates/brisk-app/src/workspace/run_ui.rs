@@ -34,7 +34,7 @@ impl Runs {
         self.venvs.iter().chain(self.all.iter().flatten())
     }
 
-    fn lookup(&self, path: &Path) -> Interpreter {
+    pub(super) fn lookup(&self, path: &Path) -> Interpreter {
         self.known().find(|i| i.path == path).cloned().unwrap_or_else(|| Interpreter {
             path: path.to_path_buf(),
             version: String::new(),
@@ -110,6 +110,9 @@ impl Workspace {
         cx.subscribe_in(&p, window, |this: &mut Self, panel, ev: &RunEvent, window, cx| match ev {
             RunEvent::Open(path, line) => this.open_at(&path.clone(), *line, window, cx),
             RunEvent::Finished { name, code, tests } => {
+                if let Some(t) = tests {
+                    this.take_test_results(&t.results, cx);
+                }
                 this.status = match (tests, code) {
                     (Some(t), _) => t.summary.clone(),
                     (None, Some(c)) => format!("'{name}' finished with exit code {c}"),
@@ -188,7 +191,7 @@ impl Workspace {
         Some(for_path(&path, &scope))
     }
 
-    fn run_config(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn run_config(&mut self, cfg: RunConfig, window: &mut Window, cx: &mut Context<Self>) {
         self.save_all(cx);
         let python = match &cfg.interpreter {
             Some(p) => Some(brisk_run::resolve(&self.root, p)),
@@ -348,6 +351,9 @@ impl Workspace {
                 v.dedup_by(|a, b| a.detail == b.detail);
                 if self.runs.all.is_none() {
                     v.push(PopupItem { label: "Detecting interpreters…".into(), detail: String::new(), hint: String::new(), target: Target::Cancel });
+                }
+                if "add interpreter".contains(&ql) && !self.venv_busy {
+                    v.push(PopupItem { label: "Add Interpreter…".into(), detail: "a new .venv in the project".into(), hint: String::new(), target: Target::AddInterpreter });
                 }
                 v
             }

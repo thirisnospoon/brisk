@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 pub mod annotate;
 mod bookmarks;
 pub mod breakpoints;
+pub mod run_marks;
 mod select;
 pub use select::{clipboard_history, remember_clip};
 mod disk;
@@ -136,6 +137,10 @@ pub struct Editor {
     disk_stamp: disk::Stamp,
     /// The file changed or vanished under unsaved edits: a banner asks what to do.
     pub disk_conflict: Option<Conflict>,
+    /// Run icons of the text: (buffer version, marks).
+    run_cache: (u64, Vec<run_marks::RunMark>),
+    /// pytest results of this file by node key, for the run icons.
+    test_results: std::collections::HashMap<String, brisk_run::TestStatus>,
 }
 
 /// Events for the workspace.
@@ -165,6 +170,8 @@ pub enum EditorEvent {
     GutterMenu(Point<Pixels>),
     /// A click on a blame annotation: show this commit's diff of the file.
     ShowCommit(String),
+    /// A click on the run icon of this line (window position for the menu).
+    RunMark(usize, Point<Pixels>),
 }
 
 impl gpui::EventEmitter<EditorEvent> for Editor {}
@@ -285,6 +292,8 @@ impl Editor {
             encoding_note: None,
             disk_stamp: disk::stamp(path),
             disk_conflict: None,
+            run_cache: (u64::MAX, Vec::new()),
+            test_results: Default::default(),
         };
         ed.reparse();
         ed
@@ -345,6 +354,8 @@ impl Editor {
             encoding_note: None,
             disk_stamp: None,
             disk_conflict: None,
+            run_cache: (u64::MAX, Vec::new()),
+            test_results: Default::default(),
         }
     }
 
@@ -918,6 +929,12 @@ impl Editor {
         if e.button == MouseButton::Left && self.annotation_click(e.position, cx) {
             return;
         }
+        if e.button == MouseButton::Left {
+            if let Some(line) = self.run_mark_at(e.position) {
+                cx.emit(EditorEvent::RunMark(line, e.position));
+                return;
+            }
+        }
         if e.button == MouseButton::Left && self.breakpoint_click(e.position, cx) {
             return;
         }
@@ -1357,6 +1374,9 @@ struct Prepaint {
     bookmark_marks: Vec<(usize, Option<ShapedLine>)>,
     /// Breakpoints on screen: (row index, has a condition, verified by the debugger, enabled).
     breakpoint_marks: Vec<(usize, bool, Option<bool>, bool)>,
+    /// Run icons on screen: (row index, glyph), and the width of their column.
+    run_icons: Vec<(usize, ShapedLine)>,
+    run_slot: Pixels,
     /// Blame annotations on screen: (row index, label, age).
     annotations: Vec<(usize, ShapedLine, f32)>,
     /// Debugger values after line ends: (row index, "name: value, …").
@@ -1402,6 +1422,7 @@ impl Element for EditorElement {
             ed.refresh_line_extent();
             ed.sync_folds();
             ed.sync_bookmarks();
+            ed.run_marks();
             if ed.show_gutter {
                 ed.fold_headers()
             } else {
@@ -1424,7 +1445,8 @@ impl Element for EditorElement {
         let digit = window.text_system().shape_line("0".into(), font_size, &[run(1, Theme::text())], None);
         let char_w = digit.width;
         let digits = n_lines.to_string().len().max(3);
-        let gutter_w = if ed.show_gutter { char_w * digits as f32 + px(46.) + ed.annotation_width(char_w) } else { px(0.) };
+        let run_slot = ed.run_slot();
+        let gutter_w = if ed.show_gutter { char_w * digits as f32 + px(46.) + ed.annotation_width(char_w) + run_slot } else { px(0.) };
 
         // Highlights: one query per run of consecutive shown lines (folds split them).
         let rope = b.rope();
@@ -1531,6 +1553,17 @@ impl Element for EditorElement {
                 }
             }
         }
+        let mut run_icons = Vec::new();
+        for m in ed.run_marks_now() {
+            if let Ok(i) = rows.binary_search(&m.line) {
+                let (glyph, color): (&str, gpui::Hsla) = match ed.test_status(&m.target) {
+                    Some(brisk_run::TestStatus::Passed) => ("✓", gpui::rgb(0x5fb865).into()),
+                    Some(brisk_run::TestStatus::Failed | brisk_run::TestStatus::Error) => ("✗", Theme::error()),
+                    _ => ("▶", gpui::rgb(0x5fb865).into()),
+                };
+                run_icons.push((i, window.text_system().shape_line(glyph.into(), font_size * 0.85, &[run(glyph.len(), color)], None)));
+            }
+        }
         let mut annotations = Vec::new();
         if let Some(a) = ed.annotation.as_ref().filter(|_| ed.show_gutter) {
             for (i, &l) in rows.iter().enumerate() {
@@ -1541,7 +1574,7 @@ impl Element for EditorElement {
                 }
             }
         }
-        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, annotations, inline_vals, gutter_w, char_w, marks }
+        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, run_icons, run_slot, annotations, inline_vals, gutter_w, char_w, marks }
     }
 
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), pp: &mut Prepaint, window: &mut Window, cx: &mut App) {
@@ -1787,14 +1820,14 @@ impl Element for EditorElement {
                 }
             }
             for (n, y) in pp.numbers.iter().zip(&line_ys) {
-                let x = bounds.left() + pp.gutter_w - px(30.) - n.width;
+                let x = bounds.left() + pp.gutter_w - px(30.) - pp.run_slot - n.width;
                 let _ = n.paint(point(x, *y), lh, window, cx);
             }
             for &(i, conditional, verified, enabled) in &pp.breakpoint_marks {
                 // A red circle over the line number (hollow when the debugger cannot stop there).
                 let y = line_ys[i];
                 let d = (lh - px(6.)).min(px(13.));
-                let x = bounds.left() + pp.gutter_w - px(30.) - d - px(1.);
+                let x = bounds.left() + pp.gutter_w - px(30.) - pp.run_slot - d - px(1.);
                 let circle = Bounds::new(point(x, y + (lh - d) / 2.), size(d, d));
                 if !enabled {
                     window.paint_quad(gpui::outline(circle, Theme::text_dim(), gpui::BorderStyle::Solid).corner_radii(d / 2.));
@@ -1827,6 +1860,11 @@ impl Element for EditorElement {
                         window.paint_quad(fill(Bounds::new(point(x + px(3.), y + px(4.)), size(px(7.), lh - px(8.))), Theme::bookmark()).corner_radii(px(1.)));
                     }
                 }
+            }
+            for (i, g) in &pp.run_icons {
+                // Centered in the column between the line numbers and the fold markers.
+                let x = text_left - px(31.) - pp.run_slot + (pp.run_slot - g.width) / 2.;
+                let _ = g.paint(point(x, line_ys[*i]), lh, window, cx);
             }
             for (i, g) in &pp.fold_marks {
                 let _ = g.paint(point(bounds.left() + pp.gutter_w - px(15.), line_ys[*i]), lh, window, cx);
