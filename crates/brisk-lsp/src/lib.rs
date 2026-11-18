@@ -216,6 +216,19 @@ pub struct CompletionItem {
     pub insert: String,
     /// The server's own replacement range, when it gives one.
     pub range: Option<(Pos, Pos)>,
+    /// Edits elsewhere in the file, applied with the item: the import line of an
+    /// auto-import completion.
+    pub extra: Vec<Edit>,
+    /// Documentation shown beside the selected item.
+    pub doc: String,
+}
+
+/// A quick fix (Alt+Enter) from the server.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeAction {
+    pub title: String,
+    pub preferred: bool,
+    pub edits: Vec<FileEdits>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -308,8 +321,22 @@ pub fn parse_completion(v: &Value) -> Vec<CompletionItem> {
                 }
                 None => (i["insertText"].as_str().unwrap_or(&label).to_string(), None),
             };
+            let mut detail = i["detail"].as_str().or_else(|| i.pointer("/labelDetails/description").and_then(Value::as_str)).unwrap_or("").to_string();
+            // ty labels auto-import items "OrderedDict (import collections)": show the name,
+            // with the module on the right like PyCharm.
+            let label = match label.strip_suffix(')').and_then(|l| l.split_once(" (import ")) {
+                Some((name, module)) => {
+                    if detail.is_empty() {
+                        detail = module.to_string();
+                    }
+                    name.to_string()
+                }
+                None => label,
+            };
             CompletionItem {
-                detail: i["detail"].as_str().or_else(|| i.pointer("/labelDetails/description").and_then(Value::as_str)).unwrap_or("").to_string(),
+                extra: edits(&i["additionalTextEdits"]),
+                doc: doc_text(&i["documentation"]),
+                detail,
                 kind: i["kind"].as_u64().unwrap_or(0) as u32,
                 sort: i["sortText"].as_str().unwrap_or(&label).to_string(),
                 label,
@@ -348,17 +375,19 @@ pub fn parse_signature(v: &Value) -> Option<Signature> {
     Some(Signature { label, params, active, doc: doc_text(&s["documentation"]) })
 }
 
+fn edits(v: &Value) -> Vec<Edit> {
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .map(|e| Edit { start: pos(&e["range"]["start"]), end: pos(&e["range"]["end"]), content: e["newText"].as_str().unwrap_or("").to_string() })
+        .collect()
+}
+
 pub fn parse_workspace_edit(v: &Value) -> Vec<FileEdits> {
     let mut by_file: Vec<FileEdits> = Vec::new();
-    let mut add = |uri: &str, edits: &Value| {
+    let mut add = |uri: &str, list: &Value| {
         let Some(path) = uri_to_path(uri) else { return };
-        let list: Vec<Edit> = edits
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|e| Edit { start: pos(&e["range"]["start"]), end: pos(&e["range"]["end"]), content: e["newText"].as_str().unwrap_or("").to_string() })
-            .collect();
-        by_file.push((path, list));
+        by_file.push((path, edits(list)));
     };
     if let Some(ch) = v.get("changes").and_then(Value::as_object) {
         for (uri, edits) in ch {
@@ -372,6 +401,28 @@ pub fn parse_workspace_edit(v: &Value) -> Vec<FileEdits> {
     }
     by_file.sort_by(|a, b| a.0.cmp(&b.0));
     by_file
+}
+
+/// `textDocument/codeAction` reply: actions that carry an edit (commands are skipped).
+pub fn parse_code_actions(v: &Value) -> Vec<CodeAction> {
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|a| {
+            let edits = parse_workspace_edit(a.get("edit")?);
+            (!edits.is_empty()).then(|| CodeAction { title: a["title"].as_str().unwrap_or("").to_string(), preferred: a["isPreferred"].as_bool().unwrap_or(false), edits })
+        })
+        .collect()
+}
+
+/// A diagnostic as the server reported it, for a code action request's context.
+fn lsp_diagnostic(d: &Diagnostic) -> Value {
+    let severity = match d.severity {
+        Severity::Error => 1,
+        Severity::Warning => 2,
+        Severity::Unused => 4,
+    };
+    json!({"range": {"start": lsp_pos(d.start), "end": lsp_pos(d.end)}, "code": d.code, "message": d.message, "severity": severity, "source": "ty"})
 }
 
 /// Hover markdown split into what the documentation popup draws.
@@ -463,6 +514,11 @@ where
     }
 }
 
+fn rename_params(renames: &[(PathBuf, PathBuf)]) -> Value {
+    let files: Vec<Value> = renames.iter().map(|(a, b)| json!({"oldUri": path_to_uri(a), "newUri": path_to_uri(b)})).collect();
+    json!({"files": files})
+}
+
 impl Ty {
     /// Start `ty server` for the project and initialize it (blocks for the handshake, about
     /// 0.1 s: call it off the UI thread). `python` selects the environment ty resolves
@@ -485,12 +541,14 @@ impl Ty {
                 "synchronization": {"didSave": false},
                 "diagnostic": {"dynamicRegistration": false},
                 "hover": {"contentFormat": ["markdown", "plaintext"]},
-                "completion": {"completionItem": {"snippetSupport": false, "documentationFormat": ["plaintext"]}},
+                "completion": {"completionItem": {"snippetSupport": false, "documentationFormat": ["markdown", "plaintext"]}},
+                "codeAction": {"codeActionLiteralSupport": {"codeActionKind": {"valueSet": ["", "quickfix", "source", "source.organizeImports", "source.fixAll"]}}, "isPreferredSupport": true},
                 "signatureHelp": {"signatureInformation": {"parameterInformation": {"labelOffsetSupport": true}}},
                 "definition": {"linkSupport": false},
                 "references": {},
                 "rename": {"prepareSupport": true}
-            }
+            },
+            "workspace": {"workspaceEdit": {"documentChanges": true}, "fileOperations": {"willRename": true, "didRename": true}}
         });
         let rx = client.request(
             "initialize",
@@ -551,6 +609,12 @@ impl Ty {
         call(self.client.request("textDocument/completion", at(path, p)), parse_completion)
     }
 
+    /// Completion and whether the list is incomplete (ty caps it at 1000 items): then the
+    /// client asks again as the prefix grows.
+    pub fn completion_list(&self, path: &Path, p: Pos) -> impl Future<Output = Result<(Vec<CompletionItem>, bool), String>> + Send + 'static {
+        call(self.client.request("textDocument/completion", at(path, p)), |v| (parse_completion(v), v["isIncomplete"].as_bool().unwrap_or(false)))
+    }
+
     pub fn signature_help(&self, path: &Path, p: Pos) -> impl Future<Output = Result<Option<Signature>, String>> + Send + 'static {
         call(self.client.request("textDocument/signatureHelp", at(path, p)), parse_signature)
     }
@@ -567,6 +631,23 @@ impl Ty {
             let r = v.get("range").unwrap_or(v);
             r.get("start").map(|s| (pos(s), pos(&r["end"])))
         })
+    }
+
+    /// Quick fixes for ty's problems in a range (auto-import, qualify, ignore).
+    pub fn code_actions(&self, path: &Path, start: Pos, end: Pos, diags: &[Diagnostic]) -> impl Future<Output = Result<Vec<CodeAction>, String>> + Send + 'static {
+        let ctx: Vec<Value> = diags.iter().map(lsp_diagnostic).collect();
+        let params = json!({"textDocument": text_doc(path), "range": {"start": lsp_pos(start), "end": lsp_pos(end)}, "context": {"diagnostics": ctx, "triggerKind": 1}});
+        call(self.client.request("textDocument/codeAction", params), parse_code_actions)
+    }
+
+    /// Import updates for files or folders about to be renamed or moved (old, new).
+    pub fn will_rename_files(&self, renames: &[(PathBuf, PathBuf)]) -> impl Future<Output = Result<Vec<FileEdits>, String>> + Send + 'static {
+        call(self.client.request("workspace/willRenameFiles", rename_params(renames)), parse_workspace_edit)
+    }
+
+    /// Files were renamed (after `will_rename_files` and the move on disk).
+    pub fn did_rename_files(&self, renames: &[(PathBuf, PathBuf)]) {
+        self.client.notify("workspace/didRenameFiles", rename_params(renames));
     }
 
     pub fn rename(&self, path: &Path, p: Pos, new_name: &str) -> impl Future<Output = Result<Vec<FileEdits>, String>> + Send + 'static {

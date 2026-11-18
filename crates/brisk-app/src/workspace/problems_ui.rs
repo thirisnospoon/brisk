@@ -27,6 +27,21 @@ pub(super) enum Intent {
     FixAllOfCode(String),
     FixAll,
     Suppress(Diagnostic),
+    /// A language server quick fix (ty: import a name, qualify it): title and edits.
+    Lsp(String, Vec<brisk_lsp::FileEdits>),
+}
+
+/// ty's action titles the way PyCharm words them: "import collections.defaultdict" ->
+/// "Import 'collections.defaultdict'".
+fn lsp_title(t: &str) -> String {
+    if let Some(rest) = t.strip_prefix("import ") {
+        return format!("Import '{rest}'");
+    }
+    if let Some(rest) = t.strip_prefix("qualify ") {
+        return format!("Qualify as '{rest}'");
+    }
+    let mut c = t.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
 }
 
 pub(super) struct Problems {
@@ -40,7 +55,7 @@ pub(super) struct Problems {
     /// Why ruff could not run (not installed, bad config).
     pub error: Option<String>,
     lint_gen: HashMap<EntityId, u64>,
-    intents: Vec<PopupItem>,
+    pub(super) intents: Vec<PopupItem>,
 }
 
 impl Problems {
@@ -432,14 +447,56 @@ impl Workspace {
             self.status = "No context actions available here".into();
             return;
         };
-        let probs = ed.read(cx).problems_at_caret();
+        let probs = {
+            let e = ed.read(cx);
+            let mut p = e.problems_at_caret();
+            // ruff and ty often flag the same spot (F821 and unresolved-reference): offer both.
+            let same: Vec<Diagnostic> = e.diagnostics.iter().filter(|d| !p.contains(d) && p.iter().any(|q| d.start <= q.end && q.start <= d.end)).cloned().collect();
+            p.extend(same);
+            p
+        };
         if probs.is_empty() {
             self.status = "No context actions available here".into();
             return;
         }
+        let ty_diags: Vec<Diagnostic> = probs.iter().filter(|d| brisk_lint::is_ty_code(&d.code)).cloned().collect();
+        let request = match ty_diags.is_empty() {
+            true => None,
+            false => self.ty_at_caret(&ed, cx).map(|(ty, path, _)| {
+                let start = ty_diags.iter().map(|d| d.start).min().unwrap_or_default();
+                let end = ty_diags.iter().map(|d| d.end).max().unwrap_or_default();
+                ty.code_actions(&path, start, end, &ty_diags)
+            }),
+        };
+        let Some(fut) = request else { return self.open_intentions(&probs, Vec::new()) };
+        // ty answers in milliseconds; never leave Alt+Enter hanging on a stuck server.
+        let timeout = cx.background_executor().timer(Duration::from_millis(1500));
+        cx.spawn_in(window, async move |this, cx| {
+            use futures::FutureExt;
+            let actions = futures::future::select(fut.boxed(), timeout.boxed()).await;
+            let actions = match actions {
+                futures::future::Either::Left((Ok(a), _)) => a,
+                _ => Vec::new(),
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.open_intentions(&probs, actions);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The Alt+Enter list: ty's fixes (auto-import first), then ruff's, then suppressions.
+    fn open_intentions(&mut self, probs: &[Diagnostic], mut actions: Vec<brisk_lsp::CodeAction>) {
         let mut items = Vec::new();
         let item = |label: String, detail: String, intent: Intent| PopupItem { label, detail, hint: String::new(), target: Target::Intention(Box::new(intent)) };
-        for d in &probs {
+        // Brisk adds its own "Suppress for line"; ty's "Ignore ... for this line" is the same.
+        actions.retain(|a| !a.title.starts_with("Ignore '"));
+        actions.sort_by_key(|a| !a.preferred);
+        for a in actions {
+            items.push(item(lsp_title(&a.title), "ty".into(), Intent::Lsp(a.title.clone(), a.edits)));
+        }
+        for d in probs {
             if let Some(f) = &d.fix {
                 items.push(item(format!("Ruff: {}", f.message), if f.safe { d.code.clone() } else { format!("{} · unsafe fix", d.code) }, Intent::Fix(d.clone())));
             }
@@ -453,7 +510,14 @@ impl Workspace {
             items.push(item("Ruff: fix all auto-fixable problems in file".into(), String::new(), Intent::FixAll));
         }
         for d in probs.iter().filter(|d| d.noqa_line.is_some()) {
+            if items.iter().any(|i| i.label == format!("Suppress '{}' for line", d.code)) {
+                continue;
+            }
             items.push(item(format!("Suppress '{}' for line", d.code), if brisk_lint::is_ty_code(&d.code) { "# ty: ignore".into() } else { "# noqa".into() }, Intent::Suppress(d.clone())));
+        }
+        if items.is_empty() {
+            self.status = "No context actions available here".into();
+            return;
         }
         self.problems.intents = items;
         self.open_popup(PopupKind::Intentions);
@@ -474,6 +538,13 @@ impl Workspace {
                 }
             }
             Intent::Suppress(d) => ed.update(cx, |e, cx| e.suppress(&d, cx)),
+            Intent::Lsp(title, edits) => {
+                let (_, failed) = self.apply_file_edits(edits, cx);
+                self.status = lsp_title(&title);
+                if !failed.is_empty() {
+                    self.show_toast(format!("Could not write: {}", failed.join("; ")), true, cx);
+                }
+            }
             Intent::FixAll | Intent::FixAllOfCode(_) => {
                 let only = match &intent {
                     Intent::FixAllOfCode(c) => Some(c.clone()),
@@ -605,11 +676,18 @@ impl Workspace {
         match result {
             Ok(out) if out.is_empty() && !text.is_empty() => self.status = "ruff returned nothing; the file was not changed".into(),
             Ok(out) => {
-                let changed = out.replace("\r\n", "\n") != text;
+                let changed = out.replace("\r\n", "\n") != text.replace("\r\n", "\n");
                 if changed {
                     ed.update(cx, |e, cx| e.replace_all_text(&out, cx));
                 }
-                self.status = if changed { format!("{what} (ruff)") } else { "No changes: the code is already formatted".into() };
+                if reformat {
+                    self.status = if changed { format!("{what} (ruff)") } else { "No changes: the code is already formatted".into() };
+                } else {
+                    // PyCharm reports what Optimize Imports did in a balloon.
+                    let msg = brisk_lint::imports_summary(&text, &out);
+                    self.status = msg.clone();
+                    self.show_toast(msg, false, cx);
+                }
             }
             Err(e) => self.show_toast(format!("ruff: {e}"), true, cx),
         }
