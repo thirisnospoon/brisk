@@ -320,6 +320,13 @@ impl Workspace {
                     }
                     v.push(PopupItem { label: c.name.clone(), detail, hint: hint(sel.as_deref() == Some(c.name.as_str())), target: Target::RunConfig(Some(c.name.clone()), run) });
                 }
+                // PyCharm: "Save 'x' Configuration" for the selected temporary one.
+                if let Some(c) = self.runs.file.selected_config().filter(|c| c.temporary) {
+                    let label = format!("Save '{}' Configuration", c.name);
+                    if label.to_lowercase().contains(&ql) {
+                        v.push(PopupItem { label, detail: "keep it: temporary ones are replaced after five newer".into(), hint: String::new(), target: Target::SaveRunConfig(c.name.clone()) });
+                    }
+                }
                 if "edit configurations".contains(&ql) {
                     v.push(PopupItem { label: "Edit Configurations…".into(), detail: brisk_run::CONFIG_FILE.into(), hint: String::new(), target: Target::EditRunConfigs });
                 }
@@ -359,6 +366,15 @@ impl Workspace {
                 }
             }
             Target::EditRunConfigs => self.edit_run_configurations(window, cx),
+            Target::SaveRunConfig(name) => {
+                self.reload_runs();
+                if let Some(c) = self.runs.file.configurations.iter_mut().find(|c| c.name == name) {
+                    c.temporary = false;
+                    self.save_runs();
+                    self.status = format!("Saved run configuration '{name}'");
+                }
+                self.focus_editor(window, cx);
+            }
             Target::Interpreter(path) => {
                 self.runs.file.interpreter = Some(brisk_run::relativize(&self.root, &path));
                 self.save_runs();
@@ -424,6 +440,132 @@ impl Workspace {
                     eprintln!("smoke-run: link -> {at:?}");
                 }
                 cx.notify();
+            });
+        })
+        .detach();
+    }
+}
+
+impl Workspace {
+    /// `BRISK_SMOKE_RUNWIN=1` in a project with `ask.py` (input()), `main.py`, `sleep.py`
+    /// and `w1.py`…`w5.py`: stdin, save-before-run, tabs, toggles, Clear All, saving a
+    /// temporary configuration.
+    pub(super) fn run_window_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let bg = cx.background_executor().clone();
+        let root = self.root.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let wait_idle = async |this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindowContext, what: &str| {
+                for _ in 0..200 {
+                    bg.timer(std::time::Duration::from_millis(100)).await;
+                    let ok = this.update(cx, |this, cx| this.runs.panel.as_ref().is_some_and(|p| !p.read(cx).run_tabs().iter().any(|(n, r)| *r && n != "sleep"))).unwrap_or(true);
+                    if ok {
+                        return;
+                    }
+                }
+                eprintln!("smoke-runwin: timeout waiting for {what}");
+            };
+            let text = |this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindowContext| {
+                this.update(cx, |this, cx| this.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default()).unwrap_or_default()
+            };
+            // Wait for an interpreter.
+            for _ in 0..100 {
+                let ready = this.update(cx, |this, _| this.runs.interpreter(&this.root).is_some()).unwrap_or(true);
+                if ready {
+                    break;
+                }
+                bg.timer(std::time::Duration::from_millis(100)).await;
+            }
+            // 1. stdin: type into the console while input() waits.
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.open_file(&root.join("ask.py"), window, cx);
+                this.dispatch(Action::RunContext, window, cx);
+            });
+            bg.timer(std::time::Duration::from_millis(1500)).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(p) = this.runs.panel.clone() else { return };
+                window.focus(&p.read(cx).focus_handle(cx));
+                for ch in "Bob".chars() {
+                    let k = gpui::Keystroke { modifiers: gpui::Modifiers::default(), key: ch.to_ascii_lowercase().to_string(), key_char: Some(ch.to_string()) };
+                    p.update(cx, |p, cx| p.key(&k, cx));
+                }
+                let k = gpui::Keystroke { modifiers: gpui::Modifiers::default(), key: "enter".into(), key_char: Some("\r".into()) };
+                p.update(cx, |p, cx| p.key(&k, cx));
+            });
+            wait_idle(&this, cx, "ask.py").await;
+            eprintln!("smoke-runwin: stdin console:\n{}", text(&this, cx));
+            // 2. Save all before launch: an unsaved edit in main.py runs.
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.open_file(&root.join("main.py"), window, cx);
+                if let Some(ed) = this.active_editor().cloned() {
+                    ed.update(cx, |e, _| {
+                        e.buffer.select_all();
+                        e.buffer.insert("print('edited before run')\n");
+                    });
+                }
+                eprintln!("smoke-runwin: main.py dirty -> {:?}", this.active_editor().map(|e| e.read(cx).buffer.is_dirty()));
+                this.dispatch(Action::RunContext, window, cx);
+            });
+            wait_idle(&this, cx, "main.py").await;
+            eprintln!("smoke-runwin: main.py console:\n{}", text(&this, cx));
+            eprintln!("smoke-runwin: main.py on disk -> {:?}", std::fs::read_to_string(root.join("main.py")).unwrap_or_default());
+            // 3. Tabs: a long run plus five more; at most five tabs, the running one stays.
+            for f in ["sleep.py", "w1.py", "w2.py", "w3.py", "w4.py", "w5.py"] {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.open_file(&root.join(f), window, cx);
+                    this.dispatch(Action::RunContext, window, cx);
+                });
+                bg.timer(std::time::Duration::from_millis(300)).await;
+            }
+            wait_idle(&this, cx, "w*.py").await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(p) = this.runs.panel.clone() else { return };
+                eprintln!("smoke-runwin: tabs -> {:?}", p.read(cx).run_tabs());
+                // Rerun (Ctrl+F5) the active tab.
+                this.dispatch(Action::Rerun, window, cx);
+                eprintln!("smoke-runwin: ctrl+f5 -> tabs {:?} status {:?}", p.read(cx).run_tabs(), this.status);
+            });
+            wait_idle(&this, cx, "rerun").await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(p) = this.runs.panel.clone() else { return };
+                // 4. Toggles and Clear All.
+                let cols = p.read(cx).columns();
+                p.update(cx, |p, _| p.toggle_soft_wrap());
+                window.refresh();
+                eprintln!("smoke-runwin: rerun console {:?}", p.read(cx).active_text());
+                eprintln!("smoke-runwin: soft wrap {} cols {cols}", p.read(cx).soft_wrap);
+                p.update(cx, |p, _| p.toggle_scroll_to_end());
+                eprintln!("smoke-runwin: scroll to end -> {}", p.read(cx).scroll_to_end);
+                let hold = std::env::var_os("BRISK_SMOKE_RUNWIN_HOLD").is_some();
+                if !hold {
+                    p.update(cx, |p, _| p.clear());
+                    eprintln!("smoke-runwin: clear -> {:?}", p.read(cx).active_text());
+                }
+                if hold {
+                    return;
+                }
+                // Stop the long run.
+                this.dispatch(Action::Stop, window, cx);
+                // 5. The temporary configuration can be saved from the chooser.
+                this.dispatch(Action::SelectRunConfiguration, window, cx);
+                let items: Vec<String> = this.popup.as_ref().map(|p| p.items.iter().map(|i| i.label.clone()).collect()).unwrap_or_default();
+                eprintln!("smoke-runwin: chooser -> {items:?}");
+                if let Some(i) = items.iter().position(|l| l.starts_with("Save '")) {
+                    if let Some(p) = this.popup.as_mut() {
+                        p.selected = i;
+                    }
+                    this.smoke_press("enter", window, cx);
+                }
+                let f = brisk_run::load(&this.root).0;
+                eprintln!("smoke-runwin: saved -> {:?} status {:?}", f.selected_config().map(|c| (c.name.clone(), c.temporary)), this.status);
+            });
+            bg.timer(std::time::Duration::from_millis(800)).await;
+            let _ = this.update(cx, |this, cx| {
+                eprintln!("smoke-runwin: after stop -> {:?}", this.runs.panel.as_ref().map(|p| p.read(cx).run_tabs()));
+                eprintln!("smoke-runwin: columns with soft wrap off -> {:?}", this.runs.panel.as_ref().map(|p| p.read(cx).columns()));
+                eprintln!("smoke-runwin: done");
+                if std::env::var_os("BRISK_SMOKE_RUNWIN_HOLD").is_none() {
+                    cx.quit();
+                }
             });
         })
         .detach();

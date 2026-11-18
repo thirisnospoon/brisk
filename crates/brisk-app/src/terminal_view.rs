@@ -17,6 +17,10 @@ pub use tests_view::TestsOutcome;
 
 const CELL_H: f32 = 18.0;
 const FONT_SIZE: f32 = 13.0;
+/// The Run window keeps at most this many tabs: the oldest finished ones close first.
+pub const MAX_RUN_TABS: usize = 5;
+/// Columns of a Run console with soft wrap off (longer lines still wrap).
+const NOWRAP_COLS: usize = 500;
 
 struct Tab {
     id: u64,
@@ -78,6 +82,11 @@ pub struct TerminalPanel {
     pub error: Option<String>,
     /// Run tool window (process output) instead of Terminal (shells).
     run_mode: bool,
+    /// Run window toggles: wrap long lines at the window edge / follow new output.
+    pub soft_wrap: bool,
+    pub scroll_to_end: bool,
+    /// Soft wrap off: first visible column.
+    h_scroll: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -142,6 +151,11 @@ impl TerminalPanel {
                                 }
                             }
                             TermEvent::Exit => this.close_tab_id(id),
+                            TermEvent::Wakeup if this.run_mode && this.scroll_to_end => {
+                                if let Some(t) = this.tabs.iter().find(|t| t.id == id) {
+                                    t.session.scroll(-(1 << 30));
+                                }
+                            }
                             TermEvent::Wakeup | TermEvent::Bell => {}
                         }
                     }
@@ -165,6 +179,9 @@ impl TerminalPanel {
             selecting: false,
             error: None,
             run_mode,
+            soft_wrap: true,
+            scroll_to_end: true,
+            h_scroll: 0,
         }
     }
 
@@ -188,14 +205,60 @@ impl TerminalPanel {
         let name = cfg.name.clone();
         let tab = Tab { id, session, title: String::new(), number: 0, run: Some(RunTab { name: name.clone(), cfg, cmd, running: true, code: None, tests }) };
         if let Some(i) = self.tabs.iter().position(|t| t.run.as_ref().is_some_and(|r| r.name == name)) {
+            // PyCharm reuses the configuration's tab (stopping a run still in progress).
             self.tabs[i].session.kill();
             self.tabs[i] = tab;
             self.active = i;
         } else {
             self.tabs.push(tab);
             self.active = self.tabs.len() - 1;
+            self.trim_run_tabs();
         }
+        self.h_scroll = 0;
         Ok(())
+    }
+
+    /// Close the oldest finished tabs beyond [`MAX_RUN_TABS`]; running ones stay.
+    fn trim_run_tabs(&mut self) {
+        while self.tabs.len() > MAX_RUN_TABS {
+            let active_id = self.tabs.get(self.active).map(|t| t.id);
+            let Some(i) = self.tabs.iter().position(|t| Some(t.id) != active_id && !t.run.as_ref().is_some_and(|r| r.running)) else { break };
+            self.tabs.remove(i);
+            self.active = active_id.and_then(|id| self.tabs.iter().position(|t| t.id == id)).unwrap_or(0);
+        }
+    }
+
+    /// Names of the Run window tabs and whether each is running (smoke tests).
+    pub fn run_tabs(&self) -> Vec<(String, bool)> {
+        self.tabs.iter().filter_map(|t| t.run.as_ref().map(|r| (r.name.clone(), r.running))).collect()
+    }
+
+    /// Clear All: empty the active console (screen and scrollback).
+    pub fn clear(&mut self) {
+        if let Some(s) = self.session() {
+            s.clear_selection();
+            // 2J moves the screen into the scrollback, 3J then drops the scrollback.
+            s.inject(b"\x1b[0m\x1b[2J\x1b[3J\x1b[H");
+        }
+    }
+
+    pub fn toggle_soft_wrap(&mut self) {
+        self.soft_wrap = !self.soft_wrap;
+        self.h_scroll = 0;
+    }
+
+    pub fn toggle_scroll_to_end(&mut self) {
+        self.scroll_to_end = !self.scroll_to_end;
+        if self.scroll_to_end {
+            if let Some(s) = self.session() {
+                s.scroll(-(1 << 30));
+            }
+        }
+    }
+
+    /// Columns of the active session (smoke tests: soft wrap off widens the grid).
+    pub fn columns(&self) -> usize {
+        self.session().map(|s| s.size().0).unwrap_or(0)
     }
 
     /// Ctrl+F5 in the Run window: run the active tab's command again.
@@ -360,7 +423,7 @@ impl TerminalPanel {
         let x = f32::from(p.x - g.bounds.left()).max(0.0);
         let y = f32::from(p.y - g.bounds.top()).max(0.0);
         let cw = f32::from(g.cell_w);
-        let col = (x / cw) as usize;
+        let col = (x / cw) as usize + self.h_scroll;
         let right = (x / cw).fract() > 0.5;
         Some(((y / CELL_H) as usize, col, right))
     }
@@ -400,16 +463,35 @@ impl TerminalPanel {
 
     fn on_scroll(&mut self, e: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
         let Some(s) = self.session() else { return };
-        let lines = (f32::from(e.delta.pixel_delta(px(CELL_H)).y) / CELL_H).round() as i32;
+        let d = e.delta.pixel_delta(px(CELL_H));
+        if self.run_mode && !self.soft_wrap {
+            let cw = self.grid.map(|g| f32::from(g.cell_w)).unwrap_or(8.0);
+            let dx = if e.modifiers.shift { f32::from(d.y) } else { f32::from(d.x) };
+            let cols = (dx / cw).round() as i64;
+            if cols != 0 {
+                self.h_scroll = (self.h_scroll as i64 - cols * 3).clamp(0, NOWRAP_COLS as i64) as usize;
+                cx.notify();
+                return;
+            }
+        }
+        let lines = (f32::from(d.y) / CELL_H).round() as i32;
         if lines == 0 {
             return;
         }
+        // Scrolling up stops following the output, like PyCharm's Scroll to End.
+        let unfollow = self.run_mode && lines > 0;
         if s.alt_screen() {
             // Full-screen apps (less, vim, htop): wheel sends arrow keys.
             let seq: &[u8] = if lines > 0 { b"\x1bOA" } else { b"\x1bOB" };
             s.write(seq.repeat(lines.unsigned_abs() as usize));
         } else {
             s.scroll(lines);
+        }
+        if unfollow {
+            self.scroll_to_end = false;
+        } else if self.run_mode && lines < 0 && self.session().is_some_and(|s| s.snapshot().display_offset == 0) {
+            // Back at the bottom: follow the output again.
+            self.scroll_to_end = true;
         }
         cx.notify();
     }
@@ -491,7 +573,36 @@ impl TerminalPanel {
     fn render_run_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let running = self.tabs.get(self.active).and_then(|t| t.run.as_ref()).is_some_and(|r| r.running);
         let button = |id: &'static str, glyph: &'static str, color: Hsla| {
-            div().id(id).w(px(26.)).h(px(26.)).flex().items_center().justify_center().rounded(px(5.)).text_color(color).hover(|s| s.bg(Theme::hover_row())).cursor_pointer().child(glyph)
+            div()
+                .id(id)
+                .w(px(26.))
+                .h(px(26.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(5.))
+                .text_color(color)
+                .hover(|s| s.bg(Theme::hover_row()))
+                .active(|s| s.bg(Theme::press()))
+                .cursor_pointer()
+                .child(glyph)
+        };
+        let tip = |t: &'static str| move |_: &mut Window, cx: &mut App| cx.new(|_| crate::workspace::Tip(t.into())).into();
+        let toggle = |id: &'static str, glyph: &'static str, on: bool| {
+            div()
+                .id(id)
+                .w(px(26.))
+                .h(px(26.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(5.))
+                .text_color(if on { Theme::text() } else { Theme::text_muted() })
+                .when(on, |d| d.bg(Theme::selection_row()))
+                .when(!on, |d| d.hover(|s| s.bg(Theme::hover_row())))
+                .active(|s| s.bg(Theme::press()))
+                .cursor_pointer()
+                .child(glyph)
         };
         div()
             .w(px(34.))
@@ -502,7 +613,7 @@ impl TerminalPanel {
             .gap(px(2.))
             .border_r_1()
             .border_color(Theme::border())
-            .child(button("run-rerun", "↻", rgb(0x5fb865).into()).on_click(cx.listener(|_, _, _, cx| cx.emit(RunEvent::RerunRequested))))
+            .child(button("run-rerun", "↻", rgb(0x5fb865).into()).tooltip(tip("Rerun  Ctrl+F5")).on_click(cx.listener(|_, _, _, cx| cx.emit(RunEvent::RerunRequested))))
             .when(self.tests().is_some(), |d| {
                 let any_failed = self.tests().is_some_and(|t| t.finished && t.tree().tree.counts().failed > 0);
                 d.child(
@@ -512,11 +623,24 @@ impl TerminalPanel {
                 )
             })
             .child(
-                button("run-stop", "■", if running { rgb(0xf05d5d).into() } else { Theme::text_dim() }).on_click(cx.listener(|this, _, _, cx| {
+                button("run-stop", "■", if running { rgb(0xf05d5d).into() } else { Theme::text_dim() }).tooltip(tip("Stop  Ctrl+F2")).on_click(cx.listener(|this, _, _, cx| {
                     this.stop();
                     cx.notify();
                 })),
             )
+            .child(div().w(px(18.)).h(px(1.)).my(px(3.)).bg(Theme::divider()))
+            .child(toggle("run-wrap", "↵", self.soft_wrap).tooltip(tip("Soft-Wrap")).on_click(cx.listener(|this, _, _, cx| {
+                this.toggle_soft_wrap();
+                cx.notify();
+            })))
+            .child(toggle("run-follow", "⤓", self.scroll_to_end).tooltip(tip("Scroll to End")).on_click(cx.listener(|this, _, _, cx| {
+                this.toggle_scroll_to_end();
+                cx.notify();
+            })))
+            .child(button("run-clear", "⌫", Theme::text_muted()).tooltip(tip("Clear All")).on_click(cx.listener(|this, _, _, cx| {
+                this.clear();
+                cx.notify();
+            })))
     }
 }
 
@@ -613,12 +737,17 @@ impl Element for TerminalElement {
         let mono = font(MONO_FONT);
         let m = window.text_system().shape_line("M".into(), fs, &[TextRun { len: 1, font: mono.clone(), color: Theme::text(), background_color: None, underline: None, strikethrough: None }], None);
         let cell_w = m.width;
-        let cols = (f32::from(bounds.size.width) / f32::from(cell_w)).floor().max(2.0) as usize;
+        let fit = (f32::from(bounds.size.width) / f32::from(cell_w)).floor().max(2.0) as usize;
         let rows = (f32::from(bounds.size.height) / CELL_H).floor().max(1.0) as usize;
+        let mut h_off = 0;
 
         let snap: Option<(Snapshot, bool)> = self.panel.update(cx, |p, _| {
             p.grid = Some(GridGeom { bounds, cell_w });
             let run_mode = p.run_mode;
+            let nowrap = run_mode && !p.soft_wrap;
+            let cols = if nowrap { NOWRAP_COLS.max(fit) } else { fit };
+            p.h_scroll = if nowrap { p.h_scroll.min(cols.saturating_sub(fit)) } else { 0 };
+            h_off = p.h_scroll;
             let tab = p.tabs.get_mut(p.active)?;
             tab.session.resize(cols, rows, f32::from(cell_w) as u16, CELL_H as u16);
             Some((tab.session.snapshot(), run_mode))
@@ -642,7 +771,7 @@ impl Element for TerminalElement {
 
         let mut rects = Vec::new();
         let mut texts = Vec::new();
-        let x_at = |c: usize| bounds.left() + cell_w * c as f32;
+        let x_at = |c: usize| bounds.left() + cell_w * (c as f32 - h_off as f32);
         for r in 0..snap.rows {
             let y = bounds.top() + px(r as f32 * CELL_H);
             let row = &snap.cells[r * snap.cols..(r + 1) * snap.cols];
