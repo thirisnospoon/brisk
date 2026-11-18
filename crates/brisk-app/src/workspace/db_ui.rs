@@ -1233,6 +1233,7 @@ impl Workspace {
                 .size_full()
                 .flex()
                 .justify_center()
+                .items_start()
                 .pt(px(80.))
                 // A modal dialog with a form: clicks outside do nothing (no lost input), Esc closes it.
                 .occlude()

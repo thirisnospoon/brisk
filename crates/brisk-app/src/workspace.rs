@@ -1938,6 +1938,8 @@ impl Workspace {
                 .size_full()
                 .flex()
                 .justify_center()
+                // Without this the row stretches the popup to its max height.
+                .items_start()
                 .pt(px(90.))
                 .occlude()
                 .child(
