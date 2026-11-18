@@ -25,6 +25,7 @@ mod find;
 mod fold;
 mod marks;
 mod lsp;
+mod inlay;
 mod doc_view;
 mod scroll;
 pub mod templates;
@@ -102,6 +103,7 @@ pub struct Editor {
     insight: lsp::Insight,
     /// A live template / Surround With being filled in (Tab moves between its fields).
     tpl: Option<templates::TemplateRun>,
+    inlays: inlay::Inlays,
     /// Ctrl+F / Ctrl+R bar.
     find: Option<find::FindBar>,
     /// The last search, for F3 after the bar is closed and for reopening it.
@@ -264,6 +266,7 @@ impl Editor {
             caret_tip: None,
             insight: lsp::Insight::default(),
             tpl: None,
+            inlays: Default::default(),
             find: None,
             last_find: find::FindOpts::default(),
             last_replace: String::new(),
@@ -323,6 +326,7 @@ impl Editor {
             caret_tip: None,
             insight: lsp::Insight::default(),
             tpl: None,
+            inlays: Default::default(),
             find: None,
             last_find: find::FindOpts::default(),
             last_replace: String::new(),
@@ -883,7 +887,7 @@ impl Editor {
         let x = p.x - l.text_x;
         let text = self.buffer.line(line);
         let col = if let Some(shaped) = l.shaped(line) {
-            byte_to_char(&text, shaped.closest_index_for_x(x.max(px(0.))))
+            byte_to_char(&text, self.text_byte(line, &text, shaped.closest_index_for_x(x.max(px(0.)))))
         } else {
             ((f32::from(x) / f32::from(l.char_w)).round().max(0.0) as usize).min(text.chars().count())
         };
@@ -1316,7 +1320,7 @@ impl EntityInputHandler for Editor {
         let y = l.bounds.top() + px(self.row_of(line) as f32 * line_height() - self.scroll_y);
         let x = if let Some(shaped) = l.shaped(line) {
             let text = self.buffer.line(line);
-            l.text_x + shaped.x_for_index(char_to_byte(&text, col))
+            l.text_x + shaped.x_for_index(self.display_byte(line, &text, char_to_byte(&text, col)))
         } else {
             l.text_x
         };
@@ -1483,6 +1487,7 @@ impl Element for EditorElement {
                     runs = recolor(runs, b0..b1, severity_color(Severity::Unused));
                 }
             }
+            let (text, runs) = ed.line_with_inlays(l, text, runs, |len| TextRun { background_color: Some(Theme::hover_row()), ..run(len, Theme::text_dim()) });
             lines.push(window.text_system().shape_line(SharedString::from(text), font_size, &runs, None));
 
             if !ed.show_gutter {
@@ -1548,7 +1553,7 @@ impl Element for EditorElement {
             match idx_of(line) {
                 Some(i) => {
                     let t = b.line(line);
-                    text_x + pp.lines[i].x_for_index(char_to_byte(&t, col))
+                    text_x + pp.lines[i].x_for_index(ed.display_byte(line, &t, char_to_byte(&t, col)))
                 }
                 None => text_x,
             }

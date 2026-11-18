@@ -7,6 +7,8 @@ use brisk_search::{Match, Options, Query, Results};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+mod tree;
+
 const LIMIT: usize = 10_000;
 const ROW_H: f32 = 24.0;
 const PREVIEW_CONTEXT: usize = 4;
@@ -26,11 +28,18 @@ pub struct FindWindow {
     selected: usize,
     scroll: UniformListScrollHandle,
     pub focus: FocusHandle,
+    /// Find Usages: each match's index in `tree::USAGE_GROUPS`; empty for a text search.
+    group_of: Vec<u8>,
+    /// Folded nodes: `(group, file)`, `(group, usize::MAX)` for a whole group.
+    collapsed: std::collections::HashSet<(u8, usize)>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum WRow {
-    File(usize, usize),
+    /// Usage group, number of usages.
+    Group(u8, usize),
+    /// Group, file, number of matches.
+    File(u8, usize, usize),
     Match(usize),
 }
 
@@ -279,19 +288,12 @@ impl Workspace {
             return;
         }
         let results = f.results.clone();
-        let mut rows = Vec::new();
-        let mut i = 0;
-        while i < results.matches.len() {
-            let file = results.matches[i].file;
-            let n = results.matches[i..].iter().take_while(|m| m.file == file).count();
-            rows.push(WRow::File(file, n));
-            rows.extend((i..i + n).map(WRow::Match));
-            i += n;
-        }
         let title = format!("“{}” in Project", f.opts.query);
         let focus = cx.focus_handle();
-        let selected = rows.iter().position(|r| matches!(r, WRow::Match(_))).unwrap_or(0);
-        self.find.window = Some(FindWindow { title, files, results, rows, selected, scroll: UniformListScrollHandle::new(), focus: focus.clone() });
+        let mut w = FindWindow { title, files, results, rows: Vec::new(), selected: 0, scroll: UniformListScrollHandle::new(), focus: focus.clone(), group_of: Vec::new(), collapsed: Default::default() };
+        w.rebuild_rows();
+        w.selected = w.rows.iter().position(|r| matches!(r, WRow::Match(_))).unwrap_or(0);
+        self.find.window = Some(w);
         self.find.open = false;
         self.bottom = Some(BottomTool::Find);
         window.focus(&focus);
@@ -300,28 +302,43 @@ impl Workspace {
 
     /// Find Usages results in the Find tool window: `(file, line, char columns)`.
     /// Line text comes from the open editor when the file is open (unsaved edits), else disk.
-    pub(super) fn show_usages(&mut self, title: String, mut usages: Vec<(PathBuf, usize, std::ops::Range<usize>)>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn show_usages(&mut self, title: String, mut usages: Vec<(PathBuf, usize, std::ops::Range<usize>)>, window: &mut Window, cx: &mut Context<Self>) -> usize {
         usages.sort_by(|a, b| (&a.0, a.1, a.2.start).cmp(&(&b.0, b.1, b.2.start)));
         usages.dedup();
         let mut files: Vec<String> = Vec::new();
         let mut matches = Vec::new();
+        let mut groups = Vec::new();
         let mut cache: Option<(PathBuf, Vec<String>)> = None;
         for (path, line, cols) in usages {
             if cache.as_ref().map(|c| &c.0) != Some(&path) {
                 let open = self.editors().find(|e| e.read(cx).path.as_deref() == Some(path.as_path())).map(|e| e.read(cx).text_string());
                 let text = open.or_else(|| brisk_search::read_text(&path)).unwrap_or_default();
                 cache = Some((path.clone(), text.lines().map(|l| l.replace('\t', "    ")).collect()));
-                files.push(match path.strip_prefix(&self.root) {
-                    Ok(r) => r.to_string_lossy().replace('\\', "/"),
-                    Err(_) => path.to_string_lossy().into_owned(),
-                });
             }
             let text = cache.as_ref().and_then(|c| c.1.get(line).cloned()).unwrap_or_default();
             let byte = |c: usize| text.char_indices().nth(c).map(|(b, _)| b).unwrap_or(text.len());
+            // As in PyCharm, the definition itself (`def add`, `class A`) is not a usage.
+            let before: String = text.chars().take(cols.start).collect();
+            let before = before.trim();
+            if before == "def" || before == "class" || before.ends_with(" def") {
+                continue;
+            }
+            let rel = match path.strip_prefix(&self.root) {
+                Ok(r) => r.to_string_lossy().replace('\\', "/"),
+                Err(_) => path.to_string_lossy().into_owned(),
+            };
+            if files.last() != Some(&rel) {
+                files.push(rel);
+            }
             let hl = byte(cols.start)..byte(cols.end).max(byte(cols.start));
+            groups.push(tree::usage_group(&text, cols.clone()));
             matches.push(Match { file: files.len() - 1, line, col: cols, text, hl });
         }
         let n_files = files.len();
+        let n = matches.len();
+        if n == 0 {
+            return 0;
+        }
         let list = Arc::new(FileList { root: self.root.clone(), files });
         let results = Results { matches, files_with_matches: n_files, files_searched: n_files, truncated: false };
         self.find.files = Some(list.clone());
@@ -330,7 +347,16 @@ impl Workspace {
         self.open_in_find_window(window, cx);
         if let Some(w) = self.find.window.as_mut() {
             w.title = title;
+            w.group_of = groups;
+            w.rebuild_rows();
+            w.selected = w.rows.iter().position(|r| matches!(r, WRow::Match(_))).unwrap_or(0);
         }
+        n
+    }
+
+    /// The Find window's tree as text and a key pressed in it, for smokes.
+    pub(super) fn find_window_rows(&self) -> Vec<String> {
+        self.find.window.as_ref().map(|w| w.rows_text()).unwrap_or_default()
     }
 
     pub(super) fn dispatch_find_window_for_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -359,10 +385,21 @@ impl Workspace {
         match k.key.as_str() {
             "up" => w.selected = w.selected.saturating_sub(1),
             "down" => w.selected = (w.selected + 1).min(n.saturating_sub(1)),
+            "left" => w.left(),
+            "right" => w.right(),
             "enter" | "f4" => {
-                if let Some(WRow::Match(i)) = w.rows.get(w.selected).copied() {
-                    let (files, m) = (w.files.clone(), w.results.matches[i].clone());
-                    self.open_match(&files, &m, window, cx);
+                match w.rows.get(w.selected).copied() {
+                    Some(WRow::Match(i)) => {
+                        let (files, m) = (w.files.clone(), w.results.matches[i].clone());
+                        self.open_match(&files, &m, window, cx);
+                    }
+                    // Enter on a group or file folds it, as in PyCharm's trees.
+                    Some(_) if k.key == "enter" => {
+                        let at = w.selected;
+                        w.toggle(at);
+                        cx.notify();
+                    }
+                    _ => {}
                 }
                 return true;
             }
@@ -812,11 +849,12 @@ impl Workspace {
         };
         let n = w.rows.len();
         let focus = w.focus.clone();
+        let (one, many) = if w.group_of.is_empty() { ("match", "matches") } else { ("usage", "usages") };
         let header = format!(
-            "{}   {} match{} in {} file{}",
+            "{}   {} {} in {} file{}",
             w.title,
             w.results.matches.len(),
-            if w.results.matches.len() == 1 { "" } else { "es" },
+            if w.results.matches.len() == 1 { one } else { many },
             w.results.files_with_matches,
             if w.results.files_with_matches == 1 { "" } else { "s" }
         );
@@ -840,27 +878,56 @@ impl Workspace {
                             .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
                             .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
                             .cursor_pointer();
-                        match w.rows[i] {
-                            WRow::File(fi, count) => {
+                        let row = w.rows[i];
+                        let indent = 10. + 18. * w.depth(row) as f32;
+                        // Folding: a click on the arrow or a double click on the node.
+                        let node_click = cx.listener(move |this, e: &ClickEvent, window, cx| {
+                            if let Some(w) = this.find.window.as_mut() {
+                                w.selected = i;
+                                window.focus(&w.focus.clone());
+                                if e.click_count() >= 2 {
+                                    w.toggle(i);
+                                }
+                            }
+                            cx.notify();
+                        });
+                        let arrow = div()
+                            .id(("fw-fold", i))
+                            .w(px(12.))
+                            .text_color(Theme::text_muted())
+                            .child(if w.is_collapsed(row) { "▸" } else { "▾" })
+                            .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
+                                if e.click_count() == 1 {
+                                    if let Some(w) = this.find.window.as_mut() {
+                                        w.toggle(i);
+                                    }
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }
+                            }));
+                        let (one, many) = if w.group_of.is_empty() { ("match", "matches") } else { ("usage", "usages") };
+                        let count_label = move |n: usize| format!("{n} {}", if n == 1 { one } else { many });
+                        match row {
+                            WRow::Group(g, count) => base
+                                .pl(px(indent))
+                                .on_click(node_click)
+                                .child(arrow)
+                                .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(tree::USAGE_GROUPS[g as usize]))
+                                .child(div().text_color(Theme::text_muted()).text_size(px(12.)).child(count_label(count))),
+                            WRow::File(_, fi, count) => {
                                 let (name, dir) = split_rel(&w.files.files[fi]);
                                 let (icon, color) = file_icon(name, false);
-                                base.pl(px(10.))
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        if let Some(w) = this.find.window.as_mut() {
-                                            w.selected = i;
-                                            window.focus(&w.focus.clone());
-                                        }
-                                        cx.notify();
-                                    }))
-                                    .child(div().text_color(Theme::text_muted()).child("▾"))
+                                base.pl(px(indent))
+                                    .on_click(node_click)
+                                    .child(arrow)
                                     .child(div().text_color(color).child(icon))
                                     .child(name.to_string())
                                     .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(dir.to_string()))
-                                    .child(div().text_color(Theme::text_muted()).text_size(px(12.)).child(format!("{count} match{}", if count == 1 { "" } else { "es" })))
+                                    .child(div().text_color(Theme::text_muted()).text_size(px(12.)).child(count_label(count)))
                             }
                             WRow::Match(mi) => {
                                 let m = &w.results.matches[mi];
-                                base.pl(px(40.))
+                                base.pl(px(indent))
                                     .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                                         let Some(w) = this.find.window.as_mut() else { return };
                                         w.selected = i;

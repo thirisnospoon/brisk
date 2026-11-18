@@ -59,7 +59,7 @@ impl Editor {
         let (line, col) = self.buffer.pos_to_line_col(self.buffer.primary().head);
         let text = self.buffer.line(line);
         let x = if let Some(shaped) = l.shaped(line) {
-            f32::from(shaped.x_for_index(super::char_to_byte(&text, col)))
+            f32::from(shaped.x_for_index(self.display_byte(line, &text, super::char_to_byte(&text, col))))
         } else {
             col as f32 * f32::from(l.char_w)
         };
