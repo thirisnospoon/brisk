@@ -163,8 +163,14 @@ impl Workspace {
                 let at = click_icon(this, 4, window, cx);
                 eprintln!("smoke-runmarks: click ▶ at {at:?}");
             });
-            pause(500).await;
             let menu = |this: &Workspace| this.menu_labels();
+            // The menu opens on the click's mouse-down: wait for it (up to 5 s).
+            for _ in 0..50 {
+                pause(100).await;
+                if this.update(cx, |t, _| !t.menu_labels().is_empty()).unwrap_or(false) {
+                    break;
+                }
+            }
             let _ = this.update_in(cx, |this, window, cx| {
                 eprintln!("smoke-runmarks: menu {:?}", menu(this));
                 if std::env::var("BRISK_SMOKE_RUNMARKS").as_deref() == Ok("menu") {
@@ -172,10 +178,22 @@ impl Workspace {
                 }
                 this.smoke_press("down enter", window, cx);
             });
-            pause(3000).await;
+            // The script prints and exits: wait for its output (up to 30 s; a cold debug start is slow).
+            let output = |t: &Workspace, cx: &gpui::App| t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default();
+            let mut waited = 0;
+            while waited < 30_000 {
+                pause(100).await;
+                waited += 100;
+                if this.update(cx, |t, cx| output(t, cx).contains("hi run icon")).unwrap_or(false) {
+                    break;
+                }
+            }
             let _ = this.update_in(cx, |this, window, cx| {
-                let out = this.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default();
-                eprintln!("smoke-runmarks: run output has 'hi run icon': {}", out.contains("hi run icon"));
+                let out = output(this, cx);
+                eprintln!("smoke-runmarks: run output has 'hi run icon': {} (after {waited} ms)", out.contains("hi run icon"));
+                if !out.contains("hi run icon") {
+                    eprintln!("smoke-runmarks: run output was {:?}, status {:?}", out.chars().take(400).collect::<String>(), this.status);
+                }
                 let t = this.root.join("test_calc.py");
                 this.open_file(&t, window, cx);
             });
@@ -187,7 +205,13 @@ impl Workspace {
                 let at = click_icon(this, 8, window, cx);
                 eprintln!("smoke-runmarks: click ▶ TestCalc at {at:?}");
             });
-            pause(500).await;
+            // The menu opens on the click's mouse-down: wait for it (up to 5 s).
+            for _ in 0..50 {
+                pause(100).await;
+                if this.update(cx, |t, _| !t.menu_labels().is_empty()).unwrap_or(false) {
+                    break;
+                }
+            }
             let _ = this.update_in(cx, |this, window, cx| {
                 eprintln!("smoke-runmarks: menu {:?}", menu(this));
                 this.smoke_press("down enter", window, cx);
