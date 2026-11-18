@@ -106,6 +106,20 @@ pub fn empty_state(icon: &'static str, text: impl Into<gpui::SharedString>) -> D
         .child(div().max_w(px(460.)).text_center().child(text.into()))
 }
 
+/// Islands: a pill that just became active fades its highlight in (140 ms, ease-out). The
+/// animation is keyed by `id`, which is only rendered while the pill is active, so it plays
+/// on every switch and costs nothing afterwards.
+pub fn pill_in<E: IntoElement + Styled + 'static>(e: E, id: impl Into<gpui::ElementId>, active: bool, color: gpui::Hsla) -> gpui::AnyElement {
+    use gpui::{Animation, AnimationExt};
+    if !(active && crate::theme::islands()) {
+        return e.into_any_element();
+    }
+    e.with_animation(id.into(), Animation::new(std::time::Duration::from_millis(140)).with_easing(gpui::ease_out_quint()), move |d, t| {
+        d.bg(color.opacity(color.a * t))
+    })
+    .into_any_element()
+}
+
 /// Popups, menus, dialogs and notices: in Islands, radius 10 and a soft two-layer shadow;
 /// in Classic, the usual large shadow (the element keeps its own radius).
 pub fn floating<E: Styled>(e: E) -> E {
