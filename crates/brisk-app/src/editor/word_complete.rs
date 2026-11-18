@@ -100,7 +100,17 @@ impl Editor {
         let start = self.word_start_before_caret();
         let caret = self.buffer.primary().head;
         let after_dot = start > 0 && self.buffer.rope().char(start - 1) == '.';
-        let items = word_items(&self.buffer.text(), start, caret, after_dot);
+        // In a large file only the lines around the caret (scanning 50k lines per key is slow).
+        let items = if self.is_big() {
+            let line = self.buffer.pos_to_line_col(caret).0;
+            let first = self.buffer.line_start(line.saturating_sub(super::big::WORD_WINDOW));
+            let last_line = (line + super::big::WORD_WINDOW).min(self.buffer.len_lines() - 1);
+            let end = self.buffer.line_start(last_line);
+            let text = self.buffer.rope().slice(first..end.max(caret)).to_string();
+            word_items(&text, start - first, caret - first, after_dot)
+        } else {
+            word_items(&self.buffer.text(), start, caret, after_dot)
+        };
         // After a dot the list may still hold postfix items (`.if`, `.not`, ...).
         if items.is_empty() && !after_dot {
             return false;

@@ -31,6 +31,8 @@ pub(super) enum Intent {
     Template(&'static str),
     /// Ctrl+Alt+T: surround with `SURROUNDERS[i]`.
     Surround(usize),
+    /// Ctrl+Alt+V: extract the selection into a variable; `true`: every occurrence.
+    ExtractVariable(bool),
     /// A language server quick fix (ty: import a name, qualify it): title and edits.
     Lsp(String, Vec<brisk_lsp::FileEdits>),
 }
@@ -586,6 +588,9 @@ impl Workspace {
             Intent::Suppress(d) => ed.update(cx, |e, cx| e.suppress(&d, cx)),
             Intent::Template(key) => ed.update(cx, |e, cx| e.insert_template(key, cx)),
             Intent::Surround(i) => ed.update(cx, |e, cx| e.surround_with(i, cx)),
+            Intent::ExtractVariable(all) => {
+                ed.update(cx, |e, cx| e.extract_variable(all, cx));
+            }
             Intent::Lsp(title, edits) => {
                 let (_, failed) = self.apply_file_edits(edits, cx);
                 self.status = lsp_title(&title);

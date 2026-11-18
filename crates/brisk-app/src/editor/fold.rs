@@ -14,7 +14,7 @@ pub struct Folds {
     /// Hidden lines, merged and sorted: (first, last) inclusive.
     hidden: Vec<(usize, usize)>,
     /// Foldable regions (first line, last line) for buffer version `.0`.
-    candidates: (Option<u64>, Vec<(usize, usize)>),
+    pub(super) candidates: (Option<u64>, Vec<(usize, usize)>),
 }
 
 /// Regions from indentation, for files without a grammar: a line followed by more deeply
@@ -160,7 +160,8 @@ impl Editor {
     /// Foldable regions (cached per buffer version).
     pub(super) fn fold_candidates(&mut self) -> &[(usize, usize)] {
         let v = self.buffer.version();
-        if self.folds.candidates.0 != Some(v) {
+        // A large file keeps slightly stale markers while typing (a full walk takes ~0.1 s).
+        if self.folds.candidates.0 != Some(v) && !(self.folds.candidates.0.is_some() && self.defer_folds()) {
             self.reparse();
             let c = match &self.syntax {
                 Some(s) => s.fold_ranges(),

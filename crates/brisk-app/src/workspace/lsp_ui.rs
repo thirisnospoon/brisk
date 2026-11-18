@@ -149,11 +149,13 @@ impl Workspace {
         self.ensure_ty(cx);
         let Some(ty) = self.ty_sync(&path, version, text) else { return };
         let fut = ty.diagnostics(&path);
-        // Inlay hints for the whole file, with the same text.
-        let hints = ty.inlay_hints(&path, 0..text.lines().count() + 1);
+        // Inlay hints for the whole file, with the same text; off in large files.
+        let big = ed.read(cx).is_big();
+        let hints = (!big).then(|| ty.inlay_hints(&path, 0..text.lines().count() + 1));
         let epoch = self.lsp.epoch;
         let hint_ed = ed.clone();
         cx.spawn(async move |_, cx| {
+            let Some(hints) = hints else { return };
             if let Ok(h) = hints.await {
                 let _ = hint_ed.update(cx, |e, cx| {
                     if e.set_inlay_hints(version, h) {
@@ -289,6 +291,10 @@ impl Workspace {
                 self.nav_step(action == A::NavigateBack, window, cx);
                 return true;
             }
+            A::ExtractVariable | A::ExtractMethod | A::ExtractConstant => {
+                self.extract_action(action, window, cx);
+                return true;
+            }
             A::GotoDeclaration | A::GotoTypeDeclaration | A::QuickDefinition | A::QuickDocumentation | A::ParameterInfo | A::CodeCompletion | A::SmartCompletion | A::FindUsages | A::ShowUsages | A::Rename => {}
             _ => return false,
         }
@@ -301,7 +307,7 @@ impl Workspace {
             A::GotoTypeDeclaration => self.goto_declaration(ed, None, true, window, cx),
             A::QuickDocumentation => self.quick_doc(ed, None, cx),
             A::QuickDefinition => self.quick_definition(ed, cx),
-            A::ParameterInfo => self.parameter_info(ed, cx),
+            A::ParameterInfo => self.parameter_info(ed, true, cx),
             A::CodeCompletion | A::SmartCompletion => self.complete(ed, true, cx),
             A::FindUsages | A::ShowUsages => self.find_usages(ed, None, window, cx),
             A::Rename => self.start_rename(ed, window, cx),
@@ -328,8 +334,8 @@ impl Workspace {
                     let in_comment = prefix.contains('#');
                     (e.completion_open() || in_comment, e.signature_open(), word, e.completion_needs_requery() && !in_comment)
                 };
-                if ready && (c == '(' || (c == ',' && sig_open)) {
-                    self.parameter_info(ed.clone(), cx);
+                if c == '(' || (c == ',' && sig_open) {
+                    self.parameter_info(ed.clone(), false, cx);
                 }
                 if ready && is_ident(c) && requery {
                     self.complete(ed, false, cx);
@@ -430,6 +436,36 @@ impl Workspace {
         .detach();
     }
 
+    /// Ctrl+Alt+V: Extract Variable; with several identical expressions in the function, a
+    /// popup asks whether to replace this one or all, as PyCharm does. Extract Method and
+    /// Extract Constant are not there yet.
+    fn extract_action(&mut self, action: brisk_keymap::Action, window: &mut Window, cx: &mut Context<Self>) {
+        use super::problems_ui::Intent;
+        use super::{PopupItem, PopupKind, Target};
+        if action != brisk_keymap::Action::ExtractVariable {
+            self.status = format!("{} is not available yet; Extract Variable (Ctrl+Alt+V) is", action.info().title);
+            cx.notify();
+            return;
+        }
+        let Some(ed) = self.editor_for_lsp(window, cx) else {
+            self.status = "Extract Variable works in Python files".into();
+            cx.notify();
+            return;
+        };
+        let n = ed.read(cx).extract_count();
+        if n == 0 {
+            self.status = "Extract Variable: select an expression first".into();
+        } else if n == 1 {
+            ed.update(cx, |e, cx| e.extract_variable(false, cx));
+        } else {
+            let item = |label: String, all: bool| PopupItem { label, detail: String::new(), hint: String::new(), target: Target::Intention(Box::new(Intent::ExtractVariable(all))) };
+            self.problems.intents = vec![item("Replace this occurrence only".into(), false), item(format!("Replace all {n} occurrences"), true)];
+            self.problems.intents_title = Some("Multiple occurrences found");
+            self.open_popup(PopupKind::Intentions);
+        }
+        cx.notify();
+    }
+
     /// Ctrl+Shift+I: the definition's source in a popup at the caret. Without ty, a `def`,
     /// `class` or assignment of the name in this file.
     fn quick_definition(&mut self, ed: Entity<Editor>, cx: &mut Context<Self>) {
@@ -471,12 +507,43 @@ impl Workspace {
     }
 
     /// Ctrl+P, and automatically after `(` and `,`.
-    fn parameter_info(&mut self, ed: Entity<Editor>, cx: &mut Context<Self>) {
-        let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else { return self.no_ty("Parameter Info") };
+    fn parameter_info(&mut self, ed: Entity<Editor>, explicit: bool, cx: &mut Context<Self>) {
+        let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else {
+            // No ty: a `def` in this file or a builtin.
+            let sig = ed.read(cx).local_signature();
+            if sig.is_none() && explicit {
+                self.status = "No parameter info here (without ty only functions of this file and builtins are known)".into();
+            }
+            ed.update(cx, |e, cx| e.show_signature(sig, cx));
+            return;
+        };
+        // Show the file's own `def` or the builtin at once; ty's answer replaces it when it comes
+        // (ty may take a while, or have nothing, while it checks a just-edited file).
+        let local = ed.read(cx).local_signature();
+        let had_local = local.is_some();
+        if had_local {
+            ed.update(cx, |e, cx| e.show_signature(local, cx));
+        }
         let fut = ty.signature_help(&path, p);
-        cx.spawn(async move |_, cx| {
-            if let Ok(sig) = fut.await {
-                let _ = ed.update(cx, |e, cx| e.show_signature(sig, cx));
+        cx.spawn(async move |this, cx| {
+            let sig = fut.await.ok().flatten();
+            let none = ed
+                .update(cx, |e, cx| {
+                    match sig {
+                        // Not if the local one was shown and closed meanwhile.
+                        Some(sig) if !had_local || e.signature_open() => e.show_signature(Some(sig), cx),
+                        Some(_) => {}
+                        None if !had_local => e.show_signature(None, cx),
+                        None => {}
+                    }
+                    !had_local && !e.signature_open()
+                })
+                .unwrap_or(false);
+            if none && explicit {
+                let _ = this.update(cx, |this, cx| {
+                    this.status = "No parameter info here".into();
+                    cx.notify();
+                });
             }
         })
         .detach();
@@ -941,3 +1008,4 @@ impl Workspace {
         .detach();
     }
 }
+
