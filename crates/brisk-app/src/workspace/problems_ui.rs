@@ -459,7 +459,18 @@ impl Workspace {
             self.status = "No context actions available here".into();
             return;
         }
-        let ty_diags: Vec<Diagnostic> = probs.iter().filter(|d| brisk_lint::is_ty_code(&d.code)).cloned().collect();
+        // ty's quick fixes answer ty's own diagnostics. Brisk hides ty's unresolved-reference
+        // when ruff reports the same name as F821, so ask ty about that one under ty's code.
+        let mut ty_diags: Vec<Diagnostic> = probs
+            .iter()
+            .filter_map(|d| match d.code.as_str() {
+                c if brisk_lint::is_ty_code(c) => Some(d.clone()),
+                "F821" => Some(Diagnostic { code: "unresolved-reference".into(), fix: None, ..d.clone() }),
+                _ => None,
+            })
+            .collect();
+        ty_diags.sort_by_key(|d| (d.start, d.end, d.code.clone()));
+        ty_diags.dedup_by(|a, b| (a.start, a.end, &a.code) == (b.start, b.end, &b.code));
         let request = match ty_diags.is_empty() {
             true => None,
             false => self.ty_at_caret(&ed, cx).map(|(ty, path, _)| {

@@ -109,6 +109,7 @@ impl Workspace {
                     ed.update(cx, |e, _| e.close_insight());
                 }
                 eprintln!("smoke-intel: done in {:.1?}", t0.elapsed());
+                cx.quit();
             });
         })
         .detach();
