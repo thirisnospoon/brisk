@@ -206,7 +206,7 @@ impl TerminalPanel {
                 .when(on, |d| d.bg(Theme::selection_row()))
                 .when(!on, |d| d.hover(|s| s.bg(Theme::hover_row())))
                 .active(|s| s.bg(Theme::press()))
-                .child(glyph)
+                .child(crate::icons::glyph(glyph, 14., if on { Theme::text() } else { Theme::text_muted() }))
         };
         let caret = div().w(px(1.5)).h(px(15.)).bg(Theme::accent());
         div()
@@ -224,7 +224,7 @@ impl TerminalPanel {
                 this.search.focused = true;
                 cx.notify();
             }))
-            .child(div().text_color(Theme::text_dim()).child("⌕"))
+            .child(crate::icons::icon("search", 14., Theme::text_dim()))
             .child(
                 div()
                     .w(px(260.))

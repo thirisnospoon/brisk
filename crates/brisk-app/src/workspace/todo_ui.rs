@@ -247,7 +247,7 @@ impl Workspace {
                         let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                         let dir = rel(p.parent().unwrap_or(p));
                         row.pl(px(8.))
-                            .child(div().w(px(10.)).text_color(Theme::text_dim()).child(if open { "▾" } else { "▸" }))
+                            .child(crate::icons::tree_arrow(true, open, Theme::text_dim()))
                             .child(div().text_color(Theme::text()).child(name))
                             .child(div().text_size(px(12.)).text_color(Theme::text_dim()).child(dir))
                             .child(div().text_size(px(12.)).text_color(Theme::text_muted()).child(format!("{n} item{}", if *n == 1 { "" } else { "s" })))

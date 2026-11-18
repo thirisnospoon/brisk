@@ -1210,9 +1210,9 @@ impl Editor {
             .hover(|s| s.bg(Theme::hover_row()))
             .cursor_pointer()
             .when(stale, |d| d.opacity(0.6))
-            .when(e > 0, |d| d.child(gpui::div().text_color(severity_color(Severity::Error)).child(format!("✗ {e}"))))
-            .when(w > 0, |d| d.child(gpui::div().text_color(severity_color(Severity::Warning)).child(format!("⚠ {w}"))))
-            .when(e + w == 0, |d| d.child(gpui::div().text_color(Theme::vcs_added()).child("✓")))
+            .when(e > 0, |d| d.child(gpui::div().flex().items_center().gap(px(3.)).text_color(severity_color(Severity::Error)).child(crate::icons::icon("circle-x", 13., severity_color(Severity::Error))).child(e.to_string())))
+            .when(w > 0, |d| d.child(gpui::div().flex().items_center().gap(px(3.)).text_color(severity_color(Severity::Warning)).child(crate::icons::icon("triangle-alert", 13., severity_color(Severity::Warning))).child(w.to_string())))
+            .when(e + w == 0, |d| d.child(crate::icons::icon("check", 13., Theme::vcs_added())))
             .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| {
                 cx.stop_propagation();
                 cx.emit(EditorEvent::ShowProblems);
@@ -1244,10 +1244,10 @@ impl Editor {
                 .shadow_md()
                 .text_size(px(12.5))
                 .cursor(gpui::CursorStyle::Arrow)
-                .child(gpui::div().flex().gap(px(6.)).child(gpui::div().text_color(severity_color(d.severity)).child(match d.severity {
-                    Severity::Error => "✗",
-                    _ => "⚠",
-                })).child(gpui::div().text_color(Theme::text()).child(d.title())))
+                .child(gpui::div().flex().items_center().gap(px(6.)).child(crate::icons::icon(match d.severity {
+                    Severity::Error => "circle-x",
+                    _ => "triangle-alert",
+                }, 14., severity_color(d.severity))).child(gpui::div().text_color(Theme::text()).child(d.title())))
                 .child(
                     gpui::div()
                         .pt(px(4.))

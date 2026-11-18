@@ -770,7 +770,7 @@ impl Workspace {
                 .hover(|s| s.bg(Theme::hover_row()).text_color(Theme::text()))
                 .active(|s| s.bg(Theme::press()))
                 .tooltip(move |_, cx| cx.new(|_| super::Tip(tip.into())).into())
-                .child(glyph)
+                .child(crate::icons::glyph(glyph, 14., Theme::text_muted()))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if let Some(d) = this.runs.dialog.as_mut() {
                         act(d);

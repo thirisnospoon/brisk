@@ -156,7 +156,7 @@ impl Workspace {
                 .hover(|s| s.bg(Theme::hover_row()))
                 .active(|s| s.bg(Theme::press()))
                 .tooltip(move |_, cx| cx.new(|_| super::Tip(tip.into())).into())
-                .child(glyph)
+                .child(crate::icons::glyph(glyph, 14., color))
         };
         let group = |title: &str| div().px(px(8.)).pt(px(6.)).pb(px(2.)).text_size(px(11.5)).text_color(Theme::text_dim()).child(title.to_string());
         let mut tree = div()
@@ -194,7 +194,7 @@ impl Workspace {
                         this.services_select(Item::Run(id), cx);
                         w.focus(&this.services.focus.clone());
                     }))
-                    .child(div().w(px(12.)).text_color(color).child(glyph))
+                    .child(div().w(px(14.)).flex().items_center().child(crate::icons::glyph(glyph, 12., color)))
                     .child(div().flex_shrink_0().whitespace_nowrap().child(r.name.clone()))
                     .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(11.5)).text_color(Theme::text_dim()).child(detail))
                     .child(small(("svc-rerun", id), "↻", Theme::file_added(), "Rerun").child(track(id, "rerun")).on_click(cx.listener(move |this, _, w, cx| {

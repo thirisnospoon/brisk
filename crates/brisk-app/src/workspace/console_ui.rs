@@ -461,7 +461,7 @@ impl Workspace {
                 .rounded(px(5.))
                 .text_color(if on { color } else { Theme::text_dim() })
                 .when(on, |x| x.cursor_pointer().hover(|s| s.bg(Theme::hover_row())).active(|s| s.bg(Theme::press())))
-                .child(glyph)
+                .child(crate::icons::glyph(glyph, 14., if on { color } else { Theme::text_dim() }))
                 .tooltip(move |_, cx| cx.new(|_| super::Tip(tip.into())).into())
                 .on_click(cx.listener(move |this, _, w, cx| {
                     if on {

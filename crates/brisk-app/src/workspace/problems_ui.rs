@@ -372,7 +372,7 @@ impl Workspace {
                         .cursor_pointer()
                         .text_color(Theme::text_muted())
                         .hover(|s| s.bg(Theme::hover_row()))
-                        .child(if self.problems.project_running { "Checking…" } else { "↻" })
+                        .child(if self.problems.project_running { div().child("Checking…").into_any_element() } else { crate::icons::glyph("↻", 14., Theme::text_muted()) })
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.check_project(cx);
                             cx.notify();
@@ -425,7 +425,7 @@ impl Workspace {
                                             window.focus(&this.problems.focus.clone());
                                             cx.notify();
                                         }))
-                                        .child(div().text_color(Theme::text_muted()).child("▾"))
+                                        .child(crate::icons::tree_arrow(true, true, Theme::text_muted()))
                                         .child(name)
                                         .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(dir))
                                         .child(div().text_color(Theme::text_muted()).text_size(px(12.)).child(format!("{count} problem{}", if *count == 1 { "" } else { "s" })))
@@ -442,7 +442,7 @@ impl Workspace {
                                             }
                                             cx.notify();
                                         }))
-                                        .child(div().w(px(14.)).text_color(c).child(g))
+                                        .child(div().w(px(14.)).flex().items_center().child(crate::icons::glyph(g, 14., c)))
                                         .child(div().text_color(Theme::text()).overflow_hidden().whitespace_nowrap().child(d.title()))
                                         .child(div().text_color(Theme::text_dim()).font_family(mono_font()).text_size(px(12.)).child(format!(":{}", d.start.line + 1)))
                                 }

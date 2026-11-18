@@ -4,7 +4,7 @@
 
 use std::borrow::Cow;
 
-use gpui::{px, svg, AssetSource, Bounds, Hsla, Pixels, Point, SharedString, Styled, Svg, Window};
+use gpui::{px, svg, AssetSource, Bounds, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels, Point, SharedString, Styled, Svg, Window};
 
 macro_rules! icons {
     ($($name:literal),* $(,)?) => {
@@ -13,11 +13,12 @@ macro_rules! icons {
 }
 
 icons![
-    "arrow-down-to-line", "arrow-right-to-line", "bookmark", "breakpoints", "bug", "calculator", "chart-pie", "chevron-down", "chevron-right", "check", "check-bold", "circle",
-    "circle-alert", "circle-check", "circle-slash", "circle-x", "copy", "database", "dot", "dot-hole", "folder", "git-branch", "git-commit", "list-todo",
-    "list-tree", "loader-circle", "menu", "mute-breakpoints", "package", "pause", "pin", "play", "play-solid", "rerun-failed", "ring", "rotate-cw",
-    "search", "server", "square-terminal", "step-into", "step-out", "step-over", "stop-solid", "terminal", "timer", "trash", "triangle-alert",
-    "wrap-text", "x",
+    "arrow-down", "arrow-down-to-line", "arrow-left-right", "arrow-right-to-line", "arrow-up", "bookmark", "breakpoints", "bug", "calculator", "chart-pie", "check",
+    "check-bold", "chevron-down", "chevron-right", "chevron-up", "circle", "circle-alert", "circle-check", "circle-slash", "circle-x", "clipboard",
+    "cloud", "copy", "database", "diamond", "dot", "dot-hole", "eraser", "external-link", "file", "file-text", "folder", "git-branch", "git-commit",
+    "history", "lightbulb", "list", "list-todo", "list-tree", "minus", "power", "undo-2", "loader-circle", "menu", "mute-breakpoints", "package", "pause", "pencil", "pin",
+    "play", "play-solid", "plus", "rerun-failed", "ring", "rotate-cw", "save", "search", "server", "settings-2", "sort-failed", "square-terminal",
+    "star", "step-into", "step-out", "step-over", "stop-solid", "terminal", "timer", "trash", "triangle-alert", "wrap-text", "x", "zap",
 ];
 
 /// The embedded icons as GPUI assets ("icons/<name>.svg").
@@ -40,6 +41,81 @@ fn path(name: &str) -> SharedString {
 /// An icon element: `size` logical px square, tinted with `color`.
 pub fn icon(name: &str, size: f32, color: impl Into<Hsla>) -> Svg {
     svg().path(path(name)).size(px(size)).flex_none().text_color(color.into())
+}
+
+/// The icon that stands for a UI glyph still used as a short label (tool buttons, popup
+/// rows, file kinds); `None` keeps the glyph as text (letters like "C", "m", "{").
+pub fn glyph_icon(g: &str) -> Option<&'static str> {
+    Some(match g {
+        "▸" => "chevron-right",
+        "▾" | "▼" => "chevron-down",
+        "▴" => "chevron-up",
+        "×" | "✕" => "x",
+        "✓" => "check",
+        "✗" => "circle-x",
+        "⚠" => "triangle-alert",
+        "▶" => "play-solid",
+        "■" => "stop-solid",
+        "↻" | "⟳" => "rotate-cw",
+        "↑" => "arrow-up",
+        "↓" => "arrow-down",
+        "↧" => "arrow-down-to-line",
+        "⌫" => "eraser",
+        "⊘" => "circle-slash",
+        "⏱" => "timer",
+        "🕘" | "◷" => "history",
+        "⇪" => "external-link",
+        "✗↑" => "sort-failed",
+        "★" => "star",
+        "☁" => "cloud",
+        "⎇" => "git-branch",
+        "+" => "plus",
+        "⚡" => "zap",
+        "▤" => "list",
+        "✎" => "pencil",
+        "⎙" => "save",
+        "✦" => "lightbulb",
+        "▰" | "▣" => "folder",
+        "▮" => "bookmark",
+        "¶" => "clipboard",
+        "●" => "dot",
+        "◆" => "diamond",
+        "⌕" => "search",
+        "↶" => "undo-2",
+        "⇆" => "arrow-left-right",
+        "⏻" => "power",
+        "⧉" => "copy",
+        "−" => "minus",
+        "⚙" => "settings-2",
+        "≡" => "file-text",
+        "•" => "file",
+        _ => return None,
+    })
+}
+
+/// A glyph label as its icon (`size` px, tinted `color`), or as text when it has none.
+pub fn glyph(g: impl Into<SharedString>, size: f32, color: impl Into<Hsla>) -> gpui::AnyElement {
+    let g: SharedString = g.into();
+    let color = color.into();
+    match glyph_icon(&g) {
+        Some(name) => icon(name, size, color).into_any_element(),
+        None => gpui::div().text_color(color).child(g).into_any_element(),
+    }
+}
+
+/// A tree row's expand arrow in a fixed 12 px slot: chevron right / down, empty for leaves.
+pub fn tree_arrow(expandable: bool, open: bool, color: impl Into<Hsla>) -> gpui::Div {
+    let slot = gpui::div().w(px(12.)).h(px(12.)).flex_none().flex().items_center().justify_center();
+    if expandable {
+        slot.child(icon(if open { "chevron-down" } else { "chevron-right" }, 12., color))
+    } else {
+        slot
+    }
+}
+
+/// A close cross that brightens while the element named `group` is hovered.
+pub fn close_x(group: &'static str, size: f32) -> Svg {
+    icon("x", size, crate::theme::Theme::text_dim()).group_hover(group, |s| s.text_color(crate::theme::Theme::text()))
 }
 
 /// A square of `size` logical px centered on `center`, snapped to the device pixel grid with
@@ -78,6 +154,11 @@ mod tests {
         }
         assert!(Assets.load("icons/play.svg").unwrap().is_some());
         assert!(Assets.load("icons/nope.svg").unwrap().is_none());
+        // Every glyph mapping names an embedded icon.
+        for g in ["▸", "▾", "▴", "×", "✓", "✗", "⚠", "▶", "■", "↻", "↑", "↓", "↧", "⌫", "⊘", "⏱", "🕘", "⇪", "✗↑", "★", "☁", "⎇", "+", "⚡", "▤", "✎", "⎙", "✦", "▰", "▮", "¶", "●", "◆", "⚙", "≡", "•", "⌕", "↶", "⇆", "⏻", "⧉", "−"] {
+            let n = glyph_icon(g).unwrap();
+            assert!(Assets.load(&format!("icons/{n}.svg")).unwrap().is_some(), "{g} -> {n}");
+        }
     }
 
     #[test]

@@ -930,7 +930,7 @@ impl Workspace {
                     window_focus_db(this, w);
                     this.dispatch(action, w, cx)
                 }))
-                .child(glyph)
+                .child(crate::icons::glyph(glyph, 14., Theme::text_muted()))
         };
         let header = div()
             .h(px(34.))
@@ -975,7 +975,7 @@ impl Workspace {
                             let row = this.db.rows[ix].clone();
                             let selected = ix == this.db.selected;
                             let open = this.db.expanded.contains(&row.key);
-                            let chevron = if row.expandable { if open { "▾" } else { "▸" } } else { " " };
+                            let chevron = crate::icons::tree_arrow(row.expandable, open, Theme::text_muted());
                             let (icon, icon_color, label, detail, label_color): (String, gpui::Hsla, String, String, gpui::Hsla) = match &row.kind {
                                 RowKind::Source(di) => {
                                     let ds = &this.db.sources[*di];
@@ -1033,7 +1033,7 @@ impl Workspace {
                                     }
                                     cx.notify();
                                 }))
-                                .child(div().w(px(12.)).text_color(Theme::text_muted()).child(chevron))
+                                .child(chevron)
                                 .child(if is_source {
                                     div()
                                         .w(px(20.))

@@ -186,7 +186,7 @@ impl GridView {
         let running = self.is_running();
         let reload = self.source.is_some() && !running;
         let btn = |id: &'static str, glyph: &'static str| {
-            div().id(id).px(px(6.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(glyph)
+            div().id(id).px(px(6.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(crate::icons::glyph(glyph, 14., Theme::text_muted()))
         };
         div()
             .h(px(28.))

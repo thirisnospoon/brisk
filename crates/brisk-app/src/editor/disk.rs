@@ -209,7 +209,7 @@ impl Editor {
                 .text_size(px(13.))
                 .text_color(Theme::text())
                 .cursor(gpui::CursorStyle::Arrow)
-                .child(div().text_color(Theme::warning()).child("⚠"))
+                .child(crate::icons::icon("triangle-alert", 14., Theme::warning()))
                 .child(div().flex_1().child(msg))
                 .when(c == Conflict::Changed, |d| d.child(button("disk-reload", "Reload from Disk", true, cx)))
                 .child(button("disk-keep", keep, false, cx))

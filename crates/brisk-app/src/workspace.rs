@@ -1781,7 +1781,7 @@ impl Workspace {
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         // A toolbar widget: text plus a small dimmed chevron, vertically centered.
-        let chip = |id: &'static str, text: String| {
+        let chip = |id: &'static str, lead: Option<&'static str>, text: String| {
             div()
                 .id(id)
                 .h(px(28.))
@@ -1793,8 +1793,9 @@ impl Workspace {
                 .hover(|s| s.bg(Theme::hover_row()))
                 .active(|s| s.bg(Theme::press()))
                 .cursor_pointer()
+                .when_some(lead, |d, n| d.child(crate::icons::icon(n, 14., Theme::text_muted())))
                 .child(text)
-                .child(div().text_size(px(9.)).text_color(Theme::text_muted()).child("▼"))
+                .child(crate::icons::icon("chevron-down", 12., Theme::text_muted()))
         };
         div()
             .h(px(40.))
@@ -1832,17 +1833,17 @@ impl Workspace {
                     self.project_name().chars().take(2).collect::<String>().to_uppercase(),
                 ),
             )
-            .child(chip("tb-project", self.project_name()).on_click(cx.listener(|this, _, _, cx| {
+            .child(chip("tb-project", None, self.project_name()).on_click(cx.listener(|this, _, _, cx| {
                 this.open_popup(PopupKind::Projects);
                 cx.notify();
             })))
             .child(
-                chip("tb-branch", format!("⎇ {}", self.branch_label()))
+                chip("tb-branch", Some("git-branch"), self.branch_label())
                     .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Branches, w, cx))),
             )
             .child(div().flex_1())
             .child(
-                chip("tb-config", self.run_widget_label())
+                chip("tb-config", None, self.run_widget_label())
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.reload_runs();
                         this.open_popup(PopupKind::RunConfigs(false));
@@ -1940,7 +1941,7 @@ impl Workspace {
                             .map(|r| {
                                 let node = &this.tree.nodes[r.id];
                                 let selected = this.tree_selected == Some(r.id);
-                                let chevron = if node.is_dir { if node.expanded { "▾" } else { "▸" } } else { " " };
+                                let chevron = crate::icons::tree_arrow(node.is_dir, node.expanded, Theme::text_muted());
                                 let (icon, icon_color) = file_icon(&node.name, node.is_dir);
                                 let open = this.active_editor().is_some_and(|e| e.read(cx).path.as_deref() == Some(node.path.as_path()));
                                 let vcs = if node.is_dir { None } else { this.file_status(&node.path).map(git_ui::status_color) };
@@ -1982,7 +1983,7 @@ impl Workspace {
                                             }))
                                             .child(chevron),
                                     )
-                                    .child(div().w(px(16.)).text_color(icon_color).child(icon))
+                                    .child(div().w(px(16.)).flex().items_center().child(crate::icons::glyph(icon, 14., icon_color)))
                                     .child(div().text_color(name_color).whitespace_nowrap().child(label))
                             })
                             .collect()
@@ -2132,7 +2133,7 @@ impl Workspace {
                         cx.stop_propagation();
                         this.tab_menu(second, i, e.position, window, cx);
                     }))
-                    .child(div().flex_shrink_0().text_color(color).child(icon))
+                    .child(div().flex_shrink_0().flex().items_center().child(crate::icons::glyph(icon, 14., color)))
                     .child(div().min_w_0().overflow_hidden().text_ellipsis().text_color(name_color).child(title))
                     .when(dirty, |d| d.child(div().flex_shrink_0().text_color(Theme::text_muted()).child("•")))
                     .when(pinned, |d| {
@@ -2171,8 +2172,9 @@ impl Workspace {
                             .justify_center()
                             .rounded(px(4.))
                             .text_color(Theme::text_dim())
-                            .hover(|s| s.text_color(Theme::text()).bg(Theme::press()))
-                            .child("×")
+                            .hover(|s| s.bg(Theme::press()))
+                            .group("close-x")
+                            .child(crate::icons::close_x("close-x", 12.))
                             // The press must not also activate the tab underneath.
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -2396,7 +2398,7 @@ impl Workspace {
                                 .border_1()
                                 .border_color(Theme::accent())
                                 .bg(Theme::bg())
-                                .child(div().text_color(Theme::text_muted()).child("⌕"))
+                                .child(crate::icons::icon("search", 14., Theme::text_muted()))
                                 .child(if p.query.is_empty() {
                                     div().text_color(Theme::text_dim()).child(placeholder).into_any_element()
                                 } else {
@@ -2513,7 +2515,7 @@ impl Workspace {
             // Fixed slots: the icon and the hint keep their size, the label
             // shrinks with an ellipsis, and the detail only takes what is
             // left (it goes first when the label is long).
-            .child(div().w(px(16.)).flex_shrink_0().text_color(color).child(icon))
+            .child(div().w(px(16.)).flex_shrink_0().flex().items_center().justify_center().child(crate::icons::glyph(icon, 14., color)))
             .child(div().min_w_0().flex_shrink().overflow_hidden().text_ellipsis().child(label))
             .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().text_color(Theme::text_dim()).text_size(px(12.)).when(show_detail, |d| d.child(it.detail.clone())))
             .child(

@@ -2263,7 +2263,7 @@ impl Workspace {
             .hover(|s| s.bg(Theme::hover_row()))
             .child(div().text_color(Theme::text_dim()).child("Thread"))
             .child(div().flex_1().child(name(cur)))
-            .child(div().text_color(Theme::text_dim()).child(if d.threads_open { "▴" } else { "▾" }))
+            .child(crate::icons::icon(if d.threads_open { "chevron-up" } else { "chevron-down" }, 12., Theme::text_dim()))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.debug.threads_open = !this.debug.threads_open;
                 cx.notify();
@@ -3032,7 +3032,7 @@ impl Workspace {
                     rows.push(new_watch_row(&e.text));
                 }
             }
-            let arrow = if r.var.reference > 0 { if r.expanded { "▾" } else { "▸" } } else { " " };
+            let arrow = crate::icons::tree_arrow(r.var.reference > 0, r.expanded, Theme::text_dim());
             let header = matches!(r.kind, RowKind::Scope | RowKind::WatchHeader);
             let watch = matches!(r.kind, RowKind::Watch(_));
             let editing_name = matches!((r.kind, edit.as_ref().map(|e| e.target)), (RowKind::Watch(w), Some(EditTarget::Watch(x))) if w == x);
@@ -3069,7 +3069,7 @@ impl Workspace {
                     .when(r.var.reference > 0, |x| x.cursor_pointer())
                     .when(d.sel == Some(i), |x| x.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
                     .when(d.sel != Some(i), |x| x.hover(|s| s.bg(Theme::hover_row())))
-                    .child(div().w(px(12.)).text_color(Theme::text_dim()).child(arrow))
+                    .child(arrow)
                     .child(if editing_name {
                         input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
                     } else {

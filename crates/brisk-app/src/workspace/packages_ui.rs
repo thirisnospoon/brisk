@@ -321,7 +321,7 @@ impl Workspace {
                     .bg(Theme::panel())
                     .border_b_1()
                     .border_color(Theme::divider())
-                    .child(div().text_color(Theme::warning()).child("⚠"))
+                    .child(crate::icons::icon("triangle-alert", 14., Theme::warning()))
                     .child(format!("Uninstall {} {} from this interpreter?", pk.name, pk.version))
                     .child(ui_kit::button("pkg-confirm", "Uninstall", true, true).on_click(cx.listener(|this, _, _, cx| {
                         this.confirm_uninstall(true, cx);

@@ -309,9 +309,8 @@ impl Workspace {
                     .child(
                         div()
                             .id(("bookmark-rm", i))
-                            .text_color(Theme::text_dim())
-                            .hover(|s| s.text_color(Theme::text()))
-                            .child("×")
+                            .group("close-x")
+                            .child(crate::icons::close_x("close-x", 12.))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.remove_bookmark(&rm_path, rm_line, cx);

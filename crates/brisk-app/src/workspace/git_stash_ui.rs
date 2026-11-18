@@ -232,7 +232,7 @@ impl Workspace {
                     .justify_center()
                     .text_size(px(10.))
                     .text_color(gpui::white())
-                    .when(untracked, |x| x.child("✓")),
+                    .when(untracked, |x| x.child(crate::icons::icon("check-bold", 10., gpui::white()))),
             )
             .child("Include untracked files")
             .on_mouse_down(

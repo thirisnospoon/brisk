@@ -891,9 +891,7 @@ impl Workspace {
                         });
                         let arrow = div()
                             .id(("fw-fold", i))
-                            .w(px(12.))
-                            .text_color(Theme::text_muted())
-                            .child(if w.is_collapsed(row) { "▸" } else { "▾" })
+                            .child(crate::icons::tree_arrow(true, !w.is_collapsed(row), Theme::text_muted()))
                             .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
                                 if e.click_count() == 1 {
                                     if let Some(w) = this.find.window.as_mut() {
@@ -918,7 +916,7 @@ impl Workspace {
                                 base.pl(px(indent))
                                     .on_click(node_click)
                                     .child(arrow)
-                                    .child(div().text_color(color).child(icon))
+                                    .child(div().flex().items_center().child(crate::icons::glyph(icon, 14., color)))
                                     .child(name.to_string())
                                     .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(dir.to_string()))
                                     .child(div().text_color(Theme::text_muted()).text_size(px(12.)).child(count_label(count)))
@@ -967,7 +965,7 @@ impl Workspace {
                     .child(div().text_color(Theme::text_muted()).child(header))
                     .child(div().flex_1())
                     .child(
-                        div().id("fw-rerun").px(px(5.)).rounded(px(4.)).cursor_pointer().text_color(Theme::text_muted()).hover(|s| s.bg(Theme::hover_row())).child("⟳")
+                        div().id("fw-rerun").px(px(5.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(crate::icons::icon("rotate-cw", 14., Theme::text_muted()))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.find.open = true;
                                 this.find.seed_selected = false;

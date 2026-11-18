@@ -192,13 +192,16 @@ impl Workspace {
                 .when(active, |d| d.bg(Theme::selection_row()).text_color(Theme::text()))
                 .when(!active, |d| d.text_color(Theme::text_muted()).hover(|s| s.bg(Theme::hover_row())))
                 .active(|s| s.bg(Theme::press()))
-                .child(label)
+                .gap(px(3.))
+                .child(crate::icons::glyph(label, 14., if active { Theme::text() } else { Theme::text_muted() }))
         };
-        let branch = chip("log-filter-branch", format!("Branch: {} ▾", q.branch.as_deref().unwrap_or("All")), q.branch.is_some())
+        let branch = chip("log-filter-branch", format!("Branch: {}", q.branch.as_deref().unwrap_or("All")), q.branch.is_some())
+            .child(crate::icons::icon("chevron-down", 12., Theme::text_muted()))
             .relative()
             .child(track(0))
             .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| this.branch_filter_menu(e.position, cx)));
-        let user = chip("log-filter-user", format!("User: {} ▾", q.author.as_deref().unwrap_or("All")), q.author.is_some())
+        let user = chip("log-filter-user", format!("User: {}", q.author.as_deref().unwrap_or("All")), q.author.is_some())
+            .child(crate::icons::icon("chevron-down", 12., Theme::text_muted()))
             .relative()
             .child(track(1))
             .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| this.author_filter_menu(e.position, cx)));

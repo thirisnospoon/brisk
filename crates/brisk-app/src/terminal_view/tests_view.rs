@@ -403,6 +403,7 @@ impl TerminalPanel {
         let view = t.view;
         let tip = |s: &'static str| move |_: &mut gpui::Window, cx: &mut gpui::App| cx.new(|_| crate::workspace::Tip(s.into())).into();
         let tool = |id: &'static str, glyph: &'static str, on: bool| {
+            let color = if on { Theme::text() } else { Theme::text_muted() };
             div()
                 .id(id)
                 .w(px(22.))
@@ -417,7 +418,7 @@ impl TerminalPanel {
                 .when(!on, |d| d.hover(|s| s.bg(Theme::hover_row())))
                 .active(|s| s.bg(Theme::press()))
                 .cursor_pointer()
-                .child(glyph)
+                .child(crate::icons::glyph(glyph, 14., color))
         };
         let history = if self.history_open { history::list(&self.root) } else { Vec::new() };
         div()
@@ -495,7 +496,7 @@ impl TerminalPanel {
                             .map(|i| {
                                 let n = &f.tree.nodes[i];
                                 let icon = status_icon(n.status);
-                                let arrow = if n.children.is_empty() { " " } else if t.collapsed.contains(&i) { "▸" } else { "▾" };
+                                let arrow = crate::icons::tree_arrow(!n.children.is_empty(), !t.collapsed.contains(&i), Theme::text_muted());
                                 let done = matches!(n.status, TestStatus::Passed | TestStatus::Failed | TestStatus::Error | TestStatus::Skipped);
                                 let dur = (done && n.duration > 0.0).then(|| brisk_run::pytest::format_duration(n.duration));
                                 let sel = i == t.selected;
@@ -514,7 +515,7 @@ impl TerminalPanel {
                                     .when(i != t.selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
                                     .cursor_pointer()
                                     .child(
-                                        div().id(("test-arrow", i)).w(px(10.)).text_color(Theme::text_muted()).child(arrow).on_click(cx.listener(move |this, _, _, cx| {
+                                        div().id(("test-arrow", i)).w(px(12.)).child(arrow).on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
                                             if let Some(t) = this.tests_mut() {
                                                 if !t.collapsed.remove(&i) {

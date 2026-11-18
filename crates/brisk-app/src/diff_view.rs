@@ -90,7 +90,7 @@ impl Render for DiffView {
         let n = self.rows.len();
         let diffs = self.blocks.len();
         let btn = |id: &'static str, glyph: &'static str| {
-            div().id(id).px(px(6.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(glyph)
+            div().id(id).px(px(6.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(crate::icons::glyph(glyph, 14., Theme::text_muted()))
         };
         div()
             .track_focus(&self.focus)

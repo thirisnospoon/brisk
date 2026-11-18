@@ -237,9 +237,9 @@ fn checkbox(on: Option<bool>) -> gpui::Div {
         .text_size(px(10.))
         .text_color(Theme::text())
         .child(match on {
-            Some(true) => "✓",
-            None => "–",
-            Some(false) => "",
+            Some(true) => crate::icons::icon("check-bold", 10., gpui::white()).into_any_element(),
+            None => crate::icons::icon("minus", 10., gpui::white()).into_any_element(),
+            Some(false) => div().into_any_element(),
         })
 }
 
@@ -868,7 +868,7 @@ impl Workspace {
                 .shadow_lg()
                 .text_size(px(13.))
                 .text_color(Theme::text())
-                .child(div().text_color(if *err { Theme::error() } else { Theme::file_added() }).child(if *err { "⚠" } else { "✓" }))
+                .child(crate::icons::icon(if *err { "triangle-alert" } else { "circle-check" }, 16., if *err { Theme::error() } else { Theme::file_added() }))
                 .child(msg.clone()),
         )
     }
@@ -904,7 +904,7 @@ impl Workspace {
                 }
                 cx.notify();
             })))
-            .child(div().w(px(14.)).text_color(icon_color).child(icon))
+            .child(div().w(px(14.)).flex().items_center().child(crate::icons::glyph(icon, 14., icon_color)))
             .child(div().text_color(status_color(c.status)).whitespace_nowrap().child(file_name(&c.path).to_string()))
             .child(div().text_color(Theme::text_dim()).text_size(px(12.)).whitespace_nowrap().child(dir_name(&c.path).to_string()))
     }
@@ -918,7 +918,7 @@ impl Workspace {
             .gap(px(6.))
             .pl(px(10.))
             .text_size(px(13.))
-            .child(div().w(px(10.)).text_color(Theme::text_muted()).child("▾"))
+            .child(crate::icons::tree_arrow(true, true, Theme::text_muted()))
             .child(div().id((id, 1usize)).child(checkbox(state)).on_click(cx.listener(move |this, _, _, cx| {
                 if let Some(g) = this.git.as_mut() {
                     let on = state != Some(true);
@@ -1020,7 +1020,7 @@ impl Workspace {
                 .text_color(Theme::text_muted())
                 .hover(|s| s.bg(Theme::hover_row()))
                 .tooltip(move |_, cx| cx.new(|_| Tip(tip.clone())).into())
-                .child(glyph)
+                .child(crate::icons::glyph(glyph, 14., Theme::text_muted()))
         };
         let shortcut = |a: Action| self.resolver.keymap().shortcut_label(a).unwrap_or_default();
         let header = div()
@@ -1155,7 +1155,7 @@ impl Workspace {
                         this.select_log(i, cx);
                     }
                 }))
-                .child(div().text_color(if b.current { gpui::rgb(0xe0a85a).into() } else { Theme::text_muted() }).child(if b.current { "★" } else { "⎇" }))
+                .child(crate::icons::icon(if b.current { "star" } else { "git-branch" }, 14., if b.current { gpui::rgb(0xe0a85a).into() } else { Theme::text_muted() }))
                 .child(div().whitespace_nowrap().child(b.name.clone()))
         };
         let mut branches = div().id("git-branches").w(px(200.)).flex_shrink_0().h_full().flex().flex_col().overflow_y_scroll().border_r_1().border_color(Theme::divider()).py(px(4.));
@@ -1163,15 +1163,15 @@ impl Workspace {
         branches = branches.child(head);
         let local: Vec<Branch> = g.branches.iter().filter(|b| !b.remote).cloned().collect();
         let remote: Vec<Branch> = g.branches.iter().filter(|b| b.remote).cloned().collect();
-        let section = |t: &'static str| div().h(px(22.)).flex().items_center().pl(px(10.)).text_size(px(12.)).text_color(Theme::text_muted()).child(t);
+        let section = |t: &'static str| div().h(px(22.)).flex().items_center().gap(px(4.)).pl(px(10.)).text_size(px(12.)).text_color(Theme::text_muted()).child(crate::icons::tree_arrow(true, true, Theme::text_muted())).child(t);
         if !local.is_empty() {
-            branches = branches.child(section("▾ Local"));
+            branches = branches.child(section("Local"));
             for b in &local {
                 branches = branches.child(branch_row(b, cx));
             }
         }
         if !remote.is_empty() {
-            branches = branches.child(section("▾ Remote"));
+            branches = branches.child(section("Remote"));
             for b in &remote {
                 branches = branches.child(branch_row(b, cx));
             }
@@ -1322,7 +1322,7 @@ impl Workspace {
                             }
                             cx.notify();
                         }))
-                        .child(div().w(px(14.)).text_color(icolor).child(icon))
+                        .child(div().w(px(14.)).flex().items_center().child(crate::icons::glyph(icon, 14., icolor)))
                         .child(div().text_color(status_color(f.status)).whitespace_nowrap().child(file_name(&f.path).to_string()))
                         .child(div().text_color(Theme::text_dim()).text_size(px(12.)).whitespace_nowrap().child(dir_name(&f.path).to_string())),
                 );
@@ -1349,7 +1349,7 @@ impl Workspace {
                     .child(div().flex_1())
                     .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(format!("{n} commits")))
                     .child(
-                        div().id("log-refresh").px(px(5.)).rounded(px(4.)).cursor_pointer().text_color(Theme::text_muted()).hover(|s| s.bg(Theme::hover_row())).child("⟳")
+                        div().id("log-refresh").px(px(5.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(crate::icons::icon("rotate-cw", 14., Theme::text_muted()))
                             .on_click(cx.listener(|this, _, _, cx| this.refresh_git(cx))),
                     ),
             )

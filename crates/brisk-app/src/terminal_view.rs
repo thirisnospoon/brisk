@@ -806,7 +806,7 @@ sys.exit(r)";
                     .when(t.run.as_ref().is_some_and(|r| r.pinned), |d| d.child(crate::icons::icon("pin", 12., Theme::accent())))
                     .child(name)
                     .child(
-                        div().id(("term-close", t.id as usize)).text_color(Theme::text_dim()).hover(|s| s.text_color(Theme::text())).child("×").on_click(
+                        div().id(("term-close", t.id as usize)).group("close-x").child(crate::icons::close_x("close-x", 12.)).on_click(
                             cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.close_tab_id(id);
