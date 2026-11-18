@@ -107,6 +107,33 @@ impl Workspace {
                     }
                 });
             }
+            // Fields: def + Tab, then type into each field and Tab on; Shift+Tab goes back.
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(ed) = this.active_editor().cloned() else { return };
+                ed.update(cx, |e, cx| {
+                    let end = e.buffer.len_chars();
+                    e.buffer.set_caret(end, false);
+                    e.type_for_smoke("\ndef", cx);
+                    e.close_insight();
+                });
+                this.smoke_press("tab", window, cx);
+                let mut steps = Vec::new();
+                for (typed, key) in [("go", "tab"), ("", "shift-tab"), ("", "tab"), ("x, y", "tab"), ("return x + y", "tab")] {
+                    if !typed.is_empty() {
+                        ed.update(cx, |e, cx| {
+                            e.type_for_smoke(typed, cx);
+                            e.close_insight();
+                        });
+                    }
+                    this.smoke_press(key, window, cx);
+                    steps.push(format!("{typed:?}+{key} -> sel {:?}", sel(this, cx)));
+                }
+                let t = text(this, cx);
+                let tail: Vec<&str> = t.lines().rev().take(2).collect::<Vec<_>>().into_iter().rev().collect();
+                let (l, c) = ed.read(cx).caret_line_col();
+                eprintln!("smoke-tpl: fields {steps:?}");
+                eprintln!("smoke-tpl: fields result {tail:?}, caret {}:{}, template still active {}", l + 1, c + 1, ed.read(cx).template_active());
+            });
             // Ctrl+J lists the templates; Ctrl+Alt+T on the first two lines, then "if / else".
             let _ = this.update_in(cx, |this, window, cx| {
                 this.smoke_press("ctrl-j", window, cx);

@@ -99,6 +99,8 @@ pub struct Editor {
     caret_tip: Option<usize>,
     /// Completion, Quick Documentation, Parameter Info.
     insight: lsp::Insight,
+    /// A live template / Surround With being filled in (Tab moves between its fields).
+    tpl: Option<templates::TemplateRun>,
     /// Ctrl+F / Ctrl+R bar.
     find: Option<find::FindBar>,
     /// The last search, for F3 after the bar is closed and for reopening it.
@@ -260,6 +262,7 @@ impl Editor {
             hover: None,
             caret_tip: None,
             insight: lsp::Insight::default(),
+            tpl: None,
             find: None,
             last_find: find::FindOpts::default(),
             last_replace: String::new(),
@@ -318,6 +321,7 @@ impl Editor {
             hover: None,
             caret_tip: None,
             insight: lsp::Insight::default(),
+            tpl: None,
             find: None,
             last_find: find::FindOpts::default(),
             last_replace: String::new(),
@@ -711,6 +715,13 @@ impl Editor {
         }
         match action {
             // Live templates, block comments (editor/templates.rs).
+            A::EditorTab if !self.is_field && self.template_next(true, cx) => return true,
+            A::EditorUnindent if !self.is_field && self.template_next(false, cx) => return true,
+            A::EditorEscape if self.end_template() => return true,
+            A::EditorNewline | A::StartNewLine | A::StartNewLineBefore if !self.is_field => {
+                // Enter finishes a template being filled in; the key still does its job.
+                self.end_template();
+            }
             A::EditorTab if !self.is_field && !self.completion_open() && self.expand_live_template(cx) => return true,
             A::CommentBlock if !self.is_field => {
                 self.toggle_block_comment(cx);

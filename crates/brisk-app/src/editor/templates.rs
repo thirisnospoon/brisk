@@ -1,6 +1,7 @@
 //! Live templates (an abbreviation then Tab, or Ctrl+J), Surround With (Ctrl+Alt+T) and block
 //! comments (Ctrl+Shift+/), the PyCharm way. Bodies use 4-space indents (rewritten to the
-//! file's indent unit) and one `${...}` placeholder that ends up selected (`${}`: the caret).
+//! file's indent unit) and fields `${1:default}`, `${2:}`, ... plus `$END$`: the first field
+//! is selected, Tab / Shift+Tab move between them, the last Tab goes to `$END$`.
 
 use super::Editor;
 use brisk_text::Selection;
@@ -15,44 +16,104 @@ pub struct Template {
 
 /// Python live templates (PyCharm's names where it has them).
 pub const TEMPLATES: &[Template] = &[
-    Template { key: "main", desc: "if __name__ == '__main__'", body: "if __name__ == \"__main__\":\n    ${main()}" },
-    Template { key: "ifmain", desc: "if __name__ == '__main__'", body: "if __name__ == \"__main__\":\n    ${main()}" },
-    Template { key: "def", desc: "Function", body: "def ${name}():\n    pass" },
-    Template { key: "class", desc: "Class with __init__", body: "class ${Name}:\n    def __init__(self):\n        pass" },
-    Template { key: "for", desc: "for loop", body: "for ${item} in items:\n    pass" },
-    Template { key: "iter", desc: "for item in iterable", body: "for item in ${iterable}:\n    pass" },
-    Template { key: "while", desc: "while loop", body: "while ${condition}:\n    pass" },
-    Template { key: "try", desc: "try / except", body: "try:\n    ${}\nexcept Exception as e:\n    raise" },
-    Template { key: "with", desc: "with statement", body: "with ${open(path)} as f:\n    pass" },
-    Template { key: "prop", desc: "Property", body: "@property\ndef ${name}(self):\n    return self._name" },
-    Template { key: "super", desc: "super() call", body: "super().${__init__()}" },
+    Template { key: "main", desc: "if __name__ == '__main__'", body: "if __name__ == \"__main__\":\n    ${1:main()}$END$" },
+    Template { key: "ifmain", desc: "if __name__ == '__main__'", body: "if __name__ == \"__main__\":\n    ${1:main()}$END$" },
+    Template { key: "def", desc: "Function", body: "def ${1:name}(${2:}):\n    ${3:pass}$END$" },
+    Template { key: "class", desc: "Class with __init__", body: "class ${1:Name}:\n    def __init__(self${2:}):\n        ${3:pass}$END$" },
+    Template { key: "for", desc: "for loop", body: "for ${1:item} in ${2:items}:\n    ${3:pass}$END$" },
+    Template { key: "iter", desc: "for item in iterable", body: "for ${1:item} in ${2:iterable}:\n    ${3:pass}$END$" },
+    Template { key: "while", desc: "while loop", body: "while ${1:condition}:\n    ${2:pass}$END$" },
+    Template { key: "try", desc: "try / except", body: "try:\n    ${1:pass}\nexcept ${2:Exception} as ${3:e}:\n    ${4:raise}$END$" },
+    Template { key: "with", desc: "with statement", body: "with ${1:open(path)} as ${2:f}:\n    ${3:pass}$END$" },
+    Template { key: "prop", desc: "Property", body: "@property\ndef ${1:name}(self):\n    return self._${2:name}$END$" },
+    Template { key: "super", desc: "super() call", body: "super().${1:__init__}(${2:})$END$" },
 ];
 
 /// Surround With: (name, header, footer). The selected lines go between, one level deeper.
 pub const SURROUNDERS: &[(&str, &str, &str)] = &[
-    ("if", "if ${condition}:", ""),
-    ("if / else", "if ${condition}:", "else:\n    pass"),
-    ("while", "while ${condition}:", ""),
-    ("for", "for ${item} in items:", ""),
-    ("try / except", "try:", "except ${Exception} as e:\n    raise"),
-    ("try / finally", "try:", "finally:\n    ${pass}"),
-    ("with", "with ${open(path)} as f:", ""),
+    ("if", "if ${1:condition}:", ""),
+    ("if / else", "if ${1:condition}:", "else:\n    ${2:pass}"),
+    ("while", "while ${1:condition}:", ""),
+    ("for", "for ${1:item} in ${2:items}:", ""),
+    ("try / except", "try:", "except ${1:Exception} as ${2:e}:\n    ${3:raise}"),
+    ("try / finally", "try:", "finally:\n    ${1:pass}"),
+    ("with", "with ${1:open(path)} as ${2:f}:", ""),
 ];
 
-/// Text with `${...}` removed, and the char range of the placeholder's text.
-fn take_placeholder(s: &str) -> (String, Range<usize>) {
-    let Some(a) = s.find("${") else {
-        let n = s.chars().count();
-        return (s.to_string(), n..n);
-    };
-    let Some(len) = s[a..].find('}') else {
-        let n = s.chars().count();
-        return (s.to_string(), n..n);
-    };
-    let inner = &s[a + 2..a + len];
-    let out = format!("{}{inner}{}", &s[..a], &s[a + len + 1..]);
-    let start = s[..a].chars().count();
-    (out, start..start + inner.chars().count())
+/// Expanded text: the fields' char ranges in Tab order, and where `$END$` was (else the end).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fields {
+    pub text: String,
+    pub stops: Vec<Range<usize>>,
+    pub end: usize,
+}
+
+/// Parse `${n:default}` fields (`${default}` counts as field 1) and `$END$`.
+fn parse_fields(s: &str) -> Fields {
+    let mut text = String::new();
+    let mut stops: Vec<(usize, Range<usize>)> = Vec::new();
+    let mut end = None;
+    let mut rest = s;
+    let mut n = 0usize; // chars written
+    while !rest.is_empty() {
+        if let Some(r) = rest.strip_prefix("$END$") {
+            end = Some(n);
+            rest = r;
+        } else if let Some(r) = rest.strip_prefix("${").filter(|r| r.contains('}')) {
+            let close = r.find('}').unwrap_or(r.len());
+            let inner = &r[..close];
+            let (order, default) = match inner.split_once(':') {
+                Some((k, d)) if !k.is_empty() && k.chars().all(|c| c.is_ascii_digit()) => (k.parse().unwrap_or(1), d),
+                _ => (1, inner),
+            };
+            let len = default.chars().count();
+            stops.push((order, n..n + len));
+            text.push_str(default);
+            n += len;
+            rest = &r[close + 1..];
+        } else {
+            let c = rest.chars().next().unwrap_or(' ');
+            text.push(c);
+            n += 1;
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    stops.sort_by_key(|s| s.0);
+    Fields { stops: stops.into_iter().map(|s| s.1).collect(), end: end.unwrap_or(n), text }
+}
+
+/// A template being filled in: field and `$END$` positions in the buffer, kept in step with
+/// edits (a field's start sticks left, its end right, so typing in it grows it).
+pub struct TemplateRun {
+    stops: Vec<(usize, usize)>,
+    end: usize,
+    current: usize,
+    version: u64,
+}
+
+fn map_left(mut pos: usize, changes: &[(usize, usize, usize)]) -> usize {
+    for &(start, removed, inserted) in changes {
+        if pos > start + removed || (removed > 0 && pos == start + removed) {
+            pos = pos - removed + inserted;
+        } else if pos > start {
+            pos = start;
+        }
+    }
+    pos
+}
+
+impl TemplateRun {
+    /// Follow edits since the last look; false when the history is gone.
+    fn sync(&mut self, b: &brisk_text::Buffer) -> bool {
+        let Some(ch) = b.changes_since(self.version) else { return false };
+        for s in &mut self.stops {
+            *s = (map_left(s.0, &ch), brisk_text::map_through(s.1, &ch));
+            s.1 = s.1.max(s.0);
+        }
+        self.end = brisk_text::map_through(self.end, &ch);
+        self.version = b.version();
+        true
+    }
 }
 
 /// Template lines re-indented: 4-space steps become `unit`, lines after the first get `base`.
@@ -73,13 +134,13 @@ fn reindent(body: &str, base: &str, unit: &str) -> String {
         .join("\n")
 }
 
-/// Expanded template text for a caret on a line indented by `base`, and its selection.
-pub fn render_template(body: &str, base: &str, unit: &str) -> (String, Range<usize>) {
-    take_placeholder(&reindent(body, base, unit))
+/// Expanded template text for a caret on a line indented by `base`, with its fields.
+pub fn render_template(body: &str, base: &str, unit: &str) -> Fields {
+    parse_fields(&reindent(body, base, unit))
 }
 
-/// The lines wrapped by a surrounder, and the placeholder range.
-pub fn render_surround(lines: &[String], header: &str, footer: &str, unit: &str) -> (String, Range<usize>) {
+/// The lines wrapped by a surrounder, with its fields.
+pub fn render_surround(lines: &[String], header: &str, footer: &str, unit: &str) -> Fields {
     let base = lines
         .iter()
         .filter(|l| !l.trim().is_empty())
@@ -97,7 +158,7 @@ pub fn render_surround(lines: &[String], header: &str, footer: &str, unit: &str)
         out.push('\n');
         out.push_str(&format!("{base}{}", reindent(footer, &base, unit)));
     }
-    take_placeholder(&out)
+    parse_fields(&out)
 }
 
 /// Block comment markers by file type; `None` where the language has only line comments.
@@ -150,12 +211,73 @@ impl Editor {
     fn insert_template_at(&mut self, t: &Template, range: Range<usize>, cx: &mut Context<Self>) {
         let (line, _) = self.buffer.pos_to_line_col(range.start);
         let base: String = self.buffer.line(line).chars().take_while(|c| c.is_whitespace()).collect();
-        let (text, sel) = render_template(t.body, &base, &self.buffer.indent_unit.clone());
+        let f = render_template(t.body, &base, &self.buffer.indent_unit.clone());
         let at = range.start;
-        self.buffer.replace_ranges(vec![(range, text)]);
-        self.buffer.selections = vec![Selection { anchor: at + sel.start, head: at + sel.end, goal_col: None }];
+        self.buffer.replace_ranges(vec![(range, f.text.clone())]);
+        self.start_fields(at, &f);
+        cx.notify();
+    }
+
+    /// Select the first field and remember the rest for Tab.
+    fn start_fields(&mut self, at: usize, f: &Fields) {
+        let stops: Vec<(usize, usize)> = f.stops.iter().map(|r| (at + r.start, at + r.end)).collect();
+        match stops.first() {
+            Some(&(s, e)) => {
+                self.buffer.selections = vec![Selection { anchor: s, head: e, goal_col: None }];
+                self.tpl = Some(TemplateRun { stops, end: at + f.end, current: 0, version: self.buffer.version() });
+            }
+            None => {
+                self.buffer.set_caret(at + f.end, false);
+                self.tpl = None;
+            }
+        }
+        self.ensure_caret_visible();
+    }
+
+    /// Tab / Shift+Tab inside a template's field: go to the next / previous one; after the
+    /// last, to `$END$`. False (an ordinary Tab) when no template is active or the caret left
+    /// the field.
+    pub fn template_next(&mut self, forward: bool, cx: &mut Context<Self>) -> bool {
+        let Some(mut run) = self.tpl.take() else { return false };
+        if !run.sync(&self.buffer) || self.buffer.selections.len() != 1 {
+            return false;
+        }
+        let r = self.buffer.primary().range();
+        let (s, e) = run.stops[run.current];
+        if r.start < s || r.end > e {
+            return false;
+        }
+        // A new line typed at a field's end means the user went on writing code: the
+        // template is done (fields are single-line), so Tab is an ordinary Tab again.
+        if self.buffer.rope().slice(s..e).chars().any(|c| c == '\n') {
+            return false;
+        }
+        let go = |ed: &mut Self, (s, e): (usize, usize)| {
+            ed.buffer.selections = vec![Selection { anchor: s, head: e, goal_col: None }];
+        };
+        if forward && run.current + 1 < run.stops.len() {
+            run.current += 1;
+            go(self, run.stops[run.current]);
+            self.tpl = Some(run);
+        } else if forward {
+            self.buffer.set_caret(run.end, false);
+        } else {
+            run.current = run.current.saturating_sub(1);
+            go(self, run.stops[run.current]);
+            self.tpl = Some(run);
+        }
         self.ensure_caret_visible();
         cx.notify();
+        true
+    }
+
+    /// Esc: stop filling in the template (the text stays).
+    pub fn end_template(&mut self) -> bool {
+        self.tpl.take().is_some()
+    }
+
+    pub fn template_active(&self) -> bool {
+        self.tpl.is_some()
     }
 
     /// Surround the selected lines (or the caret line) with `SURROUNDERS[i]`.
@@ -168,12 +290,11 @@ impl Editor {
             last -= 1;
         }
         let lines: Vec<String> = (first..=last).map(|l| self.buffer.line(l)).collect();
-        let (text, sel) = render_surround(&lines, header, footer, &self.buffer.indent_unit.clone());
+        let f = render_surround(&lines, header, footer, &self.buffer.indent_unit.clone());
         let start = self.buffer.line_start(first);
         let end = self.buffer.line_start(last) + self.buffer.line_len(last);
-        self.buffer.replace_ranges(vec![(start..end, text)]);
-        self.buffer.selections = vec![Selection { anchor: start + sel.start, head: start + sel.end, goal_col: None }];
-        self.ensure_caret_visible();
+        self.buffer.replace_ranges(vec![(start..end, f.text.clone())]);
+        self.start_fields(start, &f);
         cx.notify();
     }
 
@@ -252,23 +373,42 @@ impl Editor {
 mod tests {
     use super::*;
 
+    fn field(f: &Fields, i: usize) -> String {
+        f.text.chars().skip(f.stops[i].start).take(f.stops[i].len()).collect()
+    }
+
     #[test]
     fn templates_render() {
-        let (t, sel) = render_template(TEMPLATES[0].body, "    ", "    ");
-        assert_eq!(t, "if __name__ == \"__main__\":\n        main()");
-        assert_eq!(&t.chars().skip(sel.start).take(sel.len()).collect::<String>(), "main()");
-        let (t, sel) = render_template("try:\n    ${}\nexcept Exception as e:\n    raise", "", "\t");
-        assert_eq!(t, "try:\n\t\nexcept Exception as e:\n\traise");
-        assert_eq!(sel, 6..6);
+        let f = render_template(TEMPLATES[0].body, "    ", "    ");
+        assert_eq!(f.text, "if __name__ == \"__main__\":\n        main()");
+        assert_eq!((field(&f, 0), f.end), ("main()".to_string(), f.text.chars().count()));
+        let f = render_template("def ${1:name}(${2:}):\n    ${3:pass}$END$", "", "\t");
+        assert_eq!(f.text, "def name():\n\tpass");
+        assert_eq!(f.stops, [4..8, 9..9, 13..17]);
+        // Order comes from the numbers, not the position.
+        let f = parse_fields("a ${2:x} b ${1:y}$END$ c");
+        assert_eq!((f.text.as_str(), f.stops.clone(), f.end), ("a x b y c", vec![6..7, 2..3], 7));
+    }
+
+    #[test]
+    fn fields_follow_edits() {
+        // "def name():" with the field "name" at 4..8 replaced by "go" (one edit).
+        let ch = [(4usize, 4usize, 2usize)];
+        assert_eq!((map_left(4, &ch), brisk_text::map_through(8, &ch)), (4, 6));
+        // Typing into an empty field at 9 grows it; text inserted before it moves it.
+        let ch = [(9usize, 0usize, 3usize)];
+        assert_eq!((map_left(9, &ch), brisk_text::map_through(9, &ch)), (9, 12));
+        let ch = [(0usize, 0usize, 5usize)];
+        assert_eq!((map_left(9, &ch), brisk_text::map_through(9, &ch)), (14, 14));
     }
 
     #[test]
     fn surround_lines() {
         let lines = vec!["    x = 1".to_string(), "".to_string(), "    print(x)".to_string()];
-        let (t, sel) = render_surround(&lines, "if ${condition}:", "else:\n    pass", "    ");
-        assert_eq!(t, "    if condition:\n        x = 1\n\n        print(x)\n    else:\n        pass");
-        assert_eq!(&t.chars().skip(sel.start).take(sel.len()).collect::<String>(), "condition");
-        let (t, _) = render_surround(&["a()".to_string()], "try:", "except ${Exception} as e:\n    raise", "    ");
-        assert_eq!(t, "try:\n    a()\nexcept Exception as e:\n    raise");
+        let f = render_surround(&lines, "if ${1:condition}:", "else:\n    ${2:pass}", "    ");
+        assert_eq!(f.text, "    if condition:\n        x = 1\n\n        print(x)\n    else:\n        pass");
+        assert_eq!((field(&f, 0), field(&f, 1)), ("condition".to_string(), "pass".to_string()));
+        let f = render_surround(&["a()".to_string()], "try:", "except ${1:Exception} as ${2:e}:\n    ${3:raise}", "    ");
+        assert_eq!(f.text, "try:\n    a()\nexcept Exception as e:\n    raise");
     }
 }

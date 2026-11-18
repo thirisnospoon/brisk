@@ -194,6 +194,14 @@ impl Editor {
             "pagedown" => c.selected = (c.selected + VISIBLE).min(n - 1),
             // Tab on a live template's abbreviation ("def" is also a keyword item): expand
             // the template, as PyCharm does.
+            // In a template's field Tab goes on to the next field, as in PyCharm.
+            "tab" if self.template_active() => {
+                self.insight.completion = None;
+                if !self.template_next(true, cx) {
+                    self.accept_completion(true, cx);
+                }
+                return true;
+            }
             "tab" if self.template_before_caret().is_some() => {
                 self.insight.completion = None;
                 self.expand_live_template(cx);
