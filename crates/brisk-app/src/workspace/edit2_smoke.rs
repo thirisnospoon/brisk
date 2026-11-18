@@ -250,6 +250,7 @@ impl Workspace {
         let labels: Vec<String> = self.menu.as_ref().map(|m| m.entries.iter().filter_map(|e| match e {
             super::menu_ui::Entry::Item { label, enabled, .. } => Some(format!("{label}{}", if *enabled { "" } else { " (off)" })),
             super::menu_ui::Entry::Separator => None,
+            super::menu_ui::Entry::Submenu { label, .. } => Some(format!("{label} ›")),
         }).collect()).unwrap_or_default();
         self.menu = None;
         eprintln!("smoke-edit2: tab menu -> {labels:?}");

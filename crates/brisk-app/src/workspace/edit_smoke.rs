@@ -181,6 +181,7 @@ impl Workspace {
                 .read_with(cx, |this, _| this.menu.as_ref().map(|m| m.entries.iter().map(|e| match e {
                     super::menu_ui::Entry::Item { label, enabled, .. } => format!("{label}{}", if *enabled { "" } else { " (off)" }),
                     super::menu_ui::Entry::Separator => "—".into(),
+                    super::menu_ui::Entry::Submenu { label, .. } => format!("{label} ›"),
                 }).collect::<Vec<_>>()))
                 .ok()
                 .flatten();

@@ -648,7 +648,7 @@ impl Workspace {
                     .iter()
                     .filter_map(|e| match e {
                         super::menu_ui::Entry::Item { label, enabled, .. } => Some(format!("{label}{}", if *enabled { "" } else { " (disabled)" })),
-                        super::menu_ui::Entry::Separator => None,
+                        _ => None,
                     })
                     .collect()
             })

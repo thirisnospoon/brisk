@@ -22,6 +22,7 @@ mod git_ui;
 mod history_ui;
 mod intel_smoke;
 mod lsp_ui;
+mod main_menu;
 mod menu_ui;
 mod problems_ui;
 pub(crate) mod project_ui;
@@ -971,6 +972,11 @@ impl Workspace {
             A::GotoClass => self.open_popup(PopupKind::SearchEverywhere(SeTab::Classes)),
             A::GotoSymbol => self.open_popup(PopupKind::SearchEverywhere(SeTab::Symbols)),
             A::OpenProject => self.project_cmd(project_ui::ProjectCmd::Open, window, cx),
+            A::OpenFile => self.open_file_dialog(window, cx),
+            A::MainMenu => {
+                let entries = self.main_menu_entries();
+                self.open_menu(gpui::point(px(8.), px(40.)), entries, cx);
+            }
             A::NewProject => self.project_cmd(project_ui::ProjectCmd::New, window, cx),
             A::RecentProjects => self.open_popup(PopupKind::Projects),
             A::FindAction => self.open_popup(PopupKind::FindAction),
@@ -1479,6 +1485,27 @@ impl Workspace {
             .border_color(Theme::border())
             .text_size(px(13.))
             .text_color(Theme::text())
+            // The main menu, as in PyCharm's new UI.
+            .child(
+                div()
+                    .id("tb-main-menu")
+                    .w(px(28.))
+                    .h(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(5.))
+                    .text_size(px(16.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Theme::hover_row()))
+                    .active(|s| s.bg(Theme::press()))
+                    .tooltip(|_, cx| cx.new(|_| Tip("Main Menu".into())).into())
+                    .child("☰")
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, w, cx| {
+                        cx.stop_propagation();
+                        this.dispatch(Action::MainMenu, w, cx);
+                    })),
+            )
             .child(
                 div().w(px(24.)).h(px(24.)).rounded(px(5.)).bg(Theme::accent()).flex().items_center().justify_center().text_size(px(11.)).font_weight(gpui::FontWeight::BOLD).child(
                     self.project_name().chars().take(2).collect::<String>().to_uppercase(),

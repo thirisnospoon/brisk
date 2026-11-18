@@ -165,6 +165,8 @@ actions! {
     // Files and tabs
     SaveAll => "Save All", "File";
     OpenProject => "Open...", "File";
+    OpenFile => "Open File...", "File";
+    MainMenu => "Main Menu", "View";
     NewProject => "New Project...", "File";
     RecentProjects => "Recent Projects", "File";
     NewElement => "New...", "File";
