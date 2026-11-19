@@ -4,6 +4,7 @@
 mod bookmarks_ui;
 mod console_ui;
 mod packages_ui;
+mod packages_smoke;
 mod todo_ui;
 mod db_ui;
 mod services_ui;
@@ -592,6 +593,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_PYCONSOLE").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.python_console_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_PKGQUEUE").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.python_packages_queue_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_PACKAGES").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.python_packages_smoke(window, cx));
