@@ -893,14 +893,17 @@ impl Workspace {
     pub(super) fn render_toast(&self) -> Option<impl IntoElement> {
         let (msg, err) = self.toast.as_ref()?;
         Some(
+            // Bottom right, clear of the status bar and the window edge; at most 420 wide, a
+            // long message wraps onto more lines (never runs past the border).
             div()
                 .absolute()
-                .bottom(px(36.))
-                .right(px(16.))
-                .max_w(px(460.))
+                .bottom(ui_px(28.) + px(12.))
+                .right(px(12.))
+                .max_w(ui_px(420.))
                 .px(px(14.))
                 .py(px(10.))
                 .flex()
+                .items_start()
                 .gap(px(8.))
                 .rounded(px(8.))
                 .bg(Theme::panel())
@@ -909,8 +912,8 @@ impl Workspace {
                 .map(crate::ui_kit::floating)
                 .text_size(ui_px(13.))
                 .text_color(Theme::text())
-                .child(crate::icons::ui_icon(if *err { "triangle-alert" } else { "circle-check" }, 16., if *err { Theme::error() } else { Theme::file_added() }))
-                .child(msg.clone()),
+                .child(div().flex_none().pt(px(1.)).child(crate::icons::ui_icon(if *err { "triangle-alert" } else { "circle-check" }, 16., if *err { Theme::error() } else { Theme::file_added() })))
+                .child(div().flex_1().min_w_0().whitespace_normal().child(msg.clone())),
         )
     }
 
