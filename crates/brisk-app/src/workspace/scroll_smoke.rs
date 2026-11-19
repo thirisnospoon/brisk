@@ -266,7 +266,7 @@ impl Workspace {
                     d.vars = (0..10_000)
                         .map(|i| super::debug_ui::VarRow {
                             depth: if i == 0 { 0 } else { 1 },
-                            var: brisk_dap::Variable { name: format!("[{i}]"), value: format!("{{'key': {i}, 'name': 'row {i}'}}"), type_name: "dict".into(), reference: 0 },
+                            var: brisk_dap::Variable { name: format!("[{i}]"), value: format!("{{'key': {i}, 'name': 'row {i}'}}"), type_name: "dict".into(), reference: 0, evaluate_name: String::new() },
                             expanded: i == 0,
                             kind: if i == 0 { super::debug_ui::RowKind::Scope } else { super::debug_ui::RowKind::Var },
                             parent: 0,
