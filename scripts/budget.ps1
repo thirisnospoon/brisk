@@ -128,6 +128,43 @@ function Invoke-Start([bool]$full) {
     $res
 }
 
+# The same from outside, for an exe built without the probe (before BRISK_BUDGET existed):
+# start_ms is process start -> main window created (the first frame follows within a few ms),
+# idle is the working set 5 s later. The launch is then killed (children die with its Job).
+function Invoke-StartExternal([bool]$full) {
+    $tmp = Join-Path $env:TEMP ('brisk-budget-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    $p = [Diagnostics.Process]::Start((New-Launch $tmp $Project @{}))
+    $start = [DateTimeOffset]::new($p.StartTime).ToUnixTimeMilliseconds()
+    $res = @{ data = $null; kids = $null; marks = [ordered]@{} }
+    $deadline = (Get-Date).AddSeconds(60)
+    while (-not $p.HasExited -and (Get-Date) -lt $deadline) {
+        $p.Refresh()
+        if ($p.MainWindowHandle -ne [IntPtr]::Zero) { break }
+        Start-Sleep -Milliseconds 10
+    }
+    if (-not $p.HasExited -and $p.MainWindowHandle -ne [IntPtr]::Zero) {
+        $res.start_ms = [int]([DateTimeOffset]::Now.ToUnixTimeMilliseconds() - $start)
+        $res.marks['window_created'] = $res.start_ms
+        if ($full) {
+            Start-Sleep -Seconds 5
+            $p.Refresh()
+            $res.data = [pscustomobject]@{ idle_ws_mb = (Mb $p.WorkingSet64); idle_private_mb = (Mb $p.PrivateMemorySize64) }
+            $res.kids = Get-ChildMemory $p.Id
+        }
+    }
+    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    $p.WaitForExit(5000) | Out-Null
+    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+    $res
+}
+
+# Does the exe have the probe? (Its env var name is in the binary.)
+function Test-Probe {
+    $bytes = [IO.File]::ReadAllBytes($Exe)
+    $text = [Text.Encoding]::ASCII.GetString($bytes)
+    $text.Contains('BRISK_BUDGET_STARTUP_ONLY')
+}
+
 function Median($xs) {
     $s = @($xs | Sort-Object)
     $s[[int][math]::Floor(($s.Count - 1) / 2)]
@@ -137,10 +174,12 @@ function Median($xs) {
 $starts = @()
 $marks = [ordered]@{}
 $last = $null
+$probe = Test-Probe
+if (-not $probe) { $script:notes += "this exe has no BRISK_BUDGET probe: start_ms is process start -> main window created, idle measured from outside, no startup profile" }
 for ($i = 1; $i -le $Runs; $i++) {
-    $run = Invoke-Start ($i -eq $Runs)
+    $run = if ($probe) { Invoke-Start ($i -eq $Runs) } else { Invoke-StartExternal ($i -eq $Runs) }
     if ($null -eq $run.start_ms) { Write-Host "Launch $i did not report a first frame"; exit 2 }
-    Write-Host ("launch {0}: first frame {1} ms" -f $i, $run.start_ms)
+    Write-Host ("launch {0}: {1} {2} ms" -f $i, $(if ($probe) { 'first frame' } else { 'window created' }), $run.start_ms)
     $starts += $run.start_ms
     foreach ($k in $run.marks.Keys) {
         if (-not $marks.Contains($k)) { $marks[$k] = @() }
