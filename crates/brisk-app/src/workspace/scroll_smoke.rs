@@ -80,20 +80,21 @@ fn generate(root: &Path) {
         root.join("test_scroll.py"),
         format!("import pytest\n\n\n@pytest.mark.parametrize(\"i\", range({TESTS}))\ndef test_n(i):\n    assert i >= 0\n"),
     );
-    if !root.join(".git").exists() {
+    if !git(root, &["rev-parse", "-q", "--verify", "HEAD"], None) {
         git(root, &["init", "-q"], None);
-        // 2000 commits in one `git fast-import`: one file changed per commit.
+        // 2000 commits in one `git fast-import`: one file changed per commit. Each commit
+        // continues the branch the stream builds (a `from` line would name a ref that does
+        // not exist yet, and fast-import rejects the whole stream).
         let mut s = String::new();
         for i in 0..COMMITS {
             let body = format!("v = {i}\n");
             let msg = format!("Change {i}: tweak the value in the log scroll smoke\n");
             s.push_str(&format!("commit refs/heads/main\ncommitter Smoke <smoke@example.invalid> {} +0000\ndata {}\n{msg}", 1_700_000_000 + i * 60, msg.len()));
-            if i > 0 {
-                s.push_str("from refs/heads/main^0\n");
-            }
             s.push_str(&format!("M 644 inline log/v{}.py\ndata {}\n{body}\n", i % 50, body.len()));
         }
-        git(root, &["fast-import", "--quiet"], Some(s.as_bytes()));
+        if !git(root, &["fast-import", "--quiet"], Some(s.as_bytes())) {
+            eprintln!("smoke-scroll: git fast-import failed: no history for git-log");
+        }
         git(root, &["symbolic-ref", "HEAD", "refs/heads/main"], None);
         git(root, &["reset", "-q", "--hard"], None);
     }
@@ -330,8 +331,15 @@ impl Workspace {
                         break;
                     }
                 }
-                let at = this.update(cx, |this, _| this.git.as_ref().map(|g| At::List(g.log_handle()))).ok().flatten().unwrap_or(At::Bottom(0.45));
-                results.push(("git-log (2000 commits)", best(&this, cx, at).await));
+                let n = this.update(cx, |this, _| this.git.as_ref().map_or(0, |g| g.log.len())).unwrap_or(0);
+                if n < 1000 {
+                    // An empty log scrolls nothing: report it instead of measuring it.
+                    eprintln!("smoke-scroll: git-log shows {n} commits, expected {COMMITS}");
+                    results.push(("git-log (2000 commits)", stats(Vec::new())));
+                } else {
+                    let at = this.update(cx, |this, _| this.git.as_ref().map(|g| At::List(g.log_handle()))).ok().flatten().unwrap_or(At::Bottom(0.45));
+                    results.push(("git-log (2000 commits)", best(&this, cx, at).await));
+                }
             }
 
             if want("find") {

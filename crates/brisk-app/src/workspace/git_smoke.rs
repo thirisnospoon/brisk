@@ -487,6 +487,19 @@ impl Workspace {
                 _ => "no diff tab".into(),
             }
         }
+        // Diffs read their sides in the background: wait (up to 5 s) for a diff tab other
+        // than `prev` to become the active tab.
+        async fn wait_diff(this: &WeakEntity<Workspace>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, prev: &str) -> String {
+            let mut d = String::new();
+            for _ in 0..50 {
+                d = this.update(cx, |this, cx| diff(this, cx)).unwrap_or_default();
+                if d != "no diff tab" && d != prev {
+                    break;
+                }
+                pause(bg, 100).await;
+            }
+            d
+        }
         let file = root.join("other.py");
         let _ = this.update_in(cx, |this, window, cx| {
             this.open_file(&file, window, cx);
@@ -502,19 +515,24 @@ impl Workspace {
             eprintln!("smoke-gitx: compare with branch menu -> {:?}", this.menu_labels());
             this.menu = None;
             this.compare_with_rev("other.py", "feature", "other.py", "feature", window, cx);
-            eprintln!("smoke-gitx: compare with feature -> {}", diff(this, cx));
-            // The root commit's file: no "hash^" on the left.
-            let root_commit = sh(&this.root, &["rev-list", "--max-parents=0", "HEAD"]).trim().to_string();
-            let f = brisk_git::FileChange { path: "blame.py".into(), old_path: None, status: brisk_git::FileStatus::Added };
-            this.show_commit_diff(&root_commit, &f, window, cx);
-            eprintln!("smoke-gitx: root commit diff -> {}", diff(this, cx));
+        });
+        let d1 = wait_diff(this, cx, bg, "").await;
+        eprintln!("smoke-gitx: compare with feature -> {d1}");
+        // The root commit's file: no "hash^" on the left.
+        let root_commit = sh(root, &["rev-list", "--max-parents=0", "HEAD"]).trim().to_string();
+        let f = brisk_git::FileChange { path: "blame.py".into(), old_path: None, status: brisk_git::FileStatus::Added };
+        let _ = this.update_in(cx, |this, window, cx| this.show_commit_diff(&root_commit, &f, window, cx));
+        let d2 = wait_diff(this, cx, bg, &d1).await;
+        eprintln!("smoke-gitx: root commit diff -> {d2}");
+        let _ = this.update_in(cx, |this, window, cx| {
             // Log details: right click on a file.
             this.log_file_menu(root_commit.clone(), f.clone(), gpui::point(gpui::px(400.), gpui::px(400.)), cx);
             eprintln!("smoke-gitx: log file menu -> {:?}", this.menu_labels());
             this.menu = None;
             this.compare_with_rev("blame.py", &root_commit, "blame.py", &root_commit[..8], window, cx);
-            eprintln!("smoke-gitx: diff with working tree -> {}", diff(this, cx));
         });
+        let d3 = wait_diff(this, cx, bg, &d2).await;
+        eprintln!("smoke-gitx: diff with working tree -> {d3}");
         // Rollback in the Commit window: the checked files (other.py and blame.py changed).
         let _ = std::fs::write(root.join("blame.py"), "z = 0\na = 1\nb = 20\nc = 3\nd = 4\n");
         let _ = this.update(cx, |this, cx| this.refresh_git(cx));
