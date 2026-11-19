@@ -7,7 +7,7 @@
 
 use super::{BottomTool, LeftTool, Workspace};
 use crate::stall;
-use gpui::{AsyncWindowContext, Context, WeakEntity, Window};
+use gpui::{AsyncWindowContext, Context, UniformListScrollHandle, WeakEntity, Window};
 use std::path::Path;
 use std::time::Duration;
 
@@ -18,14 +18,14 @@ const COMMITS: usize = 2000;
 const TESTS: usize = 1000;
 
 /// Where to point the wheel, in logical pixels from the window's size.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum At {
     /// The left tool window (Project, Structure).
     Left,
     /// The bottom tool window, `x` as a fraction of the window width.
     Bottom(f32),
-    /// The middle of the window (the Find popup).
-    Center,
+    /// The middle of a list's laid-out bounds (from its scroll handle).
+    List(UniformListScrollHandle),
 }
 
 struct Stats {
@@ -113,10 +113,13 @@ async fn scroll(this: &WeakEntity<Workspace>, cx: &mut AsyncWindowContext, at: A
             Some(BottomTool::Debug) | Some(BottomTool::PythonConsole) => 300.,
             _ => 240.,
         };
-        let (x, y) = match at {
+        let (x, y) = match &at {
             At::Left => (190., h / 2.),
             At::Bottom(fx) => (w * fx, h - 30. - bottom_h / 2.),
-            At::Center => (w / 2., h * 0.55),
+            At::List(l) => {
+                let b = l.0.borrow().base_handle.bounds();
+                (f32::from(b.center().x), f32::from(b.center().y))
+            }
         };
         let s = window.scale_factor();
         (x * s, y * s)
@@ -305,7 +308,8 @@ impl Workspace {
                         break;
                     }
                 }
-                results.push(("git-log (2000 commits)", scroll(&this, cx, At::Bottom(0.45)).await));
+                let at = this.update(cx, |this, _| this.git.as_ref().map(|g| At::List(g.log_handle()))).ok().flatten().unwrap_or(At::Bottom(0.45));
+                results.push(("git-log (2000 commits)", scroll(&this, cx, at).await));
             }
 
             if want("find") {
@@ -320,7 +324,8 @@ impl Workspace {
                         break;
                     }
                 }
-                results.push(("find-in-files (needle, 20k files)", scroll(&this, cx, At::Center).await));
+                let at = this.update(cx, |this, _| At::List(this.find.list_handle())).unwrap_or(At::Bottom(0.5));
+                results.push(("find-in-files (needle, 20k files)", scroll(&this, cx, at).await));
                 let _ = this.update(cx, |this, cx| {
                     this.find.open = false;
                     cx.notify();
