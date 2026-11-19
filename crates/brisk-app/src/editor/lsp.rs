@@ -36,6 +36,8 @@ pub enum Anchor {
 pub struct DocPopup {
     pub blocks: Vec<DocBlock>,
     pub anchor: Anchor,
+    /// Where the symbol is defined: shown on top, a click opens it (file, line, label).
+    pub source: Option<(std::path::PathBuf, usize, String)>,
 }
 
 #[derive(Default)]
@@ -318,8 +320,40 @@ impl Editor {
             }
         }
         let blocks = brisk_lsp::doc_blocks(markdown);
-        self.insight.doc = (!blocks.is_empty()).then_some(DocPopup { blocks, anchor });
+        self.insight.doc = (!blocks.is_empty()).then_some(DocPopup { blocks, anchor, source: None });
         cx.notify();
+    }
+
+    /// Quick Documentation: where the symbol shown is defined.
+    pub fn set_doc_source(&mut self, path: std::path::PathBuf, line: usize, label: String, cx: &mut Context<Self>) {
+        if let Some(d) = self.insight.doc.as_mut() {
+            d.source = Some((path, line, label));
+            cx.notify();
+        }
+    }
+
+    /// The Quick Documentation's definition link and the Parameter Info lines, for smokes.
+    pub fn insight_for_smoke(&self) -> (Option<String>, Vec<String>) {
+        // The current parameter in **bold**.
+        let sig = self
+            .insight
+            .signature
+            .as_ref()
+            .map(|s| {
+                let mut label: Vec<char> = s.label.chars().collect();
+                if let Some(r) = s.active.and_then(|a| s.params.get(a)).filter(|r| r.start <= r.end && r.end <= label.len()) {
+                    label.splice(r.end..r.end, ['*', '*']);
+                    label.splice(r.start..r.start, ['*', '*']);
+                }
+                let label: String = label.into_iter().collect();
+                if s.overloads.is_empty() {
+                    vec![label]
+                } else {
+                    s.overloads.iter().enumerate().map(|(i, l)| if i == s.current { label.clone() } else { l.clone() }).collect()
+                }
+            })
+            .unwrap_or_default();
+        (self.insight.doc.as_ref().and_then(|d| d.source.as_ref().map(|s| s.2.clone())), sig)
     }
 
     pub fn show_signature(&mut self, sig: Option<Signature>, cx: &mut Context<Self>) {
@@ -396,11 +430,21 @@ impl Editor {
                     let b = |c: usize| sig.label.char_indices().nth(c).map(|(b, _)| b).unwrap_or(sig.label.len());
                     hl.push((b(r.start)..b(r.end), HighlightStyle { font_weight: Some(gpui::FontWeight::BOLD), color: Some(Theme::text()), ..Default::default() }));
                 }
+                // As in PyCharm: every overload on its own line, the matching one in full colour
+                // with the current parameter in bold; `<no parameters>` for a call without any.
+                let active_line = if sig.params.is_empty() && sig.overloads.is_empty() { gpui::div().child("<no parameters>").into_any_element() } else { gpui::div().child(StyledText::new(sig.label.clone()).with_highlights(hl)).into_any_element() };
+                let lines: Vec<gpui::AnyElement> = if sig.overloads.is_empty() {
+                    vec![active_line]
+                } else {
+                    let mut active_line = Some(active_line);
+                    sig.overloads.iter().enumerate().map(|(i, l)| if i == sig.current { active_line.take().unwrap_or_else(|| gpui::div().into_any_element()) } else { gpui::div().text_color(Theme::text_dim()).child(l.clone()).into_any_element() }).collect()
+                };
+                let rows = lines.len() as f32;
                 out.push(
                     gpui::div()
                         .absolute()
                         .left(rel.x.max(px(4.)) - px(12.))
-                        .top((rel.y - px(line_height() + 8.)).max(px(0.)))
+                        .top((rel.y - px(8. + rows * (line_height().max(17.)))).max(px(0.)))
                         .px(px(8.))
                         .py(px(3.))
                         .rounded(px(5.))
@@ -411,7 +455,10 @@ impl Editor {
                         .font_family(mono_font())
                         .text_size(px(12.5))
                         .text_color(Theme::text_muted())
-                        .child(StyledText::new(sig.label.clone()).with_highlights(hl))
+                        .flex()
+                        .flex_col()
+                        .whitespace_nowrap()
+                        .children(lines)
                         .into_any_element(),
                 );
             }
@@ -501,6 +548,22 @@ impl Editor {
             if let Some(p) = at {
                 let rel = p - origin + point(px(0.), px(line_height() + 2.));
                 let blocks = super::doc_view::doc_elements(&d.blocks, "quick-doc-text", false);
+                // The definition's module and line on top, as PyCharm's header link.
+                let source = d.source.clone().map(|(path, line, label)| {
+                    gpui::div()
+                        .id("quick-doc-source")
+                        .px(px(10.))
+                        .pt(px(6.))
+                        .text_size(px(12.))
+                        .text_color(Theme::accent())
+                        .cursor_pointer()
+                        .hover(|s| s.underline())
+                        .child(label)
+                        .on_click(cx.listener(move |e, _, _, cx| {
+                            e.insight.doc = None;
+                            cx.emit(super::EditorEvent::OpenLocation(path.clone(), line));
+                        }))
+                });
                 out.push(
                     gpui::div()
                         .id("quick-doc")
@@ -519,6 +582,7 @@ impl Editor {
                         .on_mouse_move(|_, _, cx| cx.stop_propagation())
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                        .children(source)
                         .children(blocks)
                         .into_any_element(),
                 );

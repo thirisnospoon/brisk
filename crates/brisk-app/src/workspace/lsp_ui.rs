@@ -309,7 +309,7 @@ impl Workspace {
                 self.inline_action(window, cx);
                 return true;
             }
-            A::GotoDeclaration | A::GotoTypeDeclaration | A::QuickDefinition | A::QuickDocumentation | A::ParameterInfo | A::CodeCompletion | A::SmartCompletion | A::FindUsages | A::ShowUsages | A::Rename => {}
+            A::GotoDeclaration | A::GotoTypeDeclaration | A::QuickDefinition | A::QuickDocumentation | A::TypeInfo | A::ParameterInfo | A::CodeCompletion | A::SmartCompletion | A::FindUsages | A::ShowUsages | A::Rename => {}
             _ => return false,
         }
         let Some(ed) = self.editor_for_lsp(window, cx) else {
@@ -320,6 +320,7 @@ impl Workspace {
             A::GotoDeclaration => self.goto_declaration(ed, None, false, window, cx),
             A::GotoTypeDeclaration => self.goto_declaration(ed, None, true, window, cx),
             A::QuickDocumentation => self.quick_doc(ed, None, cx),
+            A::TypeInfo => self.type_info(ed, cx),
             A::QuickDefinition => self.quick_definition(ed, cx),
             A::ParameterInfo => self.parameter_info(ed, true, cx),
             A::CodeCompletion | A::SmartCompletion => self.complete(ed, true, cx),
@@ -368,6 +369,7 @@ impl Workspace {
             E::HoverDoc(pos, at) if self.debug_hover(&ed, pos, at, cx) => {}
             E::HoverDoc(pos, at) => self.quick_doc(ed, Some((pos, at)), cx),
             E::CtrlClick(pos) => self.goto_declaration(ed, Some(pos), false, window, cx),
+            E::OpenLocation(ref path, line) => self.open_symbol(path.clone(), line, 0, window, cx),
             E::ShowProblems | E::ContextMenu(_) | E::BreakpointsChanged | E::EditBreakpoint(_) | E::GutterMenu(_) | E::ShowCommit(_) | E::ShowVcsDiff | E::RunMark(..) | E::SetNextStatement(_) => {}
         }
     }
@@ -430,21 +432,54 @@ impl Workspace {
         };
         let p = Self::pos_in(&ed, mouse.map(|m| m.0), p, cx);
         let fut = ty.hover(&path, p);
+        let def = ty.definition(&path, p);
+        let root = self.root.clone();
         cx.spawn(async move |this, cx| {
-            let res = fut.await;
+            let (res, def) = futures::join!(fut, def);
+            // PyCharm's header link: the module (or file) and line of the definition.
+            let source = def.ok().and_then(|d| d.into_iter().next()).map(|l| {
+                let name = brisk_lsp::module_name(&root, &l.path).unwrap_or_else(|| l.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+                (l.path, l.start.line, format!("{name}:{}", l.start.line + 1))
+            });
             let _ = this.update(cx, |this, cx| match res {
                 Ok(Some(md)) => {
                     let anchor = match mouse {
                         Some((pos, at)) => crate::editor::Anchor::Mouse(pos, at),
                         None => crate::editor::Anchor::Caret,
                     };
-                    ed.update(cx, |e, cx| e.show_doc(&md, anchor, cx));
+                    ed.update(cx, |e, cx| {
+                        e.show_doc(&md, anchor, cx);
+                        if let Some((p, line, label)) = source {
+                            e.set_doc_source(p, line, label, cx);
+                        }
+                    });
                 }
                 Ok(None) if mouse.is_none() => {
                     this.status = "No documentation found".into();
                     cx.notify();
                 }
                 _ => {}
+            });
+        })
+        .detach();
+    }
+
+    /// Ctrl+Shift+P Type Info: the type of the name at the caret in a small popup, as PyCharm:
+    /// a variable's type, `(a: int) -> str` for a function, `type[C]` for a class.
+    fn type_info(&mut self, ed: Entity<Editor>, cx: &mut Context<Self>) {
+        let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else { return self.no_ty("Type Info") };
+        let fut = ty.hover(&path, p);
+        cx.spawn(async move |this, cx| {
+            let t = fut.await.ok().flatten().and_then(|h| super::problems_ui::type_of_hover(&h));
+            let _ = this.update(cx, |this, cx| {
+                match t {
+                    Some(t) => {
+                        this.status = format!("Type: {t}");
+                        ed.update(cx, |e, cx| e.show_doc(&format!("```python\n{t}\n```"), crate::editor::Anchor::Caret, cx));
+                    }
+                    None => this.status = "No type information here".into(),
+                }
+                cx.notify();
             });
         })
         .detach();

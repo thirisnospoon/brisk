@@ -75,6 +75,25 @@ fn return_type(hover: &str) -> Option<String> {
     (!t.is_empty() && !t.contains('\n')).then(|| t.to_string())
 }
 
+/// Type Info: the type in ty's hover of a name: `def f(a: int) -> str` → `(a: int) -> str`,
+/// `class C` → `type[C]`, a variable → its type.
+pub(super) fn type_of_hover(hover: &str) -> Option<String> {
+    let code = hover.split("```").nth(1)?.trim_start_matches("python").trim();
+    let one = code.split_whitespace().collect::<Vec<_>>().join(" ").replace("( ", "(").replace(", )", ")").replace(" )", ")");
+    if let Some(rest) = one.strip_prefix("def ").or_else(|| one.strip_prefix("async def ")) {
+        return Some(rest[rest.find('(')?..].to_string());
+    }
+    if let Some(rest) = one.strip_prefix("class ") {
+        let name = rest.split(['(', ':']).next()?.trim();
+        return Some(format!("type[{name}]"));
+    }
+    let t = match one.split_once(": ") {
+        Some((name, t)) if name.chars().all(|c| c.is_alphanumeric() || c == '_') => t,
+        _ => &one,
+    };
+    (!t.is_empty()).then(|| t.to_string())
+}
+
 /// The type in ty's hover of a value: a variable's type, or a called function's return type.
 fn value_type(hover: &str) -> Option<String> {
     let code = hover.split("```").nth(1)?.trim_start_matches("python").trim();

@@ -245,6 +245,8 @@ pub enum EditorEvent {
     RunMark(usize, Point<Pixels>),
     /// The execution arrow was dragged to this line.
     SetNextStatement(usize),
+    /// Open this file at this line (Quick Documentation's definition link).
+    OpenLocation(std::path::PathBuf, usize),
 }
 
 impl gpui::EventEmitter<EditorEvent> for Editor {}

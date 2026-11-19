@@ -460,6 +460,60 @@ y = [i * 2 for i in x]
                 });
             }
             let _ = this.update(cx, |this, cx| eprintln!("smoke-intel: intentions result {:?}", text(this, cx).lines().collect::<Vec<_>>()));
+            // Parameter Info (current parameter in bold, overloads), Quick Documentation's
+            // definition link, Type Info.
+            let _ = this.update_in(cx, |this, window, cx| {
+                let src = "from shapes import Square\n\n\ndef area(n: int, scale: float = 1.0) -> float:\n    \"\"\"Area of a square.\"\"\"\n    return n * n * scale\n\n\na = area(3, 2.0)\nb = max(1, 2)\nsq = Square()\nprint(a, b, sq)\n";
+                let f = this.root.join("info.py");
+                let _ = std::fs::write(&f, src);
+                this.reindex_files(cx);
+                this.open_file(&f, window, cx);
+            });
+            pause(2000).await;
+            let caret = |this: &mut Self, needle: &str, off: usize, cx: &mut Context<Self>| {
+                if let Some(ed) = this.active_editor().cloned() {
+                    ed.update(cx, |e, _| {
+                        e.close_insight();
+                        let t = e.text_string();
+                        let p = t.find(needle).map(|b| t[..b + off].chars().count()).unwrap_or(0);
+                        e.buffer.set_caret(p, false);
+                    });
+                }
+            };
+            let insight = |this: &Self, cx: &gpui::App| this.active_editor().map(|e| e.read(cx).insight_for_smoke()).unwrap_or_default();
+            for (needle, off) in [("area(3, 2", 8), ("max(1", 4)] {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    caret(this, needle, off, cx);
+                    this.dispatch(brisk_keymap::Action::ParameterInfo, window, cx);
+                });
+                wait(&this, cx, &|this, cx| !insight(this, cx).1.is_empty()).await;
+                // The file's own `def` or the builtin shows at once; ty's answer replaces it.
+                pause(1500).await;
+                let _ = this.update(cx, |this, cx| eprintln!("smoke-intel: ctrl-p {needle:?} -> {:?}", insight(this, cx).1));
+            }
+            if hold.as_deref() == Some("sig") {
+                eprintln!("smoke-intel: holding");
+                return;
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                caret(this, "area(3", 1, cx);
+                this.dispatch(brisk_keymap::Action::QuickDocumentation, window, cx);
+            });
+            wait(&this, cx, &|this, cx| insight(this, cx).0.is_some()).await;
+            let _ = this.update(cx, |this, cx| {
+                let (src, _) = insight(this, cx);
+                let doc = this.active_editor().map(|e| e.read(cx).doc_shown_text().0.unwrap_or_default()).unwrap_or_default();
+                eprintln!("smoke-intel: ctrl-q link {} {src:?}, doc {:?}", pass(src.as_deref() == Some("info:4")), doc.lines().collect::<Vec<_>>());
+            });
+            for (needle, off) in [("area(3", 1), ("Square()", 1), ("a = area", 0), ("b = max", 0)] {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    caret(this, needle, off, cx);
+                    this.status.clear();
+                    this.dispatch(brisk_keymap::Action::TypeInfo, window, cx);
+                });
+                wait(&this, cx, &|this, _| !this.status.is_empty()).await;
+                let _ = this.update(cx, |this, _| eprintln!("smoke-intel: ctrl-shift-p {needle:?} -> {:?}", this.status));
+            }
             let _ = this.update(cx, |this, cx| {
                 if let Some(ed) = this.active_editor().cloned() {
                     ed.update(cx, |e, _| e.close_insight());
