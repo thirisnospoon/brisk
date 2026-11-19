@@ -177,6 +177,8 @@ enum PopupKind {
     LocalHistory,
     /// A breakpoint's condition.
     BreakpointCondition,
+    /// A directory breadcrumb: the folder's contents (`Workspace::crumb_dir`).
+    FolderCrumb,
 }
 
 #[derive(Clone)]
@@ -235,6 +237,8 @@ impl SeTab {
 #[derive(Clone)]
 enum Target {
     File(PathBuf),
+    /// A folder in the folder-crumb popup: Enter or → steps into it.
+    Dir(PathBuf),
     Action(Action),
     Line(usize),
     Branch(brisk_git::Branch),
@@ -363,6 +367,8 @@ pub struct Workspace {
     bookmarks: Vec<bookmarks_ui::Stored>,
     /// Items of the File Structure / Bookmarks popup, taken when it opens.
     structure: Vec<PopupItem>,
+    /// The folder the folder-crumb popup lists.
+    crumb_dir: (PathBuf, String),
     /// The second editor group (split editor).
     split: Option<tabs_ui::Split>,
     /// Recently closed files (Reopen Closed Tab).
@@ -716,6 +722,7 @@ impl Workspace {
             recent: Vec::new(),
             bookmarks: saved_bookmarks,
             structure: Vec::new(),
+            crumb_dir: (PathBuf::new(), String::new()),
             split: None,
             closed: Vec::new(),
             pinned: Default::default(),
@@ -1577,6 +1584,7 @@ impl Workspace {
             PopupKind::RunAnything => self.run_anything_items(&q),
             PopupKind::Intentions => self.intention_items(&q),
             PopupKind::Rename => self.rename_items(&q),
+            PopupKind::FolderCrumb => self.folder_items(&q),
         };
         let p = self.popup.as_mut().unwrap();
         p.items = items;
@@ -1605,6 +1613,11 @@ impl Workspace {
                     self.open_branch_actions(&b);
                 }
             }
+            "right" | "left" if p.kind == PopupKind::FolderCrumb => {
+                let right = k.key == "right";
+                self.folder_crumb_step(right);
+                cx.notify();
+            }
             "tab" => {
                 if let PopupKind::SearchEverywhere(t) = p.kind {
                     self.set_se_tab(t.next());
@@ -1615,6 +1628,11 @@ impl Workspace {
                 if let (true, Some(Target::History(path, at))) = (k.modifiers.control, target.clone()) {
                     self.popup = None;
                     self.history_revert(path, at, window, cx);
+                    cx.notify();
+                    return;
+                }
+                if let Some(Target::Dir(_)) = target {
+                    self.folder_crumb_step(true);
                     cx.notify();
                     return;
                 }
@@ -1674,7 +1692,7 @@ impl Workspace {
                             ed.update(cx, |e, cx| e.paste_text(&t, cx));
                         }
                     }
-                    None => self.focus_editor(window, cx),
+                    Some(Target::Dir(_)) | None => self.focus_editor(window, cx),
                 }
             }
             "backspace" => {
@@ -2314,6 +2332,7 @@ impl Workspace {
             PopupKind::Projects => ("Projects", "Type to filter"),
             PopupKind::OpenWhere => ("Open Project", "Type to filter"),
             PopupKind::FileStructure => ("File Structure", "Type to filter"),
+            PopupKind::FolderCrumb => (self.crumb_dir.1.as_str(), "Type to filter · → opens a folder · ← goes up"),
             PopupKind::Bookmarks => ("Bookmarks", "Type to filter"),
             PopupKind::BookmarkMnemonic => ("Add Bookmark with Mnemonic", "Type a digit or letter, then Enter"),
             PopupKind::PasteHistory => ("Paste from History", "Type to filter"),
@@ -2393,7 +2412,7 @@ impl Workspace {
                                     .child(div().text_color(Theme::text_dim()).text_size(px(11.)).child("Tab to switch")),
                             )
                         })
-                        .when(!title.is_empty(), |d| d.child(div().px(px(14.)).pt(px(10.)).font_weight(gpui::FontWeight::SEMIBOLD).child(title)))
+                        .when(!title.is_empty(), |d| d.child(div().px(px(14.)).pt(px(10.)).font_weight(gpui::FontWeight::SEMIBOLD).child(title.to_string())))
                         .child(
                             div()
                                 .m(px(10.))
@@ -2452,6 +2471,7 @@ impl Workspace {
     fn popup_row(i: usize, it: &PopupItem, selected: usize, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let (icon, color) = match &it.target {
             Target::File(_) => file_icon(&it.label, false),
+            Target::Dir(_) => file_icon(&it.label, true),
             Target::Action(_) => ("⚡", gpui::rgb(0xb3ae60).into()),
             Target::Line(_) => ("↧", Theme::text_muted()),
             Target::Branch(b) if b.current => ("★", gpui::rgb(0xe0a85a).into()),

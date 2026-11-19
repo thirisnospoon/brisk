@@ -315,7 +315,12 @@ impl Workspace {
                 let ed = e.clone();
                 row = row.child(crumb(i, p, if i == last { Theme::text() } else { Theme::text_muted() }).on_click(cx.listener(move |this, _, w, cx| this.open_crumb_popup(&ed, None, w, cx))));
             } else {
-                row = row.child(div().px(px(3.)).text_color(Theme::text_muted()).child(p));
+                // A folder (the first crumb is the project root): its contents.
+                let dir = rel.iter().take(i).fold(self.root.clone(), |d, c| d.join(c));
+                row = row.child(crumb(i, p, Theme::text_muted()).on_click(cx.listener(move |this, _, _, cx| {
+                    this.open_folder_crumb(dir.clone(), None);
+                    cx.notify();
+                })));
             }
         }
         for (k, &ix) in chain.iter().enumerate() {
@@ -342,6 +347,60 @@ impl Workspace {
             );
         }
         Some(row.into_any_element())
+    }
+
+    /// A folder breadcrumb was clicked: the folder's contents in a popup (folders first);
+    /// Enter opens a file, Enter or → steps into a folder, ← goes back up. `select`: the entry
+    /// to select (the folder just left).
+    pub(super) fn open_folder_crumb(&mut self, dir: PathBuf, select: Option<PathBuf>) {
+        let title = match dir.strip_prefix(&self.root) {
+            Ok(r) if !r.as_os_str().is_empty() => r.to_string_lossy().replace('\\', "/"),
+            _ => self.project_name(),
+        };
+        self.crumb_dir = (dir, title);
+        if self.popup.as_ref().is_some_and(|p| p.kind == PopupKind::FolderCrumb) {
+            let p = self.popup.as_mut().unwrap();
+            p.query.clear();
+            p.selected = 0;
+            self.refresh_popup();
+        } else {
+            self.open_popup(PopupKind::FolderCrumb);
+        }
+        if let (Some(s), Some(p)) = (select, self.popup.as_mut()) {
+            p.selected = p.items.iter().position(|i| matches!(&i.target, Target::Dir(d) if *d == s)).unwrap_or(0);
+        }
+    }
+
+    /// → / Enter on a folder: into it; ←: up to the parent (not above the project root).
+    pub(super) fn folder_crumb_step(&mut self, into: bool) {
+        let Some(p) = &self.popup else { return };
+        if into {
+            if let Some(Target::Dir(d)) = p.items.get(p.selected).map(|i| i.target.clone()) {
+                self.open_folder_crumb(d, None);
+            }
+        } else if p.query.is_empty() && self.crumb_dir.0 != self.root {
+            if let Some(up) = self.crumb_dir.0.parent().map(|d| d.to_path_buf()) {
+                let from = self.crumb_dir.0.clone();
+                self.open_folder_crumb(up, Some(from));
+            }
+        }
+    }
+
+    /// The folder's entries matching `q`: folders, then files, by name; VCS and cache folders
+    /// left out.
+    pub(super) fn folder_items(&self, q: &str) -> Vec<PopupItem> {
+        let ql = q.to_lowercase();
+        let Ok(rd) = std::fs::read_dir(&self.crumb_dir.0) else { return Vec::new() };
+        let mut v: Vec<(bool, String, PathBuf)> = rd
+            .flatten()
+            .map(|e| (e.file_type().is_ok_and(|t| t.is_dir()), e.file_name().to_string_lossy().into_owned(), e.path()))
+            .filter(|(dir, n, _)| !(*dir && matches!(n.as_str(), ".git" | "__pycache__" | ".idea" | ".brisk" | "node_modules")))
+            .filter(|(_, n, _)| n.to_lowercase().contains(&ql))
+            .collect();
+        v.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())));
+        v.into_iter()
+            .map(|(dir, label, path)| PopupItem { label, detail: String::new(), hint: if dir { "›".into() } else { String::new() }, target: if dir { Target::Dir(path) } else { Target::File(path) } })
+            .collect()
     }
 
     /// A breadcrumb was clicked: its level's neighbours (the same parent) in a popup, the

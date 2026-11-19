@@ -169,7 +169,7 @@ impl Workspace {
             .border_r_1()
             .border_color(Theme::divider())
             .text_size(px(12.5))
-            .child(group(&format!("Run · {} running", runs.iter().filter(|r| r.running).count())));
+            .child(group("Run"));
         if runs.is_empty() {
             tree = tree.child(div().px(px(14.)).py(px(4.)).text_color(Theme::text_muted()).child("Nothing has run yet"));
         }
@@ -236,7 +236,27 @@ impl Workspace {
             (Some(Item::Database), _) => self.render_db_results(cx),
             _ => crate::ui_kit::empty_state("play", "Select a run to see its console. Runs appear here as you start them (Shift+F10, Ctrl+Shift+F10).").into_any_element(),
         };
-        div().id("services-window").size_full().flex().child(tree).child(div().flex_1().min_w_0().h_full().flex().child(right)).into_any_element()
+        // The shared tool window header: the title, then how many runs are live.
+        let running = runs.iter().filter(|r| r.running).count();
+        let header = div()
+            .h(px(crate::ui_kit::header_h()))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .px(px(12.))
+            .text_size(px(13.))
+            .when(!crate::theme::islands(), |d| d.border_b_1().border_color(Theme::divider()))
+            .child(div().font_weight(gpui::FontWeight::SEMIBOLD).text_color(Theme::text()).child("Services"))
+            .when(running > 0, |d| d.child(div().text_size(px(12.)).text_color(Theme::text_muted()).child(format!("{running} running"))));
+        div()
+            .id("services-window")
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(div().flex_1().min_h_0().flex().child(tree).child(div().flex_1().min_w_0().h_full().flex().child(right)))
+            .into_any_element()
     }
 
     // --- Smoke --------------------------------------------------------------------------
