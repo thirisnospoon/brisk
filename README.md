@@ -19,6 +19,14 @@ powershell -ExecutionPolicy Bypass -File scripts\package-portable.ps1   # -NoBui
 
 Получается `dist\Brisk-<версия>-windows-x64.zip` (~37 МБ): `brisk.exe`, `README.md`, отладчик `lib\debugpy`, `lib\ty.exe` и `lib\ruff.exe` (анализ кода и инспекции работают без установки чего-либо) и файл-метка `portable`. Распаковать куда угодно (флешка, папка без прав администратора) и запускать `brisk.exe`; установка не нужна. Пока рядом с exe лежит `portable`, настройки, консоли БД и сохранённые пароли хранятся в папке `data` рядом с exe, а не в `%APPDATA%\Brisk`. Пароли зашифрованы DPAPI под пользователя Windows, поэтому на другом компьютере их придётся ввести заново.
 
+### Бюджет размера, старта и памяти
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scriptsudget.ps1   # -Build, -Package, -Runs 3, -NoMembudget, -Out результат.json
+```
+
+Один прогон меньше чем за минуту на уже собранном `targeteleaserisk.exe` (`-Build` сначала собирает, `-Package` пересобирает zip). Меряет размер `brisk.exe` и zip из `dist\`, время от старта процесса до первого нарисованного кадра окна (медиана `-Runs` запусков на `examples\demo_project`, отдельно первый, «холодный», и по шагам: настройки, инициализация GPUI, создание окна, Workspace, git, первый кадр), working set через 5 с простоя и итог `BRISK_SMOKE_MEMBUDGET` на временной копии проекта, а во время него — пик памяти ty и ruff. Пределы — в начале скрипта (`$Limits`: exe ≤ 26 МБ, zip ≤ 39 МБ, старт ≤ 400 мс, простой ≤ 110 МБ, MEMBUDGET ≤ 200 МБ); превышение даёт код выхода 1, невозможность замерить — 2. Каждый запуск идёт с чистым `APPDATA` во временной папке. Внутри приложения замеры делает `BRISK_BUDGET=<report.json>` (`BRISK_BUDGET_STARTUP_ONLY=1` — выйти сразу после первого кадра, `BRISK_BUDGET_IDLE_MS`, `BRISK_BUDGET_HOLD`).
+
 Иконка (`assets/brisk.ico`, рисуется скриптом `assets/make_icon.py`, нужен Pillow) встраивается в exe при сборке через `crates/brisk-app/brisk.rc`. Там же сведения о версии. GPUI берёт её как иконку окна и панели задач.
 
 ## Что уже работает (этап 1, каркас)

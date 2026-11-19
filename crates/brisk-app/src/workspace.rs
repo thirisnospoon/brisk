@@ -10,6 +10,7 @@ mod db_ui;
 mod services_ui;
 mod pin_smoke;
 mod dataview_smoke;
+pub(crate) mod budget_probe;
 mod multi_smoke;
 mod pycon_smoke;
 mod run_tpl_smoke;
@@ -477,10 +478,12 @@ fn title_button(id: &'static str, icon: &'static str, color: gpui::Hsla, tip: &'
 
 impl Workspace {
     pub fn new(root: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        budget_probe::mark("workspace_new");
         let branch = std::fs::read_to_string(root.join(".git/HEAD"))
             .ok()
             .map(|h| h.trim().strip_prefix("ref: refs/heads/").map(str::to_string).unwrap_or_else(|| h.trim().chars().take(8).collect()));
         let (runs, imported_runs) = run_ui::Runs::new(&root);
+        budget_probe::mark("runs");
         if imported_runs > 0 {
             cx.defer_in(window, move |this: &mut Self, _, cx| this.show_toast(format!("Imported {imported_runs} run configuration(s) from .idea"), false, cx));
         }
@@ -665,6 +668,9 @@ impl Workspace {
         if std::env::var_os("BRISK_SMOKE_HANG").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.hang_smoke(window, cx));
         }
+        if std::env::var_os("BRISK_BUDGET").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.budget_probe(window, cx));
+        }
         if std::env::var_os("BRISK_SMOKE_MEMBUDGET").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.membudget_smoke(window, cx));
         }
@@ -672,8 +678,10 @@ impl Workspace {
             let f = PathBuf::from(f);
             cx.defer_in(window, move |this: &mut Self, window, cx| this.run_smoke(f, window, cx));
         }
+        budget_probe::mark("smoke_hooks");
         let mut tree = ProjectTree::new(&root);
         tree.add_root(scratch_ui::ROOT_NAME, &scratch_ui::scratch_dir());
+        budget_probe::mark("tree");
         let focus = cx.focus_handle();
         let tree_focus = cx.focus_handle();
 
@@ -708,6 +716,7 @@ impl Workspace {
         })
         .detach();
         let (db, imported) = db_ui::Db::new(&root, cx);
+        budget_probe::mark("db");
         if imported {
             let n = db.sources.len();
             cx.defer_in(window, move |this: &mut Self, _, cx| this.show_toast(format!("Imported {n} data source(s) from .idea/dataSources.xml"), false, cx));
@@ -717,11 +726,13 @@ impl Workspace {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.db_smoke(sql, window, cx));
         }
         let git = brisk_git::Repo::discover(&root).map(|repo| git_ui::Git::new(repo, cx));
+        budget_probe::mark("git");
         cx.defer_in(window, |this: &mut Self, _, cx| this.refresh_git(cx));
 
         window.focus(&tree_focus);
         let saved_bookmarks = bookmarks_ui::load(&root);
         let debug = debug_ui::Debug::new(&root, cx);
+        budget_probe::mark("bookmarks_debug");
         cx.defer_in(window, |this: &mut Self, window, cx| this.start_disk_poll(window, cx));
         // Closing the window saves everything first (PyCharm never asks).
         let me = cx.entity().downgrade();
@@ -2926,6 +2937,7 @@ impl Focusable for Workspace {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::stall::note("Workspace render, layout or paint");
+        budget_probe::on_render(window);
         // Text without a size of its own follows the UI scale too.
         window.set_rem_size(gpui::px(16. * crate::theme::ui_scale()));
         crate::stall::frame_begin();
