@@ -117,7 +117,9 @@ impl Editor {
         if self.run_slot() == px(0.) || self.run_cache.0 == v {
             return;
         }
-        if self.buffer.len_lines() < super::big::LAZY_FOLD_LINES || self.run_cache.0 == u64::MAX {
+        // A long file: computed in the background, the first time too (opening a 30k-line
+        // file must not wait for them; the gutter slot has its width already).
+        if self.buffer.len_lines() < super::big::LAZY_FOLD_LINES {
             self.run_marks();
             return;
         }
@@ -125,8 +127,12 @@ impl Editor {
             return;
         }
         self.big.marks_for = Some(v);
+        // The first marks of a file come at once; after an edit, once typing pauses.
+        let debounce = self.run_cache.0 != u64::MAX;
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(super::big::FOLD_DEBOUNCE).await;
+            if debounce {
+                cx.background_executor().timer(super::big::FOLD_DEBOUNCE).await;
+            }
             let job = this
                 .update(cx, |e, cx| {
                     if e.buffer.version() != v {

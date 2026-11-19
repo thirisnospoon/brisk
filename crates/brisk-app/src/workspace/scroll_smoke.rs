@@ -321,6 +321,10 @@ impl Workspace {
 
             if want("git-log") {
                 let _ = this.update_in(cx, |this, window, cx| {
+                    // On a fresh folder the repository was created after the project opened.
+                    if this.git.is_none() {
+                        this.git = brisk_git::Repo::discover(&this.root).map(|repo| super::git_ui::Git::new(repo, cx));
+                    }
                     this.bottom = None;
                     this.dispatch(brisk_keymap::Action::ToggleGitWindow, window, cx);
                     this.refresh_git(cx);

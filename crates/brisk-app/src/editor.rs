@@ -307,7 +307,9 @@ impl Editor {
             };
         }
         if err.is_none() {
-            crate::local_history::record(path, &text.replace("\r\n", "\n"), crate::local_history::Label::Opened);
+            // Off the UI thread: it reads the newest revision back and gzips the text.
+            let (p, t) = (path.to_path_buf(), text.clone());
+            cx.background_executor().spawn(async move { crate::local_history::record(&p, &t.replace("\r\n", "\n"), crate::local_history::Label::Opened) }).detach();
         }
         // Indent and line endings: .editorconfig, else what the file already uses.
         let editorconfig = crate::editorconfig::for_file(path);
@@ -392,7 +394,19 @@ impl Editor {
             scope_cache: Default::default(),
         };
         ed.wrap.on = crate::settings::soft_wrap_for(path);
-        ed.reparse();
+        if text.len() > big::OPEN_PARSE_BYTES && ed.syntax.is_some() {
+            // A long file: the lines in view first (a tree of the first ones), the whole file
+            // in the background (`background_parse`, started by the first frame).
+            let v = ed.buffer.version();
+            let prefix = ed.buffer.rope().char_to_byte(ed.buffer.line_start(big::OPEN_PREVIEW_LINES.min(ed.buffer.len_lines().saturating_sub(1))));
+            ed.text();
+            if let Some(s) = ed.syntax.as_mut() {
+                s.preview(&ed.text_cache.1, prefix);
+            }
+            ed.parsed_version = v;
+        } else {
+            ed.reparse();
+        }
         ed
     }
 
@@ -654,9 +668,15 @@ impl Editor {
     }
 
     fn diag_at(&self, pos: usize) -> Option<usize> {
-        // Errors win over warnings when they overlap.
+        // Errors win over warnings when they overlap. Only the problems around the line of
+        // `pos` can contain it: a long file has thousands, and the status bar asks every frame.
+        let line = self.buffer.pos_to_line_col(pos).0;
         let mut hits: Vec<usize> = (0..self.diagnostics.len()).filter(|&i| {
-            let r = self.diag_range(&self.diagnostics[i]);
+            let d = &self.diagnostics[i];
+            if d.start.line > line + 1 || d.end.line + 1 < line {
+                return false;
+            }
+            let r = self.diag_range(d);
             r.contains(&pos) || r.start == pos
         }).collect();
         hits.sort_by_key(|&i| self.diagnostics[i].severity);
@@ -2182,7 +2202,8 @@ impl Element for EditorElement {
         let total = (ed.display_rows() as f32 * line_height()).max(f32::from(bounds.size.height));
         for d in &ed.diagnostics {
             let color = severity_color(d.severity);
-            if d.severity != Severity::Unused && !squiggle::is_deprecated(d) {
+            // Underlines: only the problems on the lines in view.
+            if d.severity != Severity::Unused && !squiggle::is_deprecated(d) && d.start.line < last + 1 && d.end.line + 1 >= first {
                 let r = ed.diag_range(d);
                 let (l1, c1) = b.pos_to_line_col(r.start);
                 let (l2, c2) = b.pos_to_line_col(r.end);

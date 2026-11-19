@@ -79,6 +79,7 @@ mod web_smoke;
 mod console_find_smoke;
 mod membudget_smoke;
 mod hang_smoke;
+mod open_smoke;
 mod scroll_smoke;
 mod templates_ui;
 mod win_input;
@@ -676,7 +677,9 @@ impl Workspace {
         if std::env::var_os("BRISK_SMOKE_TODO").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.todo_smoke(window, cx));
         }
-        if crate::stall::frames_enabled() {
+        if std::env::var_os("BRISK_SMOKE_OPEN").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.open_smoke(window, cx));
+        } else if crate::stall::frames_enabled() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.list_scroll_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_GITX").is_some() {
