@@ -14,7 +14,7 @@ use brisk_keymap::Action;
 use brisk_run::RunConfig;
 use futures::StreamExt;
 use gpui::prelude::*;
-use gpui::{div, list, px, Context, Entity, FocusHandle, ListAlignment, ListOffset, ListState, Task, Window};
+use gpui::{div, list, px, uniform_list, Context, Entity, FocusHandle, ListAlignment, ListOffset, ListState, Task, UniformListScrollHandle, Window};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -209,6 +209,10 @@ pub struct Debug {
     console_dropped: usize,
     console_dirty: bool,
     console_follow: bool,
+    /// Variables / Watches: a uniform_list (an expanded dict or DataFrame has thousands of
+    /// rows); ↑/↓ keep the selection in view.
+    vars_scroll: UniformListScrollHandle,
+    vars_bar: crate::scrollbar::BarState,
     /// Lines with exec marks, to clear them.
     marked: Vec<PathBuf>,
     /// The configuration of the last session (Rerun).
@@ -271,6 +275,8 @@ impl Debug {
             console_dropped: 0,
             console_dirty: false,
             console_follow: false,
+            vars_scroll: UniformListScrollHandle::new(),
+            vars_bar: Default::default(),
             marked: Vec::new(),
             last: None,
             pending: false,
@@ -2850,6 +2856,7 @@ impl Workspace {
         }
         let n = self.debug.vars.len();
         let sel = self.debug.sel.filter(|&s| s < n);
+        let before = self.debug.sel;
         match (k.key.as_str(), ctrl) {
             ("c", true) => {
                 if let Some(s) = sel {
@@ -2895,6 +2902,11 @@ impl Workspace {
                 }
             }
             _ => return false,
+        }
+        if self.debug.sel != before {
+            if let Some(s) = self.debug.sel {
+                self.debug.vars_scroll.scroll_to_item(s, gpui::ScrollStrategy::Top);
+            }
         }
         cx.notify();
         true
@@ -3195,7 +3207,124 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn render_debugger_tab(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// One row of the Variables / Watches list (only the rows in view are built).
+    fn debug_var_row(&self, i: usize, focused: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let d = &self.debug;
+        let Some(r) = d.vars.get(i) else { return div().into_any_element() };
+        let paused = d.paused_thread().is_some();
+        let edit = d.edit.clone();
+        let input = Self::var_input;
+        let arrow = crate::icons::tree_arrow(r.var.reference > 0, r.expanded, Theme::text_dim());
+        let header = matches!(r.kind, RowKind::Scope | RowKind::WatchHeader);
+        let watch = matches!(r.kind, RowKind::Watch(_));
+        let editing_name = matches!((r.kind, edit.as_ref().map(|e| e.target)), (RowKind::Watch(w), Some(EditTarget::Watch(x))) if w == x);
+        let editing_value = edit.as_ref().is_some_and(|e| e.target == EditTarget::Value(i));
+        let error = r.var.value.starts_with("<error: ") && watch;
+        let returned = r.return_label();
+        let name_color = if header {
+            Theme::text_muted()
+        } else if watch {
+            Theme::accent()
+        } else if returned.is_some() {
+            Theme::syntax(brisk_syntax::Highlight::Function)
+        } else {
+            Theme::syntax(brisk_syntax::Highlight::Property)
+        };
+        let value: gpui::AnyElement = if editing_value {
+            input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
+        } else if watch && r.var.value.is_empty() && !paused {
+            div().text_color(Theme::text_dim()).child("not available: the program is not paused").into_any_element()
+        } else {
+            {
+            // One line: a DataFrame's or array's repr spans lines, and a row must not.
+            let flat: String = if r.var.value.contains('\n') { r.var.value.split_whitespace().collect::<Vec<_>>().join(" ") } else { r.var.value.clone() };
+            div().text_color(if error { Theme::error() } else { Theme::text() }).child(flat.chars().take(300).collect::<String>()).into_any_element()
+        }
+        };
+        div()
+                .id(("dbg-var", i))
+                .w_full()
+                .h(ui_px(21.))
+                .pl(px(8. + 16. * r.depth as f32))
+                .pr(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .whitespace_nowrap()
+                .overflow_hidden()
+                .when(r.var.reference > 0, |x| x.cursor_pointer())
+                .when(d.sel == Some(i), |x| x.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
+                .when(d.sel != Some(i), |x| x.hover(|s| s.bg(Theme::hover_row())))
+                .child(arrow)
+                .child(if editing_name {
+                    input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
+                } else {
+                    div().text_color(name_color).child(returned.clone().unwrap_or_else(|| r.var.name.clone())).into_any_element()
+                })
+                .when(!header, |x| {
+                    x.child(div().text_color(Theme::text_dim()).child("="))
+                        .when(!r.var.type_name.is_empty(), |x| x.child(div().text_color(Theme::text_dim()).child(format!("{{{}}}", r.var.type_name))))
+                        .child(div().flex_1().min_w_0().overflow_hidden().child(value))
+                })
+                // PyCharm's "...View as DataFrame" link at the end of a frame or array row.
+                .when_some(viewable(&r.var.type_name).filter(|_| paused && !header), |x, label| {
+                    x.child(
+                        div()
+                            .id(("dbg-view-data", i))
+                            .flex_shrink_0()
+                            .ml(px(8.))
+                            .font_family(crate::theme::ui_font())
+                            .text_size(px(12.))
+                            .text_color(Theme::accent())
+                            .cursor_pointer()
+                            .hover(|s| s.underline())
+                            .child(label)
+                            .on_click(cx.listener(move |this, _, w, cx| {
+                                cx.stop_propagation();
+                                this.debug.sel = Some(i);
+                                this.view_as_data(i, w, cx);
+                            })),
+                    )
+                })
+                .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
+                    this.debug.sel = Some(i);
+                    this.var_menu(i, e.position, cx);
+                }))
+                .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, _, cx| {
+                    if this.debug.edit.as_ref().is_some_and(|e| e.target != EditTarget::Value(i)) {
+                        this.commit_edit(cx);
+                    }
+                    if ev.click_count() >= 2 {
+                        this.begin_edit(i);
+                    } else {
+                        this.toggle_var(i, cx);
+                    }
+                    cx.notify();
+                }))
+                .into_any_element()
+    }
+
+    /// The in-place editor of a watch name, a value or a new watch.
+    fn var_input(text: &str, focused: bool) -> gpui::Div {
+        let caret = || div().w(px(1.5)).h(ui_px(14.)).bg(Theme::caret());
+        div().flex().items_center().px(px(3.)).border_1().border_color(Theme::accent()).rounded(px(3.)).child(text.to_string()).when(focused, |x| x.child(caret()))
+    }
+
+    /// The "+ new watch" row while it is being typed.
+    fn new_watch_row(text: &str, focused: bool) -> gpui::AnyElement {
+        div()
+            .id("dbg-new-watch")
+            .h(ui_px(21.))
+            .pl(px(8. + 16.))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .child(div().w(px(12.)).text_color(Theme::text_dim()).child("+"))
+            .child(Self::var_input(text, focused))
+            .into_any_element()
+    }
+
+    fn render_debugger_tab(&mut self, _window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let threads = self.render_threads(cx);
         let d = &self.debug;
         let frames = div()
@@ -3230,129 +3359,10 @@ impl Workspace {
                     }))
             }));
         let paused = d.paused_thread().is_some();
-        let focused = d.focus.is_focused(window);
-        let caret = || div().w(px(1.5)).h(ui_px(14.)).bg(Theme::caret());
-        let input = |text: &str, focused: bool| div().flex().items_center().px(px(3.)).border_1().border_color(Theme::accent()).rounded(px(3.)).child(text.to_string()).when(focused, |x| x.child(caret()));
         let edit = d.edit.clone();
-        let mut rows: Vec<gpui::AnyElement> = Vec::new();
-        let new_watch_at = d.watch_len();
-        let new_watch_row = |text: &str| {
-            div()
-                .id("dbg-new-watch")
-                .h(ui_px(21.))
-                .pl(px(8. + 16.))
-                .flex()
-                .items_center()
-                .gap(px(4.))
-                .child(div().w(px(12.)).text_color(Theme::text_dim()).child("+"))
-                .child(input(text, focused))
-                .into_any_element()
-        };
-        for (i, r) in d.vars.iter().enumerate() {
-            if i == new_watch_at {
-                if let Some(e) = edit.as_ref().filter(|e| e.target == EditTarget::NewWatch) {
-                    rows.push(new_watch_row(&e.text));
-                }
-            }
-            let arrow = crate::icons::tree_arrow(r.var.reference > 0, r.expanded, Theme::text_dim());
-            let header = matches!(r.kind, RowKind::Scope | RowKind::WatchHeader);
-            let watch = matches!(r.kind, RowKind::Watch(_));
-            let editing_name = matches!((r.kind, edit.as_ref().map(|e| e.target)), (RowKind::Watch(w), Some(EditTarget::Watch(x))) if w == x);
-            let editing_value = edit.as_ref().is_some_and(|e| e.target == EditTarget::Value(i));
-            let error = r.var.value.starts_with("<error: ") && watch;
-            let returned = r.return_label();
-            let name_color = if header {
-                Theme::text_muted()
-            } else if watch {
-                Theme::accent()
-            } else if returned.is_some() {
-                Theme::syntax(brisk_syntax::Highlight::Function)
-            } else {
-                Theme::syntax(brisk_syntax::Highlight::Property)
-            };
-            let value: gpui::AnyElement = if editing_value {
-                input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
-            } else if watch && r.var.value.is_empty() && !paused {
-                div().text_color(Theme::text_dim()).child("not available: the program is not paused").into_any_element()
-            } else {
-                {
-                // One line: a DataFrame's or array's repr spans lines, and a row must not.
-                let flat: String = if r.var.value.contains('\n') { r.var.value.split_whitespace().collect::<Vec<_>>().join(" ") } else { r.var.value.clone() };
-                div().text_color(if error { Theme::error() } else { Theme::text() }).child(flat.chars().take(300).collect::<String>()).into_any_element()
-            }
-            };
-            rows.push(
-                div()
-                    .id(("dbg-var", i))
-                    .w_full()
-                    .h(ui_px(21.))
-                    .pl(px(8. + 16. * r.depth as f32))
-                    .pr(px(8.))
-                    .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    .whitespace_nowrap()
-                    .overflow_hidden()
-                    .when(r.var.reference > 0, |x| x.cursor_pointer())
-                    .when(d.sel == Some(i), |x| x.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
-                    .when(d.sel != Some(i), |x| x.hover(|s| s.bg(Theme::hover_row())))
-                    .child(arrow)
-                    .child(if editing_name {
-                        input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
-                    } else {
-                        div().text_color(name_color).child(returned.clone().unwrap_or_else(|| r.var.name.clone())).into_any_element()
-                    })
-                    .when(!header, |x| {
-                        x.child(div().text_color(Theme::text_dim()).child("="))
-                            .when(!r.var.type_name.is_empty(), |x| x.child(div().text_color(Theme::text_dim()).child(format!("{{{}}}", r.var.type_name))))
-                            .child(div().flex_1().min_w_0().overflow_hidden().child(value))
-                    })
-                    // PyCharm's "...View as DataFrame" link at the end of a frame or array row.
-                    .when_some(viewable(&r.var.type_name).filter(|_| paused && !header), |x, label| {
-                        x.child(
-                            div()
-                                .id(("dbg-view-data", i))
-                                .flex_shrink_0()
-                                .ml(px(8.))
-                                .font_family(crate::theme::ui_font())
-                                .text_size(px(12.))
-                                .text_color(Theme::accent())
-                                .cursor_pointer()
-                                .hover(|s| s.underline())
-                                .child(label)
-                                .on_click(cx.listener(move |this, _, w, cx| {
-                                    cx.stop_propagation();
-                                    this.debug.sel = Some(i);
-                                    this.view_as_data(i, w, cx);
-                                })),
-                        )
-                    })
-                    .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
-                        this.debug.sel = Some(i);
-                        this.var_menu(i, e.position, cx);
-                    }))
-                    .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, _, cx| {
-                        if this.debug.edit.as_ref().is_some_and(|e| e.target != EditTarget::Value(i)) {
-                            this.commit_edit(cx);
-                        }
-                        if ev.click_count() >= 2 {
-                            this.begin_edit(i);
-                        } else {
-                            this.toggle_var(i, cx);
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
-        }
-        if new_watch_at >= d.vars.len() {
-            if let Some(e) = edit.as_ref().filter(|e| e.target == EditTarget::NewWatch) {
-                rows.push(new_watch_row(&e.text));
-            }
-        }
-        if rows.is_empty() {
-            rows.push(div().p(px(8.)).text_color(Theme::text_dim()).child(if paused { "Loading…" } else { "Variables appear when the program is paused. Insert adds a watch." }).into_any_element());
-        }
+        // The new watch being typed shows as a row before the first scope.
+        let new_watch = edit.as_ref().filter(|e| e.target == EditTarget::NewWatch).map(|e| (d.watch_len().min(d.vars.len()), e.text.clone()));
+        let n_rows = d.vars.len() + new_watch.is_some() as usize;
         let sel = d.sel;
         let sel_kind = sel.and_then(|s| d.vars.get(s)).map(|r| (r.kind, r.parent));
         let can_remove = matches!(sel_kind, Some((RowKind::Watch(_), _)));
@@ -3411,7 +3421,38 @@ impl Workspace {
             .flex()
             .flex_col()
             .child(bar)
-            .child(div().id("dbg-vars-list").flex_1().min_h_0().overflow_y_scroll().font_family(mono_font()).text_size(ui_px(12.5)).children(rows));
+            .child(if n_rows == 0 {
+                div().flex_1().min_h_0().font_family(mono_font()).text_size(ui_px(12.5)).child(div().p(px(8.)).text_color(Theme::text_dim()).child(if paused { "Loading…" } else { "Variables appear when the program is paused. Insert adds a watch." })).into_any_element()
+            } else {
+                div()
+                    .id("dbg-vars-list")
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .font_family(mono_font())
+                    .text_size(ui_px(12.5))
+                    .child(
+                        uniform_list(
+                            "dbg-vars-rows",
+                            n_rows,
+                            cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
+                                let focused = this.debug.focus.is_focused(window);
+                                let nw = this.debug.edit.as_ref().filter(|e| e.target == EditTarget::NewWatch).map(|e| (this.debug.watch_len().min(this.debug.vars.len()), e.text.clone()));
+                                range
+                                    .map(|j| match &nw {
+                                        Some((at, text)) if j == *at => Self::new_watch_row(text, focused),
+                                        Some((at, _)) if j > *at => this.debug_var_row(j - 1, focused, cx),
+                                        _ => this.debug_var_row(j, focused, cx),
+                                    })
+                                    .collect()
+                            }),
+                        )
+                        .size_full()
+                        .track_scroll(d.vars_scroll.clone()),
+                    )
+                    .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&d.vars_scroll), d.vars_bar.clone()))
+                    .into_any_element()
+            });
         let banner = d.exception.clone().map(|e| {
             div()
                 .flex_shrink_0()
