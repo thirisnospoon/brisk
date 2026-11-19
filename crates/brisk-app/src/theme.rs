@@ -64,6 +64,8 @@ impl Theme {
     pub fn indent_guide() -> Hsla { ui("indent_guide", 0x313438, 0xebecf0) }
     pub fn right_margin() -> Hsla { ui("right_margin", 0x393b40, 0xdfe1e5) }
     /// The guide of the block holding the caret.
+    /// Show Whitespaces: the dots and arrows.
+    pub fn whitespace() -> Hsla { ui("whitespace", 0x55585e, 0xc2c4ca) }
     pub fn indent_guide_active() -> Hsla { ui("indent_guide_active", 0x505359, 0xc9ccd6) }
 
     // VCS

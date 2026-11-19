@@ -48,7 +48,14 @@ impl Workspace {
         vec![
             sub("File", file),
             sub("Edit", group(&["Edit", "Find"], true)),
-            sub("View", group(&["View", "Tool Windows"], false)),
+            sub("View", {
+                // View › Active Editor, as in PyCharm (Show Whitespaces).
+                let mut v = group(&["View"], false);
+                v.push(sub("Active Editor", group(&["Active Editor"], true)));
+                v.push(Entry::Separator);
+                v.extend(group(&["Tool Windows"], false));
+                v
+            }),
             sub("Navigate", group(&["Navigate"], false)),
             sub("Code", group(&["Code"], true)),
             sub("Refactor", group(&["Refactor"], true)),

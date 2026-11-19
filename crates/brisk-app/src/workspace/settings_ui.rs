@@ -234,6 +234,7 @@ impl Workspace {
             .child(checkbox("set-blink", s.caret_blinking, "Caret blinking", "", |s| s.caret_blinking = !s.caret_blinking, cx))
             .child(checkbox("set-slide", s.smooth_caret, "Smooth caret movement", "(the caret slides to its new place)", |s| s.smooth_caret = !s.smooth_caret, cx))
             .into_any_element();
+        let whitespace = checkbox("set-ws", s.show_whitespaces, "Show whitespaces", "(· for spaces, → for tabs)", |s| s.show_whitespaces = !s.show_whitespaces, cx);
         let sticky = checkbox("set-sticky", s.sticky_lines, "Show sticky lines", "(enclosing class and def headers stay on top)", |s| s.sticky_lines = !s.sticky_lines, cx);
         let preview = div()
             .mt(px(6.))
@@ -302,6 +303,7 @@ impl Workspace {
                         .child(preview)
                         .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › APPEARANCE"))
                         .child(row("Inlay hints", inlay))
+                        .child(row("Whitespaces", whitespace))
                         .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › EDITOR TABS"))
                         .child(row("Show tabs in", tab_rows))
                         .child(row("Tab limit", tab_limit))

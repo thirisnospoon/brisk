@@ -21,6 +21,7 @@ mod flood_smoke;
 mod motion_smoke;
 mod stripe_smoke;
 mod squiggle_smoke;
+mod whitespace_smoke;
 mod test_runners_smoke;
 mod debug_ui;
 mod disk_ui;
@@ -586,6 +587,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_STICKY").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.sticky_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_WHITESPACE").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.whitespace_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_SQUIGGLE").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.squiggle_smoke(window, cx));
@@ -1550,7 +1554,7 @@ impl Workspace {
             }
             _ => {
                 let target = self.focused_editor(window, cx).or_else(|| {
-                    matches!(action, A::Undo | A::Redo | A::Copy | A::Paste | A::SelectAll | A::CommentLine)
+                    matches!(action, A::Undo | A::Redo | A::Copy | A::Paste | A::SelectAll | A::CommentLine | A::ShowWhitespaces)
                         .then(|| self.active_editor().cloned())
                         .flatten()
                 });
