@@ -13,7 +13,7 @@ use crate::theme::{Theme, mono_font};
 use brisk_keymap::Action;
 use gpui::prelude::*;
 use gpui::{div, px, Context, Entity, MouseButton, Pixels, Point, Window};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 #[derive(Default)]
@@ -350,6 +350,86 @@ impl Workspace {
         Some(row.into_any_element())
     }
 
+    /// Past the tab limit (Settings › Editor Tabs) the least recently used tab of the group
+    /// closes: never the active one, a pinned one or one with unsaved changes, as in PyCharm.
+    pub(super) fn enforce_tab_limit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let limit = crate::settings::tab_limit();
+        while self.tabs.len() > limit {
+            let keep = self.active.and_then(|i| self.tabs.get(i)).map(|t| t.entity_id());
+            let age = |p: Option<&Path>| p.and_then(|p| self.recent.iter().position(|r| r == p)).unwrap_or(usize::MAX);
+            let victim = self
+                .tabs
+                .iter()
+                .enumerate()
+                .filter(|(i, t)| Some(*i) != self.active && !self.pinned.contains(&t.entity_id()))
+                .filter_map(|(i, t)| match t {
+                    Tab::Editor(e) => {
+                        let e = e.read(cx);
+                        (!e.buffer.is_dirty()).then(|| (i, age(e.path.as_deref())))
+                    }
+                    _ => Some((i, usize::MAX)),
+                })
+                .max_by_key(|&(i, age)| (age, usize::MAX - i))
+                .map(|(i, _)| i);
+            let Some(v) = victim else { break };
+            let n = self.tabs.len();
+            self.close_tab(v, window, cx);
+            // close_tab moves the selection next to the closed tab: keep the one we had.
+            if let Some(id) = keep {
+                self.active = self.tabs.iter().position(|t| t.entity_id() == id).or(self.active);
+            }
+            if self.tabs.len() == n {
+                break;
+            }
+        }
+    }
+
+    /// The ▾ list: every tab of the focused group; the ones scrolled out of the strip are
+    /// marked "hidden".
+    pub(super) fn tab_list_items(&self, cx: &gpui::App) -> Vec<PopupItem> {
+        let second = self.split.as_ref().is_some_and(|s| s.second);
+        let scroll = &self.tab_scroll[second as usize];
+        let (vb, x) = (scroll.bounds(), scroll.offset().x);
+        let mut v = Vec::new();
+        for (i, t) in self.tabs.iter().enumerate() {
+            let (label, path) = match t {
+                Tab::Editor(e) => (e.read(cx).title(), e.read(cx).path.clone()),
+                Tab::Diff(d) => (d.read(cx).title.clone(), None),
+                Tab::Grid(g) => (g.read(cx).title.clone(), None),
+            };
+            let hidden = scroll.bounds_for_item(i).is_some_and(|b| b.left() + x < vb.left() - px(1.) || b.right() + x > vb.right() + px(1.));
+            let detail = path
+                .as_deref()
+                .and_then(|p| p.strip_prefix(&self.root).ok())
+                .and_then(|r| r.parent())
+                .map(|d| d.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            v.push(PopupItem { label, detail, hint: if hidden { "hidden".into() } else { String::new() }, target: Target::Tab(i) });
+        }
+        v
+    }
+
+    /// A tab dropped on tab `to` of the same group: it moves there (pinned tabs stay first).
+    pub(super) fn move_tab(&mut self, d: &DraggedTab, to: usize, second: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if d.second != second || d.ix == to {
+            return;
+        }
+        self.focus_pane(second, window, cx);
+        if d.ix >= self.tabs.len() || to >= self.tabs.len() {
+            return;
+        }
+        let pc = self.pinned_count();
+        let from_pinned = d.ix < pc;
+        let to = if from_pinned { to.min(pc.saturating_sub(1)) } else { to.max(pc) };
+        let keep = self.active.and_then(|i| self.tabs.get(i)).map(|t| t.entity_id());
+        let tab = self.tabs.remove(d.ix);
+        self.tabs.insert(to.min(self.tabs.len()), tab);
+        if let Some(id) = keep {
+            self.active = self.tabs.iter().position(|t| t.entity_id() == id);
+        }
+        cx.notify();
+    }
+
     /// A folder breadcrumb was clicked: the folder's contents in a popup (folders first);
     /// Enter opens a file, Enter or → steps into a folder, ← goes back up. `select`: the entry
     /// to select (the folder just left).
@@ -510,5 +590,31 @@ fn same_tab(a: &Tab, b: &Tab) -> bool {
         (Tab::Diff(x), Tab::Diff(y)) => x == y,
         (Tab::Grid(x), Tab::Grid(y)) => x == y,
         _ => false,
+    }
+}
+
+/// A tab being dragged along the strip, and the chip that follows the mouse.
+#[derive(Clone)]
+pub(super) struct DraggedTab {
+    pub ix: usize,
+    pub second: bool,
+    pub title: gpui::SharedString,
+}
+
+impl gpui::Render for DraggedTab {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .h(px(26.))
+            .px(px(12.))
+            .flex()
+            .items_center()
+            .rounded(px(6.))
+            .bg(Theme::selection_row())
+            .opacity(0.9)
+            .font_family(crate::theme::ui_font())
+            .text_size(px(13.))
+            .text_color(Theme::text())
+            .map(crate::ui_kit::floating)
+            .child(self.title.clone())
     }
 }

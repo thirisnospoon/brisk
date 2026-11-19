@@ -21,17 +21,25 @@ pub struct Settings {
     pub inlay_hints: bool,
     /// UI style: "Islands" (rounded panels on a darker frame) instead of "Classic".
     pub islands: bool,
+    /// Editor Tabs: how many tabs a group keeps open; past it the least recently used
+    /// unpinned, unmodified tab closes.
+    pub tab_limit: u32,
+    /// Editor Tabs: "Show tabs in multiple rows" instead of one scrolling row.
+    pub tab_rows: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false }
+        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false }
     }
 }
 
 static LIGHT: AtomicBool = AtomicBool::new(false);
 static INLAY_HINTS: AtomicBool = AtomicBool::new(true);
 static ISLANDS: AtomicBool = AtomicBool::new(false);
+static TAB_LIMIT: AtomicU32 = AtomicU32::new(DEFAULT_TAB_LIMIT);
+static TAB_ROWS: AtomicBool = AtomicBool::new(false);
+pub const DEFAULT_TAB_LIMIT: u32 = 10;
 /// The font size in use (the setting, or a zoomed size: Alt+Shift+. / Ctrl+wheel).
 static FONT_SIZE: AtomicU32 = AtomicU32::new(0);
 static SPACING: AtomicU32 = AtomicU32::new(0);
@@ -68,6 +76,12 @@ pub fn load() -> Settings {
             if let Some(t) = v.get("ui_style").and_then(|t| t.as_str()) {
                 s.islands = t == "islands";
             }
+            if let Some(n) = v.get("tab_limit").and_then(|t| t.as_u64()) {
+                s.tab_limit = (n as u32).clamp(1, 100);
+            }
+            if let Some(b) = v.get("tab_rows").and_then(|t| t.as_bool()) {
+                s.tab_rows = b;
+            }
         }
     }
     apply(&s);
@@ -79,6 +93,8 @@ pub fn apply(s: &Settings) {
     LIGHT.store(s.light, Ordering::Relaxed);
     INLAY_HINTS.store(s.inlay_hints, Ordering::Relaxed);
     ISLANDS.store(s.islands, Ordering::Relaxed);
+    TAB_LIMIT.store(s.tab_limit.clamp(1, 100), Ordering::Relaxed);
+    TAB_ROWS.store(s.tab_rows, Ordering::Relaxed);
     FONT_SIZE.store(s.font_size.to_bits(), Ordering::Relaxed);
     SPACING.store(s.line_spacing.to_bits(), Ordering::Relaxed);
     if let Ok(mut c) = CURRENT.write() {
@@ -94,6 +110,8 @@ pub fn save(s: &Settings) -> std::io::Result<()> {
         "line_spacing": (s.line_spacing as f64 * 10.0).round() / 10.0,
         "inlay_hints": s.inlay_hints,
         "ui_style": if s.islands { "islands" } else { "classic" },
+        "tab_limit": s.tab_limit,
+        "tab_rows": s.tab_rows,
     });
     let p = path();
     if let Some(d) = p.parent() {
@@ -109,6 +127,14 @@ pub fn is_light() -> bool {
 /// The UI style setting (`theme::islands()` is what is in effect: BRISK_DESIGN overrides it).
 pub fn islands() -> bool {
     ISLANDS.load(Ordering::Relaxed)
+}
+
+pub fn tab_limit() -> usize {
+    TAB_LIMIT.load(Ordering::Relaxed) as usize
+}
+
+pub fn tab_rows() -> bool {
+    TAB_ROWS.load(Ordering::Relaxed)
 }
 
 pub fn inlay_hints() -> bool {

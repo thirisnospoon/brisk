@@ -108,18 +108,19 @@ impl Workspace {
         let row = |label: &'static str, value: gpui::AnyElement| {
             div().min_h(px(36.)).flex().items_center().gap(px(12.)).child(div().w(px(110.)).flex_shrink_0().text_color(Theme::text_muted()).child(label)).child(value)
         };
-        let stepper = |id: &'static str, value: String, step: f32, size: bool, cx: &mut Context<Self>| {
+        // − value +: `edit` adds its argument (±1 step) to the setting.
+        let stepper = |id: &'static str, value: String, step: f32, edit: fn(&mut Settings, f32), cx: &mut Context<Self>| {
             div()
                 .flex()
                 .items_center()
                 .gap(px(6.))
                 .child(chip((id, 0), false, "−".into()).on_click(cx.listener(move |this, _, w, cx| {
-                    this.settings_edit(|s| if size { s.font_size -= step } else { s.line_spacing -= step }, w);
+                    this.settings_edit(|s| edit(s, -step), w);
                     cx.notify();
                 })))
                 .child(div().w(px(44.)).flex().justify_center().child(value))
                 .child(chip((id, 1), false, "+".into()).on_click(cx.listener(move |this, _, w, cx| {
-                    this.settings_edit(|s| if size { s.font_size += step } else { s.line_spacing += step }, w);
+                    this.settings_edit(|s| edit(s, step), w);
                     cx.notify();
                 })))
                 .into_any_element()
@@ -167,8 +168,21 @@ impl Workspace {
                 }))
             }))
             .into_any_element();
-        let size = stepper("set-size", format!("{}", s.font_size), 1.0, true, cx);
-        let spacing = stepper("set-spacing", format!("{:.1}", s.line_spacing), 0.1, false, cx);
+        let size = stepper("set-size", format!("{}", s.font_size), 1.0, |s, d| s.font_size += d, cx);
+        let spacing = stepper("set-spacing", format!("{:.1}", s.line_spacing), 0.1, |s, d| s.line_spacing += d, cx);
+        let tab_limit = stepper("set-tab-limit", format!("{}", s.tab_limit), 1.0, |s, d| s.tab_limit = (s.tab_limit as f32 + d).clamp(1., 100.) as u32, cx);
+        let tab_rows = div()
+            .flex()
+            .gap(px(6.))
+            .child(chip(("set-tab-rows", 0), !s.tab_rows, "One row".into()).on_click(cx.listener(|this, _, w, cx| {
+                this.settings_edit(|s| s.tab_rows = false, w);
+                cx.notify();
+            })))
+            .child(chip(("set-tab-rows", 1), s.tab_rows, "Multiple rows".into()).on_click(cx.listener(|this, _, w, cx| {
+                this.settings_edit(|s| s.tab_rows = true, w);
+                cx.notify();
+            })))
+            .into_any_element();
         let on = s.inlay_hints;
         let inlay = div()
             .id("set-inlay")
@@ -256,6 +270,9 @@ impl Workspace {
                         .child(preview)
                         .child(div().text_size(px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › APPEARANCE"))
                         .child(row("Inlay hints", inlay))
+                        .child(div().text_size(px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › EDITOR TABS"))
+                        .child(row("Show tabs in", tab_rows))
+                        .child(row("Tab limit", tab_limit))
                         .child(
                             div()
                                 .pt(px(12.))

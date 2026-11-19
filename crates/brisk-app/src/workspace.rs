@@ -187,6 +187,8 @@ enum PopupKind {
     FolderCrumb,
     /// The status bar's background tasks.
     BackgroundTasks,
+    /// The ▾ at the end of the tab strip: every tab of the group, hidden ones marked.
+    TabList,
 }
 
 #[derive(Clone)]
@@ -255,6 +257,8 @@ enum Target {
     Cancel,
     /// A row of the background tasks popup (nothing to do on Enter).
     Task,
+    /// A tab of the focused editor group (the ▾ list).
+    Tab(usize),
     RunConfig(Option<String>, bool),
     /// The configuration is still running: stop it and run it again.
     StopAndRerun(Box<brisk_run::RunConfig>),
@@ -892,6 +896,7 @@ impl Workspace {
                 self.show_toast(msg, false, cx);
             }
             self.add_tab(Tab::Editor(ed));
+            self.enforce_tab_limit(window, cx);
         }
         if let Some(e) = self.active_editor() {
             let f = e.read(cx).focus_handle(cx);
@@ -1630,6 +1635,7 @@ impl Workspace {
             PopupKind::FolderCrumb => self.folder_items(&q),
             PopupKind::PutLabel => self.put_label_items(&q),
             PopupKind::BackgroundTasks => self.bg_task_items(&q),
+            PopupKind::TabList => self.structure_items(&q),
         };
         let p = self.popup.as_mut().unwrap();
         p.items = items;
@@ -1740,6 +1746,13 @@ impl Workspace {
                         if let (Some(t), Some(ed)) = (crate::editor::clipboard_history().get(i).cloned(), self.active_editor().cloned()) {
                             ed.update(cx, |e, cx| e.paste_text(&t, cx));
                         }
+                    }
+                    Some(Target::Tab(i)) => {
+                        if i < self.tabs.len() {
+                            self.save_all(cx);
+                            self.active = Some(i);
+                        }
+                        self.focus_editor(window, cx);
                     }
                     Some(Target::Dir(_) | Target::Task) | None => self.focus_editor(window, cx),
                 }
@@ -2169,14 +2182,20 @@ impl Workspace {
         }
         let wheel = scroll.clone();
         let islands = crate::theme::islands();
-        div()
+        let rows = crate::settings::tab_rows();
+        // Some tabs do not fit (as of the last layout): the ▾ list at the strip's end.
+        let overflow = !rows && scroll.max_offset().width > px(0.5);
+        let strip = div()
             .id(("tabs", second as usize))
-            .h(px(36.))
-            .flex_shrink_0()
+            .flex_1()
+            .min_w_0()
             .flex()
+            .map(|d| if rows {
+                d.flex_wrap().min_h(px(36.)).when(islands, |d| d.py(px(4.)).gap_y(px(2.)))
+            } else {
+                d.h(px(36.)).overflow_x_scroll().track_scroll(&scroll)
+            })
             .items_end()
-            .overflow_x_scroll()
-            .track_scroll(&scroll)
             // A plain mouse wheel scrolls the strip sideways, as in PyCharm.
             .on_scroll_wheel(move |e, window, cx| {
                 let d = e.delta.pixel_delta(px(20.));
@@ -2189,9 +2208,8 @@ impl Workspace {
                     cx.stop_propagation();
                 }
             })
-            .when(!islands, |d| d.bg(Theme::panel_alt()).border_b_1().border_color(Theme::divider()))
             // Islands: pills on the editor's own background.
-            .when(islands, |d| d.bg(Theme::editor_bg()).items_center().px(px(6.)).gap(px(2.)))
+            .when(islands, |d| d.items_center().px(px(6.)).gap_x(px(2.)))
             .children(tabs.iter().enumerate().map(|(i, t)| {
                 let active = current == Some(i);
                 let (title, icon, color, name_color, dirty) = match t {
@@ -2208,7 +2226,8 @@ impl Workspace {
                 };
                 let name_color = name_color.unwrap_or(if active { Theme::text() } else { Theme::text_muted() });
                 let pinned = self.pinned.contains(&t.entity_id());
-                div()
+                let dragged = tabs_ui::DraggedTab { ix: i, second, title: title.clone().into() };
+                let tab = div()
                     .id(("tab", i))
                     .h(px(if islands { 26. } else { 36. }))
                     .when(islands, |d| d.rounded(px(6.)))
@@ -2294,8 +2313,53 @@ impl Workspace {
                                 this.close_tab(i, window, cx);
                             })),
                     ))
-                    .map(|d| crate::ui_kit::pill_in(d, ("tab-pill", i + 1000 * second as usize), active, if focused { Theme::selection_row() } else { Theme::hover_row() }))
-            }))
+                    .map(|d| crate::ui_kit::pill_in(d, ("tab-pill", i + 1000 * second as usize), active, if focused { Theme::selection_row() } else { Theme::hover_row() }));
+                // Drag to reorder. The drag lives on a wrapper: the pill's fade-in wraps an
+                // active tab in an animation element, which changes the tab's element id path
+                // on the press that activates it (GPUI would forget the pending drag).
+                div()
+                    .id(("tab-dnd", i))
+                    .flex_shrink_0()
+                    .rounded(px(6.))
+                    .on_drag(dragged, |d, _, _, cx| cx.new(|_| d.clone()))
+                    .drag_over::<tabs_ui::DraggedTab>(|s, _, _, _| s.bg(Theme::hover_row()))
+                    .on_drop(cx.listener(move |this, d: &tabs_ui::DraggedTab, window, cx| this.move_tab(d, i, second, window, cx)))
+                    .child(tab)
+            }));
+        div()
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .when(!islands, |d| d.bg(Theme::panel_alt()).border_b_1().border_color(Theme::divider()))
+            .when(islands, |d| d.bg(Theme::editor_bg()))
+            .child(strip)
+            .when(overflow, |d| {
+                d.child(
+                    div()
+                        .id(("tabs-more", second as usize))
+                        .flex_shrink_0()
+                        .mx(px(4.))
+                        .size(px(24.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(5.))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(Theme::hover_row()))
+                        .tooltip(|_, cx| cx.new(|_| Tip("Show Hidden Tabs".into())).into())
+                        .child(crate::icons::icon("chevron-down", 14., Theme::text_muted()))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.focus_pane(second, window, cx);
+                            this.structure = this.tab_list_items(cx);
+                            this.open_popup(PopupKind::TabList);
+                            if let (Some(a), Some(p)) = (this.active, this.popup.as_mut()) {
+                                p.selected = p.items.iter().position(|it| matches!(it.target, Target::Tab(t) if t == a)).unwrap_or(0);
+                            }
+                            cx.notify();
+                        })),
+                )
+            })
     }
 
     fn render_welcome(&self) -> impl IntoElement {
@@ -2427,6 +2491,7 @@ impl Workspace {
             PopupKind::OpenWhere => ("Open Project", "Type to filter"),
             PopupKind::FileStructure => ("File Structure", "Type to filter"),
             PopupKind::BackgroundTasks => ("Background Tasks", "Type to filter"),
+            PopupKind::TabList => ("Open Tabs", "Type to filter · hidden tabs are marked"),
             PopupKind::FolderCrumb => (self.crumb_dir.1.as_str(), "Type to filter · → opens a folder · ← goes up"),
             PopupKind::Bookmarks => ("Bookmarks", "Type to filter"),
             PopupKind::BookmarkMnemonic => ("Add Bookmark with Mnemonic", "Type a digit or letter, then Enter"),
@@ -2577,6 +2642,7 @@ impl Workspace {
             Target::Confirm(_) => ("✓", Theme::file_added()),
             Target::Cancel => ("×", Theme::text_muted()),
             Target::Task => ("◷", Theme::accent()),
+            Target::Tab(_) => file_icon(&it.label, false),
             Target::RunConfig(None, _) => ("▤", Theme::text_muted()),
             Target::RunConfig(Some(_), _) | Target::StopAndRerun(_) => ("▶", gpui::rgb(0x5fb865).into()),
             Target::EditRunConfigs => ("✎", Theme::text_muted()),
