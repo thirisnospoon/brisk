@@ -4,7 +4,8 @@
 //! shows frames, variables (expandable) and the console with an evaluate line.
 
 use crate::theme::ui_px;
-use super::{BottomTool, PopupItem, PopupKind, Target, Workspace};
+use super::{BottomTool, PopupItem, PopupKind, Tab, Target, Workspace};
+use crate::data_view::{viewable, DataView};
 use crate::editor::breakpoints::Breakpoint;
 use crate::editor::Editor;
 use crate::theme::{Theme, mono_font};
@@ -338,13 +339,13 @@ impl Debug {
         if self.watches.is_empty() {
             return Vec::new();
         }
-        let head = Variable { name: "Watches".into(), value: String::new(), type_name: String::new(), reference: 0 };
+        let head = Variable { name: "Watches".into(), value: String::new(), type_name: String::new(), reference: 0, evaluate_name: String::new() };
         let mut v = vec![VarRow { depth: 0, var: head, expanded: true, kind: RowKind::WatchHeader, parent: 0 }];
         for (i, w) in self.watches.iter().enumerate() {
             let var = match vals.as_ref().and_then(|v| v.get(i)) {
-                Some(Ok(x)) => Variable { name: w.clone(), ..x.clone() },
-                Some(Err(e)) => Variable { name: w.clone(), value: format!("<error: {e}>"), type_name: String::new(), reference: -1 },
-                None => Variable { name: w.clone(), value: String::new(), type_name: String::new(), reference: 0 },
+                Some(Ok(x)) => Variable { name: w.clone(), evaluate_name: w.clone(), ..x.clone() },
+                Some(Err(e)) => Variable { name: w.clone(), value: format!("<error: {e}>"), type_name: String::new(), reference: -1, evaluate_name: w.clone() },
+                None => Variable { name: w.clone(), value: String::new(), type_name: String::new(), reference: 0, evaluate_name: w.clone() },
             };
             v.push(VarRow { depth: 1, var, expanded: false, kind: RowKind::Watch(i), parent: 0 });
         }
@@ -642,8 +643,10 @@ fn inline_values(lines: &[String], stop: usize, vars: &[Variable]) -> std::colle
             .into_iter()
             .filter_map(|n| vars.iter().find(|v| v.name == n))
             .map(|v| {
-                let mut val: String = v.value.chars().take(60).collect();
-                if v.value.chars().count() > 60 {
+                // One line: a DataFrame's or a multi-line string's repr is flattened.
+                let flat = v.value.split_whitespace().collect::<Vec<_>>().join(" ");
+                let mut val: String = flat.chars().take(60).collect();
+                if flat.chars().count() > 60 {
                     val.push('…');
                 }
                 format!("{}: {val}", v.name)
@@ -654,6 +657,21 @@ fn inline_values(lines: &[String], stop: usize, vars: &[Variable]) -> std::colle
         }
     }
     out
+}
+
+/// An expression whose value is the hex of `expr`'s str() (a string) or repr() (anything else).
+fn full_value_expression(expr: &str) -> String {
+    format!("(lambda _v: (_v if isinstance(_v, str) else repr(_v)).encode('utf-8', 'replace').hex())(({expr}))")
+}
+
+/// debugpy's repr of a hex string ('6869') back to its text.
+fn decode_hex_repr(r: &str) -> Option<String> {
+    let h = r.trim().trim_matches(|c| c == '\'' || c == '"');
+    if h.len() % 2 != 0 {
+        return None;
+    }
+    let bytes: Option<Vec<u8>> = (0..h.len()).step_by(2).map(|i| u8::from_str_radix(h.get(i..i + 2)?, 16).ok()).collect();
+    Some(String::from_utf8_lossy(&bytes?).into_owned())
 }
 
 /// What a Python command line runs, short: `app.py` or `-m http.server` (the list's label).
@@ -1610,6 +1628,7 @@ impl Workspace {
         self.debug.idle_watches();
         self.debug.exception = None;
         self.clear_exec_marks(cx);
+        self.stale_data_views("Running: rows of the last stop", cx);
     }
 
     fn clear_exec_marks(&mut self, cx: &mut Context<Self>) {
@@ -1785,6 +1804,7 @@ impl Workspace {
         self.debug.edit = None;
         self.debug.exception = None;
         self.clear_exec_marks(cx);
+        self.stale_data_views("The debug session ended", cx);
         for e in self.editors().cloned().collect::<Vec<_>>() {
             e.update(cx, |e, cx| {
                 e.clear_breakpoints_verified();
@@ -2328,6 +2348,7 @@ impl Workspace {
         }
         self.debug.idle_watches();
         self.evaluate_watches(cx);
+        self.refresh_data_views(cx);
         let Some(s) = &self.debug.session else { return };
         let rx = s.client.request("scopes", json!({"frameId": f.id}));
         let client = s.client.clone();
@@ -2475,7 +2496,7 @@ impl Workspace {
                     Ok(Ok(v)) => {
                         let (value, reference) = brisk_dap::parse_evaluate(&v);
                         let type_name = v.get("type").and_then(Value::as_str).unwrap_or("").to_string();
-                        Ok(Variable { name: e.clone(), value, type_name, reference })
+                        Ok(Variable { name: e.clone(), value, type_name, reference, evaluate_name: e.clone() })
                     }
                     Ok(Err(e)) => Err(e),
                     Err(_) => Err("no reply".into()),
@@ -2597,8 +2618,167 @@ impl Workspace {
         if matches!(r.kind, RowKind::Scope | RowKind::WatchHeader) {
             return;
         }
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(r.var.value.clone()));
-        self.status = format!("Copied the value of {}", r.var.name);
+        let (name, shown) = (r.var.name.clone(), r.var.value.clone());
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(shown));
+        self.status = format!("Copied the value of {name}");
+        // The tree shows debugpy's short repr: replace it with the whole value when it comes.
+        self.full_value(i, cx, move |this, full, cx| {
+            if let Ok(full) = full {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(full));
+                this.status = format!("Copied the value of {name}");
+            }
+        });
+    }
+
+    /// The expression of a row of the variables tree: a watch's text, or debugpy's evaluateName.
+    pub(super) fn row_expression(&self, i: usize) -> Option<String> {
+        let r = self.debug.vars.get(i)?;
+        match r.kind {
+            RowKind::Watch(w) => self.debug.watches.get(w).cloned(),
+            RowKind::Var if !r.var.evaluate_name.is_empty() => Some(r.var.evaluate_name.clone()),
+            RowKind::Var if r.depth == 1 => Some(r.var.name.clone()),
+            _ => None,
+        }
+    }
+
+    /// The whole value of a row (str() of a string, repr() of anything else), not the
+    /// tree's truncated repr: evaluated in the program, hex-encoded so no repr mangles it.
+    fn full_value(&mut self, i: usize, cx: &mut Context<Self>, done: impl FnOnce(&mut Self, Result<String, String>, &mut Context<Self>) + 'static) {
+        let Some(expr) = self.row_expression(i) else { return };
+        let Some(s) = self.debug.session.as_ref().filter(|s| matches!(s.state, State::Paused(_))) else { return };
+        let mut args = json!({"expression": full_value_expression(&expr), "context": "clipboard"});
+        if let Some(f) = self.debug.frames.get(self.debug.frame) {
+            args["frameId"] = json!(f.id);
+        }
+        let rx = s.client.request("evaluate", args);
+        cx.spawn(async move |this, cx| {
+            let res = rx.await;
+            let _ = this.update(cx, |this, cx| {
+                let v = match res {
+                    Ok(Ok(v)) => decode_hex_repr(v.get("result").and_then(Value::as_str).unwrap_or("")).ok_or_else(|| "unexpected reply".to_string()),
+                    Ok(Err(e)) => Err(e),
+                    Err(_) => Err("no reply".into()),
+                };
+                done(this, v, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn copy_as_expression(&mut self, i: usize, cx: &mut Context<Self>) {
+        let Some(expr) = self.row_expression(i) else { return };
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(expr.clone()));
+        self.status = format!("Copied {expr}");
+    }
+
+    pub(super) fn add_row_to_watches(&mut self, i: usize, cx: &mut Context<Self>) {
+        let Some(expr) = self.row_expression(i) else { return };
+        if !self.debug.watches.contains(&expr) {
+            self.add_watch(expr, cx);
+        }
+    }
+
+    /// View: the whole value in an editor tab (a long string, a big repr).
+    pub(super) fn view_value(&mut self, i: usize, cx: &mut Context<Self>) {
+        let Some(expr) = self.row_expression(i) else { return };
+        self.full_value(i, cx, move |this, full, cx| match full {
+            Ok(text) => {
+                let ed = cx.new(|cx| {
+                    let mut e = Editor::scratch(&text, cx);
+                    e.title_override = Some(format!("{expr} (value)"));
+                    e
+                });
+                this.add_tab(Tab::Editor(ed));
+            }
+            Err(e) => this.status = format!("Cannot view {expr}: {e}"),
+        });
+    }
+
+    /// View as DataFrame / View as Array: the row's value in a table tab, paged from the program.
+    pub(super) fn view_as_data(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(expr) = self.row_expression(i) else { return };
+        let Some(s) = self.debug.session.as_ref().filter(|s| matches!(s.state, State::Paused(_))) else { return };
+        let client = s.client.clone();
+        let frame = self.debug.frames.get(self.debug.frame).map(|f| f.id);
+        // One tab per expression: View again shows it, evaluated anew.
+        let existing = self.all_tabs().find_map(|t| match t {
+            Tab::Data(v) if v.read(cx).expr == expr => Some(v.clone()),
+            _ => None,
+        });
+        let v = match existing {
+            Some(v) => {
+                v.update(cx, |v, cx| v.refresh(client, frame, cx));
+                v
+            }
+            None => {
+                let v = cx.new(|cx| DataView::new(expr, client, frame, cx));
+                self.add_tab(Tab::Data(v.clone()));
+                v
+            }
+        };
+        if let Some(at) = self.tabs.iter().position(|t| matches!(t, Tab::Data(x) if *x == v)) {
+            self.active = Some(at);
+        }
+        window.focus(&gpui::Focusable::focus_handle(v.read(cx), cx));
+        cx.notify();
+    }
+
+    fn data_views(&self) -> Vec<Entity<DataView>> {
+        self.all_tabs()
+            .filter_map(|t| match t {
+                Tab::Data(v) => Some(v.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A stop or another frame: open tables evaluate their expressions there again.
+    fn refresh_data_views(&mut self, cx: &mut Context<Self>) {
+        let Some(s) = self.debug.session.as_ref().filter(|s| matches!(s.state, State::Paused(_))) else { return };
+        let client = s.client.clone();
+        let frame = self.debug.frames.get(self.debug.frame).map(|f| f.id);
+        for v in self.data_views() {
+            v.update(cx, |v, cx| v.refresh(client.clone(), frame, cx));
+        }
+    }
+
+    fn stale_data_views(&mut self, why: &str, cx: &mut Context<Self>) {
+        for v in self.data_views() {
+            v.update(cx, |v, cx| v.set_stale(why, cx));
+        }
+    }
+
+    /// Right click in the variables tree.
+    fn var_menu(&mut self, i: usize, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+        use super::menu_ui::Entry;
+        use std::rc::Rc;
+        let Some(r) = self.debug.vars.get(i).cloned() else { return };
+        if matches!(r.kind, RowKind::Scope | RowKind::WatchHeader) {
+            return;
+        }
+        let paused = self.debug.paused_thread().is_some();
+        let has_expr = self.row_expression(i).is_some();
+        let item = |label: &str, shortcut: &str, enabled: bool, run: super::menu_ui::MenuFn| Entry::Item { label: label.into(), shortcut: shortcut.into(), enabled, run };
+        let mut v = Vec::new();
+        if let Some(label) = viewable(&r.var.type_name) {
+            v.push(item(label, "", paused && has_expr, Rc::new(move |this, w, cx| this.view_as_data(i, w, cx))));
+            v.push(Entry::Separator);
+        }
+        v.push(item("Set Value…", "F2", paused && r.kind == RowKind::Var && r.parent > 0, Rc::new(move |this, _, cx| {
+            this.begin_edit(i);
+            cx.notify();
+        })));
+        v.push(item("Copy Value", "Ctrl+C", true, Rc::new(move |this, _, cx| this.copy_value(i, cx))));
+        v.push(item("Copy as Expression", "", has_expr, Rc::new(move |this, _, cx| this.copy_as_expression(i, cx))));
+        v.push(item("View Value", "", paused && has_expr, Rc::new(move |this, _, cx| this.view_value(i, cx))));
+        v.push(Entry::Separator);
+        if let RowKind::Watch(w) = r.kind {
+            v.push(item("Remove Watch", "Delete", true, Rc::new(move |this, _, cx| this.remove_watch(w, cx))));
+        } else {
+            v.push(item("Add to Watches", "", has_expr, Rc::new(move |this, _, cx| this.add_row_to_watches(i, cx))));
+        }
+        self.open_menu(pos, v, cx);
     }
 
     /// Keys in the variables tree (the Debugger tab has focus).
@@ -3054,11 +3234,16 @@ impl Workspace {
             } else if watch && r.var.value.is_empty() && !paused {
                 div().text_color(Theme::text_dim()).child("not available: the program is not paused").into_any_element()
             } else {
-                div().text_color(if error { Theme::error() } else { Theme::text() }).child(r.var.value.chars().take(300).collect::<String>()).into_any_element()
+                {
+                // One line: a DataFrame's or array's repr spans lines, and a row must not.
+                let flat: String = if r.var.value.contains('\n') { r.var.value.split_whitespace().collect::<Vec<_>>().join(" ") } else { r.var.value.clone() };
+                div().text_color(if error { Theme::error() } else { Theme::text() }).child(flat.chars().take(300).collect::<String>()).into_any_element()
+            }
             };
             rows.push(
                 div()
                     .id(("dbg-var", i))
+                    .w_full()
                     .h(ui_px(21.))
                     .pl(px(8. + 16. * r.depth as f32))
                     .pr(px(8.))
@@ -3079,8 +3264,32 @@ impl Workspace {
                     .when(!header, |x| {
                         x.child(div().text_color(Theme::text_dim()).child("="))
                             .when(!r.var.type_name.is_empty(), |x| x.child(div().text_color(Theme::text_dim()).child(format!("{{{}}}", r.var.type_name))))
-                            .child(value)
+                            .child(div().flex_1().min_w_0().overflow_hidden().child(value))
                     })
+                    // PyCharm's "...View as DataFrame" link at the end of a frame or array row.
+                    .when_some(viewable(&r.var.type_name).filter(|_| paused && !header), |x, label| {
+                        x.child(
+                            div()
+                                .id(("dbg-view-data", i))
+                                .flex_shrink_0()
+                                .ml(px(8.))
+                                .font_family(crate::theme::ui_font())
+                                .text_size(px(12.))
+                                .text_color(Theme::accent())
+                                .cursor_pointer()
+                                .hover(|s| s.underline())
+                                .child(label)
+                                .on_click(cx.listener(move |this, _, w, cx| {
+                                    cx.stop_propagation();
+                                    this.debug.sel = Some(i);
+                                    this.view_as_data(i, w, cx);
+                                })),
+                        )
+                    })
+                    .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
+                        this.debug.sel = Some(i);
+                        this.var_menu(i, e.position, cx);
+                    }))
                     .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, _, cx| {
                         if this.debug.edit.as_ref().is_some_and(|e| e.target != EditTarget::Value(i)) {
                             this.commit_edit(cx);
@@ -3156,6 +3365,7 @@ impl Workspace {
         let vars = div()
             .id("dbg-vars")
             .flex_1()
+            .min_w_0()
             .h_full()
             .flex()
             .flex_col()
@@ -3967,7 +4177,7 @@ mod tests {
     #[test]
     fn inline_values_of_a_function() {
         let lines: Vec<String> = ["x = 1", "def main(n):", "    items = [n, 2]  # n", "    s = \"items\"", "    total = add(items[0], obj.items)"].map(String::from).to_vec();
-        let var = |n: &str, v: &str| Variable { name: n.into(), value: v.into(), type_name: String::new(), reference: 0 };
+        let var = |n: &str, v: &str| Variable { name: n.into(), value: v.into(), type_name: String::new(), reference: 0, evaluate_name: String::new() };
         let vars = [var("n", "5"), var("items", "[5, 2]"), var("x", "1")];
         let v = inline_values(&lines, 4, &vars);
         // From the def line on; not inside strings, comments, or after a dot.
