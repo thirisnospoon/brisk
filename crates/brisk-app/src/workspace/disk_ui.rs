@@ -38,9 +38,8 @@ struct Snapshot {
 struct Polled {
     editors: Vec<(Entity<Editor>, Option<(SystemTime, u64)>)>,
     stamps: HashMap<PathBuf, Option<SystemTime>>,
-    /// Changed folders (outermost ones) and the listings of them and their expanded subfolders.
-    changed: Vec<PathBuf>,
-    listings: HashMap<PathBuf, Vec<brisk_project::Entry>>,
+    /// Changed folders with their fresh listings, shallowest first.
+    changed: Vec<(PathBuf, Vec<brisk_project::Entry>)>,
 }
 
 impl Snapshot {
@@ -55,21 +54,9 @@ impl Snapshot {
             }
             stamps.insert(p.clone(), now);
         }
-        // Outermost first; a folder inside a changed one is re-read with it.
         changed.sort_by_key(|p| p.components().count());
-        let mut outer: Vec<PathBuf> = Vec::new();
-        for p in changed {
-            if !outer.iter().any(|o| p.starts_with(o)) {
-                outer.push(p);
-            }
-        }
-        let listings = self
-            .dirs
-            .iter()
-            .filter(|d| outer.iter().any(|o| d.starts_with(o)))
-            .map(|d| (d.clone(), brisk_project::read_entries(d)))
-            .collect();
-        Polled { editors, stamps, changed: outer, listings }
+        let changed = changed.into_iter().map(|d| { let e = brisk_project::read_entries(&d); (d, e) }).collect();
+        Polled { editors, stamps, changed }
     }
 }
 
@@ -89,7 +76,7 @@ impl Workspace {
 
     fn disk_snapshot(&mut self, cx: &mut Context<Self>) -> Snapshot {
         let editors = self.editors().filter_map(|e| Some((e.clone(), e.read(cx).path.clone()?))).collect();
-        let dirs = self.tree.nodes.iter().filter(|n| n.is_dir && n.expanded && n.children.is_some()).map(|n| n.path.clone()).collect();
+        let dirs = self.tree.expanded_dirs().into_iter().map(|i| self.tree.nodes[i].path.clone()).collect();
         Snapshot { editors, dirs, stamps: self.dir_stamps.0.clone() }
     }
 
@@ -126,11 +113,9 @@ impl Workspace {
         self.dir_stamps.0 = polled.stamps;
         let changed = !polled.changed.is_empty();
         if changed {
-            let mut listings = polled.listings;
-            for p in polled.changed {
+            for (p, entries) in polled.changed {
                 if let Some(id) = self.tree.find(&p) {
-                    let pre = listings.extract_if(|d, _| d.starts_with(&p)).collect();
-                    self.tree.reload_with(id, pre);
+                    self.tree.set_entries(id, entries);
                 }
             }
             self.reindex_files(cx);

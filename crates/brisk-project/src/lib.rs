@@ -45,8 +45,6 @@ pub struct ProjectTree {
     pub nodes: Vec<Node>,
     rows: Vec<Row>,
     rows_dirty: bool,
-    /// Folder listings read off the UI thread, used by the next `load_children` of that folder.
-    prefetched: std::collections::HashMap<PathBuf, Vec<Entry>>,
 }
 
 /// One folder entry: (name, path, is_dir).
@@ -89,7 +87,6 @@ impl ProjectTree {
             }],
             rows: Vec::new(),
             rows_dirty: true,
-            prefetched: Default::default(),
         };
         t.expand(0);
         t
@@ -106,7 +103,7 @@ impl ProjectTree {
         let dir = self.nodes[id].path.clone();
         let depth = self.nodes[id].depth + 1;
         let parent_excluded = self.nodes[id].excluded;
-        let entries = self.prefetched.remove(&dir).unwrap_or_else(|| read_entries(&dir));
+        let entries = read_entries(&dir);
         let mut ids = Vec::with_capacity(entries.len());
         for (name, path, is_dir) in entries {
             let excluded = parent_excluded || (is_dir && is_excluded_dir(&name));
@@ -167,35 +164,70 @@ impl ProjectTree {
         Some(cur)
     }
 
-    /// `reload` with folder listings already read (by `read_entries` off the UI thread); a
-    /// folder missing from `pre` is read here.
-    pub fn reload_with(&mut self, id: NodeId, pre: std::collections::HashMap<PathBuf, Vec<Entry>>) {
-        self.prefetched = pre;
-        self.reload(id);
-        self.prefetched.clear();
+    /// Re-read a folder and its expanded subfolders after files changed in them, keeping
+    /// expanded subfolders expanded.
+    pub fn reload(&mut self, id: NodeId) {
+        let entries = read_entries(&self.nodes[id].path);
+        self.set_entries(id, entries);
+        let open: Vec<NodeId> = self.nodes[id].children.iter().flatten().copied().filter(|&c| self.nodes[c].expanded).collect();
+        for c in open {
+            self.reload(c);
+        }
     }
 
-    /// Re-read a folder after files changed in it, keeping its expanded subfolders expanded.
-    pub fn reload(&mut self, id: NodeId) {
-        let mut open = Vec::new();
-        let mut stack = vec![id];
-        while let Some(n) = stack.pop() {
-            if let Some(ch) = &self.nodes[n].children {
-                for &c in ch {
-                    if self.nodes[c].expanded {
-                        open.push(self.nodes[c].path.clone());
-                        stack.push(c);
+    /// Put a folder's fresh listing (from `read_entries`, which can run off the UI thread) in
+    /// place, merging by name: an entry that was there keeps its node (so its expanded state,
+    /// and the children of an expanded subfolder, stay), only new entries get nodes. A folder
+    /// of 50k files that gains one file costs one node, not 50k.
+    pub fn set_entries(&mut self, id: NodeId, entries: Vec<Entry>) {
+        let depth = self.nodes[id].depth + 1;
+        let parent_excluded = self.nodes[id].excluded;
+        let mut old: std::collections::HashMap<String, NodeId> =
+            self.nodes[id].children.take().unwrap_or_default().into_iter().map(|c| (std::mem::take(&mut self.nodes[c].name), c)).collect();
+        let mut ids = Vec::with_capacity(entries.len());
+        for (name, path, is_dir) in entries {
+            match old.remove(&name) {
+                Some(c) if self.nodes[c].is_dir == is_dir => {
+                    let n = &mut self.nodes[c];
+                    n.name = name;
+                    // A collapsed subfolder is read again when it is expanded.
+                    if is_dir && !n.expanded {
+                        n.children = None;
                     }
+                    ids.push(c);
+                }
+                gone => {
+                    if let Some(c) = gone {
+                        self.nodes[c].expanded = false;
+                        self.nodes[c].children = None;
+                    }
+                    let excluded = parent_excluded || (is_dir && is_excluded_dir(&name));
+                    ids.push(self.nodes.len());
+                    self.nodes.push(Node { name, path, is_dir, excluded, depth, parent: Some(id), children: None, expanded: false });
                 }
             }
         }
-        self.refresh(id);
-        for p in open {
-            if let Some(n) = self.reveal(&p) {
-                self.expand(n);
+        // Removed entries: their nodes stay unreachable (ids are not reused).
+        for c in old.into_values() {
+            self.nodes[c].expanded = false;
+            self.nodes[c].children = None;
+        }
+        self.nodes[id].children = Some(ids);
+        self.rows_dirty = true;
+    }
+
+    /// Expanded, loaded folders reachable from the root (the ones to watch for changes).
+    pub fn expanded_dirs(&self) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        let mut stack = vec![0usize];
+        while let Some(id) = stack.pop() {
+            let n = &self.nodes[id];
+            if let (true, true, Some(ch)) = (n.is_dir, n.expanded, &n.children) {
+                out.push(id);
+                stack.extend(ch.iter().copied().filter(|&c| self.nodes[c].is_dir));
             }
         }
-        self.rows_dirty = true;
+        out
     }
 
     /// Flattened visible rows; the UI renders only the slice in view.
@@ -304,6 +336,31 @@ impl FileList {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn set_entries_reuses_nodes() {
+        let d = std::env::temp_dir().join(format!("brisk-merge-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        for i in 0..100 {
+            std::fs::write(d.join(format!("f{i:03}.py")), "").unwrap();
+        }
+        let mut t = super::ProjectTree::new(&d);
+        let n0 = t.nodes.len();
+        let first = t.nodes[0].children.clone().unwrap();
+        t.set_entries(0, super::read_entries(&d));
+        assert_eq!(t.nodes.len(), n0, "no change: no new nodes");
+        assert_eq!(t.nodes[0].children.as_ref().unwrap(), &first);
+        std::fs::write(d.join("f050b.py"), "").unwrap();
+        std::fs::remove_file(d.join("f000.py")).unwrap();
+        t.set_entries(0, super::read_entries(&d));
+        assert_eq!(t.nodes.len(), n0 + 1, "one new file: one new node");
+        let names: Vec<_> = t.nodes[0].children.as_ref().unwrap().iter().map(|&c| t.nodes[c].name.clone()).collect();
+        assert_eq!(names.len(), 100);
+        assert_eq!(names[0], "f001.py");
+        assert!(names.contains(&"f050b.py".to_string()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn reload_keeps_expanded_folders() {
         let d = std::env::temp_dir().join(format!("brisk-reload-{}", std::process::id()));
