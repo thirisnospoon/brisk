@@ -14,7 +14,7 @@ use brisk_keymap::Action;
 use brisk_run::RunConfig;
 use futures::StreamExt;
 use gpui::prelude::*;
-use gpui::{div, px, Context, Entity, FocusHandle, ScrollHandle, Task, Window};
+use gpui::{div, list, px, Context, Entity, FocusHandle, ListAlignment, ListOffset, ListState, Task, Window};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -203,7 +203,12 @@ pub struct Debug {
     pub cwd: PathBuf,
     pub tab: DebugTab,
     pub focus: FocusHandle,
-    console_scroll: ScrollHandle,
+    /// The Debug Console output, virtualized (`console` holds up to 5000 lines; only the
+    /// lines in view are built, with their link checks). See `console_changed`.
+    console_out: ListState,
+    console_dropped: usize,
+    console_dirty: bool,
+    console_follow: bool,
     /// Lines with exec marks, to clear them.
     marked: Vec<PathBuf>,
     /// The configuration of the last session (Rerun).
@@ -262,7 +267,10 @@ impl Debug {
             cwd: root.to_path_buf(),
             tab: DebugTab::Debugger,
             focus: cx.focus_handle(),
-            console_scroll: ScrollHandle::new(),
+            console_out: ListState::new(0, ListAlignment::Bottom, px(300.)),
+            console_dropped: 0,
+            console_dirty: false,
+            console_follow: false,
             marked: Vec::new(),
             last: None,
             pending: false,
@@ -325,8 +333,39 @@ impl Debug {
         }
         if self.console.len() > 5000 {
             self.console.drain(..1000);
+            self.console_dropped += 1000;
         }
-        self.console_scroll.scroll_to_bottom();
+        self.console_changed(true);
+    }
+
+    /// `console` changed (lines added at the end, `follow`: and the view sticks to the end;
+    /// or the whole of it replaced or cleared, `follow` false).
+    pub(super) fn console_changed(&mut self, follow: bool) {
+        self.console_dirty = true;
+        self.console_follow |= follow;
+    }
+
+    /// Bring the list state in line with `console` before a frame.
+    fn sync_console(&mut self) {
+        if !std::mem::take(&mut self.console_dirty) {
+            return;
+        }
+        let dropped = std::mem::take(&mut self.console_dropped);
+        if dropped > 0 {
+            let count = self.console_out.item_count();
+            self.console_out.splice(0..dropped.min(count), 0);
+        }
+        let (count, n) = (self.console_out.item_count(), self.console.len());
+        if count > n {
+            self.console_out.reset(n);
+        } else {
+            // The last line may have grown by a chunk: measure it again.
+            let from = count.saturating_sub(1);
+            self.console_out.splice(from..count, n - from);
+        }
+        if std::mem::take(&mut self.console_follow) {
+            self.console_out.scroll_to(ListOffset { item_ix: n, offset_in_item: px(0.) });
+        }
     }
 
     /// Rows before the first scope: the Watches section and what is expanded under it.
@@ -371,7 +410,7 @@ impl Debug {
         let mut t: String = text.into();
         t.push('\n');
         self.console.push((t, Line::Info));
-        self.console_scroll.scroll_to_bottom();
+        self.console_changed(true);
     }
 }
 
@@ -1702,6 +1741,7 @@ impl Workspace {
         self.debug.exception = None;
         let name = cfg.name.clone();
         self.debug.console.clear();
+        self.debug.console_changed(false);
         self.debug.frames.clear();
         self.debug.idle_watches();
         self.debug.tab = DebugTab::Console;
@@ -2118,6 +2158,7 @@ impl Workspace {
         self.debug.last_attach = Some((pid, label.clone()));
         self.debug.exception = None;
         self.debug.console.clear();
+        self.debug.console_changed(false);
         self.debug.frames.clear();
         self.debug.idle_watches();
         self.debug.tab = DebugTab::Console;
@@ -3389,7 +3430,47 @@ impl Workspace {
         div().size_full().flex().flex_col().children(banner).child(div().flex_1().min_h_0().flex().child(frames).child(vars)).into_any_element()
     }
 
+    /// One Debug Console line (the list builds only the lines in view, links included).
+    fn debug_console_line(&self, ln: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let Some((t, k)) = self.debug.console.get(ln) else { return div().into_any_element() };
+        let color = match k {
+            Line::Out => Theme::text(),
+            Line::Err => Theme::error(),
+            Line::Info => Theme::text_muted(),
+            Line::Input => Theme::accent(),
+            Line::Result => Theme::syntax(brisk_syntax::Highlight::String),
+        };
+        let line = t.trim_end_matches('\n');
+        let chars: Vec<char> = line.chars().collect();
+        let mut pieces: Vec<gpui::AnyElement> = Vec::new();
+        let mut at = 0;
+        if matches!(k, Line::Out | Line::Err) {
+            for (j, l) in brisk_run::find_links(line).into_iter().enumerate() {
+                let Some((path, n)) = self.console_link(&l.path, l.line) else { continue };
+                if l.cols.start > at {
+                    pieces.push(div().child(chars[at..l.cols.start].iter().collect::<String>()).into_any_element());
+                }
+                pieces.push(
+                    div()
+                        .id(("dbg-link", ln * 64 + j))
+                        .text_color(Theme::accent())
+                        .underline()
+                        .cursor_pointer()
+                        .child(chars[l.cols.clone()].iter().collect::<String>())
+                        .on_click(cx.listener(move |this, _, w, cx| this.open_console_link(&path, n, w, cx)))
+                        .into_any_element(),
+                );
+                at = l.cols.end;
+            }
+        }
+        if at < chars.len() || pieces.is_empty() {
+            pieces.push(div().child(chars[at.min(chars.len())..].iter().collect::<String>()).into_any_element());
+        }
+        div().px(px(8.)).min_h(ui_px(17.)).flex().text_color(color).whitespace_nowrap().children(pieces).into_any_element()
+    }
+
     fn render_console_tab(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        self.debug.sync_console();
         let d = &self.debug;
         let focused = d.focus.is_focused(window);
         let can_eval = d.paused_thread().is_some();
@@ -3397,48 +3478,10 @@ impl Workspace {
             .id("dbg-console")
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&d.console_scroll)
-            .px(px(8.))
             .py(px(4.))
             .font_family(mono_font())
             .text_size(ui_px(12.5))
-            .children(d.console.iter().enumerate().map(|(ln, (t, k))| {
-                let color = match k {
-                    Line::Out => Theme::text(),
-                    Line::Err => Theme::error(),
-                    Line::Info => Theme::text_muted(),
-                    Line::Input => Theme::accent(),
-                    Line::Result => Theme::syntax(brisk_syntax::Highlight::String),
-                };
-                let line = t.trim_end_matches('\n');
-                let chars: Vec<char> = line.chars().collect();
-                let mut pieces: Vec<gpui::AnyElement> = Vec::new();
-                let mut at = 0;
-                if matches!(k, Line::Out | Line::Err) {
-                    for (j, l) in brisk_run::find_links(line).into_iter().enumerate() {
-                        let Some((path, n)) = self.console_link(&l.path, l.line) else { continue };
-                        if l.cols.start > at {
-                            pieces.push(div().child(chars[at..l.cols.start].iter().collect::<String>()).into_any_element());
-                        }
-                        pieces.push(
-                            div()
-                                .id(("dbg-link", ln * 64 + j))
-                                .text_color(Theme::accent())
-                                .underline()
-                                .cursor_pointer()
-                                .child(chars[l.cols.clone()].iter().collect::<String>())
-                                .on_click(cx.listener(move |this, _, w, cx| this.open_console_link(&path, n, w, cx)))
-                                .into_any_element(),
-                        );
-                        at = l.cols.end;
-                    }
-                }
-                if at < chars.len() || pieces.is_empty() {
-                    pieces.push(div().child(chars[at.min(chars.len())..].iter().collect::<String>()).into_any_element());
-                }
-                div().min_h(ui_px(17.)).flex().text_color(color).whitespace_nowrap().children(pieces)
-            }));
+            .child(list(d.console_out.clone(), cx.processor(|this, ln: usize, _window, cx| this.debug_console_line(ln, cx))).size_full());
         let input = div()
             .h(ui_px(26.))
             .px(px(8.))

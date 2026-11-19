@@ -264,6 +264,7 @@ impl Workspace {
                             }
                         })
                         .collect();
+                    d.console_changed(true);
                     d.vars = (0..10_000)
                         .map(|i| super::debug_ui::VarRow {
                             depth: if i == 0 { 0 } else { 1 },
