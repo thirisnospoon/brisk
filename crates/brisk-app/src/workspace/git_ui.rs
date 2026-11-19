@@ -536,6 +536,16 @@ impl Workspace {
                 Some(ed) => self.toggle_annotate(ed, cx),
                 None => self.status = "Annotate: open a file first".into(),
             },
+            // Ctrl+Alt+Z with the caret in a changed block of the editor: Rollback Lines.
+            A::RollbackChanges if !self.commit_focus.is_focused(window) && self.focused_editor(window, cx).is_some_and(|e| e.read(cx).vcs_change_at_caret().is_some()) => {
+                if let Some(e) = self.focused_editor(window, cx) {
+                    e.update(cx, |e, cx| {
+                        if let Some(i) = e.vcs_change_at_caret() {
+                            e.rollback_change(i, cx);
+                        }
+                    });
+                }
+            }
             A::RollbackChanges => {
                 let files: Vec<FileChange> = if self.commit_focus.is_focused(window) {
                     let checked: Vec<FileChange> = self.git.as_ref().map(|g| g.rows().into_iter().filter(|c| c.status != FileStatus::Untracked && g.included(c)).collect()).unwrap_or_default();
@@ -565,8 +575,13 @@ impl Workspace {
 
     /// The active editor's file as a change (Modified if git reports nothing: diff shows "identical").
     fn active_file_change(&self, cx: &App) -> Option<FileChange> {
+        self.editor_file_change(self.active_editor()?, cx)
+    }
+
+    /// An editor's file as a change.
+    pub(super) fn editor_file_change(&self, ed: &Entity<Editor>, cx: &App) -> Option<FileChange> {
         let g = self.git.as_ref()?;
-        let path = self.active_editor()?.read(cx).path.clone()?;
+        let path = ed.read(cx).path.clone()?;
         let rel = g.repo.rel(&path)?;
         let st = g.by_path.get(&rel).copied().unwrap_or(FileStatus::Modified);
         let old = g.status.changes.iter().find(|c| c.path == rel).and_then(|c| c.old_path.clone());

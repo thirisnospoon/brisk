@@ -16,6 +16,8 @@ pub enum LineChangeKind {
 pub struct LineChange {
     pub kind: LineChangeKind,
     pub lines: Range<usize>,
+    /// The lines it replaces in the base (empty for an addition).
+    pub base: Range<usize>,
 }
 
 /// Changes of `current` relative to `base`, for the editor gutter.
@@ -26,12 +28,9 @@ pub fn line_changes(base: &str, current: &str) -> Vec<LineChange> {
         let (tag, old, new) = op.as_tag_tuple();
         match tag {
             DiffTag::Equal => {}
-            DiffTag::Insert => out.push(LineChange { kind: LineChangeKind::Added, lines: new }),
-            DiffTag::Delete => out.push(LineChange { kind: LineChangeKind::Deleted, lines: new.start..new.start }),
-            DiffTag::Replace => {
-                let _ = old;
-                out.push(LineChange { kind: LineChangeKind::Modified, lines: new });
-            }
+            DiffTag::Insert => out.push(LineChange { kind: LineChangeKind::Added, lines: new, base: old }),
+            DiffTag::Delete => out.push(LineChange { kind: LineChangeKind::Deleted, lines: new.start..new.start, base: old }),
+            DiffTag::Replace => out.push(LineChange { kind: LineChangeKind::Modified, lines: new, base: old }),
         }
     }
     out
@@ -270,12 +269,12 @@ mod tests {
         assert_eq!(
             ch,
             vec![
-                LineChange { kind: LineChangeKind::Modified, lines: 1..2 },
-                LineChange { kind: LineChangeKind::Added, lines: 3..4 },
+                LineChange { kind: LineChangeKind::Modified, lines: 1..2, base: 1..2 },
+                LineChange { kind: LineChangeKind::Added, lines: 3..4, base: 3..3 },
             ]
         );
         let ch = line_changes("a\nb\nc\n", "a\nc\n");
-        assert_eq!(ch, vec![LineChange { kind: LineChangeKind::Deleted, lines: 1..1 }]);
+        assert_eq!(ch, vec![LineChange { kind: LineChangeKind::Deleted, lines: 1..1, base: 1..2 }]);
     }
 
     #[test]

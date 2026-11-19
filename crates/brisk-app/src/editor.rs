@@ -16,6 +16,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 pub mod annotate;
+mod vcs_popup;
 mod bookmarks;
 pub mod breakpoints;
 pub mod run_marks;
@@ -165,6 +166,8 @@ pub struct Editor {
     /// Annotate with Git Blame: the column, and the hovered line.
     pub annotation: Option<annotate::Annotation>,
     ann_hover: Option<(usize, Point<Pixels>)>,
+    /// The change marker popup: (change index, buffer version it was opened at).
+    vcs_popup: Option<(usize, u64)>,
     sel_stack: select::SelStack,
     /// Ctrl+wheel distance not yet turned into a font size step.
     zoom_acc: f32,
@@ -217,6 +220,8 @@ pub enum EditorEvent {
     GutterMenu(Point<Pixels>),
     /// A click on a blame annotation: show this commit's diff of the file.
     ShowCommit(String),
+    /// Show Diff in the change marker popup: the file's diff against HEAD.
+    ShowVcsDiff,
     /// A click on the run icon of this line (window position for the menu).
     RunMark(usize, Point<Pixels>),
     /// The execution arrow was dragged to this line.
@@ -348,6 +353,7 @@ impl Editor {
             exec_line: None,
             annotation: None,
             ann_hover: None,
+            vcs_popup: None,
             sel_stack: Default::default(),
             zoom_acc: 0.0,
             editorconfig,
@@ -425,6 +431,7 @@ impl Editor {
             exec_line: None,
             annotation: None,
             ann_hover: None,
+            vcs_popup: None,
             sel_stack: Default::default(),
             zoom_acc: 0.0,
             editorconfig: Default::default(),
@@ -827,6 +834,10 @@ impl Editor {
         }
         self.caret_tip = None;
         self.insight.doc = None;
+        if action == A::EditorEscape && self.vcs_popup.take().is_some() {
+            cx.notify();
+            return true;
+        }
         if action == A::EditorEscape && self.close_insight() {
             cx.notify();
             return true;
@@ -1058,6 +1069,9 @@ impl Editor {
             return;
         }
         if e.button == MouseButton::Left && self.annotation_click(e.position, cx) {
+            return;
+        }
+        if e.button == MouseButton::Left && self.vcs_marker_click(e.position, cx) {
             return;
         }
         if e.button == MouseButton::Left && self.exec_arrow_down(e.position) {
@@ -1401,6 +1415,7 @@ impl Render for Editor {
             .when_some(self.render_inlay_tip(), |d, t| d.child(t))
             .when_some(self.render_middle_anchor(), |d, a| d.child(a))
             .when_some(self.render_annotation_tip(), |d, t| d.child(t))
+            .when_some(self.render_vcs_popup(cx), |d, t| d.child(t))
             .children(self.render_insight(cx));
         gpui::div()
             .id("editor")

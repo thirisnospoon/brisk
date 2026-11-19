@@ -3,7 +3,7 @@
 //! a real project: it commits there. `BRISK_SMOKE_VCS_HOLD=<phase>` stops at that phase with
 //! the window open (`diff`: the live side-by-side diff; `unified`: the unified one; `merge`:
 //! the merge window as it opens; `merged`: after resolving, before Apply; `annotate`: a file
-//! annotated; `previous`: Annotate Previous Revision's tab).
+//! annotated; `previous`: Annotate Previous Revision's tab; `popup`: a change marker's popup).
 
 use super::git_smoke::{commit_as, sh};
 use super::{Tab, Workspace};
@@ -68,6 +68,9 @@ impl Workspace {
             if held(&["annotate", "previous"]) {
                 Self::smoke_vcs_annotate(&this, cx, &bg, &root).await;
             }
+            if held(&["popup"]) {
+                Self::smoke_vcs_hunks(&this, cx, &bg, &root).await;
+            }
             let _ = this.update(cx, |_, cx| {
                 eprintln!("smoke-vcs: done");
                 if std::env::var_os("BRISK_SMOKE_VCS_HOLD").is_none() {
@@ -90,6 +93,72 @@ impl Workspace {
             Some(Tab::Merge(m)) => Some(m.clone()),
             _ => None,
         }
+    }
+
+    /// V6: the change marker popup, Rollback Lines from it and with Ctrl+Alt+Z, Show Diff.
+    async fn smoke_vcs_hunks(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
+        let base: String = (1..=10).map(|i| format!("v{i} = compute({i}, 'x')
+")).collect();
+        let _ = std::fs::write(root.join("hunks.py"), &base);
+        commit_as(root, "Alice", "2024-03-01T10:00:00", "Add hunks.py");
+        // Line 2 changes a word, a line is added after 5, line 8 is deleted.
+        let mut cur = base.replace("v2 = compute(2, 'x')", "v2 = compute(2, 'y')").replace("v5 = compute(5, 'x')
+", "v5 = compute(5, 'x')
+added = True
+");
+        cur = cur.replace("v8 = compute(8, 'x')
+", "");
+        let _ = std::fs::write(root.join("hunks.py"), &cur);
+        let _ = this.update_in(cx, |this, window, cx| {
+            this.refresh_git(cx);
+            this.open_file(&root.join("hunks.py"), window, cx);
+        });
+        pause(bg, 1500).await;
+        let _ = this.update_in(cx, |this, _, cx| {
+            let Some(ed) = this.active_editor().cloned() else { return };
+            eprintln!("smoke-vcs: hunks.py changes -> {}", ed.read(cx).vcs_change_count());
+            // A click on the marker of line 2 opens its popup.
+            let p = ed.read(cx).vcs_marker_point(1);
+            let opened = p.is_some_and(|p| ed.update(cx, |e, cx| e.vcs_marker_click(p, cx)));
+            eprintln!("smoke-vcs: marker click -> opened {opened}, change {:?}", ed.read(cx).vcs_popup_change());
+        });
+        if hold("popup") {
+            return;
+        }
+        let _ = this.update_in(cx, |this, window, cx| {
+            let Some(ed) = this.active_editor().cloned() else { return };
+            // Rollback Lines in the popup.
+            ed.update(cx, |e, cx| {
+                e.rollback_change(0, cx);
+            });
+            eprintln!("smoke-vcs: rollback -> line 2 {:?}, changes {}, popup {:?}", ed.read(cx).buffer.line(1), ed.read(cx).vcs_change_count(), ed.read(cx).vcs_popup_change());
+            // Ctrl+Alt+Z with the caret on the added line rolls just it back.
+            ed.update(cx, |e, cx| e.go_to_line(5, cx));
+            this.smoke_press("ctrl-alt-z", window, cx);
+            eprintln!("smoke-vcs: ctrl-alt-z on the added line -> line 6 {:?}, changes {}, confirm dialog {}", ed.read(cx).buffer.line(5), ed.read(cx).vcs_change_count(), this.popup.is_some());
+            // The deleted line: open its popup (old text), roll it back too; the file equals HEAD.
+            ed.update(cx, |e, cx| e.open_vcs_popup(0, cx));
+            ed.update(cx, |e, cx| {
+                e.rollback_change(0, cx);
+            });
+            eprintln!("smoke-vcs: rollback the deletion -> equals HEAD {}", ed.read(cx).text_string() == base);
+            // Show Diff from the popup: an edit, then the event opens the live diff.
+            ed.update(cx, |e, cx| {
+                let t = e.text_string().replace("v3 = ", "v3x = ");
+                e.replace_all_text(&t, cx);
+                e.open_vcs_popup(0, cx);
+                cx.emit(crate::editor::EditorEvent::ShowVcsDiff);
+            });
+        });
+        pause(bg, 1200).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            let tab = this.active_diff_view().map(|d| d.read(cx).title.clone());
+            eprintln!("smoke-vcs: show diff from the popup -> {tab:?}");
+            if let Some(i) = this.active {
+                this.close_tab(i, window, cx);
+            }
+            this.dispatch(brisk_keymap::Action::SaveAll, window, cx);
+        });
     }
 
     /// V5: Annotate with Git Blame through a rename; the annotation menu; Annotate Previous

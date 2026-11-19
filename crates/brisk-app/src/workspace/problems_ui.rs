@@ -170,6 +170,11 @@ impl Workspace {
             EditorEvent::GutterMenu(at) => this.open_gutter_menu(ed.clone(), *at, cx),
             EditorEvent::RunMark(line, at) => this.run_mark_menu(ed.clone(), *line, *at, cx),
             EditorEvent::ShowCommit(hash) => this.show_annotation_commit(ed.clone(), hash.clone(), window, cx),
+            EditorEvent::ShowVcsDiff => {
+                if let Some(c) = this.editor_file_change(ed, cx) {
+                    this.show_change_diff(&c, window, cx);
+                }
+            }
             ev => this.lsp_editor_event(ed.clone(), ev, window, cx),
         })
         .detach();
