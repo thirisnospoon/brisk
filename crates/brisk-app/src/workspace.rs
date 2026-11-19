@@ -67,6 +67,7 @@ mod web_smoke;
 mod console_find_smoke;
 mod membudget_smoke;
 mod hang_smoke;
+mod scroll_smoke;
 mod templates_ui;
 mod win_input;
 
@@ -621,6 +622,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_TODO").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.todo_smoke(window, cx));
+        }
+        if crate::stall::frames_enabled() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.list_scroll_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_GITX").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.gitx_smoke(window, cx));
@@ -2855,6 +2859,7 @@ impl Render for Workspace {
         crate::stall::note("Workspace render, layout or paint");
         // Text without a size of its own follows the UI scale too.
         window.set_rem_size(gpui::px(16. * crate::theme::ui_scale()));
+        crate::stall::frame_begin();
         let viewport = window.viewport_size();
         let left: Option<gpui::AnyElement> = match self.left {
             Some(LeftTool::Project) => Some(self.render_project(cx).into_any_element()),
@@ -2953,6 +2958,7 @@ impl Render for Workspace {
             .children(self.render_run_dialog(cx).map(|e| fade_in("run-dialog-in", e, 110)))
             .children(self.render_git_dialog(cx).map(|e| fade_in("git-dialog-in", e, 110)))
             .children(self.render_menu(viewport, cx).map(|e| fade_in("menu-in", e, 90)))
+            .children(crate::stall::frame_probe())
     }
 }
 

@@ -56,8 +56,12 @@ pub(super) struct Problems {
     pub focus: FocusHandle,
     pub selected: usize,
     pub scroll: UniformListScrollHandle,
-    /// Last whole-project check; `None` until the Project tab is first opened.
+    /// Last whole-project check; `None` until the Project tab is first opened. Set through
+    /// `set_project`, which also groups it into `project_rows`.
     pub project: Option<Result<Vec<Diagnostic>, String>>,
+    /// The Project tab's rows (file headers and problems, as indices into `project`), built
+    /// once per check instead of on every frame and every key.
+    project_rows: std::rc::Rc<Vec<Row>>,
     pub project_running: bool,
     /// Why ruff could not run (not installed, bad config).
     pub error: Option<String>,
@@ -75,6 +79,7 @@ impl Problems {
             selected: 0,
             scroll: UniformListScrollHandle::new(),
             project: None,
+            project_rows: Default::default(),
             project_running: false,
             error: None,
             lint_gen: HashMap::new(),
@@ -82,12 +87,29 @@ impl Problems {
             intents_title: None,
         }
     }
+
+    pub fn set_project(&mut self, res: Option<Result<Vec<Diagnostic>, String>>) {
+        let mut rows = Vec::new();
+        if let Some(Ok(all)) = &res {
+            let mut i = 0;
+            while i < all.len() {
+                let n = all[i..].iter().take_while(|d| d.file == all[i].file).count();
+                rows.push(Row::File(i, n));
+                rows.extend((i..i + n).map(Row::Problem));
+                i += n;
+            }
+        }
+        self.project = res;
+        self.project_rows = std::rc::Rc::new(rows);
+    }
 }
 
-/// A row of the Problems list.
+/// A row of the Problems list, by index into the tab's diagnostics (the active editor's, or
+/// the project check's): a file header (its first problem, problem count), or a problem.
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Row {
-    File(PathBuf, usize),
-    Problem(Diagnostic),
+    File(usize, usize),
+    Problem(usize),
 }
 
 fn icon(s: Severity) -> (&'static str, gpui::Hsla) {
@@ -211,10 +233,10 @@ impl Workspace {
         }
         let Some(ruff) = self.ruff() else {
             if self.runs.all.is_none() {
-                self.problems.project = None;
+                self.problems.set_project(None);
                 return;
             }
-            self.problems.project = Some(Err("ruff not found: install it in the project interpreter (pip install ruff)".into()));
+            self.problems.set_project(Some(Err("ruff not found: install it in the project interpreter (pip install ruff)".into())));
             return;
         };
         self.problems.project_running = true;
@@ -224,7 +246,7 @@ impl Workspace {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.problems.project_running = false;
-                this.problems.project = Some(res);
+                this.problems.set_project(Some(res));
                 cx.notify();
             });
         })
@@ -249,26 +271,26 @@ impl Workspace {
         }
     }
 
-    fn file_rows(&self, cx: &gpui::App) -> Vec<Row> {
-        self.active_editor().map(|e| e.read(cx).diagnostics.iter().cloned().map(Row::Problem).collect()).unwrap_or_default()
+    fn file_count(&self, cx: &gpui::App) -> usize {
+        self.active_editor().map_or(0, |e| e.read(cx).diagnostics.len())
     }
 
-    fn rows(&self, cx: &gpui::App) -> Vec<Row> {
+    /// The current tab's rows: indices only, nothing cloned.
+    fn rows(&self, cx: &gpui::App) -> std::rc::Rc<Vec<Row>> {
         match self.problems.tab {
-            ProblemsTab::File => self.file_rows(cx),
-            ProblemsTab::Project => {
-                let Some(Ok(all)) = &self.problems.project else { return Vec::new() };
-                let mut rows = Vec::new();
-                let mut i = 0;
-                while i < all.len() {
-                    let f = all[i].file.clone();
-                    let n = all[i..].iter().take_while(|d| d.file == f).count();
-                    rows.push(Row::File(f, n));
-                    rows.extend(all[i..i + n].iter().cloned().map(Row::Problem));
-                    i += n;
-                }
-                rows
-            }
+            ProblemsTab::File => std::rc::Rc::new((0..self.file_count(cx)).map(Row::Problem).collect()),
+            ProblemsTab::Project => self.problems.project_rows.clone(),
+        }
+    }
+
+    /// The diagnostic a row's index points at, in the current tab.
+    fn problem_at(&self, i: usize, cx: &gpui::App) -> Option<Diagnostic> {
+        match self.problems.tab {
+            ProblemsTab::File => self.active_editor().and_then(|e| e.read(cx).diagnostics.get(i).cloned()),
+            ProblemsTab::Project => match &self.problems.project {
+                Some(Ok(all)) => all.get(i).cloned(),
+                _ => None,
+            },
         }
     }
 
@@ -294,9 +316,10 @@ impl Workspace {
             "home" => self.problems.selected = 0,
             "end" => self.problems.selected = n.saturating_sub(1),
             "enter" | "f4" => {
-                if let Some(Row::Problem(d)) = rows.get(self.problems.selected) {
-                    let d = d.clone();
-                    self.open_problem(&d, window, cx);
+                if let Some(&Row::Problem(di)) = rows.get(self.problems.selected) {
+                    if let Some(d) = self.problem_at(di, cx) {
+                        self.open_problem(&d, window, cx);
+                    }
                 }
                 cx.notify();
                 return true;
@@ -326,7 +349,7 @@ impl Workspace {
         let rows = self.rows(cx);
         let n = rows.len();
         let file_name = self.active_editor().and_then(|e| e.read(cx).path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()));
-        let file_count = self.file_rows(cx).len();
+        let file_count = self.file_count(cx);
         let project_count = match &self.problems.project {
             Some(Ok(v)) => Some(v.len()),
             _ => None,
@@ -402,9 +425,20 @@ impl Workspace {
                     let rows = this.rows(cx);
                     let focused = this.problems.focus.is_focused(window);
                     let root = this.root.clone();
-                    range
-                        .filter_map(|i| rows.get(i).map(|r| (i, r)))
-                        .map(|(i, r)| {
+                    // Only the visible rows' diagnostics are cloned.
+                    let visible: Vec<(usize, Row, Diagnostic)> = range
+                        .filter_map(|i| {
+                            let r = *rows.get(i)?;
+                            let di = match r {
+                                Row::File(first, _) => first,
+                                Row::Problem(di) => di,
+                            };
+                            Some((i, r, this.problem_at(di, cx)?))
+                        })
+                        .collect();
+                    visible
+                        .into_iter()
+                        .map(|(i, r, d)| {
                             let selected = this.problems.selected == i;
                             let base = div()
                                 .id(("problem", i))
@@ -418,8 +452,8 @@ impl Workspace {
                                 .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
                                 .cursor_pointer();
                             match r {
-                                Row::File(f, count) => {
-                                    let rel = brisk_run::relativize(&root, f);
+                                Row::File(_, count) => {
+                                    let rel = brisk_run::relativize(&root, &d.file);
                                     let (name, dir) = match rel.rsplit_once('/') {
                                         Some((d, n)) => (n.to_string(), d.to_string()),
                                         None => (rel.clone(), String::new()),
@@ -433,9 +467,9 @@ impl Workspace {
                                         .child(crate::icons::tree_arrow(true, true, Theme::text_muted()))
                                         .child(name)
                                         .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(dir))
-                                        .child(div().text_color(Theme::text_muted()).text_size(ui_px(12.)).child(format!("{count} problem{}", if *count == 1 { "" } else { "s" })))
+                                        .child(div().text_color(Theme::text_muted()).text_size(ui_px(12.)).child(format!("{count} problem{}", if count == 1 { "" } else { "s" })))
                                 }
-                                Row::Problem(d) => {
+                                Row::Problem(_) => {
                                     let (g, c) = icon(d.severity);
                                     let d2 = d.clone();
                                     base.pl(px(if this.problems.tab == ProblemsTab::Project { 32. } else { 12. }))

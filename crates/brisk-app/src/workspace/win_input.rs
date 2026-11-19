@@ -65,6 +65,52 @@ pub(super) fn post(kind: Mouse, x: f32, y: f32, held: bool) {
 #[cfg(not(windows))]
 pub(super) fn post(_: Mouse, _: f32, _: f32, _: bool) {}
 
+/// One WM_MOUSEWHEEL notch (`delta` 120 = up, -120 = down) at window coordinates in physical
+/// pixels (the message carries screen coordinates).
+#[cfg(windows)]
+pub(super) fn wheel(x: f32, y: f32, delta: i16) {
+    #[repr(C)]
+    struct Pt {
+        x: i32,
+        y: i32,
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        fn EnumThreadWindows(thread: u32, f: extern "system" fn(isize, isize) -> i32, l: isize) -> i32;
+        fn IsWindowVisible(h: isize) -> i32;
+        fn PostMessageW(h: isize, msg: u32, w: usize, l: isize) -> i32;
+        fn ClientToScreen(h: isize, p: *mut Pt) -> i32;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentThreadId() -> u32;
+    }
+    extern "system" fn found(h: isize, out: isize) -> i32 {
+        unsafe {
+            if IsWindowVisible(h) != 0 {
+                *(out as *mut isize) = h;
+                return 0;
+            }
+        }
+        1
+    }
+    let mut hwnd: isize = 0;
+    unsafe {
+        EnumThreadWindows(GetCurrentThreadId(), found, &mut hwnd as *mut isize as isize);
+        if hwnd == 0 {
+            return;
+        }
+        let mut p = Pt { x: x as i32, y: y as i32 };
+        ClientToScreen(hwnd, &mut p);
+        let l = ((p.y as isize & 0xffff) << 16) | (p.x as isize & 0xffff);
+        let w = ((delta as u16 as usize) << 16) as usize;
+        PostMessageW(hwnd, 0x020A, w, l); // WM_MOUSEWHEEL
+    }
+}
+
+#[cfg(not(windows))]
+pub(super) fn wheel(_: f32, _: f32, _: i16) {}
+
 /// A left click: move, press, release.
 pub(super) fn click(x: f32, y: f32) {
     post(Mouse::Move, x, y, false);
