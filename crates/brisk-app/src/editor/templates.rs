@@ -32,15 +32,18 @@ pub const TEMPLATES: &[Template] = &[
     Template { key: "super", desc: "super() call", body: "super().${1:__init__}(${2:})$END$" },
 ];
 
-/// Surround With: (name, header, footer). The selected lines go between, one level deeper.
+/// Surround With: (name, header, footer). The selected lines go between, one level deeper
+/// (a comment pair keeps their indent). PyCharm's order, so the 1-7 mnemonics match.
 pub const SURROUNDERS: &[(&str, &str, &str)] = &[
     ("if", "if ${1:condition}:", ""),
     ("if / else", "if ${1:condition}:", "else:\n    ${2:pass}"),
     ("while", "while ${1:condition}:", ""),
-    ("for", "for ${1:item} in ${2:items}:", ""),
     ("try / except", "try:", "except ${1:Exception} as ${2:e}:\n    ${3:raise}"),
     ("try / finally", "try:", "finally:\n    ${1:pass}"),
+    ("for", "for ${1:item} in ${2:items}:", ""),
     ("with", "with ${1:open(path)} as ${2:f}:", ""),
+    ("def", "def ${1:name}(${2:}):", ""),
+    ("region...endregion Comments", "# region ${1:Description}", "# endregion"),
 ];
 
 /// Expanded text: the fields' char ranges in Tab order, and where `$END$` was (else the end).
@@ -151,6 +154,7 @@ pub fn render_surround(lines: &[String], header: &str, footer: &str, unit: &str)
         .min_by_key(|s| s.chars().count())
         .unwrap_or_default();
     let mut out = format!("{base}{}", reindent(header, &base, unit));
+    let unit = if header.starts_with('#') { "" } else { unit };
     for l in lines {
         out.push('\n');
         if !l.trim().is_empty() {
@@ -413,5 +417,7 @@ mod tests {
         assert_eq!((field(&f, 0), field(&f, 1)), ("condition".to_string(), "pass".to_string()));
         let f = render_surround(&["a()".to_string()], "try:", "except ${1:Exception} as ${2:e}:\n    ${3:raise}", "    ");
         assert_eq!(f.text, "try:\n    a()\nexcept Exception as e:\n    raise");
+        let f = render_surround(&["    a()".to_string()], "# region ${1:Description}", "# endregion", "    ");
+        assert_eq!(f.text, "    # region Description\n    a()\n    # endregion");
     }
 }

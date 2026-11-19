@@ -86,6 +86,7 @@ actions! {
     ReformatCode => "Reformat Code", "Code";
     OptimizeImports => "Optimize Imports", "Code";
     CodeCleanup => "Code Cleanup", "Code";
+    Unwrap => "Unwrap/Remove...", "Code";
     ExpandRegion => "Expand", "Code";
     CollapseRegion => "Collapse", "Code";
     ExpandAll => "Expand All", "Code";

@@ -32,6 +32,8 @@ pub(super) enum Intent {
     Template(&'static str),
     /// Ctrl+Alt+T: surround with `SURROUNDERS[i]`.
     Surround(usize),
+    /// Ctrl+Shift+Delete: unwrap or remove the enclosing statement.
+    Unwrap(brisk_syntax::Unwrap),
     /// Ctrl+Alt+V: extract the selection into a variable; `true`: every occurrence.
     ExtractVariable(bool),
     /// A language server quick fix (ty: import a name, qualify it): title and edits.
@@ -631,6 +633,7 @@ impl Workspace {
             Intent::Suppress(d) => ed.update(cx, |e, cx| e.suppress(&d, cx)),
             Intent::Template(key) => ed.update(cx, |e, cx| e.insert_template(key, cx)),
             Intent::Surround(i) => ed.update(cx, |e, cx| e.surround_with(i, cx)),
+            Intent::Unwrap(u) => ed.update(cx, |e, cx| e.apply_unwrap(&u, cx)),
             Intent::ExtractVariable(all) => {
                 ed.update(cx, |e, cx| e.extract_variable(all, cx));
             }

@@ -59,6 +59,7 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("ctrl-shift-/", A::CommentBlock, ED);
     k.bind("ctrl-alt-l", A::ReformatCode, ED);
     k.bind("ctrl-alt-o", A::OptimizeImports, None);
+    k.bind("ctrl-shift-delete", A::Unwrap, None);
     k.bind("ctrl-=", A::ExpandRegion, ED);
     k.bind("ctrl--", A::CollapseRegion, ED);
     k.bind("ctrl-shift-=", A::ExpandAll, ED);

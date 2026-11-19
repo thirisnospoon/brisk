@@ -1367,6 +1367,7 @@ impl Workspace {
             A::NextError | A::PreviousError => self.goto_problem(action == A::NextError, window, cx),
             A::ShowIntentionActions => self.show_intentions(window, cx),
             A::SurroundWith | A::InsertLiveTemplate => self.template_action(action, window, cx),
+            A::Unwrap => self.unwrap_action(window, cx),
             A::ToggleGitWindow => {
                 self.toggle_bottom(BottomTool::Git, window, cx);
                 if self.bottom == Some(BottomTool::Git) {

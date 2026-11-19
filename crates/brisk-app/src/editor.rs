@@ -21,6 +21,7 @@ pub mod breakpoints;
 pub mod run_marks;
 pub mod coverage;
 mod select;
+mod structure;
 mod scope;
 pub use scope::siblings as scope_siblings;
 pub use select::{clipboard_history, remember_clip};
@@ -925,8 +926,9 @@ impl Editor {
             A::DeleteLine => b.delete_lines(),
             A::JoinLines => b.join_lines(),
             A::ToggleCase => b.toggle_case(),
-            A::MoveLineUp | A::MoveStatementUp => b.move_lines(true),
-            A::MoveLineDown | A::MoveStatementDown => b.move_lines(false),
+            A::MoveLineUp => b.move_lines(true),
+            A::MoveLineDown => b.move_lines(false),
+            A::MoveStatementUp | A::MoveStatementDown => self.move_statement(action == A::MoveStatementUp),
             A::CommentLine => b.toggle_line_comment(),
             A::AddCaretNextOccurrence => b.add_next_occurrence(),
             A::SelectAllOccurrences => b.select_all_occurrences(),

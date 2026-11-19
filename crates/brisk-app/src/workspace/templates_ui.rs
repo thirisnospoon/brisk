@@ -33,6 +33,25 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Ctrl+Shift+Delete (Unwrap/Remove...): the enclosing statements to unwrap or remove.
+    pub(super) fn unwrap_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ed) = self.focused_editor(window, cx).or_else(|| self.active_editor().cloned()) else { return };
+        let options = ed.update(cx, |e, _| e.unwrap_options());
+        if options.is_empty() {
+            self.problems.intents.clear();
+            self.status = "Nothing here to unwrap or remove".into();
+            cx.notify();
+            return;
+        }
+        self.problems.intents = options
+            .into_iter()
+            .map(|u| PopupItem { label: u.label.clone(), detail: String::new(), hint: String::new(), target: Target::Intention(Box::new(Intent::Unwrap(u))) })
+            .collect();
+        self.problems.intents_title = Some("Choose the statement to unwrap/remove");
+        self.open_popup(PopupKind::Intentions);
+        cx.notify();
+    }
+
     /// `BRISK_SMOKE_TEMPLATES=1`: writes `tpl.py`, `tpl.toml`, `tpl.yaml`, `tpl.json` and
     /// `tpl.css` in the project and presses real keys: abbreviations + Tab, Ctrl+J, Ctrl+Alt+T,
     /// Ctrl+/ and Ctrl+Shift+/. Prints each result.
