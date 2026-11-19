@@ -1,4 +1,5 @@
-//! Settings dialog (Ctrl+Alt+S): theme, editor font, font size, line spacing, inlay hints, editor tabs, actions on save; font zoom
+//! Settings dialog (Ctrl+Alt+S): theme, smooth scrolling, the caret, editor font, font size, line
+//! spacing, inlay hints, editor tabs, actions on save; font zoom
 //! (Alt+Shift+. / Alt+Shift+, / Ctrl+wheel) and the quick theme switch.
 
 use crate::theme::ui_px;
@@ -224,6 +225,15 @@ impl Workspace {
         let inlay = checkbox("set-inlay", s.inlay_hints, "Show inlay hints", "(inferred types, parameter names)", |s| s.inlay_hints = !s.inlay_hints, cx);
         let reformat = checkbox("set-reformat", s.reformat_on_save, "Reformat code", "(ruff format)", |s| s.reformat_on_save = !s.reformat_on_save, cx);
         let imports = checkbox("set-imports", s.optimize_imports_on_save, "Optimize imports", "(ruff: unused, sorted)", |s| s.optimize_imports_on_save = !s.optimize_imports_on_save, cx);
+        let smooth = checkbox("set-smooth", s.smooth_scrolling, "Enable smooth scrolling", "", |s| s.smooth_scrolling = !s.smooth_scrolling, cx);
+        let caret = div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .py(px(4.))
+            .child(checkbox("set-blink", s.caret_blinking, "Caret blinking", "", |s| s.caret_blinking = !s.caret_blinking, cx))
+            .child(checkbox("set-slide", s.smooth_caret, "Smooth caret movement", "(the caret slides to its new place)", |s| s.smooth_caret = !s.smooth_caret, cx))
+            .into_any_element();
         let preview = div()
             .mt(px(6.))
             .p(px(10.))
@@ -280,6 +290,9 @@ impl Workspace {
                         .child(row("Theme", theme))
                         .child(row("UI style", style))
                         .child(row("UI font size", ui_size))
+                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › GENERAL"))
+                        .child(row("Scrolling", smooth))
+                        .child(row("Caret", caret))
                         .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › FONT"))
                         .child(row("Font", fonts))
                         .child(row("Size", size))
@@ -331,8 +344,10 @@ impl Workspace {
         eprintln!("smoke-settings: inlay hints off (live) -> {}", settings::inlay_hints());
         self.settings_edit(|s| s.islands = true, window);
         eprintln!("smoke-settings: ui style islands (live) -> islands={}", crate::theme::islands());
+        self.settings_edit(|s| (s.smooth_scrolling, s.caret_blinking, s.smooth_caret) = (false, false, true), window);
+        eprintln!("smoke-settings: smooth scrolling / caret blinking / smooth caret (live) -> {} {} {}", settings::smooth_scrolling(), settings::caret_blinking(), settings::smooth_caret());
         self.smoke_press("escape", window, cx);
-        eprintln!("smoke-settings: escape -> inlay hints {} islands={}", settings::inlay_hints(), crate::theme::islands());
+        eprintln!("smoke-settings: escape -> inlay hints {} islands={} smooth scrolling {} caret blinking {} smooth caret {}", settings::inlay_hints(), crate::theme::islands(), settings::smooth_scrolling(), settings::caret_blinking(), settings::smooth_caret());
         self.dispatch(Action::Settings, window, cx);
         let font = self.settings_dialog.as_ref().and_then(|d| d.fonts.last().cloned()).unwrap_or_default();
         self.settings_edit(|s| {

@@ -43,6 +43,7 @@ mod quick_def;
 mod word_complete;
 mod doc_view;
 mod scroll;
+mod motion;
 pub mod templates;
 pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
@@ -85,9 +86,8 @@ pub struct Editor {
     focus: FocusHandle,
     scroll_y: f32,
     scroll_x: f32,
-    /// Smooth wheel scrolling: (target scroll_y, the value the animation last set).
-    smooth: Option<(f32, f32)>,
-    smooth_task: Option<gpui::Task<()>>,
+    /// Smooth scrolling and the caret's blink and slide (editor/motion.rs).
+    motion: motion::Motion,
     /// (buffer version, longest line in chars): the horizontal scroll range.
     max_line: (u64, usize),
     big: big::BigFile,
@@ -306,8 +306,7 @@ impl Editor {
             focus: cx.focus_handle(),
             scroll_y: 0.0,
             scroll_x: 0.0,
-            smooth: None,
-            smooth_task: None,
+            motion: Default::default(),
             max_line: (u64::MAX, 0),
             big: Default::default(),
             occ: Default::default(),
@@ -384,8 +383,7 @@ impl Editor {
             focus: cx.focus_handle(),
             scroll_y: 0.0,
             scroll_x: 0.0,
-            smooth: None,
-            smooth_task: None,
+            motion: Default::default(),
             max_line: (u64::MAX, 0),
             big: Default::default(),
             occ: Default::default(),
@@ -485,7 +483,7 @@ impl Editor {
         let y = y.clamp(0.0, self.max_scroll_y().max(0.0));
         if (y - self.scroll_y).abs() > 0.01 {
             self.scroll_y = y;
-            self.smooth = None;
+            self.motion.glide = None;
             cx.notify();
         }
     }
@@ -777,6 +775,7 @@ impl Editor {
 
     fn ensure_caret_visible(&mut self) {
         self.sync_folds();
+        let shown = self.begin_scroll();
         let (line, _) = self.caret_line_col();
         let vh = self.layout.as_ref().map(|l| f32::from(l.bounds.size.height)).unwrap_or(600.0);
         let y = self.row_of(line) as f32 * line_height();
@@ -787,6 +786,7 @@ impl Editor {
             self.scroll_y = y + line_height() - vh + margin;
         }
         self.clamp_scroll();
+        self.end_scroll(shown, Self::jump_duration());
         self.ensure_caret_visible_x();
     }
 
@@ -794,8 +794,10 @@ impl Editor {
         self.sync_folds();
         let (line, _) = self.caret_line_col();
         let vh = self.layout.as_ref().map(|l| f32::from(l.bounds.size.height)).unwrap_or(600.0);
+        let shown = self.begin_scroll();
         self.scroll_y = (self.row_of(line) as f32 * line_height() - vh / 3.0).max(0.0);
         self.clamp_scroll();
+        self.end_scroll(shown, Self::jump_duration());
     }
 
     fn clamp_scroll(&mut self) {
@@ -1027,6 +1029,9 @@ impl Editor {
             A::MoveDown | A::SelectDown | A::PageDown => self.skip_folded_lines(true),
             _ => {}
         }
+        if matches!(action, A::PageUp | A::PageDown) && !self.is_field {
+            self.page_scroll(action == A::PageDown, page);
+        }
         if !keep_scroll {
             self.ensure_caret_visible();
         } else {
@@ -1247,52 +1252,9 @@ impl Editor {
             self.smooth_scroll(f32::from(d.y), cx);
             return;
         }
-        self.smooth = None;
+        self.motion.glide = None;
         self.scroll_by(f32::from(d.x), f32::from(d.y), e.modifiers.shift);
         cx.notify();
-    }
-
-    fn smooth_scroll(&mut self, dy: f32, cx: &mut Context<Self>) {
-        // Keep adding to the running target unless something else moved the view meanwhile.
-        let base = match self.smooth {
-            Some((target, last)) if last == self.scroll_y => target,
-            _ => self.scroll_y,
-        };
-        let target = (base - dy).clamp(0.0, self.max_scroll_y());
-        self.smooth = Some((target, self.scroll_y));
-        if self.smooth_task.is_some() {
-            return;
-        }
-        self.smooth_task = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(std::time::Duration::from_millis(7)).await;
-                let go_on = this
-                    .update(cx, |ed, cx| {
-                        let Some((target, last)) = ed.smooth else { return false };
-                        if last != ed.scroll_y {
-                            // Caret moves, Go to Line and the like take over.
-                            ed.smooth = None;
-                            return false;
-                        }
-                        let left = target - ed.scroll_y;
-                        if left.abs() < 0.5 {
-                            ed.scroll_y = target;
-                            ed.smooth = None;
-                        } else {
-                            // About 90 ms to settle, fast at first, like PyCharm's smooth scrolling.
-                            ed.scroll_y += left * 0.3;
-                            ed.smooth = Some((target, ed.scroll_y));
-                        }
-                        cx.notify();
-                        ed.smooth.is_some()
-                    })
-                    .unwrap_or(false);
-                if !go_on {
-                    break;
-                }
-            }
-            let _ = this.update(cx, |ed, _| ed.smooth_task = None);
-        }));
     }
 }
 
@@ -1604,6 +1566,9 @@ impl Element for EditorElement {
         let run = |len: usize, color: gpui::Hsla| TextRun { len, font: mono.clone(), color, background_color: None, underline: None, strikethrough: None };
 
         let headers = self.editor.update(cx, |ed, cx| {
+            if ed.step_glide() {
+                window.request_animation_frame();
+            }
             ed.reparse();
             ed.background_parse(cx);
             ed.schedule_folds(cx);
@@ -1932,11 +1897,23 @@ impl Element for EditorElement {
                 }
             }
         }
-        if focused {
+        // Carets: fading blink, optional slide of the primary one, 2 px snapped to device pixels.
+        let caret_look = focused.then(|| {
+            let (l, c) = b.pos_to_line_col(b.primary().head);
+            let target = idx_of(l).map(|_| point(x_of(l, c), y_of(l)));
+            let key = (b.version(), b.primary().head, b.selections.len());
+            ed.motion.caret_look(key, target, point(px(ed.scroll_x), px(ed.scroll_y)))
+        });
+        if let Some(look) = caret_look.as_ref().filter(|k| k.alpha > 0.0) {
+            let scale = window.scale_factor();
+            let snap = |v: Pixels| px((f32::from(v) * scale).round() / scale);
+            let w = px((2.0 * scale).round().max(1.0) / scale);
+            let primary = b.primary().head;
             for s in &b.selections {
                 let (l, c) = b.pos_to_line_col(s.head);
                 if idx_of(l).is_some() {
-                    carets.push(fill(Bounds::new(point(x_of(l, c), y_of(l)), size(px(2.), lh)), Theme::caret()));
+                    let at = look.primary.filter(|_| s.head == primary).unwrap_or_else(|| point(x_of(l, c), y_of(l)));
+                    carets.push(fill(Bounds::new(point(snap(at.x), snap(at.y)), size(w, lh)), Theme::caret().opacity(look.alpha)));
                 }
             }
         }
@@ -2242,8 +2219,13 @@ impl Element for EditorElement {
         let lines = std::mem::take(&mut pp.lines);
         let rows = std::mem::take(&mut pp.rows);
         let char_w = pp.char_w;
-        self.editor.update(cx, |ed, _| {
+        let me = self.editor.clone();
+        self.editor.update(cx, |ed, cx| {
             ed.layout = Some(LayoutCache { bounds, caret_xy, text_left, text_x, rows, lines, char_w });
+            match caret_look {
+                Some(look) => ed.keep_caret_look(look, &me, window, cx),
+                None => ed.stop_caret_look(),
+            }
         });
     }
 }
