@@ -294,6 +294,16 @@ struct Popup {
     items: Vec<PopupItem>,
 }
 
+/// Structure tool window state: its scroll and the item it last followed the caret to.
+#[derive(Default)]
+struct StructureView {
+    scroll: gpui::ScrollHandle,
+    bar: crate::scrollbar::BarState,
+    follow: Option<usize>,
+    /// Caret line of the active editor at the last repaint.
+    caret: Option<usize>,
+}
+
 pub struct Workspace {
     root: PathBuf,
     branch: Option<String>,
@@ -313,6 +323,7 @@ pub struct Workspace {
     tree_scroll: UniformListScrollHandle,
     popup_scroll: UniformListScrollHandle,
     tree_bar: crate::scrollbar::BarState,
+    structure_view: StructureView,
     files: Option<Arc<FileList>>,
     tabs: Vec<Tab>,
     active: Option<usize>,
@@ -466,6 +477,15 @@ impl Workspace {
             cx.defer_in(window, move |this: &mut Self, window, cx| {
                 for f in &files {
                     this.open_file(f, window, cx);
+                }
+            });
+        }
+        // Screenshot helper: the Structure window, with the caret on line N (1-based) of the file.
+        if let Some(line) = std::env::var("BRISK_OPEN_STRUCTURE").ok().and_then(|l| l.parse::<usize>().ok()) {
+            cx.defer_in(window, move |this: &mut Self, window, cx| {
+                this.toggle_left(LeftTool::Structure, window, cx);
+                if let Some(ed) = this.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.go_to_line(line.saturating_sub(1), cx));
                 }
             });
         }
@@ -693,6 +713,7 @@ impl Workspace {
             tree_scroll: UniformListScrollHandle::new(),
             popup_scroll: UniformListScrollHandle::new(),
             tree_bar: Default::default(),
+            structure_view: Default::default(),
             files: None,
             tabs: Vec::new(),
             tab_scroll: [gpui::ScrollHandle::new(), gpui::ScrollHandle::new()],
@@ -2016,43 +2037,79 @@ impl Workspace {
             ).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&self.tree_scroll), self.tree_bar.clone())))
     }
 
+    /// The active editor notified: repaint Structure when its caret moved to another line, so
+    /// the highlighted item follows it.
+    pub(super) fn structure_follow_caret(&mut self, ed: &Entity<Editor>, cx: &mut Context<Self>) {
+        if self.left != Some(LeftTool::Structure) || self.active_editor() != Some(ed) {
+            return;
+        }
+        let line = ed.read(cx).caret_line_col().0;
+        if self.structure_view.caret != Some(line) {
+            self.structure_view.caret = Some(line);
+            cx.notify();
+        }
+    }
+
+    /// Structure (Alt+7): the file's classes and functions. The item around the caret is
+    /// highlighted and scrolled into view as the caret moves (PyCharm's Autoscroll from Source).
     fn render_structure(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let items = self.active_editor().cloned().map(|e| e.update(cx, |e, _| e.outline())).unwrap_or_default();
         let ed = self.active_editor().cloned();
+        let (items, chain) = ed.as_ref().map(|e| e.update(cx, |e, _| e.caret_scope())).unwrap_or_default();
+        let current = chain.last().copied();
+        if current != self.structure_view.follow {
+            if let Some(i) = current {
+                self.structure_view.scroll.scroll_to_item(i);
+            }
+            // Before the list's first layout GPUI cannot scroll it yet: try again next frame.
+            if self.structure_view.scroll.bounds().size.height > px(0.) {
+                self.structure_view.follow = current;
+            } else {
+                cx.notify();
+            }
+        }
+        let rows = items.iter().cloned().enumerate().map(move |(i, it)| {
+            let (glyph, color) = match it.kind {
+                brisk_syntax::OutlineKind::Class => ("C", gpui::rgb(0x6c9be8)),
+                brisk_syntax::OutlineKind::Function => ("f", gpui::rgb(0xe0a85a)),
+                brisk_syntax::OutlineKind::Method => ("m", gpui::rgb(0xcf8e6d)),
+            };
+            let ed = ed.clone();
+            let line = it.line;
+            div()
+                .id(("outline", i))
+                .h(px(24.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .pl(px(12. + it.depth as f32 * 16.))
+                .text_size(px(13.))
+                .when(current == Some(i), |d| d.bg(Theme::selection_row()))
+                .hover(|s| s.bg(Theme::hover_row()))
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if let Some(ed) = &ed {
+                        ed.update(cx, |e, cx| e.go_to_line(line, cx));
+                    }
+                    this.focus_editor(window, cx);
+                }))
+                .child(div().w(px(16.)).h(px(16.)).rounded(px(8.)).bg(color).text_color(Theme::bg()).text_size(px(10.)).flex().items_center().justify_center().child(glyph))
+                .child(it.name)
+        });
         div()
             .id("structure")
             .flex()
             .flex_col()
             .size_full()
-            .overflow_y_scroll()
             .child(Self::panel_header("Structure"))
-            .children(items.into_iter().enumerate().map(move |(i, it)| {
-                let (glyph, color) = match it.kind {
-                    brisk_syntax::OutlineKind::Class => ("C", gpui::rgb(0x6c9be8)),
-                    brisk_syntax::OutlineKind::Function => ("f", gpui::rgb(0xe0a85a)),
-                    brisk_syntax::OutlineKind::Method => ("m", gpui::rgb(0xcf8e6d)),
-                };
-                let ed = ed.clone();
-                let line = it.line;
+            .child(
                 div()
-                    .id(("outline", i))
-                    .h(px(24.))
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .pl(px(12. + it.depth as f32 * 16.))
-                    .text_size(px(13.))
-                    .hover(|s| s.bg(Theme::hover_row()))
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if let Some(ed) = &ed {
-                            ed.update(cx, |e, cx| e.go_to_line(line, cx));
-                        }
-                        this.focus_editor(window, cx);
-                    }))
-                    .child(div().w(px(16.)).h(px(16.)).rounded(px(8.)).bg(color).text_color(Theme::bg()).text_size(px(10.)).flex().items_center().justify_center().child(glyph))
-                    .child(it.name)
-            }))
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(div().id("structure-list").size_full().flex().flex_col().overflow_y_scroll().track_scroll(&self.structure_view.scroll).children(rows))
+                    .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::Handle(self.structure_view.scroll.clone()), self.structure_view.bar.clone())),
+            )
     }
 
     fn render_placeholder(title: &str, body: &str) -> gpui::AnyElement {

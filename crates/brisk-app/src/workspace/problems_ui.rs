@@ -121,8 +121,9 @@ impl Workspace {
         cx.observe(ed, |this: &mut Self, ed, cx| {
             let v = ed.read(cx).buffer.version();
             if ed.read(cx).lint_sent != v && ed.read(cx).is_python() {
-                this.schedule_lint(ed, LINT_DELAY, cx);
+                this.schedule_lint(ed.clone(), LINT_DELAY, cx);
             }
+            this.structure_follow_caret(&ed, cx);
         })
         .detach();
         cx.subscribe_in(ed, window, |this: &mut Self, ed, ev: &EditorEvent, window, cx| match ev {
