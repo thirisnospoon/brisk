@@ -12,7 +12,7 @@ pub struct Folds {
     /// Buffer version `regions` and `hidden` are up to date with.
     version: u64,
     /// Hidden lines, merged and sorted: (first, last) inclusive.
-    hidden: Vec<(usize, usize)>,
+    pub(super) hidden: Vec<(usize, usize)>,
     /// Foldable regions (first line, last line) for buffer version `.0`.
     pub(super) candidates: (Option<u64>, Vec<(usize, usize)>),
 }
@@ -109,6 +109,9 @@ impl Editor {
 
     /// The display row of a buffer line (a hidden line maps to the row after its header).
     pub fn row_of(&self, line: usize) -> usize {
+        if self.wrap_active() {
+            return self.wrap_first_row(line);
+        }
         let mut hidden = 0;
         for &(a, z) in &self.folds.hidden {
             if a > line {
@@ -126,6 +129,9 @@ impl Editor {
 
     /// The buffer line shown on a display row.
     pub fn line_of_row(&self, row: usize) -> usize {
+        if self.wrap_active() {
+            return self.wrap_line_of_row(row);
+        }
         let mut line = row;
         for &(a, z) in &self.folds.hidden {
             if a > line {
@@ -137,6 +143,9 @@ impl Editor {
     }
 
     pub fn display_rows(&self) -> usize {
+        if self.wrap_active() {
+            return self.wrap_total_rows();
+        }
         let hidden: usize = self.folds.hidden.iter().map(|&(a, z)| z + 1 - a).sum();
         self.buffer.len_lines().saturating_sub(hidden).max(1)
     }

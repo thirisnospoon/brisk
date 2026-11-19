@@ -43,11 +43,23 @@ pub struct Settings {
     pub sticky_lines: bool,
     /// Editor › General › Appearance: "Show whitespaces" (the default for every editor).
     pub show_whitespaces: bool,
+    /// Editor › General › Soft Wraps: "Soft-wrap these files" (`;`-separated masks).
+    pub soft_wrap_files: String,
+    /// "Use original line's indent for wrapped parts", plus this many columns.
+    pub soft_wrap_indent: bool,
+    pub soft_wrap_extra_indent: u32,
+    /// Code Style › Python › Code Generation: "Line comment at first column" and
+    /// "Add a space at line comment start" (both on in PyCharm).
+    pub line_comment_first_column: bool,
+    pub line_comment_space: bool,
 }
+
+/// PyCharm's default for "Soft-wrap these files".
+pub const DEFAULT_SOFT_WRAP_FILES: &str = "*.md; *.txt; *.rst; *.adoc";
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false, ui_font_size: DEFAULT_UI_FONT_SIZE, ui_zoom: 1.0, reformat_on_save: false, optimize_imports_on_save: false, smooth_scrolling: true, caret_blinking: true, smooth_caret: false, sticky_lines: true, show_whitespaces: false }
+        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false, ui_font_size: DEFAULT_UI_FONT_SIZE, ui_zoom: 1.0, reformat_on_save: false, optimize_imports_on_save: false, smooth_scrolling: true, caret_blinking: true, smooth_caret: false, sticky_lines: true, soft_wrap_files: DEFAULT_SOFT_WRAP_FILES.into(), soft_wrap_indent: true, soft_wrap_extra_indent: 0, line_comment_first_column: true, line_comment_space: true, show_whitespaces: false }
     }
 }
 
@@ -129,6 +141,21 @@ pub fn load() -> Settings {
             s.smooth_caret = flag("smooth_caret").unwrap_or(s.smooth_caret);
             s.sticky_lines = flag("sticky_lines").unwrap_or(s.sticky_lines);
             s.show_whitespaces = flag("show_whitespaces").unwrap_or(s.show_whitespaces);
+            if let Some(t) = v.get("soft_wrap_files").and_then(|t| t.as_str()) {
+                s.soft_wrap_files = t.to_string();
+            }
+            if let Some(b) = v.get("soft_wrap_indent").and_then(|t| t.as_bool()) {
+                s.soft_wrap_indent = b;
+            }
+            if let Some(n) = v.get("soft_wrap_extra_indent").and_then(|t| t.as_u64()) {
+                s.soft_wrap_extra_indent = (n as u32).min(16);
+            }
+            if let Some(b) = v.get("line_comment_first_column").and_then(|t| t.as_bool()) {
+                s.line_comment_first_column = b;
+            }
+            if let Some(b) = v.get("line_comment_space").and_then(|t| t.as_bool()) {
+                s.line_comment_space = b;
+            }
         }
     }
     apply(&s);
@@ -175,12 +202,50 @@ pub fn save(s: &Settings) -> std::io::Result<()> {
         "smooth_caret": s.smooth_caret,
         "sticky_lines": s.sticky_lines,
         "show_whitespaces": s.show_whitespaces,
+        "soft_wrap_files": s.soft_wrap_files,
+        "soft_wrap_indent": s.soft_wrap_indent,
+        "soft_wrap_extra_indent": s.soft_wrap_extra_indent,
+        "line_comment_first_column": s.line_comment_first_column,
+        "line_comment_space": s.line_comment_space,
     });
     let p = path();
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d)?;
     }
     std::fs::write(p, serde_json::to_string_pretty(&v).unwrap_or_default())
+}
+
+/// Whether a new editor for `path` starts with Soft-Wrap on ("Soft-wrap these files").
+pub fn soft_wrap_for(path: &std::path::Path) -> bool {
+    let name = path.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    current().soft_wrap_files.split([';', ',']).map(|m| m.trim().to_lowercase()).filter(|m| !m.is_empty()).any(|m| mask_matches(&m, &name))
+}
+
+/// `*` (any run) and `?` (one char) in a file name mask.
+fn mask_matches(mask: &str, name: &str) -> bool {
+    fn go(m: &[char], n: &[char]) -> bool {
+        match m.first() {
+            None => n.is_empty(),
+            Some('*') => (0..=n.len()).any(|i| go(&m[1..], &n[i..])),
+            Some('?') => !n.is_empty() && go(&m[1..], &n[1..]),
+            Some(c) => n.first() == Some(c) && go(&m[1..], &n[1..]),
+        }
+    }
+    go(&mask.chars().collect::<Vec<_>>(), &name.chars().collect::<Vec<_>>())
+}
+
+pub fn soft_wrap_indent() -> bool {
+    current().soft_wrap_indent
+}
+
+pub fn soft_wrap_extra_indent() -> usize {
+    current().soft_wrap_extra_indent as usize
+}
+
+/// (line comment at first column, add a space after the comment mark).
+pub fn line_comment_style() -> (bool, bool) {
+    let s = current();
+    (s.line_comment_first_column, s.line_comment_space)
 }
 
 pub fn is_light() -> bool {

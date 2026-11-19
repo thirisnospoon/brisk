@@ -129,6 +129,62 @@ fn comment_toggle_blank_lines_and_partial_selection() {
 }
 
 #[test]
+fn mouse_carets_and_unit_drags() {
+    let mut b = buf("alpha beta gamma\nsecond line\nthird");
+    b.selections = vec![Selection::caret(0)];
+    b.toggle_caret(6);
+    assert_eq!(b.selections.len(), 2);
+    // Again on the same spot: removed; the last caret is never removed.
+    b.toggle_caret(6);
+    assert_eq!(b.selections.len(), 1);
+    b.toggle_caret(0);
+    assert_eq!(b.selections.len(), 1);
+    b.toggle_caret(3);
+    assert_eq!(b.selections.len(), 2);
+    // Double click on "beta" then drag to "gamma" / back to "alpha": whole words.
+    b.select_units_to(6..10, 13, false);
+    assert_eq!(b.primary().range(), 6..16);
+    b.select_units_to(6..10, 2, false);
+    assert_eq!((b.primary().anchor, b.primary().head), (10, 0));
+    // Triple click on line 1, drag into line 2: whole lines.
+    b.select_units_to(17..29, 31, true);
+    assert_eq!(b.primary().range(), 17..34);
+}
+
+#[test]
+fn comment_on_a_blank_line() {
+    // Ctrl+/ on an empty line: "# " and the caret after it, on the same line.
+    let mut b = buf("def f():\n\n    pass");
+    b.selections = vec![Selection::caret(9)];
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "def f():\n# \n    pass");
+    assert_eq!(b.primary().head, 11);
+    // An indented blank line keeps its indent before the mark.
+    let mut b = buf("def f():\n    \n");
+    b.selections = vec![Selection::caret(13)];
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "def f():\n    # \n");
+    assert_eq!(b.primary().head, 15);
+}
+
+#[test]
+fn comment_style_options() {
+    // "Line comment at first column" off: at the block's indent; no space when asked.
+    let mut b = buf("    x = 1\n        y = 2");
+    b.comment_first_column = false;
+    b.select_all();
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "    # x = 1\n    #     y = 2");
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "    x = 1\n        y = 2");
+    let mut b = buf("x = 1");
+    b.comment_space = false;
+    b.select_all();
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "#x = 1");
+}
+
+#[test]
 fn multi_caret_insert() {
     let mut b = buf("a\nb\nc");
     b.selections = vec![Selection::caret(1), Selection::caret(3), Selection::caret(5)];
@@ -195,10 +251,63 @@ fn indent_unindent_selection() {
 }
 
 #[test]
+fn join_lines_python() {
+    let py = |t: &str| {
+        let mut b = buf(t);
+        b.python = true;
+        b.line_comment = Some("#".into());
+        b
+    };
+    let caret_mark = |b: &Buffer| {
+        let mut t = b.text();
+        let at = t.char_indices().nth(b.primary().head).map_or(t.len(), |(i, _)| i);
+        t.insert(at, '|');
+        t
+    };
+    // `if x:` + `y` -> `if x: y`, the caret at the joint.
+    let mut b = py("if x:\n    y = 1\n");
+    b.join_lines();
+    assert_eq!(caret_mark(&b), "if x:| y = 1\n");
+    // A backslash continuation goes.
+    let mut b = py("total = a + \\\n    b\n");
+    b.join_lines();
+    assert_eq!(b.text(), "total = a + b\n");
+    // String literals merge, with or without a backslash between them.
+    let mut b = py("s = ('abc'\n     'def')\n");
+    b.join_lines();
+    assert_eq!(caret_mark(&b), "s = ('abc|def')\n");
+    let mut b = py("s = \"ab\" \\\n    \"cd\"\n");
+    b.join_lines();
+    assert_eq!(b.text(), "s = \"abcd\"\n");
+    // Different quotes or an f-string stay apart.
+    let mut b = py("s = ('a'\n     \"b\")\n");
+    b.join_lines();
+    assert_eq!(b.text(), "s = ('a' \"b\")\n");
+    let mut b = py("s = (f'{a}'\n     '{b}')\n");
+    b.join_lines();
+    assert_eq!(b.text(), "s = (f'{a}' '{b}')\n");
+    // Comment lines: one comment.
+    let mut b = py("# first\n# second\nx = 1");
+    b.join_lines();
+    assert_eq!(b.text(), "# first second\nx = 1");
+    // Several lines at once: the selection's lines.
+    let mut b = py("f(\n    a,\n    b,\n)\nz");
+    b.selections = vec![Selection { anchor: 0, head: 15, goal_col: None }];
+    b.join_lines();
+    assert_eq!(b.text(), "f(a, b,\n)\nz");
+    // Two carets: each joins its line.
+    let mut b = py("a\nb\nc\nd");
+    b.selections = vec![Selection::caret(0), Selection::caret(4)];
+    b.join_lines();
+    assert_eq!(b.text(), "a b\nc d");
+    assert_eq!(b.selections.len(), 2);
+}
+
+#[test]
 fn join_and_case() {
     let mut b = buf("x = (\n    1)");
     b.join_lines();
-    assert_eq!(b.text(), "x = ( 1)");
+    assert_eq!(b.text(), "x = (1)");
     let mut b = buf("abc");
     b.select_all();
     b.toggle_case();

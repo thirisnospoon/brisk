@@ -101,6 +101,10 @@ pub struct Buffer {
     pub python: bool,
     /// No edits at all (a file at a revision): every change and undo is ignored.
     pub read_only: bool,
+    /// Ctrl+/ (Code Style › Code Generation): the mark at column 0, or at the lines' indent;
+    /// a space after it.
+    pub comment_first_column: bool,
+    pub comment_space: bool,
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
     version: u64,
@@ -140,6 +144,8 @@ impl Buffer {
             auto_pairs: true,
             python: false,
             read_only: false,
+            comment_first_column: true,
+            comment_space: true,
             undo: Vec::new(),
             redo: Vec::new(),
             version: 0,
@@ -775,6 +781,17 @@ impl Buffer {
     /// Ctrl+/: toggle line comment on selected lines, PyCharm style (comment at column 0).
     pub fn toggle_line_comment(&mut self) {
         let Some(prefix) = self.line_comment.clone() else { return };
+        // One caret on a blank line: the mark there and the caret after it, ready to type.
+        if self.selections.len() == 1 && self.primary().is_empty() {
+            let (line, _) = self.pos_to_line_col(self.primary().head);
+            if self.line(line).trim().is_empty() {
+                let at = self.line_end(line);
+                let mark = if self.comment_space { format!("{prefix} ") } else { prefix };
+                let end = at + mark.chars().count();
+                self.apply(vec![(at..at, mark)], EditKind::Other, |_, _| vec![Selection::caret(end)]);
+                return;
+            }
+        }
         let mut all_lines: Vec<usize> = Vec::new();
         for s in &self.selections {
             all_lines.extend(self.selected_lines(s));
@@ -785,6 +802,13 @@ impl Buffer {
         let targets = if non_empty.is_empty() { all_lines.clone() } else { non_empty };
         let all_commented = targets.iter().all(|&l| self.line(l).trim_start().starts_with(&prefix));
         let plen = prefix.chars().count();
+        let mark = if self.comment_space { format!("{prefix} ") } else { prefix.clone() };
+        // Not at the first column: at the smallest indent of the lines, so the block lines up.
+        let at = if self.comment_first_column {
+            0
+        } else {
+            targets.iter().filter(|&&l| !self.line(l).trim().is_empty()).map(|&l| self.line(l).chars().take_while(|c| *c == ' ' || *c == '\t').count()).min().unwrap_or(0)
+        };
         let mut edits = Vec::new();
         for &l in &targets {
             let start = self.line_start(l);
@@ -795,7 +819,8 @@ impl Buffer {
                 let extra = if after == " " { 1 } else { 0 };
                 edits.push((start + ws..start + ws + plen + extra, String::new()));
             } else {
-                edits.push((start..start, format!("{prefix} ")));
+                let col = at.min(self.line_len(l));
+                edits.push((start + col..start + col, mark.clone()));
             }
         }
         let single_caret = self.selections.len() == 1 && self.primary().is_empty();
@@ -864,21 +889,58 @@ impl Buffer {
     }
 
     /// Ctrl+Shift+J.
+    /// Ctrl+Shift+J, as in PyCharm: the caret's line with the next one, or all the lines a
+    /// selection covers, for every caret. The next line's indent goes; a line continuation
+    /// (`\`) goes; two string literals with the same quotes merge (`'a' 'b'` → `'ab'`); two
+    /// comment lines become one comment; no space after an opening bracket or before a closing
+    /// one, a comma or a dot; otherwise one space (`if x:` + `y` → `if x: y`).
     pub fn join_lines(&mut self) {
-        let s = self.primary();
-        let (line, _) = self.pos_to_line_col(s.head);
-        if line + 1 >= self.len_lines() {
+        let n = self.len_lines();
+        let mut blocks: Vec<(usize, usize)> = Vec::new();
+        for s in &self.selections {
+            let r = s.range();
+            let (l1, _) = self.pos_to_line_col(r.start);
+            let (mut l2, c2) = self.pos_to_line_col(r.end);
+            if l2 > l1 && c2 == 0 {
+                l2 -= 1;
+            }
+            let last = if l2 > l1 { l2 } else { l1 + 1 };
+            if last < n {
+                blocks.push((l1, last));
+            }
+        }
+        blocks.sort();
+        // Overlapping or touching blocks join as one.
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (a, z) in blocks {
+            match merged.last_mut() {
+                Some(m) if a <= m.1 => m.1 = m.1.max(z),
+                _ => merged.push((a, z)),
+            }
+        }
+        if merged.is_empty() {
             return;
         }
-        let end = self.line_end(line);
-        let next_ws = self.leading_ws(line + 1).chars().count();
-        let next_start = self.line_start(line + 1);
-        let cur_trailing = self.line(line).chars().rev().take_while(|c| c.is_whitespace()).count();
-        let r = end - cur_trailing..next_start + next_ws;
-        let next_empty = self.line(line + 1).trim().is_empty();
-        let sep = if next_empty { "" } else { " " };
-        let at = r.start;
-        self.apply(vec![(r, sep.into())], EditKind::Other, |_, _| vec![Selection::caret(at)]);
+        let comment = self.line_comment.clone();
+        let python = self.python;
+        let mut edits = Vec::new();
+        let mut carets = Vec::new();
+        // Carets in the text after the edits: earlier blocks shift the later ones.
+        let mut delta: isize = 0;
+        for (a, z) in merged {
+            let mut text = self.line(a);
+            let mut at = 0;
+            for l in a + 1..=z {
+                let (t, c) = smart::join_pair(&text, &self.line(l), python, comment.as_deref());
+                text = t;
+                at = c;
+            }
+            let (start, end) = (self.line_start(a), self.line_end(z));
+            carets.push((start as isize + delta) as usize + at);
+            delta += text.chars().count() as isize - (end - start) as isize;
+            edits.push((start..end, text));
+        }
+        self.apply(edits, EditKind::Other, |_, _| carets.iter().map(|&c| Selection::caret(c)).collect());
     }
 
     /// Ctrl+Shift+U.
@@ -1020,6 +1082,38 @@ impl Buffer {
         let len = self.len_chars();
         self.selections.push(Selection::caret(pos.min(len)));
         normalize(&mut self.selections, len);
+    }
+
+    /// Alt+Shift+click: a caret there, or, when one is already there (and not the only one),
+    /// remove it, as in PyCharm.
+    pub fn toggle_caret(&mut self, pos: usize) {
+        let pos = pos.min(self.len_chars());
+        if self.selections.len() > 1 {
+            if let Some(i) = self.selections.iter().position(|s| s.head == pos || (!s.is_empty() && s.range().contains(&pos))) {
+                self.selections.remove(i);
+                return;
+            }
+        }
+        self.add_caret(pos);
+    }
+
+    /// Mouse drag after a double / triple click: from `unit` (the word or line clicked) to the
+    /// word or line at `pos`, keeping `unit` selected.
+    pub fn select_units_to(&mut self, unit: Range<usize>, pos: usize, lines: bool) {
+        let at = if lines {
+            let l = self.pos_to_line_col(pos.min(self.len_chars())).0;
+            let end = if l + 1 < self.len_lines() { self.line_start(l + 1) } else { self.len_chars() };
+            self.line_start(l)..end
+        } else {
+            let r = self.word_range_at(pos);
+            if r.is_empty() { pos..pos } else { r }
+        };
+        let sel = if at.start < unit.start {
+            Selection { anchor: unit.end, head: at.start, goal_col: None }
+        } else {
+            Selection { anchor: unit.start, head: at.end.max(unit.end), goal_col: None }
+        };
+        self.selections = vec![sel];
     }
 
     pub fn select_all(&mut self) {

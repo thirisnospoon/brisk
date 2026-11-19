@@ -84,6 +84,26 @@ impl Workspace {
         cx.write_to_clipboard(gpui::ClipboardItem::new_string("def m(self):\n        return 1".into()));
         self.smoke_press("ctrl-v", window, cx);
         eprintln!("smoke-w7: paste into class {:?}", show(&ed, cx));
+        // --- E13 Join Lines ---------------------------------------------------------------
+        ed.update(cx, |e, _| {
+            e.buffer.set_text("if x:\n    y = 1\ns = ('abc'\n     'def')\nt = a + \\\n    b\n");
+            e.buffer.selections = vec![Selection::caret(0)];
+        });
+        self.smoke_press("ctrl-shift-j", window, cx);
+        ed.update(cx, |e, _| e.buffer.selections = vec![Selection::caret(e.buffer.line_start(1)), Selection::caret(e.buffer.line_start(3))]);
+        self.smoke_press("ctrl-shift-j", window, cx);
+        eprintln!("smoke-w7: join lines {:?}", show(&ed, cx));
+
+        // --- E14 comments ---------------------------------------------------------------------
+        ed.update(cx, |e, _| {
+            e.buffer.set_text("def f():\n\n    pass\n");
+            e.buffer.selections = vec![Selection::caret(9)];
+        });
+        self.smoke_press("ctrl-/", window, cx);
+        eprintln!("smoke-w7: ctrl-/ on an empty line {:?}", show(&ed, cx));
+        ed.update(cx, |e, _| e.buffer.selections = vec![Selection { anchor: 0, head: 8, goal_col: None }]);
+        self.smoke_press("ctrl-shift-/", window, cx);
+        eprintln!("smoke-w7: ctrl-shift-/ in python {:?}", show(&ed, cx));
         let margin = ed.read(cx).right_margin;
         eprintln!("smoke-w7: right margin {margin:?}");
 
@@ -142,10 +162,139 @@ impl Workspace {
             });
             tick().await;
             eprintln!("smoke-w7: go to 3:5 -> {:?}", line(&this, cx));
-            let _ = this.update_in(cx, |this, _, cx| {
+
+            // --- E11 soft wraps: a .md file wraps ("Soft-wrap these files"), a .py one not ---
+            let _ = this.update_in(cx, |this, window, cx| {
                 if let Some(ed) = this.active_editor().cloned() {
                     ed.update(cx, |e, _| e.buffer.mark_saved());
+                    eprintln!("smoke-w7: a.py soft wrap {}", ed.read(cx).soft_wrap());
                 }
+                let word = "lorem ipsum dolor sit amet consectetur ";
+                let text: String = (0..60).map(|i| format!("{i}. {}\n", word.repeat(8))).collect();
+                let md = this.root.join("notes.md");
+                let _ = std::fs::write(&md, text);
+                this.open_file(&md, window, cx);
+            });
+            tick().await;
+            tick().await;
+            let probe = |this: &gpui::WeakEntity<Self>, cx: &mut gpui::AsyncWindowContext| this.update(cx, |this, cx| this.active_editor().map(|e| e.read(cx).wrap_smoke())).ok().flatten().unwrap_or_default();
+            eprintln!("smoke-w7: wrap md {}", probe(&this, cx));
+            for k in ["end", "end", "home", "home", "down", "down", "up"] {
+                let _ = this.update_in(cx, |this, window, cx| this.smoke_press(k, window, cx));
+                tick().await;
+                eprintln!("smoke-w7: wrap {k} -> {:?}", line(&this, cx));
+            }
+            let _ = this.update(cx, |this, cx| {
+                if let Some(e) = this.active_editor() {
+                    let e = e.read(cx);
+                    eprintln!("smoke-w7: wrap click row1 col4 -> {:?} row2 col0 -> {:?} row3 col4 -> {:?}", e.wrap_click(1, 4.0), e.wrap_click(2, 0.0), e.wrap_click(3, 4.0));
+                }
+            });
+            let _ = this.update_in(cx, |this, window, cx| this.smoke_press("ctrl-end", window, cx));
+            // Smooth scrolling glides there in ~170 ms.
+            for _ in 0..12 {
+                tick().await;
+            }
+            eprintln!("smoke-w7: wrap ctrl-end {}", probe(&this, cx));
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.smoke_press("ctrl-home", window, cx);
+                this.smoke_press("shift-down", window, cx);
+            });
+            tick().await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(e) = this.active_editor() {
+                    let b = &e.read(cx).buffer;
+                    eprintln!("smoke-w7: wrap shift-down selects {:?}", b.primary().range());
+                }
+            });
+            let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::ToggleSoftWrap, window, cx));
+            tick().await;
+            eprintln!("smoke-w7: wrap toggled {}", probe(&this, cx));
+            // --- E11 with sticky lines: a wrapped .py, the view inside a method ---------------
+            let _ = this.update_in(cx, |this, window, cx| {
+                let long = "word ".repeat(60);
+                let mut t = String::from("class A:
+    def m(self):
+");
+                for i in 0..30 {
+                    t.push_str(&format!("        x{i} = \"{long}\"
+"));
+                }
+                t.push_str("        return x0
+
+
+def g():
+    pass
+");
+                let p = this.root.join("wrapsticky.py");
+                let _ = std::fs::write(&p, t);
+                this.open_file(&p, window, cx);
+                this.dispatch(Action::ToggleSoftWrap, window, cx);
+            });
+            tick().await;
+            tick().await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(ed) = this.active_editor().cloned() {
+                    let y = ed.read(cx).line_top_for_smoke(20);
+                    ed.update(cx, |e, cx| e.set_scroll_for_smoke(y, cx));
+                }
+            });
+            tick().await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(ed) = this.active_editor().cloned() {
+                    let e = ed.read(cx);
+                    eprintln!("smoke-w7: wrap + sticky {} | at line 21 -> {:?}", e.wrap_smoke(), e.sticky_shown());
+                    let y = e.line_top_for_smoke(32) + e.scroll_state().1;
+                    ed.update(cx, |e, cx| e.set_scroll_for_smoke(y - 20.0, cx));
+                }
+            });
+            tick().await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(ed) = this.active_editor().cloned() {
+                    eprintln!("smoke-w7: wrap + sticky, method's last line under the panel -> {:?}", ed.read(cx).sticky_shown());
+                }
+            });
+            let _ = this.update_in(cx, |this, window, cx| {
+                let md = this.root.join("notes.md");
+                this.open_file(&md, window, cx);
+            });
+            tick().await;
+
+            // --- E12 mouse: double / triple click and drag, Alt+Shift+click twice, Alt+drag ----
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(ed) = this.active_editor().cloned() else { return };
+                let none = gpui::Modifiers::default();
+                let sel = |ed: &gpui::Entity<crate::editor::Editor>, cx: &gpui::App| {
+                    let b = &ed.read(cx).buffer;
+                    b.selections.iter().map(|s| b.slice(s.range())).collect::<Vec<_>>()
+                };
+                ed.update(cx, |e, cx| e.smoke_mouse((1, 5), none, 2, None, window, cx));
+                eprintln!("smoke-w7: mouse double click {:?}", sel(&ed, cx));
+                ed.update(cx, |e, cx| e.smoke_mouse((1, 5), none, 2, Some((1, 16)), window, cx));
+                eprintln!("smoke-w7: mouse double click + drag {:?}", sel(&ed, cx));
+                ed.update(cx, |e, cx| e.smoke_mouse((2, 4), none, 3, Some((3, 1)), window, cx));
+                eprintln!("smoke-w7: mouse triple click + drag lines {:?}", ed.read(cx).buffer.selections.iter().map(|s| { let b = &ed.read(cx).buffer; (b.pos_to_line_col(s.range().start), b.pos_to_line_col(s.range().end)) }).collect::<Vec<_>>());
+                ed.update(cx, |e, cx| e.smoke_mouse((5, 0), none, 1, None, window, cx));
+                let alt_shift = gpui::Modifiers { alt: true, shift: true, ..Default::default() };
+                ed.update(cx, |e, cx| e.smoke_mouse((5, 4), alt_shift, 1, None, window, cx));
+                let n1 = ed.read(cx).buffer.selections.len();
+                ed.update(cx, |e, cx| e.smoke_mouse((5, 4), alt_shift, 1, None, window, cx));
+                eprintln!("smoke-w7: mouse alt+shift click carets {n1} -> again {}", ed.read(cx).buffer.selections.len());
+                let alt = gpui::Modifiers { alt: true, ..Default::default() };
+                ed.update(cx, |e, cx| e.smoke_mouse((5, 3), alt, 1, Some((7, 8)), window, cx));
+                eprintln!("smoke-w7: mouse alt+drag block {:?}", sel(&ed, cx));
+                ed.update(cx, |e, cx| e.smoke_mouse((0, 0), none, 1, None, window, cx));
+            });
+            if std::env::var_os("BRISK_SMOKE_W7_HOLD").is_some() {
+                // For a look: wraps back on and a selection across rows.
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.dispatch(Action::ToggleSoftWrap, window, cx);
+                    if let Some(ed) = this.active_editor().cloned() {
+                        ed.update(cx, |e, _| e.buffer.selections = vec![Selection { anchor: 100, head: 400, goal_col: None }]);
+                    }
+                });
+            }
+            let _ = this.update_in(cx, |_, _, cx| {
                 eprintln!("smoke-w7: done");
                 if std::env::var_os("BRISK_SMOKE_W7_HOLD").is_none() {
                     cx.quit();

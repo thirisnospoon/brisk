@@ -184,9 +184,9 @@ impl Editor {
 
     fn select_match(&mut self, m: Range<usize>) {
         self.buffer.selections = vec![brisk_text::Selection { anchor: m.start, head: m.end, goal_col: None }];
-        let (line, _) = self.buffer.pos_to_line_col(m.start);
         let vh = self.layout.as_ref().map(|l| f32::from(l.bounds.size.height)).unwrap_or(600.0);
-        let y = self.row_of(line) as f32 * line_height();
+        self.refresh_wrap();
+        let y = self.caret_row() as f32 * line_height();
         if y < self.scroll_y || y + line_height() > self.scroll_y + vh {
             self.center_caret();
         }
