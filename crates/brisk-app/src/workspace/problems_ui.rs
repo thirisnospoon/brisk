@@ -32,6 +32,10 @@ pub(super) enum Intent {
     Template(&'static str),
     /// Ctrl+Alt+T: surround with `SURROUNDERS[i]`.
     Surround(usize),
+    /// Generate / Override: insert this member into the class at the caret.
+    Member(String),
+    /// Generate: open Override Methods (`false`) or Implement Methods (`true`).
+    Overrides(bool),
     /// Ctrl+Shift+Delete: unwrap or remove the enclosing statement.
     Unwrap(brisk_syntax::Unwrap),
     /// Ctrl+Alt+V: extract the selection into a variable; `true`: every occurrence.
@@ -634,6 +638,8 @@ impl Workspace {
             Intent::Template(key) => ed.update(cx, |e, cx| e.insert_template(key, cx)),
             Intent::Surround(i) => ed.update(cx, |e, cx| e.surround_with(i, cx)),
             Intent::Unwrap(u) => ed.update(cx, |e, cx| e.apply_unwrap(&u, cx)),
+            Intent::Member(code) => ed.update(cx, |e, cx| e.insert_member(&code, cx)),
+            Intent::Overrides(implement) => self.override_methods(implement, window, cx),
             Intent::ExtractVariable(all) => {
                 ed.update(cx, |e, cx| e.extract_variable(all, cx));
             }

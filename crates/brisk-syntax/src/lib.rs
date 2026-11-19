@@ -3,10 +3,12 @@
 //! Highlighting is computed only for the visible byte range, so cost does not grow with file size.
 
 mod scope;
+mod generate;
 mod sql;
 mod structure;
 pub use scope::{name_refs_of, occurrences_of, NameRefs};
 pub use structure::{statement_move, unwrap_options, Unwrap};
+pub use generate::{class_at, class_named, data_fields, gen_eq, gen_init, gen_override, gen_property, gen_repr, object_methods, property_candidates, ClassInfo, Field, Method};
 pub use sql::highlight_sql;
 pub use tree_sitter::Tree;
 

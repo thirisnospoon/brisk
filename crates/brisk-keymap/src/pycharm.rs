@@ -54,12 +54,14 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("ctrl-j", A::InsertLiveTemplate, ED);
     k.bind("ctrl-alt-t", A::SurroundWith, ED);
     k.bind("alt-insert", A::Generate, ED);
+    k.bind("ctrl-o", A::OverrideMethods, ED);
+    k.bind("ctrl-i", A::ImplementMethods, ED);
     k.bind("alt-insert", A::NewElement, PV);
     k.bind("ctrl-/", A::CommentLine, ED);
     k.bind("ctrl-shift-/", A::CommentBlock, ED);
     k.bind("ctrl-alt-l", A::ReformatCode, ED);
     k.bind("ctrl-alt-o", A::OptimizeImports, None);
-    k.bind("ctrl-shift-delete", A::Unwrap, None);
+    k.bind("ctrl-shift-delete", A::Unwrap, ED);
     k.bind("ctrl-=", A::ExpandRegion, ED);
     k.bind("ctrl--", A::CollapseRegion, ED);
     k.bind("ctrl-shift-=", A::ExpandAll, ED);

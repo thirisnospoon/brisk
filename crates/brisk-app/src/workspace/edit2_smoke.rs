@@ -111,10 +111,58 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.format_smoke(window, cx);
                 this.structure_smoke(window, cx);
-                this.edit2_rest(window, cx);
+                this.generate_smoke(window, cx);
             });
+            // Override (Ctrl+O) and Implement (Ctrl+I) answer asynchronously (ty, other files).
+            for (key, title) in [("ctrl-o", "Select Methods to Override"), ("ctrl-i", "Select Methods to Implement")] {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.problems.intents_title = None;
+                    this.smoke_press(key, window, cx);
+                });
+                for _ in 0..100 {
+                    if this.read_with(cx, |this, _| this.problems.intents_title == Some(title)).unwrap_or(true) {
+                        break;
+                    }
+                    bg.timer(std::time::Duration::from_millis(100)).await;
+                }
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let labels: Vec<String> = this.problems.intents.iter().map(|i| format!("{} [{}]", i.label, i.detail)).collect();
+                    eprintln!("smoke-edit2: {key} -> {:?} {labels:?}", this.problems.intents_title);
+                    // Ctrl+O: override `describe`; Ctrl+I: implement the abstract `area`.
+                    let pick = this.problems.intents.iter().find(|i| key == "ctrl-i" || i.label.starts_with("describe")).map(|i| i.target.clone());
+                    if let Some(super::Target::Intention(i)) = pick {
+                        this.popup = None;
+                        this.apply_intent(*i, window, cx);
+                    }
+                    let t = this.active_editor().map(|e| e.read(cx).text_string()).unwrap_or_default();
+                    eprintln!("smoke-edit2: {key} inserted -> {:?}", t.lines().skip(13).collect::<Vec<_>>());
+                });
+            }
+            let _ = this.update_in(cx, |this, window, cx| this.edit2_rest(window, cx));
         })
         .detach();
+    }
+
+    /// Generate (Alt+Insert) in a class; `base.py` holds the base classes for Ctrl+O / Ctrl+I.
+    fn generate_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let _ = std::fs::write(self.root.join("base.py"), "from abc import ABC, abstractmethod\n\n\nclass Shape(ABC):\n    @abstractmethod\n    def area(self) -> float: ...\n\n    def describe(self, prefix: str, *, loud=False) -> str:\n        return prefix\n");
+        let file = self.root.join("gen.py");
+        let _ = std::fs::write(&file, "from base import Shape\n\n\nclass Circle(Shape):\n    r: float\n    name: str = \"c\"\n");
+        self.open_file(&file, window, cx);
+        let Some(ed) = self.active_editor().cloned() else { return };
+        ed.update(cx, |e, _| e.buffer.set_caret(e.buffer.line_col_to_pos(4, 4), false));
+        self.smoke_press("alt-insert", window, cx);
+        let labels: Vec<_> = self.problems.intents.iter().map(|i| i.label.clone()).collect();
+        eprintln!("smoke-edit2: generate -> {:?} {labels:?}", self.problems.intents_title);
+        for name in ["__init__", "__repr__"] {
+            self.dispatch(Action::Generate, window, cx);
+            if let Some(super::Target::Intention(i)) = self.problems.intents.iter().find(|i| i.label == name).map(|i| i.target.clone()) {
+                self.popup = None;
+                self.apply_intent(*i, window, cx);
+            }
+        }
+        let caret = ed.read(cx).caret_line_col();
+        eprintln!("smoke-edit2: generated -> {:?} caret {caret:?}", ed.read(cx).text_string().lines().skip(3).collect::<Vec<_>>());
     }
 
     fn format_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {

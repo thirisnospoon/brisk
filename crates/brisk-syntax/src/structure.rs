@@ -107,6 +107,12 @@ fn head_word(n: &Node) -> &'static str {
 /// Unwrap / Remove choices for the statements around `byte`, innermost first: "Unwrap 'if...'"
 /// keeps the body, "Remove 'else...'" drops the clause, "Unwrap 'else...'" keeps only it.
 pub fn unwrap_options(tree: &Tree, text: &str, byte: usize) -> Vec<Unwrap> {
+    let v = unwrap_from(tree, text, byte);
+    // At the end of a line the caret is just past the statement's node.
+    if v.is_empty() && byte > 0 { unwrap_from(tree, text, byte - 1) } else { v }
+}
+
+fn unwrap_from(tree: &Tree, text: &str, byte: usize) -> Vec<Unwrap> {
     let lines: Vec<&str> = text.split('\n').collect();
     let mut out = Vec::new();
     let mut n = tree.root_node().descendant_for_byte_range(byte, byte);

@@ -50,6 +50,7 @@ mod lsp_ui;
 mod main_menu;
 mod menu_ui;
 mod problems_ui;
+mod generate_ui;
 pub(crate) mod project_ui;
 mod run_config_ui;
 mod run_marks_ui;
@@ -1368,6 +1369,8 @@ impl Workspace {
             A::ShowIntentionActions => self.show_intentions(window, cx),
             A::SurroundWith | A::InsertLiveTemplate => self.template_action(action, window, cx),
             A::Unwrap => self.unwrap_action(window, cx),
+            A::Generate => self.generate_action(window, cx),
+            A::OverrideMethods | A::ImplementMethods => self.override_methods(action == A::ImplementMethods, window, cx),
             A::ToggleGitWindow => {
                 self.toggle_bottom(BottomTool::Git, window, cx);
                 if self.bottom == Some(BottomTool::Git) {
