@@ -49,6 +49,7 @@ mod guides;
 mod rounded;
 mod stripe;
 mod squiggle;
+mod whitespace;
 pub mod templates;
 pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
@@ -99,6 +100,8 @@ pub struct Editor {
     guides: guides::Guides,
     /// Error stripe marks on the vertical scrollbar (editor/stripe.rs).
     stripe: stripe::Stripe,
+    /// View › Active Editor › Show Whitespaces and the per-line cache (editor/whitespace.rs).
+    whitespace: whitespace::Whitespace,
     /// (buffer version, longest line in chars): the horizontal scroll range.
     max_line: (u64, usize),
     big: big::BigFile,
@@ -321,6 +324,7 @@ impl Editor {
             sticky: Default::default(),
             guides: Default::default(),
             stripe: Default::default(),
+            whitespace: Default::default(),
             max_line: (u64::MAX, 0),
             big: Default::default(),
             occ: Default::default(),
@@ -401,6 +405,7 @@ impl Editor {
             sticky: Default::default(),
             guides: Default::default(),
             stripe: Default::default(),
+            whitespace: Default::default(),
             max_line: (u64::MAX, 0),
             big: Default::default(),
             occ: Default::default(),
@@ -835,6 +840,11 @@ impl Editor {
             match action {
                 A::Find => {
                     self.open_find(false, window, cx);
+                    return true;
+                }
+                A::ShowWhitespaces => {
+                    self.toggle_whitespace();
+                    cx.notify();
                     return true;
                 }
                 A::Replace => {
@@ -1611,6 +1621,7 @@ impl Element for EditorElement {
             ed.update_sticky();
             ed.update_guides();
             ed.update_stripe();
+            ed.update_whitespace(f32::from(bounds.size.height));
             let h = if ed.show_gutter {
                 ed.fold_headers()
             } else {
@@ -1906,6 +1917,36 @@ impl Element for EditorElement {
             let x = text_x + pp.char_w * m as f32;
             if x > text_left && x < bounds.right() {
                 under.push(fill(Bounds::new(point(x, bounds.top()), size(px(1.), bounds.size.height)), Theme::right_margin()));
+            }
+        }
+        // Show Whitespaces: a dot in the middle of each space, an arrow across each tab, on whole
+        // device pixels (the columns come from the per-line cache).
+        if ed.whitespace_shown() {
+            let dot = (1.5 * scale).round().max(1.) / scale;
+            let thin = 1. / scale;
+            let snap = |v: Pixels| px((f32::from(v) * scale).round() / scale);
+            for &l in rows.iter() {
+                let Some(cols) = ed.whitespace_of(l) else { continue };
+                let mid = y_of(l) + lh / 2.;
+                for &(c, tab) in cols.iter() {
+                    let (x0, x1) = (x_of(l, c as usize), x_of(l, c as usize + 1));
+                    if tab {
+                        let (a, z) = (snap(x0 + px(2.)), snap(x1 - px(2.)));
+                        if z - a < px(4.) {
+                            continue;
+                        }
+                        let y = snap(mid);
+                        under.push(fill(Bounds::new(point(a, y), size(z - a, px(thin))), Theme::whitespace()));
+                        // The head: three columns, 5 / 3 / 1 px tall, ending at the line's end.
+                        for (k, h) in [(3., 5.), (2., 3.), (1., 1.)] {
+                            let hx = snap(z - px(k));
+                            under.push(fill(Bounds::new(point(hx, snap(y - px((h - 1.) / 2.))), size(px(thin), px(h))), Theme::whitespace()));
+                        }
+                    } else {
+                        let cx_ = (x0 + x1) / 2.;
+                        under.push(fill(Bounds::new(point(snap(cx_ - px(dot / 2.)), snap(mid - px(dot / 2.))), size(px(dot), px(dot))), Theme::whitespace()));
+                    }
+                }
             }
         }
         // Search matches: all of them, the current one brighter.

@@ -35,6 +35,7 @@ pub(super) enum SetCtl {
     Size(i8),
     Spacing(i8),
     Inlay,
+    Whitespace,
     TabRows(bool),
     TabLimit(i8),
     Reformat,
@@ -49,7 +50,7 @@ impl SettingsDialog {
         use SetCtl::*;
         let mut v = vec![Theme(false), Theme(true), Style(false), Style(true), UiSize(-1), UiSize(1), Smooth, Blink, Slide, Sticky];
         v.extend((0..self.fonts.len()).map(Font));
-        v.extend([Size(-1), Size(1), Spacing(-1), Spacing(1), Inlay, TabRows(false), TabRows(true), TabLimit(-1), TabLimit(1), Reformat, Imports, Cancel, Ok]);
+        v.extend([Size(-1), Size(1), Spacing(-1), Spacing(1), Inlay, Whitespace, TabRows(false), TabRows(true), TabLimit(-1), TabLimit(1), Reformat, Imports, Cancel, Ok]);
         v
     }
 
@@ -177,6 +178,7 @@ impl Workspace {
             SetCtl::Blink => self.settings_edit(|s| s.caret_blinking = !s.caret_blinking, window),
             SetCtl::Slide => self.settings_edit(|s| s.smooth_caret = !s.smooth_caret, window),
             SetCtl::Sticky => self.settings_edit(|s| s.sticky_lines = !s.sticky_lines, window),
+            SetCtl::Whitespace => self.settings_edit(|s| s.show_whitespaces = !s.show_whitespaces, window),
             SetCtl::Inlay => self.settings_edit(|s| s.inlay_hints = !s.inlay_hints, window),
             SetCtl::Reformat => self.settings_edit(|s| s.reformat_on_save = !s.reformat_on_save, window),
             SetCtl::Imports => self.settings_edit(|s| s.optimize_imports_on_save = !s.optimize_imports_on_save, window),
@@ -294,6 +296,7 @@ impl Workspace {
             .child(checkbox("set-blink", s.caret_blinking, "Caret blinking", "", SetCtl::Blink, cx))
             .child(checkbox("set-slide", s.smooth_caret, "Smooth caret movement", "(the caret slides to its new place)", SetCtl::Slide, cx))
             .into_any_element();
+        let whitespace = checkbox("set-ws", s.show_whitespaces, "Show whitespaces", "(· for spaces, → for tabs)", SetCtl::Whitespace, cx);
         let sticky = checkbox("set-sticky", s.sticky_lines, "Show sticky lines", "(enclosing class and def headers stay on top)", SetCtl::Sticky, cx);
         let preview = div()
             .mt(px(6.))
@@ -356,6 +359,7 @@ impl Workspace {
                         .child(preview)
                         .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › APPEARANCE"))
                         .child(row("Inlay hints", inlay))
+                        .child(row("Whitespaces", whitespace))
                         .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › EDITOR TABS"))
                         .child(row("Show tabs in", tab_rows))
                         .child(row("Tab limit", tab_limit))

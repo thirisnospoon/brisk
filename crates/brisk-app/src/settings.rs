@@ -41,11 +41,13 @@ pub struct Settings {
     pub smooth_caret: bool,
     /// Editor › General › Sticky Lines: "Show sticky lines".
     pub sticky_lines: bool,
+    /// Editor › General › Appearance: "Show whitespaces" (the default for every editor).
+    pub show_whitespaces: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false, ui_font_size: DEFAULT_UI_FONT_SIZE, ui_zoom: 1.0, reformat_on_save: false, optimize_imports_on_save: false, smooth_scrolling: true, caret_blinking: true, smooth_caret: false, sticky_lines: true }
+        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false, ui_font_size: DEFAULT_UI_FONT_SIZE, ui_zoom: 1.0, reformat_on_save: false, optimize_imports_on_save: false, smooth_scrolling: true, caret_blinking: true, smooth_caret: false, sticky_lines: true, show_whitespaces: false }
     }
 }
 
@@ -66,6 +68,7 @@ static SMOOTH_SCROLLING: AtomicBool = AtomicBool::new(true);
 static CARET_BLINKING: AtomicBool = AtomicBool::new(true);
 static SMOOTH_CARET: AtomicBool = AtomicBool::new(false);
 static STICKY_LINES: AtomicBool = AtomicBool::new(true);
+static SHOW_WHITESPACES: AtomicBool = AtomicBool::new(false);
 /// The font size in use (the setting, or a zoomed size: Alt+Shift+. / Ctrl+wheel).
 static FONT_SIZE: AtomicU32 = AtomicU32::new(0);
 static SPACING: AtomicU32 = AtomicU32::new(0);
@@ -125,6 +128,7 @@ pub fn load() -> Settings {
             s.caret_blinking = flag("caret_blinking").unwrap_or(s.caret_blinking);
             s.smooth_caret = flag("smooth_caret").unwrap_or(s.smooth_caret);
             s.sticky_lines = flag("sticky_lines").unwrap_or(s.sticky_lines);
+            s.show_whitespaces = flag("show_whitespaces").unwrap_or(s.show_whitespaces);
         }
     }
     apply(&s);
@@ -144,6 +148,7 @@ pub fn apply(s: &Settings) {
     CARET_BLINKING.store(s.caret_blinking, Ordering::Relaxed);
     SMOOTH_CARET.store(s.smooth_caret, Ordering::Relaxed);
     STICKY_LINES.store(s.sticky_lines, Ordering::Relaxed);
+    SHOW_WHITESPACES.store(s.show_whitespaces, Ordering::Relaxed);
     FONT_SIZE.store(s.font_size.to_bits(), Ordering::Relaxed);
     SPACING.store(s.line_spacing.to_bits(), Ordering::Relaxed);
     if let Ok(mut c) = CURRENT.write() {
@@ -169,6 +174,7 @@ pub fn save(s: &Settings) -> std::io::Result<()> {
         "caret_blinking": s.caret_blinking,
         "smooth_caret": s.smooth_caret,
         "sticky_lines": s.sticky_lines,
+        "show_whitespaces": s.show_whitespaces,
     });
     let p = path();
     if let Some(d) = p.parent() {
@@ -227,6 +233,10 @@ pub fn caret_blinking() -> bool {
 
 pub fn smooth_caret() -> bool {
     SMOOTH_CARET.load(Ordering::Relaxed)
+}
+
+pub fn show_whitespaces() -> bool {
+    SHOW_WHITESPACES.load(Ordering::Relaxed)
 }
 
 pub fn sticky_lines() -> bool {

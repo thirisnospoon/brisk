@@ -198,6 +198,7 @@ actions! {
     ZoomOutIde => "Zoom Out IDE", "View";
     ResetIdeZoom => "Reset IDE Zoom", "View";
     QuickSwitchTheme => "Switch Light / Dark Theme", "View";
+    ShowWhitespaces => "Show Whitespaces", "Active Editor";
     ProjectStructure => "Project Structure", "File";
     ReloadFromDisk => "Reload All from Disk", "File";
     OpenSelected => "Open / Jump to Source", "File";
