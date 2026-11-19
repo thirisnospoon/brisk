@@ -49,6 +49,9 @@ impl Editor {
     }
 
     pub(super) fn max_scroll_x(&self) -> f32 {
+        if self.soft_wrap() {
+            return 0.0;
+        }
         let extent = (self.max_line.1 + 4) as f32 * self.char_w();
         (extent - self.view_width()).max(0.0)
     }
@@ -64,6 +67,10 @@ impl Editor {
 
     /// Scroll sideways so the primary caret stays in view.
     pub(super) fn ensure_caret_visible_x(&mut self) {
+        if self.soft_wrap() {
+            self.scroll_x = 0.0;
+            return;
+        }
         let Some(l) = self.layout.as_ref() else { return };
         let (line, col) = self.buffer.pos_to_line_col(self.buffer.primary().head);
         let text = self.buffer.line(line);

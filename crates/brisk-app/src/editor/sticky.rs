@@ -49,7 +49,7 @@ impl Editor {
         for (k, &i) in picked.iter().enumerate() {
             let item = &outline[i];
             // Pushed up when the block's last line scrolls past this slot.
-            let bottom = (self.row_of(item.end_line) + 1) as f32 * lh - self.scroll_y;
+            let bottom = (self.row_of(item.end_line) + 1 + self.wrap_breaks(item.end_line).len()) as f32 * lh - self.scroll_y;
             let y = (k as f32 * lh).min(bottom - lh);
             if y > -lh {
                 self.sticky.shown.push((item.line, y));

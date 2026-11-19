@@ -129,6 +129,23 @@ fn comment_toggle_blank_lines_and_partial_selection() {
 }
 
 #[test]
+fn comment_style_options() {
+    // "Line comment at first column" off: at the block's indent; no space when asked.
+    let mut b = buf("    x = 1\n        y = 2");
+    b.comment_first_column = false;
+    b.select_all();
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "    # x = 1\n    #     y = 2");
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "    x = 1\n        y = 2");
+    let mut b = buf("x = 1");
+    b.comment_space = false;
+    b.select_all();
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "#x = 1");
+}
+
+#[test]
 fn multi_caret_insert() {
     let mut b = buf("a\nb\nc");
     b.selections = vec![Selection::caret(1), Selection::caret(3), Selection::caret(5)];

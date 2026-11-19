@@ -142,10 +142,61 @@ impl Workspace {
             });
             tick().await;
             eprintln!("smoke-w7: go to 3:5 -> {:?}", line(&this, cx));
-            let _ = this.update_in(cx, |this, _, cx| {
+
+            // --- E11 soft wraps: a .md file wraps ("Soft-wrap these files"), a .py one not ---
+            let _ = this.update_in(cx, |this, window, cx| {
                 if let Some(ed) = this.active_editor().cloned() {
                     ed.update(cx, |e, _| e.buffer.mark_saved());
+                    eprintln!("smoke-w7: a.py soft wrap {}", ed.read(cx).soft_wrap());
                 }
+                let word = "lorem ipsum dolor sit amet consectetur ";
+                let text: String = (0..60).map(|i| format!("{i}. {}\n", word.repeat(8))).collect();
+                let md = this.root.join("notes.md");
+                let _ = std::fs::write(&md, text);
+                this.open_file(&md, window, cx);
+            });
+            tick().await;
+            tick().await;
+            let probe = |this: &gpui::WeakEntity<Self>, cx: &mut gpui::AsyncWindowContext| this.update(cx, |this, cx| this.active_editor().map(|e| e.read(cx).wrap_smoke())).ok().flatten().unwrap_or_default();
+            eprintln!("smoke-w7: wrap md {}", probe(&this, cx));
+            for k in ["end", "end", "home", "home", "down", "down", "up"] {
+                let _ = this.update_in(cx, |this, window, cx| this.smoke_press(k, window, cx));
+                tick().await;
+                eprintln!("smoke-w7: wrap {k} -> {:?}", line(&this, cx));
+            }
+            let _ = this.update(cx, |this, cx| {
+                if let Some(e) = this.active_editor() {
+                    let e = e.read(cx);
+                    eprintln!("smoke-w7: wrap click row1 col4 -> {:?} row2 col0 -> {:?} row3 col4 -> {:?}", e.wrap_click(1, 4.0), e.wrap_click(2, 0.0), e.wrap_click(3, 4.0));
+                }
+            });
+            let _ = this.update_in(cx, |this, window, cx| this.smoke_press("ctrl-end", window, cx));
+            tick().await;
+            eprintln!("smoke-w7: wrap ctrl-end {}", probe(&this, cx));
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.smoke_press("ctrl-home", window, cx);
+                this.smoke_press("shift-down", window, cx);
+            });
+            tick().await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(e) = this.active_editor() {
+                    let b = &e.read(cx).buffer;
+                    eprintln!("smoke-w7: wrap shift-down selects {:?}", b.primary().range());
+                }
+            });
+            let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::ToggleSoftWrap, window, cx));
+            tick().await;
+            eprintln!("smoke-w7: wrap toggled {}", probe(&this, cx));
+            if std::env::var_os("BRISK_SMOKE_W7_HOLD").is_some() {
+                // For a look: wraps back on and a selection across rows.
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.dispatch(Action::ToggleSoftWrap, window, cx);
+                    if let Some(ed) = this.active_editor().cloned() {
+                        ed.update(cx, |e, _| e.buffer.selections = vec![Selection { anchor: 100, head: 400, goal_col: None }]);
+                    }
+                });
+            }
+            let _ = this.update_in(cx, |_, _, cx| {
                 eprintln!("smoke-w7: done");
                 if std::env::var_os("BRISK_SMOKE_W7_HOLD").is_none() {
                     cx.quit();

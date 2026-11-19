@@ -1554,6 +1554,14 @@ impl Workspace {
                     window.focus(&self.tree_focus);
                 }
             }
+            A::ToggleSoftWrap => {
+                if let Some(ed) = self.active_editor().cloned() {
+                    ed.update(cx, |e, cx| {
+                        e.toggle_soft_wrap();
+                        cx.notify();
+                    });
+                }
+            }
             A::Settings | A::IncreaseFontSize | A::DecreaseFontSize | A::ResetFontSize | A::QuickSwitchTheme | A::ZoomInIde | A::ZoomOutIde | A::ResetIdeZoom => {
                 self.settings_action(action, window, cx);
             }

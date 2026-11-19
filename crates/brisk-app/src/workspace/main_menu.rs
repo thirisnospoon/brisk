@@ -48,7 +48,12 @@ impl Workspace {
         vec![
             sub("File", file),
             sub("Edit", group(&["Edit", "Find"], true)),
-            sub("View", group(&["View", "Tool Windows"], false)),
+            sub("View", {
+                let mut v = group(&["View", "Tool Windows"], false);
+                v.push(Entry::Separator);
+                v.push(sub("Active Editor", group(&["Active Editor"], true)));
+                v
+            }),
             sub("Navigate", group(&["Navigate"], false)),
             sub("Code", group(&["Code"], true)),
             sub("Refactor", group(&["Refactor"], true)),

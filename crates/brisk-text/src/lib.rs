@@ -101,6 +101,10 @@ pub struct Buffer {
     pub python: bool,
     /// No edits at all (a file at a revision): every change and undo is ignored.
     pub read_only: bool,
+    /// Ctrl+/ (Code Style › Code Generation): the mark at column 0, or at the lines' indent;
+    /// a space after it.
+    pub comment_first_column: bool,
+    pub comment_space: bool,
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
     version: u64,
@@ -140,6 +144,8 @@ impl Buffer {
             auto_pairs: true,
             python: false,
             read_only: false,
+            comment_first_column: true,
+            comment_space: true,
             undo: Vec::new(),
             redo: Vec::new(),
             version: 0,
@@ -785,6 +791,13 @@ impl Buffer {
         let targets = if non_empty.is_empty() { all_lines.clone() } else { non_empty };
         let all_commented = targets.iter().all(|&l| self.line(l).trim_start().starts_with(&prefix));
         let plen = prefix.chars().count();
+        let mark = if self.comment_space { format!("{prefix} ") } else { prefix.clone() };
+        // Not at the first column: at the smallest indent of the lines, so the block lines up.
+        let at = if self.comment_first_column {
+            0
+        } else {
+            targets.iter().filter(|&&l| !self.line(l).trim().is_empty()).map(|&l| self.line(l).chars().take_while(|c| *c == ' ' || *c == '\t').count()).min().unwrap_or(0)
+        };
         let mut edits = Vec::new();
         for &l in &targets {
             let start = self.line_start(l);
@@ -795,7 +808,8 @@ impl Buffer {
                 let extra = if after == " " { 1 } else { 0 };
                 edits.push((start + ws..start + ws + plen + extra, String::new()));
             } else {
-                edits.push((start..start, format!("{prefix} ")));
+                let col = at.min(self.line_len(l));
+                edits.push((start + col..start + col, mark.clone()));
             }
         }
         let single_caret = self.selections.len() == 1 && self.primary().is_empty();

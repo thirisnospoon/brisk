@@ -168,14 +168,13 @@ impl Editor {
     }
 
     pub fn motion_probe(&self) -> MotionProbe {
-        let (line, _) = self.caret_line_col();
         MotionProbe {
             scroll_y: self.scroll_y,
             target: self.motion.glide.map(|g| g.to),
             paints: self.motion.paints,
             alpha: self.motion.alpha,
             caret_x: self.motion.caret_x,
-            caret_screen_row: self.row_of(line) as f32 - self.scroll_y / line_height(),
+            caret_screen_row: self.caret_row() as f32 - self.scroll_y / line_height(),
             line_height: line_height(),
         }
     }

@@ -19,6 +19,8 @@ pub struct SettingsDialog {
     /// The control with the keyboard focus (Tab / Shift+Tab, or the last one clicked), as
     /// an index into `controls()`; it wears the focus ring.
     kb: Option<usize>,
+    /// Typing goes to the "Soft-wrap these files" field.
+    pub mask_edit: bool,
 }
 
 /// A Settings control, in Tab order; steppers carry their step (-1 / +1).
@@ -37,6 +39,11 @@ pub(super) enum SetCtl {
     Inlay,
     TabRows(bool),
     TabLimit(i8),
+    WrapFiles,
+    WrapIndent,
+    WrapExtra(i8),
+    CommentCol,
+    CommentSpace,
     Reformat,
     Imports,
     Cancel,
@@ -49,7 +56,9 @@ impl SettingsDialog {
         use SetCtl::*;
         let mut v = vec![Theme(false), Theme(true), Style(false), Style(true), UiSize(-1), UiSize(1), Smooth, Blink, Slide, Sticky];
         v.extend((0..self.fonts.len()).map(Font));
-        v.extend([Size(-1), Size(1), Spacing(-1), Spacing(1), Inlay, TabRows(false), TabRows(true), TabLimit(-1), TabLimit(1), Reformat, Imports, Cancel, Ok]);
+        v.extend([Size(-1), Size(1), Spacing(-1), Spacing(1), Inlay, TabRows(false), TabRows(true), TabLimit(-1), TabLimit(1)]);
+        v.extend([WrapFiles, WrapIndent, WrapExtra(-1), WrapExtra(1), CommentCol, CommentSpace]);
+        v.extend([Reformat, Imports, Cancel, Ok]);
         v
     }
 
@@ -101,7 +110,7 @@ impl Workspace {
         if !fonts.iter().any(|f| f.eq_ignore_ascii_case(&s.editor_font)) {
             fonts.insert(0, s.editor_font.clone());
         }
-        self.settings_dialog = Some(SettingsDialog { orig: s.clone(), draft: s, fonts, kb: None });
+        self.settings_dialog = Some(SettingsDialog { orig: s.clone(), draft: s, fonts, kb: None, mask_edit: false });
     }
 
     /// Change the draft and show it at once.
@@ -139,6 +148,12 @@ impl Workspace {
                 let cancel = self.settings_dialog.as_ref().is_some_and(|d| d.focused() == Some(SetCtl::Cancel));
                 self.settings_close(!cancel, window, cx)
             }
+            // The masks field: a plain one-line text box.
+            "backspace" if self.settings_dialog.as_ref().is_some_and(|d| d.mask_edit) => {
+                self.settings_edit(|s| {
+                    s.soft_wrap_files.pop();
+                }, window);
+            }
             // Tab / Shift+Tab move the focus over the controls, Space presses the focused one.
             "tab" => {
                 if let Some(d) = self.settings_dialog.as_mut() {
@@ -149,7 +164,12 @@ impl Workspace {
                         (Some(i), false) => (i + 1) % n,
                         (Some(i), true) => (i + n - 1) % n,
                     });
+                    d.mask_edit = d.focused() == Some(SetCtl::WrapFiles);
                 }
+            }
+            _ if self.settings_dialog.as_ref().is_some_and(|d| d.mask_edit) && !k.modifiers.control && !k.modifiers.alt && k.key_char.as_ref().is_some_and(|t| t.chars().all(|c| !c.is_control())) => {
+                let t = k.key_char.clone().unwrap_or_default();
+                self.settings_edit(|s| s.soft_wrap_files.push_str(&t), window);
             }
             "space" => {
                 if let Some(c) = self.settings_dialog.as_ref().and_then(|d| d.focused()) {
@@ -163,7 +183,16 @@ impl Workspace {
 
     /// Press control `c` (a click, or Space when it has the focus).
     fn settings_press(&mut self, c: SetCtl, window: &mut Window, cx: &mut Context<Self>) {
+        // Typing goes to the masks field while it is the one pressed.
+        if let Some(d) = self.settings_dialog.as_mut() {
+            d.mask_edit = c == SetCtl::WrapFiles;
+        }
         match c {
+            SetCtl::WrapFiles => {}
+            SetCtl::WrapIndent => self.settings_edit(|s| s.soft_wrap_indent = !s.soft_wrap_indent, window),
+            SetCtl::WrapExtra(d) => self.settings_edit(|s| s.soft_wrap_extra_indent = (s.soft_wrap_extra_indent as i32 + d as i32).clamp(0, 16) as u32, window),
+            SetCtl::CommentCol => self.settings_edit(|s| s.line_comment_first_column = !s.line_comment_first_column, window),
+            SetCtl::CommentSpace => self.settings_edit(|s| s.line_comment_space = !s.line_comment_space, window),
             SetCtl::Theme(light) => self.settings_edit(|s| s.light = light, window),
             SetCtl::Style(islands) => self.settings_edit(|s| s.islands = islands, window),
             SetCtl::UiSize(d) => self.settings_edit(|s| s.ui_font_size += d as f32, window),
@@ -295,6 +324,29 @@ impl Workspace {
             .child(checkbox("set-slide", s.smooth_caret, "Smooth caret movement", "(the caret slides to its new place)", SetCtl::Slide, cx))
             .into_any_element();
         let sticky = checkbox("set-sticky", s.sticky_lines, "Show sticky lines", "(enclosing class and def headers stay on top)", SetCtl::Sticky, cx);
+        let editing = d.mask_edit;
+        let masks = div()
+            .id("set-wrap-files")
+            .relative()
+            .flex_1()
+            .h(ui_px(26.))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .rounded(px(4.))
+            .border_1()
+            .border_color(if editing { Theme::accent() } else { Theme::divider() })
+            .bg(Theme::editor_bg())
+            .cursor_text()
+            .child(s.soft_wrap_files.clone())
+            .when(editing, |x| x.child(div().w(px(1.5)).h(ui_px(15.)).bg(Theme::caret())))
+            .when(focus == Some(SetCtl::WrapFiles) && !editing, |x| x.child(crate::ui_kit::focus_ring(4., 0.)))
+            .on_click(Self::settings_click(SetCtl::WrapFiles, cx))
+            .into_any_element();
+        let wrap_indent = checkbox("set-wrap-indent", s.soft_wrap_indent, "Use original line's indent for wrapped parts", "", SetCtl::WrapIndent, cx);
+        let wrap_extra = stepper("set-wrap-extra", format!("+{}", s.soft_wrap_extra_indent), SetCtl::WrapExtra, cx);
+        let comment_col = checkbox("set-comment-col", s.line_comment_first_column, "Line comment at first column", "", SetCtl::CommentCol, cx);
+        let comment_space = checkbox("set-comment-space", s.line_comment_space, "Add a space at line comment start", "", SetCtl::CommentSpace, cx);
         let preview = div()
             .mt(px(6.))
             .p(px(10.))
@@ -329,6 +381,8 @@ impl Workspace {
                     div()
                         .id("settings-dialog")
                         .w(px(620.))
+                        .max_h(gpui::relative(0.86))
+                        .overflow_y_scroll()
                         .flex()
                         .flex_col()
                         .gap(px(2.))
@@ -359,6 +413,12 @@ impl Workspace {
                         .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › EDITOR TABS"))
                         .child(row("Show tabs in", tab_rows))
                         .child(row("Tab limit", tab_limit))
+                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › GENERAL › SOFT WRAPS"))
+                        .child(row("Soft-wrap files", masks))
+                        .child(row("", div().flex().items_center().gap(px(12.)).child(wrap_indent).child(wrap_extra).into_any_element()))
+                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › CODE STYLE › PYTHON › CODE GENERATION"))
+                        .child(row("Comment code", comment_col))
+                        .child(row("", comment_space))
                         .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("TOOLS › ACTIONS ON SAVE"))
                         .child(row("", reformat))
                         .child(row("", imports))
