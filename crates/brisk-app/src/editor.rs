@@ -43,6 +43,10 @@ mod quick_def;
 mod word_complete;
 mod doc_view;
 mod scroll;
+mod motion;
+mod sticky;
+mod guides;
+mod rounded;
 pub mod templates;
 pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
@@ -85,9 +89,12 @@ pub struct Editor {
     focus: FocusHandle,
     scroll_y: f32,
     scroll_x: f32,
-    /// Smooth wheel scrolling: (target scroll_y, the value the animation last set).
-    smooth: Option<(f32, f32)>,
-    smooth_task: Option<gpui::Task<()>>,
+    /// Smooth scrolling and the caret's blink and slide (editor/motion.rs).
+    motion: motion::Motion,
+    /// Headers of the enclosing blocks pinned at the top (editor/sticky.rs).
+    sticky: sticky::Sticky,
+    /// The caret's block for the brighter indent guide (editor/guides.rs).
+    guides: guides::Guides,
     /// (buffer version, longest line in chars): the horizontal scroll range.
     max_line: (u64, usize),
     big: big::BigFile,
@@ -306,8 +313,9 @@ impl Editor {
             focus: cx.focus_handle(),
             scroll_y: 0.0,
             scroll_x: 0.0,
-            smooth: None,
-            smooth_task: None,
+            motion: Default::default(),
+            sticky: Default::default(),
+            guides: Default::default(),
             max_line: (u64::MAX, 0),
             big: Default::default(),
             occ: Default::default(),
@@ -384,8 +392,9 @@ impl Editor {
             focus: cx.focus_handle(),
             scroll_y: 0.0,
             scroll_x: 0.0,
-            smooth: None,
-            smooth_task: None,
+            motion: Default::default(),
+            sticky: Default::default(),
+            guides: Default::default(),
             max_line: (u64::MAX, 0),
             big: Default::default(),
             occ: Default::default(),
@@ -485,7 +494,7 @@ impl Editor {
         let y = y.clamp(0.0, self.max_scroll_y().max(0.0));
         if (y - self.scroll_y).abs() > 0.01 {
             self.scroll_y = y;
-            self.smooth = None;
+            self.motion.glide = None;
             cx.notify();
         }
     }
@@ -777,6 +786,7 @@ impl Editor {
 
     fn ensure_caret_visible(&mut self) {
         self.sync_folds();
+        let shown = self.begin_scroll();
         let (line, _) = self.caret_line_col();
         let vh = self.layout.as_ref().map(|l| f32::from(l.bounds.size.height)).unwrap_or(600.0);
         let y = self.row_of(line) as f32 * line_height();
@@ -787,6 +797,7 @@ impl Editor {
             self.scroll_y = y + line_height() - vh + margin;
         }
         self.clamp_scroll();
+        self.end_scroll(shown, Self::jump_duration());
         self.ensure_caret_visible_x();
     }
 
@@ -794,8 +805,10 @@ impl Editor {
         self.sync_folds();
         let (line, _) = self.caret_line_col();
         let vh = self.layout.as_ref().map(|l| f32::from(l.bounds.size.height)).unwrap_or(600.0);
+        let shown = self.begin_scroll();
         self.scroll_y = (self.row_of(line) as f32 * line_height() - vh / 3.0).max(0.0);
         self.clamp_scroll();
+        self.end_scroll(shown, Self::jump_duration());
     }
 
     fn clamp_scroll(&mut self) {
@@ -1027,6 +1040,9 @@ impl Editor {
             A::MoveDown | A::SelectDown | A::PageDown => self.skip_folded_lines(true),
             _ => {}
         }
+        if matches!(action, A::PageUp | A::PageDown) && !self.is_field {
+            self.page_scroll(action == A::PageDown, page);
+        }
         if !keep_scroll {
             self.ensure_caret_visible();
         } else {
@@ -1062,6 +1078,9 @@ impl Editor {
         self.insight.signature = None;
         if self.scrollbar_down(e.position) {
             cx.notify();
+            return;
+        }
+        if e.button == MouseButton::Left && self.sticky_click(e.position, cx) {
             return;
         }
         if self.fold_click(e.position) {
@@ -1122,6 +1141,7 @@ impl Editor {
             self.middle_move(e.position);
         }
         self.hover_scrollbar(Some(e.position), cx);
+        self.sticky_hover(Some(e.position), cx);
         if in_gutter != self.gutter_hover {
             self.gutter_hover = in_gutter;
             cx.notify();
@@ -1247,52 +1267,9 @@ impl Editor {
             self.smooth_scroll(f32::from(d.y), cx);
             return;
         }
-        self.smooth = None;
+        self.motion.glide = None;
         self.scroll_by(f32::from(d.x), f32::from(d.y), e.modifiers.shift);
         cx.notify();
-    }
-
-    fn smooth_scroll(&mut self, dy: f32, cx: &mut Context<Self>) {
-        // Keep adding to the running target unless something else moved the view meanwhile.
-        let base = match self.smooth {
-            Some((target, last)) if last == self.scroll_y => target,
-            _ => self.scroll_y,
-        };
-        let target = (base - dy).clamp(0.0, self.max_scroll_y());
-        self.smooth = Some((target, self.scroll_y));
-        if self.smooth_task.is_some() {
-            return;
-        }
-        self.smooth_task = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(std::time::Duration::from_millis(7)).await;
-                let go_on = this
-                    .update(cx, |ed, cx| {
-                        let Some((target, last)) = ed.smooth else { return false };
-                        if last != ed.scroll_y {
-                            // Caret moves, Go to Line and the like take over.
-                            ed.smooth = None;
-                            return false;
-                        }
-                        let left = target - ed.scroll_y;
-                        if left.abs() < 0.5 {
-                            ed.scroll_y = target;
-                            ed.smooth = None;
-                        } else {
-                            // About 90 ms to settle, fast at first, like PyCharm's smooth scrolling.
-                            ed.scroll_y += left * 0.3;
-                            ed.smooth = Some((target, ed.scroll_y));
-                        }
-                        cx.notify();
-                        ed.smooth.is_some()
-                    })
-                    .unwrap_or(false);
-                if !go_on {
-                    break;
-                }
-            }
-            let _ = this.update(cx, |ed, _| ed.smooth_task = None);
-        }));
     }
 }
 
@@ -1403,6 +1380,7 @@ impl Render for Editor {
                 }
                 if !*hovered {
                     this.hover_scrollbar(None, cx);
+                    this.sticky_hover(None, cx);
                     if this.inlays.tip.take().is_some() {
                         cx.notify();
                     }
@@ -1569,6 +1547,8 @@ struct Prepaint {
     gutter_w: Pixels,
     char_w: Pixels,
     marks: marks::CaretMarks,
+    /// Sticky lines: (text, line number, top offset, under the mouse).
+    sticky: Vec<(ShapedLine, ShapedLine, f32, bool)>,
 }
 
 impl IntoElement for EditorElement {
@@ -1604,6 +1584,9 @@ impl Element for EditorElement {
         let run = |len: usize, color: gpui::Hsla| TextRun { len, font: mono.clone(), color, background_color: None, underline: None, strikethrough: None };
 
         let headers = self.editor.update(cx, |ed, cx| {
+            if ed.step_glide() {
+                window.request_animation_frame();
+            }
             ed.reparse();
             ed.background_parse(cx);
             ed.schedule_folds(cx);
@@ -1613,6 +1596,8 @@ impl Element for EditorElement {
             ed.sync_folds();
             ed.sync_bookmarks();
             ed.refresh_run_marks(cx);
+            ed.update_sticky();
+            ed.update_guides();
             let h = if ed.show_gutter {
                 ed.fold_headers()
             } else {
@@ -1770,7 +1755,19 @@ impl Element for EditorElement {
                 }
             }
         }
-        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, breakpoint_preview, run_icons, run_slot, annotations, inline_vals, chips, gutter_w, char_w, marks }
+        let sticky = ed
+            .sticky
+            .shown
+            .iter()
+            .enumerate()
+            .map(|(k, &(l, y))| {
+                let (text, runs) = ed.sticky_runs(l, &run);
+                let num = (l + 1).to_string();
+                let n = window.text_system().shape_line(SharedString::from(num.clone()), font_size, &[run(num.len(), Theme::gutter_fg())], None);
+                (window.text_system().shape_line(SharedString::from(text), font_size, &runs, None), n, y, ed.sticky.hover == Some(k))
+            })
+            .collect();
+        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, breakpoint_preview, run_icons, run_slot, annotations, inline_vals, chips, gutter_w, char_w, marks, sticky }
     }
 
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), pp: &mut Prepaint, window: &mut Window, cx: &mut App) {
@@ -1869,14 +1866,18 @@ impl Element for EditorElement {
                 under.push(fill(Bounds::from_corners(point(a, y_of(*l) + px(1.)), point(z, y_of(*l) + lh - px(1.))), Theme::diff_modified_word_bg()).corner_radii(px(3.)));
             }
         }
-        // Indent guides: one at each enclosing indentation level (columns 0, 4, 8, ...).
+        // Indent guides (editor/guides.rs): one at each enclosing block's level, none of their
+        // own on continuation lines, kept through blank lines; the caret's block brighter.
         let unit = b.indent_unit.chars().count().max(1);
+        let scale = window.scale_factor();
         for &l in rows.iter() {
-            let t = b.line(l);
-            let ws = if t.trim().is_empty() { 0 } else { t.chars().take_while(|c| *c == ' ').count() };
+            let ws = ed.guide_indent(l);
             for c in (0..ws).step_by(unit) {
-                let x = text_x + pp.char_w * c as f32;
-                under.push(fill(Bounds::new(point(x, y_of(l)), size(px(1.), lh)), Theme::indent_guide()));
+                // Snapped to a device pixel so the 1-px line stays crisp.
+                let x = px((f32::from(text_x + pp.char_w * c as f32) * scale).round() / scale);
+                let active = ed.guides.active.is_some_and(|(col, a, z)| col == c && (a..=z).contains(&l));
+                let color = if active { Theme::indent_guide_active() } else { Theme::indent_guide() };
+                under.push(fill(Bounds::new(point(x, y_of(l)), size(px(1. / scale), lh)), color));
             }
         }
         // The right margin (PyCharm's "Hard wrap at" column), a thin line across the text area.
@@ -1893,13 +1894,17 @@ impl Element for EditorElement {
             for (r, cur) in ed.visible_matches(lo, hi) {
                 let (l1, c1) = b.pos_to_line_col(r.start);
                 let (l2, c2) = b.pos_to_line_col(r.end);
+                let mut shape = Vec::new();
                 for l in (l1.max(first)..=l2.min(last.saturating_sub(1))).filter(|&l| idx_of(l).is_some()) {
                     let sx = if l == l1 { x_of(l, c1) } else { text_x };
                     let ex = if l == l2 { x_of(l, c2) } else { x_of(l, b.line_len(l)) + pp.char_w };
                     if ex > sx {
-                        under.push(fill(Bounds::from_corners(point(sx, y_of(l)), point(ex, y_of(l) + lh)), if cur { Theme::search_current() } else { Theme::search_hit() }));
+                        // 1 px in at the hit's top and bottom, so hits on adjacent lines stay apart.
+                        let (t, z) = (if l == l1 { px(1.) } else { px(0.) }, if l == l2 { px(1.) } else { px(0.) });
+                        shape.push(rounded::row(y_of(l) + t, y_of(l) + lh - z, sx, ex));
                     }
                 }
+                rounded::push(&shape, rounded::MARK, scale, if cur { Theme::search_current() } else { Theme::search_hit() }, &mut under);
             }
         }
         // Identifier occurrences and the matching brackets under the caret.
@@ -1907,7 +1912,7 @@ impl Element for EditorElement {
             let (l1, c1) = b.pos_to_line_col(r.start);
             let (l2, c2) = b.pos_to_line_col(r.end);
             if l1 == l2 && idx_of(l1).is_some() {
-                under.push(fill(Bounds::from_corners(point(x_of(l1, c1), y_of(l1)), point(x_of(l1, c2), y_of(l1) + lh)), color));
+                rounded::push(&[rounded::row(y_of(l1) + px(1.), y_of(l1) + lh - px(1.), x_of(l1, c1), x_of(l1, c2))], rounded::MARK, scale, color, under);
             }
         };
         for r in &pp.marks.occurrences {
@@ -1924,19 +1929,34 @@ impl Element for EditorElement {
             let r = s.range();
             let (l1, c1) = b.pos_to_line_col(r.start);
             let (l2, c2) = b.pos_to_line_col(r.end);
+            // One shape per selection: rounded outer corners, the rows joined.
+            let mut shape = Vec::new();
             for l in (l1.max(first)..=l2.min(last.saturating_sub(1))).filter(|&l| idx_of(l).is_some()) {
                 let sx = if l == l1 { x_of(l, c1) } else { text_x };
                 let ex = if l == l2 { x_of(l, c2) } else { x_of(l, b.line_len(l)) + pp.char_w };
                 if ex > sx {
-                    under.push(fill(Bounds::from_corners(point(sx, y_of(l)), point(ex, y_of(l) + lh)), Theme::selection()));
+                    shape.push(rounded::row(y_of(l), y_of(l) + lh, sx, ex));
                 }
             }
+            rounded::push(&shape, rounded::SELECTION, scale, Theme::selection(), &mut under);
         }
-        if focused {
+        // Carets: fading blink, optional slide of the primary one, 2 px snapped to device pixels.
+        let caret_look = focused.then(|| {
+            let (l, c) = b.pos_to_line_col(b.primary().head);
+            let target = idx_of(l).map(|_| point(x_of(l, c), y_of(l)));
+            let key = (b.version(), b.primary().head, b.selections.len());
+            ed.motion.caret_look(key, target, point(px(ed.scroll_x), px(ed.scroll_y)))
+        });
+        if let Some(look) = caret_look.as_ref().filter(|k| k.alpha > 0.0) {
+            let scale = window.scale_factor();
+            let snap = |v: Pixels| px((f32::from(v) * scale).round() / scale);
+            let w = px((2.0 * scale).round().max(1.0) / scale);
+            let primary = b.primary().head;
             for s in &b.selections {
                 let (l, c) = b.pos_to_line_col(s.head);
                 if idx_of(l).is_some() {
-                    carets.push(fill(Bounds::new(point(x_of(l, c), y_of(l)), size(px(2.), lh)), Theme::caret()));
+                    let at = look.primary.filter(|_| s.head == primary).unwrap_or_else(|| point(x_of(l, c), y_of(l)));
+                    carets.push(fill(Bounds::new(point(snap(at.x), snap(at.y)), size(w, lh)), Theme::caret().opacity(look.alpha)));
                 }
             }
         }
@@ -2058,6 +2078,7 @@ impl Element for EditorElement {
             }
         }
         let dragging = ed.selecting || ed.drag.is_some() || ed.exec_dragging();
+        let ed_sticky_h = ed.sticky_height();
         let caret_xy = {
             let (l, c) = b.pos_to_line_col(b.primary().head);
             idx_of(l).is_some().then(|| point(x_of(l, c), y_of(l)))
@@ -2188,6 +2209,26 @@ impl Element for EditorElement {
             for q in carets {
                 window.paint_quad(q);
             }
+            if !pp.sticky.is_empty() {
+                let right = bounds.right() - px(scroll::BAR);
+                for (text, num, y, hover) in &pp.sticky {
+                    let top = bounds.top() + px(*y);
+                    let row = Bounds::new(point(bounds.left(), top), size(right - bounds.left(), lh));
+                    window.paint_quad(fill(row, Theme::editor_bg()));
+                    if *hover {
+                        window.paint_quad(fill(row, Theme::hover_row()));
+                    }
+                    let _ = num.paint(point(bounds.left() + pp.gutter_w - px(30.) - pp.run_slot - num.width, top), lh, window, cx);
+                    window.with_content_mask(Some(ContentMask { bounds: Bounds::from_corners(point(text_left, top), point(right, top + lh)) }), |window| {
+                        let _ = text.paint(point(text_x, top), lh, window, cx);
+                    });
+                }
+                // A soft shadow under the panel.
+                let bottom = bounds.top() + px(ed_sticky_h);
+                for (i, a) in [0.22f32, 0.12, 0.06, 0.02].iter().enumerate() {
+                    window.paint_quad(fill(Bounds::new(point(bounds.left(), bottom + px(i as f32)), size(right - bounds.left(), px(1.))), gpui::black().opacity(*a)));
+                }
+            }
             for mut q in thumbs {
                 q.bounds = crate::icons::snap_bounds(q.bounds, window.scale_factor());
                 window.paint_quad(q);
@@ -2242,8 +2283,13 @@ impl Element for EditorElement {
         let lines = std::mem::take(&mut pp.lines);
         let rows = std::mem::take(&mut pp.rows);
         let char_w = pp.char_w;
-        self.editor.update(cx, |ed, _| {
+        let me = self.editor.clone();
+        self.editor.update(cx, |ed, cx| {
             ed.layout = Some(LayoutCache { bounds, caret_xy, text_left, text_x, rows, lines, char_w });
+            match caret_look {
+                Some(look) => ed.keep_caret_look(look, &me, window, cx),
+                None => ed.stop_caret_look(),
+            }
         });
     }
 }

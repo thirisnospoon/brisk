@@ -63,6 +63,8 @@ impl Theme {
     pub fn selection() -> Hsla { ui("selection", 0x214283, 0xa6d2ff) }
     pub fn indent_guide() -> Hsla { ui("indent_guide", 0x313438, 0xebecf0) }
     pub fn right_margin() -> Hsla { ui("right_margin", 0x393b40, 0xdfe1e5) }
+    /// The guide of the block holding the caret.
+    pub fn indent_guide_active() -> Hsla { ui("indent_guide_active", 0x505359, 0xc9ccd6) }
 
     // VCS
     pub fn vcs_added() -> Hsla { pick(0x549159, 0x9fd09c) }
@@ -133,6 +135,11 @@ impl Theme {
             Operator => (0xbcbec4, 0x080808),
             Punctuation => (0xbcbec4, 0x080808),
             SelfParam => (0x94558d, 0x94558d),
+            // PyCharm: calls keep the text color; keyword arguments are orange-brown; f-string
+            // braces are colored like keywords.
+            Call => (0xbcbec4, 0x080808),
+            KeywordArg => (0xaa4926, 0x660099),
+            FStringBrace => (0xcf8e6d, 0x0037a6),
         };
         if !crate::settings::is_light() {
             if let Some(c) = design_syntax(design(), h) {
@@ -305,7 +312,7 @@ fn design_syntax(d: u8, h: Highlight) -> Option<u32> {
             Comment => 0x6c7986,
             Number => 0xd0bf69,
             Constant => 0xa167e6,
-            Property => 0x9ef1dd,
+            Property | KeywordArg => 0x9ef1dd,
             Decorator => 0xfd8f3f,
             SelfParam => 0xfc5fa3,
             _ => 0xe8e8ea,
@@ -319,7 +326,7 @@ fn design_syntax(d: u8, h: Highlight) -> Option<u32> {
             Comment => 0x545a6b,
             Number => 0xf78c6c,
             Constant => 0xf78c6c,
-            Property => 0xb0bec5,
+            Property | KeywordArg => 0xb0bec5,
             Decorator => 0xffcb6b,
             SelfParam => 0xf07178,
             _ => 0xbfc4d4,
@@ -334,7 +341,7 @@ fn design_syntax(d: u8, h: Highlight) -> Option<u32> {
             Comment => 0x6c7086,
             Number => 0xfab387,
             Constant => 0xfab387,
-            Property => 0xb4befe,
+            Property | KeywordArg => 0xb4befe,
             Decorator => 0xf9e2af,
             SelfParam => 0xf38ba8,
             _ => 0x9399b2,

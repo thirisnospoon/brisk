@@ -35,11 +35,24 @@ pub enum Highlight {
     Operator,
     Punctuation,
     SelfParam,
+    /// A function or method call (PyCharm leaves calls in the text color; definitions are
+    /// colored).
+    Call,
+    /// `name=` in a call.
+    KeywordArg,
+    /// `{` `}` around an f-string expression.
+    FStringBrace,
 }
 
-fn classify(capture: &str) -> Option<Highlight> {
+fn classify(lang: Lang, capture: &str) -> Option<Highlight> {
     use Highlight::*;
     Some(match capture {
+        // Ours (Lang::extra_query); before the generic prefixes below.
+        "function.call" => Call,
+        "keyword.argument" => KeywordArg,
+        "string.fbrace" => FStringBrace,
+        // PyCharm leaves attributes, class names and capitalized names in the text color.
+        "property" | "constructor" if lang == Lang::Python => return None,
         c if c.starts_with("keyword") => Keyword,
         // HTML/CSS tags, CSS at-rules, Markdown headings.
         c if c.starts_with("tag") => Keyword,
@@ -187,7 +200,10 @@ impl Lang {
                 (decorator (identifier) @decorator)
                 (decorator (attribute) @decorator)
                 (decorator (call function: (_) @decorator))
-                (keyword_argument name: (identifier) @property)
+                (keyword_argument name: (identifier) @keyword.argument)
+                (call function: (identifier) @function.call)
+                (call function: (attribute attribute: (identifier) @function.call))
+                (interpolation "{" @string.fbrace "}" @string.fbrace)
                 ["def" "class" "if" "elif" "else" "for" "while" "return" "import" "from" "as"
                  "try" "except" "finally" "with" "pass" "break" "continue" "raise" "lambda"
                  "yield" "await" "async" "global" "nonlocal" "assert" "del" "in" "not" "and" "or" "is"] @keyword
@@ -251,7 +267,7 @@ impl SyntaxTree {
         parser.set_language(&lang.ts()).expect("grammar version mismatch");
         let src = format!("{}\n{}", lang.highlights_query(), lang.extra_query());
         let query = Query::new(&lang.ts(), &src).expect("bad highlight query");
-        let names = query.capture_names().iter().map(|n| classify(n)).collect();
+        let names = query.capture_names().iter().map(|n| classify(lang, n)).collect();
         Self { lang, parser, query, names, tree: None, parsed: String::new(), stale: false }
     }
 
@@ -373,7 +389,8 @@ impl SyntaxTree {
         let specificity = |k: Highlight| -> u8 {
             use Highlight::*;
             match k {
-                SelfParam | FunctionBuiltin | ConstantBuiltin | Escape => 2,
+                SelfParam | FunctionBuiltin | ConstantBuiltin | Escape | Call | FStringBrace => 2,
+                KeywordArg => 2,
                 Method | Decorator | Keyword => 1,
                 Property if keys_win => 1,
                 _ => 0,
@@ -419,6 +436,25 @@ impl SyntaxTree {
 
     /// The bracket at `byte` and its partner, from the tree (brackets in strings and comments
     /// are not tokens, so they never match). Byte ranges: (this one, the other one).
+    /// Where the bracketed expression that `byte` continues was opened, when that is before
+    /// `line_start` (the line holding `byte` continues an expression from an earlier line: its
+    /// indentation is not a block's). The outermost such bracket's start byte.
+    pub fn continuation_start(&self, byte: usize, line_start: usize) -> Option<usize> {
+        let tree = self.tree.as_ref()?;
+        let mut node = tree.root_node().descendant_for_byte_range(byte, byte)?;
+        let mut found = None;
+        loop {
+            if node.start_byte() < line_start && node.child(0).is_some_and(|c| matches!(c.kind(), "(" | "[" | "{")) {
+                found = Some(node.start_byte());
+            }
+            match node.parent() {
+                Some(p) => node = p,
+                None => break,
+            }
+        }
+        found
+    }
+
     pub fn bracket_pair(&self, byte: usize) -> Option<(Range<usize>, Range<usize>)> {
         let tree = self.tree.as_ref()?;
         let leaf = tree.root_node().descendant_for_byte_range(byte, byte + 1)?;
@@ -692,10 +728,31 @@ mod tests {
         assert_eq!(kind_of("42"), Some(Highlight::Number));
         assert_eq!(kind_of("self"), Some(Highlight::SelfParam));
         assert_eq!(kind_of("str(42)"), Some(Highlight::FunctionBuiltin));
+        assert_eq!(kind_of("name(self)"), Some(Highlight::Function));
         // Non-overlapping and sorted.
         for w in spans.windows(2) {
             assert!(w[0].range.end <= w[1].range.start);
         }
+    }
+
+    #[test]
+    fn python_like_pycharm() {
+        let src = "u = User(name=f\"{a.b}\")\nu.save(1)\nx = (1,\n     2)\n";
+        let mut s = SyntaxTree::new(Lang::Python);
+        s.parse(src);
+        let spans = s.highlights(src, 0..src.len());
+        let kind_of = |needle: &str| {
+            let at = src.find(needle).unwrap();
+            spans.iter().find(|sp| sp.range.contains(&at)).map(|sp| sp.kind)
+        };
+        assert_eq!(kind_of("User"), Some(Highlight::Call));
+        assert_eq!(kind_of("name="), Some(Highlight::KeywordArg));
+        assert_eq!(kind_of("{a"), Some(Highlight::FStringBrace));
+        assert!(matches!(kind_of("b}"), None | Some(Highlight::Punctuation)), "an attribute keeps the text color");
+        assert_eq!(kind_of("save"), Some(Highlight::Call));
+        let second = src.find("     2").unwrap();
+        assert_eq!(s.continuation_start(second + 5, second), Some(src.find("(1,").unwrap()));
+        assert_eq!(s.continuation_start(src.find("u.save").unwrap(), src.find("u.save").unwrap()), None);
     }
 
     #[test]

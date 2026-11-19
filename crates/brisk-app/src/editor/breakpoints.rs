@@ -222,7 +222,7 @@ impl Editor {
     pub fn pointer_style(&self) -> gpui::CursorStyle {
         if self.middle_active() {
             gpui::CursorStyle::ResizeUpDown
-        } else if self.bar_hover.is_some() || self.drag.is_some() {
+        } else if self.bar_hover.is_some() || self.drag.is_some() || self.sticky.hover.is_some() {
             gpui::CursorStyle::Arrow
         } else if self.breakpoints.hand {
             gpui::CursorStyle::PointingHand

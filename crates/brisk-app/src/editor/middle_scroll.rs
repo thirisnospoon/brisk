@@ -24,7 +24,7 @@ impl Editor {
     /// Middle button pressed in the text: arm scrolling around this point.
     pub(super) fn middle_scroll_start(&mut self, at: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         self.middle = Some(MiddleScroll { origin: at, mouse: at, moved: false });
-        self.smooth = None;
+        self.motion.glide = None;
         cx.spawn_in(window, async move |this, cx| loop {
             cx.background_executor().timer(TICK).await;
             if !this.update(cx, |e, cx| e.middle_tick(cx)).unwrap_or(false) {
