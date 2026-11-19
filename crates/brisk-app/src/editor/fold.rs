@@ -274,6 +274,11 @@ impl Editor {
         if !self.is_python() {
             return;
         }
+        // Opened with only its first lines parsed: once the whole tree is there.
+        if self.syntax.as_ref().is_some_and(|s| s.tree().is_none() && s.is_stale()) {
+            self.big.collapse_pending = true;
+            return;
+        }
         let is_import = |l: &str| l.starts_with("import ") || l.starts_with("from ");
         let candidates = self.fold_candidates().to_vec();
         let group = candidates.into_iter().find(|&(a, z)| {

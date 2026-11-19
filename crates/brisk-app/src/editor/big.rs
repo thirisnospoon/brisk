@@ -26,6 +26,10 @@ pub(super) const FOLD_DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// Longest reparse on the UI thread in a large file.
 pub const PARSE_BUDGET: Duration = Duration::from_millis(30);
+/// Opening a file larger than this parses only its first [`OPEN_PREVIEW_LINES`] lines on the
+/// UI thread (highlighting what is in view), the rest in the background.
+pub const OPEN_PARSE_BYTES: usize = 64 * 1024;
+pub const OPEN_PREVIEW_LINES: usize = 300;
 
 /// Lines around the caret that word completion looks at in a large file.
 pub const WORD_WINDOW: usize = 2_000;
@@ -40,6 +44,9 @@ pub struct BigFile {
     extent_at: Option<Instant>,
     /// A background parse is running.
     parsing: bool,
+    /// Collapse the imports once the first complete tree lands (a long file opens with only
+    /// its first lines parsed).
+    pub(super) collapse_pending: bool,
 }
 
 impl Editor {
@@ -71,6 +78,12 @@ impl Editor {
                 e.big.folds_for = None;
                 if let Some(c) = e.folds.candidates.0.as_mut() {
                     *c = u64::MAX;
+                }
+                // The outline (Structure, breadcrumbs) was read without a complete tree.
+                e.scope_cache = Default::default();
+                if e.big.collapse_pending && e.syntax.as_ref().is_some_and(|s| !s.is_stale()) {
+                    e.big.collapse_pending = false;
+                    e.collapse_imports();
                 }
                 cx.notify();
             });

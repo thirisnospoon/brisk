@@ -84,7 +84,7 @@ fn classify(lang: Lang, capture: &str) -> Option<Highlight> {
     })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Lang {
     Python,
     Json,
@@ -236,8 +236,13 @@ const TOML_QUERY: &str = r#"
 pub struct SyntaxTree {
     lang: Lang,
     parser: Parser,
-    query: Query,
-    names: Vec<Option<Highlight>>,
+    /// Compiled once per language (compiling the Python query takes milliseconds, and every
+    /// opened file has a tree).
+    query: std::sync::Arc<Query>,
+    names: std::sync::Arc<[Option<Highlight>]>,
+    /// Before the first complete parse of a long file: a tree of its first bytes only (that
+    /// many), so the lines in view at the top are highlighted at once (`preview`).
+    preview: Option<(usize, Tree)>,
     tree: Option<Tree>,
     /// The text `tree` was parsed from: the next parse diffs against it and reparses only
     /// the changed region (a full parse of a 50k-line file takes seconds).
@@ -266,9 +271,21 @@ impl SyntaxTree {
         let mut parser = Parser::new();
         parser.set_language(&lang.ts()).expect("grammar version mismatch");
         let src = format!("{}\n{}", lang.highlights_query(), lang.extra_query());
-        let query = Query::new(&lang.ts(), &src).expect("bad highlight query");
-        let names = query.capture_names().iter().map(|n| classify(lang, n)).collect();
-        Self { lang, parser, query, names, tree: None, parsed: String::new(), stale: false }
+        type Compiled = (std::sync::Arc<Query>, std::sync::Arc<[Option<Highlight>]>);
+        static QUERIES: std::sync::Mutex<Vec<(Lang, Compiled)>> = std::sync::Mutex::new(Vec::new());
+        let mut cache = QUERIES.lock().unwrap_or_else(|e| e.into_inner());
+        let (query, names) = match cache.iter().find(|(l, _)| *l == lang) {
+            Some((_, c)) => c.clone(),
+            None => {
+                let query = Query::new(&lang.ts(), &src).expect("bad highlight query");
+                let names: std::sync::Arc<[Option<Highlight>]> = query.capture_names().iter().map(|n| classify(lang, n)).collect();
+                let c = (std::sync::Arc::new(query), names);
+                cache.push((lang, c.clone()));
+                c
+            }
+        };
+        drop(cache);
+        Self { lang, parser, query, names, preview: None, tree: None, parsed: String::new(), stale: false }
     }
 
     pub fn lang(&self) -> Lang {
@@ -296,6 +313,19 @@ impl SyntaxTree {
         if let Some(tree) = self.tree.as_mut() {
             tree.edit(&text_edit(&self.parsed, text));
         }
+        self.stale = true;
+        self.parsed.clear();
+        self.parsed.push_str(text);
+    }
+
+    /// The first parse of a long file, done by halves: only `text[..prefix]` is parsed here
+    /// (the lines in view on opening, highlighted by [`Self::highlights`]); the whole text
+    /// is left stale for a background `parse_full` (`stale_job` / `adopt`). Until then
+    /// there is no tree: outline and folds wait for it.
+    pub fn preview(&mut self, text: &str, prefix: usize) {
+        let prefix = (0..=prefix.min(text.len())).rev().find(|&i| text.is_char_boundary(i)).unwrap_or(0);
+        self.preview = self.parser.parse(&text[..prefix], None).map(|t| (prefix, t));
+        self.tree = None;
         self.stale = true;
         self.parsed.clear();
         self.parsed.push_str(text);
@@ -331,6 +361,9 @@ impl SyntaxTree {
         // Out of budget: keep the old tree (if any; the first parse of a large file has none)
         // until a background parse brings a complete one.
         self.stale = parsed.is_none();
+        if parsed.is_some() {
+            self.preview = None;
+        }
         self.tree = parsed.or(old);
         self.parsed.clear();
         self.parsed.push_str(text);
@@ -357,6 +390,7 @@ impl SyntaxTree {
         } else {
             self.stale = false;
         }
+        self.preview = None;
         self.tree = Some(tree);
     }
 
@@ -366,7 +400,12 @@ impl SyntaxTree {
 
     /// Spans intersecting `bytes`, non-overlapping and sorted. Innermost capture wins.
     pub fn highlights(&self, text: &str, bytes: Range<usize>) -> Vec<Span> {
-        let Some(tree) = &self.tree else { return Vec::new() };
+        let (tree, bytes) = match (&self.tree, &self.preview) {
+            (Some(t), _) => (t, bytes),
+            // Only the previewed prefix has a tree yet.
+            (None, Some((n, t))) if bytes.start < *n => (t, bytes.start..bytes.end.min(*n)),
+            _ => return Vec::new(),
+        };
         let mut cursor = QueryCursor::new();
         cursor.set_byte_range(bytes.clone());
         let mut raw: Vec<(Range<usize>, usize, Highlight)> = Vec::new();
@@ -1018,6 +1057,28 @@ class C:
         inc.parse_within(&text, Some(std::time::Duration::from_secs(10)));
         assert!(!inc.is_stale());
         assert_eq!(inc.tree().unwrap().root_node().to_sexp(), full(&text));
+    }
+
+    #[test]
+    fn preview_highlights_the_prefix_until_the_full_parse() {
+        let text: String = (0..2000).map(|i| format!("def f{i}(a):\n    return \"s\"\n\n")).collect();
+        let full = {
+            let mut f = SyntaxTree::new(Lang::Python);
+            f.parse(&text);
+            f
+        };
+        let mut t = SyntaxTree::new(Lang::Python);
+        t.preview(&text, 300);
+        // No tree yet (outline and folds wait), but the first lines are highlighted as in
+        // the full parse; past the prefix nothing is.
+        assert!(t.tree().is_none() && t.is_stale());
+        assert_eq!(t.highlights(&text, 0..200), full.highlights(&text, 0..200));
+        assert!(t.highlights(&text, 1000..1200).is_empty());
+        let (lang, job_text, tree) = t.stale_job().unwrap();
+        assert!(tree.is_none());
+        t.adopt(&job_text, parse_full(lang, &job_text, None).unwrap());
+        assert!(!t.is_stale());
+        assert_eq!(t.highlights(&text, 1000..1200), full.highlights(&text, 1000..1200));
     }
 
     #[test]
