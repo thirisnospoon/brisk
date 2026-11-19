@@ -107,7 +107,13 @@ impl Theme {
     pub fn occurrence_mark() -> Hsla { pick(0xa7a77c, 0x9b8fe0) }
     /// Bookmark marks in the gutter.
     pub fn bookmark() -> Hsla { ui("bookmark", 0x5f8dd3, 0x3574f0) }
+    /// TODO comments (marks on the error stripe).
+    pub fn todo() -> Hsla { ui("todo", 0x8bb33d, 0x008dde) }
     pub fn error() -> Hsla { pick(0xe55765, 0xd5301f) }
+    /// Warning underlines and marks (PyCharm's "Warning" effect color).
+    pub fn warning_wave() -> Hsla { ui("warning_wave", 0xc9a032, 0xc98a00) }
+    /// Unused code ("Unused symbol": the text greyed out).
+    pub fn unused() -> Hsla { ui("unused", 0x6f737a, 0x8c8c8c) }
     /// Breakpoint circles in the gutter.
     pub fn breakpoint() -> Hsla { pick(0xdb5c5c, 0xe55765) }
     /// Run icons in the gutter and toolbars: a calm green.
