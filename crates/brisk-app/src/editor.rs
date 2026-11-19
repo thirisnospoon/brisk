@@ -48,6 +48,7 @@ mod sticky;
 mod guides;
 mod rounded;
 mod stripe;
+mod squiggle;
 pub mod templates;
 pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
@@ -243,8 +244,8 @@ impl gpui::EventEmitter<EditorEvent> for Editor {}
 fn severity_color(s: Severity) -> gpui::Hsla {
     match s {
         Severity::Error => Theme::error(),
-        Severity::Warning => gpui::rgb(0xc9a032).into(),
-        Severity::Unused => Theme::text_dim(),
+        Severity::Warning => Theme::warning_wave(),
+        Severity::Unused => Theme::unused(),
     }
 }
 
@@ -1706,6 +1707,14 @@ impl Element for EditorElement {
                     runs = recolor(runs, b0..b1, severity_color(Severity::Unused));
                 }
             }
+            for d in ed.diagnostics.iter().filter(|d| squiggle::is_deprecated(d) && d.start.line <= l && l <= d.end.line) {
+                let c0 = if d.start.line == l { d.start.col } else { 0 };
+                let c1 = if d.end.line == l { d.end.col } else { usize::MAX };
+                let (b0, b1) = (char_to_byte(&text, c0), char_to_byte(&text, c1));
+                if b1 > b0 {
+                    runs = squiggle::strike(runs, b0..b1);
+                }
+            }
             // Hints in the UI font, so they do not read as code; their chips are painted under the text.
             let (text, runs, hint_chips) = ed.line_with_inlays(l, text, runs, |len| TextRun { font: font(crate::theme::ui_font()), ..run(len, Theme::inlay_fg()) });
             chips.extend(hint_chips.into_iter().map(|r| (ri, r)));
@@ -2015,22 +2024,21 @@ impl Element for EditorElement {
             }
         }
         // Problems: wavy underlines (errors and warnings) and marks on the right edge.
-        let mut waves: Vec<(Point<Pixels>, Pixels, gpui::Hsla)> = Vec::new();
+        let mut waves: Vec<(Pixels, Pixels, Pixels, gpui::Hsla)> = Vec::new();
         let mut stripe: Vec<gpui::PaintQuad> = Vec::new();
         let total = (ed.display_rows() as f32 * line_height()).max(f32::from(bounds.size.height));
         for d in &ed.diagnostics {
             let color = severity_color(d.severity);
-            if d.severity != Severity::Unused {
+            if d.severity != Severity::Unused && !squiggle::is_deprecated(d) {
                 let r = ed.diag_range(d);
                 let (l1, c1) = b.pos_to_line_col(r.start);
                 let (l2, c2) = b.pos_to_line_col(r.end);
                 for l in (l1.max(first)..=l2.min(last.saturating_sub(1))).filter(|&l| idx_of(l).is_some()) {
-                    let sx = if l == l1 { x_of(l, c1) } else { text_x };
-                    let mut ex = if l == l2 { x_of(l, c2) } else { x_of(l, b.line_len(l)) };
-                    if ex <= sx {
-                        ex = sx + pp.char_w;
-                    }
-                    waves.push((point(sx, y_of(l) + lh - px(3.)), ex - sx, color));
+                    let Some((a, z)) = squiggle::wave_cols(&b.line(l), (l == l1).then_some(c1), (l == l2).then_some(c2)) else { continue };
+                    let len = b.line_len(l);
+                    let sx = x_of(l, a.min(len)) + pp.char_w * a.saturating_sub(len) as f32;
+                    let ex = x_of(l, z.min(len)) + pp.char_w * z.saturating_sub(len) as f32;
+                    waves.push((sx, ex, squiggle::wave_top(y_of(l), lh), color));
                 }
             }
         }
@@ -2118,8 +2126,8 @@ impl Element for EditorElement {
                 window.paint_quad(q);
                 let _ = pp.placeholder.paint(at, lh, window, cx);
             }
-            for (o, w, color) in waves {
-                window.paint_underline(o, w, &gpui::UnderlineStyle { color: Some(color), thickness: px(1.), wavy: true });
+            for (x0, x1, y, color) in waves {
+                squiggle::paint_wave(window, x0, x1, y, color);
             }
             // Gutter (painted over text so horizontal overflow never covers line numbers).
             if !is_field {
