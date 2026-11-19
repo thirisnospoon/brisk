@@ -38,7 +38,9 @@ pub struct Git {
     details_sel: Option<usize>,
     log_scroll: UniformListScrollHandle,
     pub log_focus: FocusHandle,
-    busy: Option<&'static str>,
+    pub(super) busy: Option<&'static str>,
+    /// A status refresh is running (the status bar's tasks indicator).
+    pub(super) refreshing: bool,
     /// PyCharm: tracked changes are included by default, unversioned files are not.
     excluded: HashSet<String>,
     included_untracked: HashSet<String>,
@@ -76,6 +78,7 @@ impl Git {
             log_scroll: UniformListScrollHandle::new(),
             log_focus: cx.focus_handle(),
             busy: None,
+            refreshing: false,
             excluded: HashSet::new(),
             included_untracked: HashSet::new(),
             commit_sel: None,
@@ -295,7 +298,8 @@ impl Workspace {
     }
 
     pub(super) fn refresh_git(&mut self, cx: &mut Context<Self>) {
-        let Some(g) = &self.git else { return };
+        let Some(g) = self.git.as_mut() else { return };
+        g.refreshing = true;
         let repo = g.repo.clone();
         let want_log = self.bottom == Some(BottomTool::Git);
         let query = g.filter.query.clone();
@@ -319,6 +323,7 @@ impl Workspace {
     fn apply_git(&mut self, st: brisk_git::Result<Status>, br: Vec<Branch>, log: Option<Vec<Commit>>, cx: &mut Context<Self>) {
         crate::stall::note("apply git status");
         let Some(g) = self.git.as_mut() else { return };
+        g.refreshing = false;
         let mut head_changed = false;
         match st {
             Ok(st) => {

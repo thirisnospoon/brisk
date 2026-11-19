@@ -52,6 +52,7 @@ mod run_config_ui;
 mod run_marks_ui;
 mod run_ui;
 mod settings_ui;
+mod status_ui;
 mod tabs_ui;
 mod venv_ui;
 mod run_anything_ui;
@@ -183,6 +184,8 @@ enum PopupKind {
     BreakpointCondition,
     /// A directory breadcrumb: the folder's contents (`Workspace::crumb_dir`).
     FolderCrumb,
+    /// The status bar's background tasks.
+    BackgroundTasks,
 }
 
 #[derive(Clone)]
@@ -249,6 +252,8 @@ enum Target {
     NewBranch,
     Confirm(git_ui::Pending),
     Cancel,
+    /// A row of the background tasks popup (nothing to do on Enter).
+    Task,
     RunConfig(Option<String>, bool),
     /// The configuration is still running: stop it and run it again.
     StopAndRerun(Box<brisk_run::RunConfig>),
@@ -1620,6 +1625,7 @@ impl Workspace {
             PopupKind::Rename => self.rename_items(&q),
             PopupKind::FolderCrumb => self.folder_items(&q),
             PopupKind::PutLabel => self.put_label_items(&q),
+            PopupKind::BackgroundTasks => self.bg_task_items(&q),
         };
         let p = self.popup.as_mut().unwrap();
         p.items = items;
@@ -1731,7 +1737,7 @@ impl Workspace {
                             ed.update(cx, |e, cx| e.paste_text(&t, cx));
                         }
                     }
-                    Some(Target::Dir(_)) | None => self.focus_editor(window, cx),
+                    Some(Target::Dir(_) | Target::Task) | None => self.focus_editor(window, cx),
                 }
             }
             "backspace" => {
@@ -2331,7 +2337,10 @@ impl Workspace {
             )
     }
 
-    fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_status(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        if crate::theme::islands() {
+            return self.render_status_islands(cx);
+        }
         let enc = self.active_editor().map(|e| e.read(cx).encoding_label()).unwrap_or_default();
         let indent = self.active_editor().map(|e| e.read(cx).indent_label()).unwrap_or_default();
         let (pos, eol, lang, crumbs) = match self.active_editor() {
@@ -2389,6 +2398,7 @@ impl Workspace {
                         cx.notify();
                     })),
             )
+            .into_any_element()
     }
 
     fn render_popup(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -2412,6 +2422,7 @@ impl Workspace {
             PopupKind::Projects => ("Projects", "Type to filter"),
             PopupKind::OpenWhere => ("Open Project", "Type to filter"),
             PopupKind::FileStructure => ("File Structure", "Type to filter"),
+            PopupKind::BackgroundTasks => ("Background Tasks", "Type to filter"),
             PopupKind::FolderCrumb => (self.crumb_dir.1.as_str(), "Type to filter · → opens a folder · ← goes up"),
             PopupKind::Bookmarks => ("Bookmarks", "Type to filter"),
             PopupKind::BookmarkMnemonic => ("Add Bookmark with Mnemonic", "Type a digit or letter, then Enter"),
@@ -2561,6 +2572,7 @@ impl Workspace {
             Target::NewBranch => ("+", Theme::text_muted()),
             Target::Confirm(_) => ("✓", Theme::file_added()),
             Target::Cancel => ("×", Theme::text_muted()),
+            Target::Task => ("◷", Theme::accent()),
             Target::RunConfig(None, _) => ("▤", Theme::text_muted()),
             Target::RunConfig(Some(_), _) | Target::StopAndRerun(_) => ("▶", gpui::rgb(0x5fb865).into()),
             Target::EditRunConfigs => ("✎", Theme::text_muted()),
@@ -2847,6 +2859,9 @@ fn fade_in(id: &'static str, e: impl IntoElement, ms: u64) -> impl IntoElement {
     use gpui::{Animation, AnimationExt};
     // Islands: popups, menus and dialogs take 140 ms (toasts keep 160), still ease-out.
     let ms = if crate::theme::islands() { ms.clamp(140, 160) } else { ms };
+    // The surface's shadow fades in with it: GPUI scales shadow alpha by the element opacity
+    // (from 0 to the `ui_kit::floating` target over the same 140 ms), so no shadow animation of
+    // its own is needed.
     // Toasts and balloons rise a little more than popups and menus.
     let rise = if ms >= 160 { 8. } else if ms >= 110 { 4. } else { 2. };
     div()
