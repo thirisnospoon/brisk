@@ -13,7 +13,7 @@ mod remote;
 mod stash;
 
 pub use blame::{parse_blame, BlameLine};
-pub use diff::{align, line_changes, AlignedRow, LineChange, LineChangeKind, RowKind};
+pub use diff::{align, foldable, inline_diff, line_changes, unified, AlignedRow, LineChange, LineChangeKind, RowKind, UnifiedRow};
 pub use stash::StashEntry;
 pub use remote::Outgoing;
 pub use log_query::LogQuery;

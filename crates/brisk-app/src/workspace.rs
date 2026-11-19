@@ -31,6 +31,7 @@ mod git_log_filter;
 mod git_merge_ui;
 mod git_stash_ui;
 mod git_smoke;
+mod vcs_smoke;
 mod git_ui;
 pub(crate) use git_ui::fmt_time;
 mod history_ui;
@@ -198,7 +199,11 @@ impl Tab {
     fn focus(&self, cx: &App) -> FocusHandle {
         match self {
             Tab::Editor(e) => e.read(cx).focus_handle(cx),
-            Tab::Diff(d) => d.read(cx).focus_handle(cx),
+            // A live diff types into its editor.
+            Tab::Diff(d) => match d.read(cx).live_editor() {
+                Some(e) => e.read(cx).focus_handle(cx),
+                None => d.read(cx).focus_handle(cx),
+            },
             Tab::Grid(g) => g.read(cx).focus_handle(cx),
         }
     }
@@ -559,6 +564,9 @@ impl Workspace {
         if std::env::var_os("BRISK_SMOKE_GITX").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.gitx_smoke(window, cx));
         }
+        if std::env::var_os("BRISK_SMOKE_VCS").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.vcs_smoke(window, cx));
+        }
         if std::env::var_os("BRISK_SMOKE_RUNWIN").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_window_smoke(window, cx));
         }
@@ -765,6 +773,17 @@ impl Workspace {
                 return Some(f);
             }
         }
+        // The editable side of a live diff.
+        if let Some(Tab::Diff(d)) = self.active.and_then(|i| self.tabs.get(i)) {
+            if let Some(e) = d.read(cx).live_editor() {
+                if e.read(cx).focus_handle(cx).is_focused(window) {
+                    return Some(e);
+                }
+                if let Some(f) = e.read(cx).find_field_focused(window, cx) {
+                    return Some(f);
+                }
+            }
+        }
         let git_fields = self.git.as_ref().map(|g| [g.message.clone(), g.filter.field.clone()]).into_iter().flatten();
         let console = self.pyc.as_ref().map(|p| p.input.clone());
         let packages = self.packages.as_ref().map(|p| p.fields()).into_iter().flatten();
@@ -775,7 +794,9 @@ impl Workspace {
         let mut saved = 0;
         let mut saved_paths = Vec::new();
         let mut problem = None;
-        let eds: Vec<_> = self.editors().cloned().collect();
+        let mut eds: Vec<_> = self.editors().cloned().collect();
+        // Editors that live diffs opened for files without a tab.
+        eds.extend(self.all_tabs().filter_map(|t| if let Tab::Diff(d) = t { d.read(cx).owned_editor() } else { None }));
         for t in eds {
             t.update(cx, |e, cx| {
                 match e.save() {
@@ -861,6 +882,15 @@ impl Workspace {
     fn close_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
         if i >= self.tabs.len() {
             return;
+        }
+        // A live diff's own editor is written when the diff closes, like a tab's.
+        if let Tab::Diff(d) = self.tabs[i].clone() {
+            if let Some(e) = d.read(cx).owned_editor() {
+                if let Err(err) = e.update(cx, |e, _| e.save()) {
+                    let msg = format!("Cannot save {}: {err}", e.read(cx).title());
+                    self.show_toast(msg, true, cx);
+                }
+            }
         }
         if let Tab::Editor(e) = self.tabs[i].clone() {
             let saved = e.update(cx, |e, _| e.save());
@@ -1002,6 +1032,14 @@ impl Workspace {
     fn active_diff(&self, window: &Window, cx: &App) -> Option<Entity<DiffView>> {
         match self.active.and_then(|i| self.tabs.get(i)) {
             Some(Tab::Diff(d)) if d.read(cx).focus_handle(cx).is_focused(window) => Some(d.clone()),
+            _ => None,
+        }
+    }
+
+    /// The active diff tab while focus is anywhere in it (its live editor too): F7 / F4.
+    pub(super) fn diff_in_focus(&self, window: &Window, cx: &App) -> Option<Entity<DiffView>> {
+        match self.active.and_then(|i| self.tabs.get(i)) {
+            Some(Tab::Diff(d)) if d.read(cx).focus_handle(cx).contains_focused(window, cx) => Some(d.clone()),
             _ => None,
         }
     }

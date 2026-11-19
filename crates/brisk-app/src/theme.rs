@@ -77,6 +77,12 @@ impl Theme {
     pub fn diff_deleted_bg() -> Hsla { pick(0x3e3a3a, 0xf6e1e1) }
     pub fn diff_modified_bg() -> Hsla { pick(0x283850, 0xdde8fa) }
     pub fn diff_filler_bg() -> Hsla { pick(0x232427, 0xf2f3f5) }
+    /// Changed words inside a changed line (stronger than the line's own background).
+    pub fn diff_added_word_bg() -> Hsla { pick(0x3d6b43, 0xb6e7bf) }
+    pub fn diff_deleted_word_bg() -> Hsla { pick(0x6b4545, 0xf2bcbc) }
+    pub fn diff_modified_word_bg() -> Hsla { pick(0x35588c, 0xb5cdf5) }
+    /// The folded "N unchanged lines" row of a diff.
+    pub fn diff_fold_bg() -> Hsla { pick(0x26282c, 0xeef0f3) }
     /// Search match highlight.
     pub fn search_hit() -> Hsla { ui("search_hit", 0x32593d, 0xfbe8a8) }
     pub fn search_current() -> Hsla { ui("search_current", 0x2e7d4a, 0xf3c85a) }

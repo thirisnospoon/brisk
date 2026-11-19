@@ -580,14 +580,12 @@ impl Workspace {
     }
 
     /// HEAD ↔ working copy (unsaved editor text included).
-    fn show_change_diff(&mut self, c: &FileChange, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn show_change_diff(&mut self, c: &FileChange, window: &mut Window, cx: &mut Context<Self>) {
         let Some(g) = &self.git else { return };
         let abs = g.repo.abs(&c.path);
         let base_path = c.old_path.clone().unwrap_or_else(|| c.path.clone());
-        let open = self
-            .editors()
-            .find(|e| e.read(cx).path.as_deref().is_some_and(|p| g.repo.rel(p).as_deref() == Some(c.path.as_str())))
-            .map(|e| e.read(cx).text_string());
+        let tab_editor = self.editors().find(|e| e.read(cx).path.as_deref().is_some_and(|p| g.repo.rel(p).as_deref() == Some(c.path.as_str()))).cloned();
+        let open = tab_editor.as_ref().map(|e| e.read(cx).text_string());
         let (repo, status, name) = (g.repo.clone(), c.status, file_name(&c.path).to_string());
         // `git show HEAD:<file>` and the disk read off the UI thread.
         let abs2 = abs.clone();
@@ -603,7 +601,22 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let (left, right) = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                let view = cx.new(|cx| DiffView::new(format!("{name} (HEAD ↔ Local)"), Some(abs), format!("HEAD: {base_path}"), &left, "Your version".into(), &right, cx));
+                let title = format!("{name} (HEAD ↔ Local)");
+                let left_label = format!("HEAD: {base_path}");
+                // The working copy is editable in the diff (PyCharm): the tab's editor if the
+                // file is open, else one the diff opens and saves. A deleted file is read-only.
+                let editor = if status == FileStatus::Deleted || !abs.is_file() {
+                    None
+                } else {
+                    match tab_editor {
+                        Some(e) => Some((e, false)),
+                        None => Some((cx.new(|cx| crate::editor::Editor::open(&abs, cx)), true)),
+                    }
+                };
+                let view = match editor {
+                    Some((e, owned)) => cx.new(|cx| DiffView::new_live(title, Some(abs), left_label, left, "Your version".into(), e, owned, cx)),
+                    None => cx.new(|cx| DiffView::new(title, Some(abs), left_label, &left, "Your version".into(), &right, cx)),
+                };
                 this.open_diff(view, window, cx);
             });
         })
@@ -800,7 +813,7 @@ impl Workspace {
                 }
             }
         }
-        if let Some(d) = self.active_diff(window, cx) {
+        if let Some(d) = self.diff_in_focus(window, cx) {
             match k.key.as_str() {
                 "f7" if !m.control && !m.alt => {
                     d.update(cx, |d, cx| d.jump(!m.shift, cx));

@@ -19,6 +19,7 @@ icons![
     "history", "lightbulb", "list", "list-todo", "list-tree", "minus", "power", "undo-2", "loader-circle", "menu", "mute-breakpoints", "package", "pause", "pencil", "pin",
     "play", "play-solid", "plus", "rerun-failed", "ring", "rotate-cw", "save", "search", "server", "settings-2", "sort-failed", "square-terminal",
     "star", "step-into", "step-out", "step-over", "stop-solid", "terminal", "timer", "trash", "triangle-alert", "wrap-text", "x", "zap",
+    "align-justify", "columns-2", "fold-vertical", "unfold-vertical",
 ];
 
 /// The embedded icons as GPUI assets ("icons/<name>.svg").
