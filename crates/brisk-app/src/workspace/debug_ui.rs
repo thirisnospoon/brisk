@@ -1396,6 +1396,7 @@ impl Workspace {
                             .cursor_text()
                             .child(cond)
                             .when(editing, |x| x.child(div().w(px(1.5)).h(ui_px(15.)).bg(Theme::caret())))
+                            .when(editing, |x| x.relative().child(crate::ui_kit::focus_ring(crate::ui_kit::RADIUS, 0.)))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(d) = this.debug.bp_dialog.as_mut() {
                                     d.editing = true;
@@ -1431,6 +1432,7 @@ impl Workspace {
                             .cursor_text()
                             .child(c.name.clone())
                             .when(editing, |x| x.child(div().w(px(1.5)).h(ui_px(15.)).bg(Theme::caret())))
+                            .when(editing, |x| x.relative().child(crate::ui_kit::focus_ring(crate::ui_kit::RADIUS, 0.)))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(d) = this.debug.bp_dialog.as_mut() {
                                     d.editing = true;

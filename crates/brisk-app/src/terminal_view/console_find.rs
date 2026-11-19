@@ -279,7 +279,8 @@ impl TerminalPanel {
                     .whitespace_nowrap()
                     .child(s.query.clone())
                     .when(s.focused, |d| d.child(caret))
-                    .when(s.query.is_empty(), |d| d.child(div().text_color(Theme::text_dim()).child(" Find in output"))),
+                    .when(s.query.is_empty(), |d| d.child(div().text_color(Theme::text_dim()).child(" Find in output")))
+                    .when(s.focused, |d| d.relative().child(crate::ui_kit::focus_ring(4., 0.))),
             )
             .child(div().min_w(px(70.)).text_color(if none { Theme::error() } else { Theme::text_muted() }).child(self.search_summary()))
             .child(button("cf-prev", "↑", false).on_click(cx.listener(|this, _, _, cx| {

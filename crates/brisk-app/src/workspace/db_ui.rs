@@ -1098,7 +1098,8 @@ impl Workspace {
                         .flex_shrink()
                         .px(px(8.))
                         .cursor(if f.is_text() { gpui::CursorStyle::IBeam } else { gpui::CursorStyle::Arrow })
-                        .child(value),
+                        .child(value)
+                        .when(active, |d| d.child(crate::ui_kit::focus_ring(crate::ui_kit::RADIUS, 0.))),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if let Some(d) = this.db.dialog.as_mut() {

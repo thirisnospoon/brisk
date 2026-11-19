@@ -16,6 +16,46 @@ pub struct SettingsDialog {
     pub draft: Settings,
     /// Installed monospaced fonts we offer.
     fonts: Vec<String>,
+    /// The control with the keyboard focus (Tab / Shift+Tab, or the last one clicked), as
+    /// an index into `controls()`; it wears the focus ring.
+    kb: Option<usize>,
+}
+
+/// A Settings control, in Tab order; steppers carry their step (-1 / +1).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum SetCtl {
+    Theme(bool),
+    Style(bool),
+    UiSize(i8),
+    Smooth,
+    Blink,
+    Slide,
+    Sticky,
+    Font(usize),
+    Size(i8),
+    Spacing(i8),
+    Inlay,
+    TabRows(bool),
+    TabLimit(i8),
+    Reformat,
+    Imports,
+    Cancel,
+    Ok,
+}
+
+impl SettingsDialog {
+    /// Every control, in the order Tab visits them (top to bottom, left to right).
+    fn controls(&self) -> Vec<SetCtl> {
+        use SetCtl::*;
+        let mut v = vec![Theme(false), Theme(true), Style(false), Style(true), UiSize(-1), UiSize(1), Smooth, Blink, Slide, Sticky];
+        v.extend((0..self.fonts.len()).map(Font));
+        v.extend([Size(-1), Size(1), Spacing(-1), Spacing(1), Inlay, TabRows(false), TabRows(true), TabLimit(-1), TabLimit(1), Reformat, Imports, Cancel, Ok]);
+        v
+    }
+
+    fn focused(&self) -> Option<SetCtl> {
+        self.kb.and_then(|i| self.controls().get(i).copied())
+    }
 }
 
 impl Workspace {
@@ -61,7 +101,7 @@ impl Workspace {
         if !fonts.iter().any(|f| f.eq_ignore_ascii_case(&s.editor_font)) {
             fonts.insert(0, s.editor_font.clone());
         }
-        self.settings_dialog = Some(SettingsDialog { orig: s.clone(), draft: s, fonts });
+        self.settings_dialog = Some(SettingsDialog { orig: s.clone(), draft: s, fonts, kb: None });
     }
 
     /// Change the draft and show it at once.
@@ -91,20 +131,81 @@ impl Workspace {
     }
 
     pub(super) fn settings_key(&mut self, e: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        match e.keystroke.key.as_str() {
+        let k = &e.keystroke;
+        match k.key.as_str() {
             "escape" => self.settings_close(false, window, cx),
-            "enter" => self.settings_close(true, window, cx),
+            // Enter is OK, unless Cancel has the focus.
+            "enter" => {
+                let cancel = self.settings_dialog.as_ref().is_some_and(|d| d.focused() == Some(SetCtl::Cancel));
+                self.settings_close(!cancel, window, cx)
+            }
+            // Tab / Shift+Tab move the focus over the controls, Space presses the focused one.
+            "tab" => {
+                if let Some(d) = self.settings_dialog.as_mut() {
+                    let n = d.controls().len();
+                    d.kb = Some(match (d.kb, k.modifiers.shift) {
+                        (None, false) => 0,
+                        (None, true) => n - 1,
+                        (Some(i), false) => (i + 1) % n,
+                        (Some(i), true) => (i + n - 1) % n,
+                    });
+                }
+            }
+            "space" => {
+                if let Some(c) = self.settings_dialog.as_ref().and_then(|d| d.focused()) {
+                    self.settings_press(c, window, cx);
+                }
+            }
             _ => {}
         }
         cx.notify();
     }
 
+    /// Press control `c` (a click, or Space when it has the focus).
+    fn settings_press(&mut self, c: SetCtl, window: &mut Window, cx: &mut Context<Self>) {
+        match c {
+            SetCtl::Theme(light) => self.settings_edit(|s| s.light = light, window),
+            SetCtl::Style(islands) => self.settings_edit(|s| s.islands = islands, window),
+            SetCtl::UiSize(d) => self.settings_edit(|s| s.ui_font_size += d as f32, window),
+            SetCtl::Font(i) => {
+                let Some(n) = self.settings_dialog.as_ref().and_then(|d| d.fonts.get(i).cloned()) else { return };
+                self.settings_edit(|s| s.editor_font = n, window)
+            }
+            SetCtl::Size(d) => self.settings_edit(|s| s.font_size += d as f32, window),
+            SetCtl::Spacing(d) => self.settings_edit(|s| s.line_spacing += d as f32 * 0.1, window),
+            SetCtl::Smooth => self.settings_edit(|s| s.smooth_scrolling = !s.smooth_scrolling, window),
+            SetCtl::Blink => self.settings_edit(|s| s.caret_blinking = !s.caret_blinking, window),
+            SetCtl::Slide => self.settings_edit(|s| s.smooth_caret = !s.smooth_caret, window),
+            SetCtl::Sticky => self.settings_edit(|s| s.sticky_lines = !s.sticky_lines, window),
+            SetCtl::Inlay => self.settings_edit(|s| s.inlay_hints = !s.inlay_hints, window),
+            SetCtl::Reformat => self.settings_edit(|s| s.reformat_on_save = !s.reformat_on_save, window),
+            SetCtl::Imports => self.settings_edit(|s| s.optimize_imports_on_save = !s.optimize_imports_on_save, window),
+            SetCtl::TabRows(rows) => self.settings_edit(|s| s.tab_rows = rows, window),
+            SetCtl::TabLimit(d) => self.settings_edit(|s| s.tab_limit = (s.tab_limit as f32 + d as f32).clamp(1., 100.) as u32, window),
+            SetCtl::Cancel => return self.settings_close(false, window, cx),
+            SetCtl::Ok => return self.settings_close(true, window, cx),
+        }
+        cx.notify();
+    }
+
+    /// A click on control `c`: it takes the focus (its ring shows) and is pressed.
+    fn settings_click(c: SetCtl, cx: &mut Context<Self>) -> Box<dyn Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> {
+        Box::new(cx.listener(move |this, _: &gpui::ClickEvent, w, cx| {
+            if let Some(d) = this.settings_dialog.as_mut() {
+                d.kb = d.controls().iter().position(|x| *x == c);
+            }
+            this.settings_press(c, w, cx);
+        }))
+    }
+
     pub(super) fn render_settings(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let d = self.settings_dialog.as_ref()?;
         let s = d.draft.clone();
-        let chip = |id: (&'static str, usize), on: bool, label: String| {
+        let focus = d.focused();
+        let chip = |id: (&'static str, usize), on: bool, label: String, c: SetCtl| {
             div()
                 .id(id)
+                .relative()
                 .px(px(10.))
                 .h(ui_px(26.))
                 .flex()
@@ -114,55 +215,32 @@ impl Workspace {
                 .border_1()
                 .border_color(if on { Theme::accent() } else { Theme::divider() })
                 .when(on, |x| x.bg(Theme::selection_row()))
-                .when(!on, |x| x.hover(|st| st.bg(Theme::hover_row())))
+                .when(!on, |x| x.hover(|st| st.bg(Theme::hover_row())).active(|st| st.bg(Theme::press())))
                 .child(label)
+                .when(focus == Some(c), |x| x.child(crate::ui_kit::focus_ring(5., 0.)))
         };
         let row = |label: &'static str, value: gpui::AnyElement| {
             div().min_h(ui_px(36.)).flex().items_center().gap(px(12.)).child(div().w(px(110.)).flex_shrink_0().text_color(Theme::text_muted()).child(label)).child(value)
         };
-        // − value +: `edit` adds its argument (±1 step) to the setting.
-        let stepper = |id: &'static str, value: String, step: f32, edit: fn(&mut Settings, f32), cx: &mut Context<Self>| {
+        // − value +
+        let stepper = |id: &'static str, value: String, ctl: fn(i8) -> SetCtl, cx: &mut Context<Self>| {
             div()
                 .flex()
                 .items_center()
                 .gap(px(6.))
-                .child(chip((id, 0), false, "−".into()).on_click(cx.listener(move |this, _, w, cx| {
-                    this.settings_edit(|s| edit(s, -step), w);
-                    cx.notify();
-                })))
+                .child(chip((id, 0), false, "−".into(), ctl(-1)).on_click(Self::settings_click(ctl(-1), cx)))
                 .child(div().w(px(44.)).flex().justify_center().child(value))
-                .child(chip((id, 1), false, "+".into()).on_click(cx.listener(move |this, _, w, cx| {
-                    this.settings_edit(|s| edit(s, step), w);
-                    cx.notify();
-                })))
+                .child(chip((id, 1), false, "+".into(), ctl(1)).on_click(Self::settings_click(ctl(1), cx)))
                 .into_any_element()
         };
-        let theme = div()
-            .flex()
-            .gap(px(6.))
-            .child(chip(("set-theme", 0), !s.light, "Dark".into()).on_click(cx.listener(|this, _, w, cx| {
-                this.settings_edit(|s| s.light = false, w);
-                cx.notify();
-            })))
-            .child(chip(("set-theme", 1), s.light, "Light".into()).on_click(cx.listener(|this, _, w, cx| {
-                this.settings_edit(|s| s.light = true, w);
-                cx.notify();
-            })))
-            .into_any_element();
+        // Two or more choices, one of them on.
+        let choices = |id: &'static str, items: Vec<(String, bool, SetCtl)>, cx: &mut Context<Self>| {
+            div().flex().items_center().flex_wrap().gap(px(6.)).children(items.into_iter().enumerate().map(|(i, (label, on, c))| chip((id, i), on, label, c).on_click(Self::settings_click(c, cx))))
+        };
+        let theme = choices("set-theme", vec![("Dark".into(), !s.light, SetCtl::Theme(false)), ("Light".into(), s.light, SetCtl::Theme(true))], cx).into_any_element();
         // UI style: the setting; BRISK_DESIGN, when it names a style, wins (and says so).
         let forced = crate::theme::islands_override();
-        let style = div()
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .child(chip(("set-style", 0), !s.islands, "Classic".into()).on_click(cx.listener(|this, _, w, cx| {
-                this.settings_edit(|s| s.islands = false, w);
-                cx.notify();
-            })))
-            .child(chip(("set-style", 1), s.islands, "Islands".into()).on_click(cx.listener(|this, _, w, cx| {
-                this.settings_edit(|s| s.islands = true, w);
-                cx.notify();
-            })))
+        let style = choices("set-style", vec![("Classic".into(), !s.islands, SetCtl::Style(false)), ("Islands".into(), s.islands, SetCtl::Style(true))], cx)
             .when_some(forced, |d, on| {
                 d.child(div().pl(px(6.)).text_size(ui_px(11.5)).text_color(Theme::text_dim()).child(format!("BRISK_DESIGN sets {} for this run", if on { "Islands" } else { "Classic" })))
             })
@@ -171,32 +249,15 @@ impl Workspace {
             .flex()
             .flex_wrap()
             .gap(px(6.))
-            .children(d.fonts.iter().enumerate().map(|(i, f)| {
-                let name = f.clone();
-                chip(("set-font", i), f.eq_ignore_ascii_case(&s.editor_font), f.clone()).font_family(f.clone()).on_click(cx.listener(move |this, _, w, cx| {
-                    let n = name.clone();
-                    this.settings_edit(|s| s.editor_font = n, w);
-                    cx.notify();
-                }))
-            }))
+            .children(d.fonts.iter().enumerate().map(|(i, f)| chip(("set-font", i), f.eq_ignore_ascii_case(&s.editor_font), f.clone(), SetCtl::Font(i)).font_family(f.clone()).on_click(Self::settings_click(SetCtl::Font(i), cx))))
             .into_any_element();
-        let size = stepper("set-size", format!("{}", s.font_size), 1.0, |s, d| s.font_size += d, cx);
-        let spacing = stepper("set-spacing", format!("{:.1}", s.line_spacing), 0.1, |s, d| s.line_spacing += d, cx);
-        let ui_size = stepper("set-ui-size", format!("{}", s.ui_font_size), 1.0, |s, d| s.ui_font_size += d, cx);
-        let tab_limit = stepper("set-tab-limit", format!("{}", s.tab_limit), 1.0, |s, d| s.tab_limit = (s.tab_limit as f32 + d).clamp(1., 100.) as u32, cx);
-        let tab_rows = div()
-            .flex()
-            .gap(px(6.))
-            .child(chip(("set-tab-rows", 0), !s.tab_rows, "One row".into()).on_click(cx.listener(|this, _, w, cx| {
-                this.settings_edit(|s| s.tab_rows = false, w);
-                cx.notify();
-            })))
-            .child(chip(("set-tab-rows", 1), s.tab_rows, "Multiple rows".into()).on_click(cx.listener(|this, _, w, cx| {
-                this.settings_edit(|s| s.tab_rows = true, w);
-                cx.notify();
-            })))
-            .into_any_element();
-        let checkbox = |id: &'static str, on: bool, label: &'static str, note: &'static str, flip: fn(&mut Settings), cx: &mut Context<Self>| {
+        let size = stepper("set-size", format!("{}", s.font_size), SetCtl::Size, cx);
+        let spacing = stepper("set-spacing", format!("{:.1}", s.line_spacing), SetCtl::Spacing, cx);
+        let ui_size = stepper("set-ui-size", format!("{}", s.ui_font_size), SetCtl::UiSize, cx);
+        let tab_limit = stepper("set-tab-limit", format!("{}", s.tab_limit), SetCtl::TabLimit, cx);
+        let tab_rows = choices("set-tab-rows", vec![("One row".into(), !s.tab_rows, SetCtl::TabRows(false)), ("Multiple rows".into(), s.tab_rows, SetCtl::TabRows(true))], cx).into_any_element();
+        // A checkbox; filled with the accent when on, so its focus ring sits outside.
+        let checkbox = |id: &'static str, on: bool, label: &'static str, note: &'static str, c: SetCtl, cx: &mut Context<Self>| {
             div()
                 .id(id)
                 .flex()
@@ -205,6 +266,7 @@ impl Workspace {
                 .cursor_pointer()
                 .child(
                     div()
+                        .relative()
                         .size(ui_px(16.))
                         .flex()
                         .items_center()
@@ -212,29 +274,27 @@ impl Workspace {
                         .rounded(px(3.))
                         .border_1()
                         .border_color(if on { Theme::accent() } else { Theme::divider() })
-                        .when(on, |x| x.bg(Theme::accent()).child(crate::icons::ui_icon("check-bold", 12., gpui::white()))),
+                        .when(on, |x| x.bg(Theme::accent()).child(crate::icons::ui_icon("check-bold", 12., gpui::white())))
+                        .when(focus == Some(c), |x| x.child(crate::ui_kit::focus_ring(3., if on { 3. } else { 0. }))),
                 )
                 .child(label)
                 .when(!note.is_empty(), |x| x.child(div().text_color(Theme::text_dim()).child(note)))
-                .on_click(cx.listener(move |this, _, w, cx| {
-                    this.settings_edit(flip, w);
-                    cx.notify();
-                }))
+                .on_click(Self::settings_click(c, cx))
                 .into_any_element()
         };
-        let inlay = checkbox("set-inlay", s.inlay_hints, "Show inlay hints", "(inferred types, parameter names)", |s| s.inlay_hints = !s.inlay_hints, cx);
-        let reformat = checkbox("set-reformat", s.reformat_on_save, "Reformat code", "(ruff format)", |s| s.reformat_on_save = !s.reformat_on_save, cx);
-        let imports = checkbox("set-imports", s.optimize_imports_on_save, "Optimize imports", "(ruff: unused, sorted)", |s| s.optimize_imports_on_save = !s.optimize_imports_on_save, cx);
-        let smooth = checkbox("set-smooth", s.smooth_scrolling, "Enable smooth scrolling", "", |s| s.smooth_scrolling = !s.smooth_scrolling, cx);
+        let inlay = checkbox("set-inlay", s.inlay_hints, "Show inlay hints", "(inferred types, parameter names)", SetCtl::Inlay, cx);
+        let reformat = checkbox("set-reformat", s.reformat_on_save, "Reformat code", "(ruff format)", SetCtl::Reformat, cx);
+        let imports = checkbox("set-imports", s.optimize_imports_on_save, "Optimize imports", "(ruff: unused, sorted)", SetCtl::Imports, cx);
+        let smooth = checkbox("set-smooth", s.smooth_scrolling, "Enable smooth scrolling", "", SetCtl::Smooth, cx);
         let caret = div()
             .flex()
             .flex_col()
             .gap(px(8.))
             .py(px(4.))
-            .child(checkbox("set-blink", s.caret_blinking, "Caret blinking", "", |s| s.caret_blinking = !s.caret_blinking, cx))
-            .child(checkbox("set-slide", s.smooth_caret, "Smooth caret movement", "(the caret slides to its new place)", |s| s.smooth_caret = !s.smooth_caret, cx))
+            .child(checkbox("set-blink", s.caret_blinking, "Caret blinking", "", SetCtl::Blink, cx))
+            .child(checkbox("set-slide", s.smooth_caret, "Smooth caret movement", "(the caret slides to its new place)", SetCtl::Slide, cx))
             .into_any_element();
-        let sticky = checkbox("set-sticky", s.sticky_lines, "Show sticky lines", "(enclosing class and def headers stay on top)", |s| s.sticky_lines = !s.sticky_lines, cx);
+        let sticky = checkbox("set-sticky", s.sticky_lines, "Show sticky lines", "(enclosing class and def headers stay on top)", SetCtl::Sticky, cx);
         let preview = div()
             .mt(px(6.))
             .p(px(10.))
@@ -247,18 +307,12 @@ impl Workspace {
             .line_height(px(settings::line_height()))
             .child(div().flex().child(div().text_color(Theme::syntax(brisk_syntax::Highlight::Keyword)).child("def ")).child(div().text_color(Theme::syntax(brisk_syntax::Highlight::Function)).child("greet")).child(div().text_color(Theme::text()).child("(name):")))
             .child(div().flex().child(div().text_color(Theme::syntax(brisk_syntax::Highlight::Keyword)).child("    return ")).child(div().text_color(Theme::syntax(brisk_syntax::Highlight::String)).child("f\"Hello, {name}!\"")).child(div().text_color(Theme::syntax(brisk_syntax::Highlight::Comment)).child("  # 0O1lI")));
-        let button = |id: &'static str, label: &'static str, primary: bool| {
-            div()
-                .id(id)
+        let button = |id: &'static str, label: &'static str, primary: bool, c: SetCtl, cx: &mut Context<Self>| {
+            crate::ui_kit::button(id, label, true, primary)
+                .text_size(ui_px(13.))
                 .px(px(14.))
-                .h(ui_px(28.))
-                .flex()
-                .items_center()
-                .rounded(px(5.))
-                .cursor_pointer()
-                .when(primary, |b| b.bg(Theme::accent()).text_color(gpui::white()))
-                .when(!primary, |b| b.border_1().border_color(Theme::divider()).hover(|st| st.bg(Theme::hover_row())))
-                .child(label)
+                .when(focus == Some(c), |b| b.child(crate::ui_kit::focus_ring(crate::ui_kit::RADIUS, if primary { 3. } else { 0. })))
+                .on_click(Self::settings_click(c, cx))
         };
         Some(
             div()
@@ -315,8 +369,8 @@ impl Workspace {
                                 .items_center()
                                 .gap(px(8.))
                                 .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("Alt+Shift+. / Alt+Shift+, or Ctrl+wheel: zoom all editors"))
-                                .child(button("set-cancel", "Cancel", false).on_click(cx.listener(|this, _, w, cx| this.settings_close(false, w, cx))))
-                                .child(button("set-ok", "OK", true).on_click(cx.listener(|this, _, w, cx| this.settings_close(true, w, cx)))),
+                                .child(button("set-cancel", "Cancel", false, SetCtl::Cancel, cx))
+                                .child(button("set-ok", "OK", true, SetCtl::Ok, cx)),
                         ),
                 )
                 .into_any_element(),
@@ -350,6 +404,22 @@ impl Workspace {
         eprintln!("smoke-settings: smooth scrolling / caret blinking / smooth caret (live) -> {} {} {}", settings::smooth_scrolling(), settings::caret_blinking(), settings::smooth_caret());
         self.smoke_press("escape", window, cx);
         eprintln!("smoke-settings: escape -> inlay hints {} islands={} smooth scrolling {} caret blinking {} smooth caret {}", settings::inlay_hints(), crate::theme::islands(), settings::smooth_scrolling(), settings::caret_blinking(), settings::smooth_caret());
+        // Keyboard focus: Tab / Shift+Tab move the ring, Space presses the focused control,
+        // Enter on Cancel cancels.
+        self.dispatch(Action::Settings, window, cx);
+        let light0 = settings::current().light;
+        self.smoke_press("tab tab space", window, cx);
+        let (at, light) = (self.settings_dialog.as_ref().and_then(|d| d.focused()), settings::current().light);
+        self.smoke_press("shift-tab", window, cx);
+        let back = self.settings_dialog.as_ref().and_then(|d| d.focused());
+        self.smoke_press("shift-tab shift-tab", window, cx);
+        let wrapped = self.settings_dialog.as_ref().and_then(|d| d.focused());
+        self.smoke_press("enter", window, cx);
+        eprintln!(
+            "smoke-settings: tab tab space -> {at:?} light {light0}->{light}; shift-tab -> {back:?}; twice more -> {wrapped:?}; Cancel+Enter -> open={} light={}",
+            self.settings_dialog.is_some(),
+            settings::current().light
+        );
         self.dispatch(Action::Settings, window, cx);
         let font = self.settings_dialog.as_ref().and_then(|d| d.fonts.last().cloned()).unwrap_or_default();
         self.settings_edit(|s| {

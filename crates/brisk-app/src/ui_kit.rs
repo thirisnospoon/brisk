@@ -64,7 +64,30 @@ pub fn editor_slot(e: &Entity<Editor>, placeholder: &'static str, show_placehold
 /// A one-line editor field: `input_frame` around `editor_slot`.
 pub fn editor_field(e: &Entity<Editor>, placeholder: &'static str, focused: bool, bad: bool, h: f32, cx: &gpui::App) -> Div {
     let empty = e.read(cx).buffer.len_chars() == 0;
-    input_frame(focused, bad, h).child(editor_slot(e, placeholder, empty && !focused, h - 2.))
+    input_frame(focused, bad, h).child(editor_slot(e, placeholder, empty && !focused, h - 2.)).when(focused, |d| d.child(focus_ring(RADIUS, 0.)))
+}
+
+/// The keyboard focus ring: 2 px in the focus color, following the radius `r` of an element
+/// with a 1 px border. `out` is how far its outer edge sits outside the element: 0 for fields
+/// and outlined controls (the ring takes the place of their border), 3 for ones filled with
+/// the accent (a 1 px gap, then the ring), where a ring inside would vanish. Added as the
+/// element's last child (the element is `relative`), it paints over the content and changes
+/// no layout. Every focused field, button, checkbox and choice in Settings, dialogs and
+/// popups wears this one.
+pub fn focus_ring(r: f32, out: f32) -> Div {
+    // Absolute children are placed from the padding box, inside the 1 px border.
+    let o = out + 1.;
+    div().absolute().top(px(-o)).left(px(-o)).right(px(-o)).bottom(px(-o)).rounded(px(r + out)).border_2().border_color(Theme::focus_ring())
+}
+
+/// Hover and pressed backgrounds of a button: a filled (default) one darkens the accent, the
+/// rest take the hover / press colors of rows and tool buttons.
+pub fn button_states(d: Stateful<Div>, primary: bool) -> Stateful<Div> {
+    if primary {
+        d.hover(|s| s.bg(Theme::accent_hover()).border_color(Theme::accent_hover())).active(|s| s.bg(Theme::accent_press()).border_color(Theme::accent_press()))
+    } else {
+        d.hover(|s| s.bg(Theme::hover_row())).active(|s| s.bg(Theme::press()))
+    }
 }
 
 /// Islands: the corner radius of a panel and the gap between panels.
@@ -167,6 +190,7 @@ pub fn floating<E: Styled>(e: E) -> E {
 pub fn button(id: &'static str, label: &'static str, enabled: bool, primary: bool) -> Stateful<Div> {
     div()
         .id(id)
+        .relative()
         .flex_shrink_0()
         .h(ui_px(CONTROL_H))
         .px(px(12.))
@@ -179,7 +203,7 @@ pub fn button(id: &'static str, label: &'static str, enabled: bool, primary: boo
         .when(primary && enabled, |d| d.bg(Theme::accent()).border_color(Theme::accent()).text_color(gpui::white()))
         .when(!(primary && enabled), |d| d.border_color(Theme::divider()))
         .when(!enabled, |d| d.text_color(Theme::text_dim()))
-        .when(enabled, |d| d.cursor_pointer().hover(|s| s.opacity(0.9)).active(|s| s.bg(Theme::press())))
+        .when(enabled, |d| button_states(d.cursor_pointer(), primary))
         .child(label)
 }
 
@@ -187,6 +211,7 @@ pub fn button(id: &'static str, label: &'static str, enabled: bool, primary: boo
 pub fn icon_button(id: &'static str, icon: &'static str, enabled: bool) -> Stateful<Div> {
     div()
         .id(id)
+        .relative()
         .flex_shrink_0()
         .size(ui_px(CONTROL_H))
         .flex()
@@ -195,6 +220,6 @@ pub fn icon_button(id: &'static str, icon: &'static str, enabled: bool) -> State
         .rounded(px(RADIUS))
         .border_1()
         .border_color(Theme::divider())
-        .when(enabled, |d| d.cursor_pointer().hover(|s| s.bg(Theme::hover_row())).active(|s| s.bg(Theme::press())))
+        .when(enabled, |d| button_states(d.cursor_pointer(), false))
         .child(crate::icons::ui_icon(icon, 16., if enabled { Theme::text_muted() } else { Theme::text_dim().opacity(0.5) }))
 }
