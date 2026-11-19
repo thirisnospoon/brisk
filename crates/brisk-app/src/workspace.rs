@@ -8,6 +8,7 @@ mod todo_ui;
 mod db_ui;
 mod services_ui;
 mod pin_smoke;
+mod dataview_smoke;
 mod multi_smoke;
 mod pycon_smoke;
 mod run_tpl_smoke;
@@ -184,6 +185,8 @@ pub enum Tab {
     Editor(Entity<Editor>),
     Diff(Entity<DiffView>),
     Grid(Entity<GridView>),
+    /// View as DataFrame / Array of the paused program.
+    Data(Entity<crate::data_view::DataView>),
 }
 
 impl Tab {
@@ -192,6 +195,7 @@ impl Tab {
             Tab::Editor(e) => e.entity_id(),
             Tab::Diff(d) => d.entity_id(),
             Tab::Grid(g) => g.entity_id(),
+            Tab::Data(v) => v.entity_id(),
         }
     }
 
@@ -200,6 +204,7 @@ impl Tab {
             Tab::Editor(e) => e.read(cx).focus_handle(cx),
             Tab::Diff(d) => d.read(cx).focus_handle(cx),
             Tab::Grid(g) => g.read(cx).focus_handle(cx),
+            Tab::Data(v) => v.read(cx).focus_handle(cx),
         }
     }
 }
@@ -467,6 +472,10 @@ impl Workspace {
                 this.open_settings(window);
                 cx.notify();
             });
+        }
+        if let Some(f) = std::env::var_os("BRISK_SMOKE_DATAVIEW") {
+            let f = PathBuf::from(f);
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.dataview_smoke(f, window, cx));
         }
         if let Some(f) = std::env::var_os("BRISK_SMOKE_DEBUG") {
             let f = PathBuf::from(f);
@@ -2101,6 +2110,7 @@ impl Workspace {
                     }
                     Tab::Diff(d) => (d.read(cx).title.clone(), "⇆", Theme::file_modified(), None, false),
                     Tab::Grid(g) => (g.read(cx).title.clone(), "▦", gpui::rgb(0x6c9be8).into(), None, false),
+                    Tab::Data(v) => (v.read(cx).title.clone(), "▦", gpui::rgb(0xd0a35c).into(), None, false),
                 };
                 let name_color = name_color.unwrap_or(if active { Theme::text() } else { Theme::text_muted() });
                 let pinned = self.pinned.contains(&t.entity_id());

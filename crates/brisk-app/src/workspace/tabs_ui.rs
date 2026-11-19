@@ -270,6 +270,7 @@ impl Workspace {
             Some(Tab::Editor(e)) => e.clone().into_any_element(),
             Some(Tab::Diff(d)) => d.clone().into_any_element(),
             Some(Tab::Grid(g)) => g.clone().into_any_element(),
+            Some(Tab::Data(v)) => v.clone().into_any_element(),
             None => self.render_welcome().into_any_element(),
         }
     }
@@ -449,6 +450,7 @@ fn same_tab(a: &Tab, b: &Tab) -> bool {
         (Tab::Editor(x), Tab::Editor(y)) => x == y,
         (Tab::Diff(x), Tab::Diff(y)) => x == y,
         (Tab::Grid(x), Tab::Grid(y)) => x == y,
+        (Tab::Data(x), Tab::Data(y)) => x == y,
         _ => false,
     }
 }

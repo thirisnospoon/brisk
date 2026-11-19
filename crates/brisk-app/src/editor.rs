@@ -132,6 +132,8 @@ pub struct Editor {
     last_replace: String,
     /// A one-line input (search fields): no find bar of its own, Enter is handled by the owner.
     pub is_field: bool,
+    /// The tab title of a pathless editor ("df (value)"), instead of "untitled".
+    pub title_override: Option<String>,
     /// Collapsed regions.
     folds: fold::Folds,
     /// F11 / Ctrl+F11 bookmarks.
@@ -309,6 +311,7 @@ impl Editor {
             last_find: find::FindOpts::default(),
             last_replace: String::new(),
             is_field: false,
+            title_override: None,
             folds: Default::default(),
             bookmarks: Default::default(),
             breakpoints: Default::default(),
@@ -378,6 +381,7 @@ impl Editor {
             last_find: find::FindOpts::default(),
             last_replace: String::new(),
             is_field: false,
+            title_override: None,
             folds: Default::default(),
             bookmarks: Default::default(),
             breakpoints: Default::default(),
@@ -459,6 +463,9 @@ impl Editor {
     }
 
     pub fn title(&self) -> String {
+        if let Some(t) = &self.title_override {
+            return t.clone();
+        }
         self.path
             .as_ref()
             .and_then(|p| p.file_name())

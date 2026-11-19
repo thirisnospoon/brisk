@@ -374,13 +374,15 @@ pub fn parse_frames(v: &Value) -> Vec<Frame> {
         .unwrap_or_default()
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Variable {
     pub name: String,
     pub value: String,
     pub type_name: String,
     /// > 0: has children (`variables` request with this reference).
     pub reference: i64,
+    /// debugpy's `evaluateName`: an expression of the frame for this value ("df", "obj.items[0]").
+    pub evaluate_name: String,
 }
 
 /// Scopes (`scopes` reply) as variables with children, or a `variables` reply.
@@ -394,6 +396,7 @@ pub fn parse_scopes(v: &Value) -> Vec<Variable> {
                     value: String::new(),
                     type_name: String::new(),
                     reference: s.get("variablesReference").and_then(Value::as_i64).unwrap_or(0),
+                    evaluate_name: String::new(),
                 })
                 .collect()
         })
@@ -410,6 +413,7 @@ pub fn parse_variables(v: &Value) -> Vec<Variable> {
                     value: x.get("value").and_then(Value::as_str).unwrap_or("").to_string(),
                     type_name: x.get("type").and_then(Value::as_str).unwrap_or("").to_string(),
                     reference: x.get("variablesReference").and_then(Value::as_i64).unwrap_or(0),
+                    evaluate_name: x.get("evaluateName").and_then(Value::as_str).unwrap_or("").to_string(),
                 })
                 // debugpy groups "special variables" / "function variables": keep them, last.
                 .collect()
