@@ -70,8 +70,11 @@ pub struct Packages {
     /// Normalized name → newer version on the index.
     pub outdated: HashMap<String, String>,
     pub outdated_loading: bool,
-    /// PyPI's project names (normalized, original), loaded the first time a name is typed.
-    index: Option<Arc<Vec<(String, String)>>>,
+    /// The file with PyPI's project names (fetched the first time a name is typed); each query
+    /// reads it in the background, so the names never stay in memory.
+    index: Option<PathBuf>,
+    /// Bumped by every query: a pass for an older one stops early.
+    query_gen: Arc<std::sync::atomic::AtomicU64>,
     pub index_loading: bool,
     index_error: Option<String>,
     /// Names for the Package name field, and the highlighted one.
@@ -121,6 +124,7 @@ impl Packages {
             outdated: HashMap::new(),
             outdated_loading: false,
             index: None,
+            query_gen: Default::default(),
             index_loading: false,
             index_error: None,
             suggestions: Vec::new(),
@@ -383,12 +387,14 @@ impl Workspace {
             cx.notify();
             return;
         }
+        use std::sync::atomic::Ordering::Relaxed;
+        let gen = p.query_gen.fetch_add(1, Relaxed) + 1;
         match p.index.clone() {
             // A pass over a million names: off the UI thread, the newest query wins.
             Some(index) => {
                 let task = cx.background_executor().spawn({
-                    let q = q.clone();
-                    async move { py_packages::suggest_in(&index, &q, 12) }
+                    let (q, current) = (q.clone(), p.query_gen.clone());
+                    async move { py_packages::suggest_file(&index, &q, 12, &|| current.load(Relaxed) == gen) }
                 });
                 cx.spawn(async move |this, cx| {
                     let found = task.await;
@@ -412,14 +418,14 @@ impl Workspace {
         let Some(p) = self.packages.as_mut() else { return };
         let Some(py) = p.python.clone() else { return };
         p.index_loading = true;
-        let task = cx.background_executor().spawn(async move { py_packages::index_names(&py).map(py_packages::name_index) });
+        let task = cx.background_executor().spawn(async move { py_packages::index_file(&py) });
         cx.spawn(async move |this, cx| {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
                 let Some(p) = this.packages.as_mut() else { return };
                 p.index_loading = false;
                 match res {
-                    Ok(names) => p.index = Some(Arc::new(names)),
+                    Ok(file) => p.index = Some(file),
                     Err(e) => p.index_error = Some(e),
                 }
                 p.suggested_for.clear();
