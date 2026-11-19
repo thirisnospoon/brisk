@@ -339,7 +339,7 @@ struct Popup {
 /// Structure tool window state: its scroll and the item it last followed the caret to.
 #[derive(Default)]
 struct StructureView {
-    scroll: gpui::ScrollHandle,
+    scroll: UniformListScrollHandle,
     bar: crate::scrollbar::BarState,
     follow: Option<usize>,
     /// Caret line of the active editor at the last repaint.
@@ -2201,17 +2201,45 @@ impl Workspace {
         let (items, chain) = ed.as_ref().map(|e| e.update(cx, |e, _| e.caret_scope())).unwrap_or_default();
         let current = chain.last().copied();
         if current != self.structure_view.follow {
+            // A uniform_list keeps the request until its next layout, the first one included.
             if let Some(i) = current {
-                self.structure_view.scroll.scroll_to_item(i);
+                self.structure_view.scroll.scroll_to_item(i, gpui::ScrollStrategy::Top);
             }
-            // Before the list's first layout GPUI cannot scroll it yet: try again next frame.
-            if self.structure_view.scroll.bounds().size.height > px(0.) {
-                self.structure_view.follow = current;
-            } else {
-                cx.notify();
-            }
+            self.structure_view.follow = current;
         }
-        let rows = items.iter().cloned().enumerate().map(move |(i, it)| {
+        // Virtualized: only the rows in view are built (a generated module has thousands of
+        // definitions); the outline itself is cached per buffer version.
+        let n = items.len();
+        let list = uniform_list(
+            "structure-list",
+            n,
+            cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                let ed = this.active_editor().cloned();
+                let (items, chain) = ed.as_ref().map(|e| e.update(cx, |e, _| e.caret_scope())).unwrap_or_default();
+                let current = chain.last().copied();
+                range.filter_map(|i| items.get(i).cloned().map(|it| (i, it))).map(|(i, it)| Self::structure_row(i, it, current, ed.clone(), cx)).collect()
+            }),
+        )
+        .size_full()
+        .track_scroll(self.structure_view.scroll.clone());
+        div()
+            .id("structure")
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(Self::panel_header("Structure"))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(list)
+                    .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&self.structure_view.scroll), self.structure_view.bar.clone())),
+            )
+    }
+
+    fn structure_row(i: usize, it: brisk_syntax::OutlineItem, current: Option<usize>, ed: Option<Entity<Editor>>, cx: &mut Context<Self>) -> gpui::AnyElement {
+        {
             let (glyph, color) = match it.kind {
                 brisk_syntax::OutlineKind::Class => ("C", gpui::rgb(0x6c9be8)),
                 brisk_syntax::OutlineKind::Function => ("f", gpui::rgb(0xe0a85a)),
@@ -2240,21 +2268,8 @@ impl Workspace {
                 }))
                 .child(div().w(px(16.)).h(ui_px(16.)).rounded(px(8.)).bg(color).text_color(Theme::bg()).text_size(ui_px(10.)).flex().items_center().justify_center().child(glyph))
                 .child(it.name)
-        });
-        div()
-            .id("structure")
-            .flex()
-            .flex_col()
-            .size_full()
-            .child(Self::panel_header("Structure"))
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .child(div().id("structure-list").size_full().flex().flex_col().overflow_y_scroll().track_scroll(&self.structure_view.scroll).children(rows))
-                    .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::Handle(self.structure_view.scroll.clone()), self.structure_view.bar.clone())),
-            )
+                .into_any_element()
+        }
     }
 
     fn render_placeholder(title: &str, body: &str) -> gpui::AnyElement {
