@@ -18,6 +18,10 @@ pub struct FindOpts {
     pub case_sensitive: bool,
     pub whole_words: bool,
     pub regex: bool,
+    /// Replace keeps the found text's case: FOO → BAR, Foo → Bar, foo → bar.
+    pub preserve_case: bool,
+    /// Search only inside [`FindBar::scope`].
+    pub in_selection: bool,
 }
 
 pub struct FindBar {
@@ -32,6 +36,8 @@ pub struct FindBar {
     searched: Option<(u64, FindOpts)>,
     /// Where the caret was when the bar opened: typing searches forward from here.
     origin: usize,
+    /// "In Selection": the searched range and the buffer version it is in.
+    scope: Option<(u64, Range<usize>)>,
     _subs: Vec<Subscription>,
 }
 
@@ -56,15 +62,25 @@ impl Editor {
     /// Ctrl+F (`replace` false) / Ctrl+R: open the bar, prefilled with a one-line selection.
     pub fn open_find(&mut self, replace: bool, window: &mut Window, cx: &mut Context<Self>) {
         let seed = self.search_seed();
+        // A selection over several lines: search in it (PyCharm turns "In Selection" on).
+        let sel = self.buffer.primary().range();
+        let multiline = !sel.is_empty() && self.buffer.pos_to_line_col(sel.start).0 != self.buffer.pos_to_line_col(sel.end).0;
+        let scope = multiline.then(|| (self.buffer.version(), sel.clone()));
         if self.find.is_none() {
             let mut opts = self.last_find.clone();
             if let Some(s) = &seed {
                 opts.query = s.clone();
             }
+            opts.in_selection = multiline;
             let query = field(&opts.query, window, cx);
             let subs = vec![cx.observe(&query, |this, _, cx| this.find_query_changed(cx))];
             let origin = self.buffer.selections.first().map(|s| s.range().start).unwrap_or(0);
-            self.find = Some(FindBar { query, replace: None, opts, matches: Vec::new(), current: None, error: None, searched: None, origin, _subs: subs });
+            self.find = Some(FindBar { query, replace: None, opts, matches: Vec::new(), current: None, error: None, searched: None, origin, scope, _subs: subs });
+        } else if multiline {
+            let f = self.find.as_mut().unwrap();
+            f.opts.in_selection = true;
+            f.scope = scope;
+            f.searched = None;
         } else if let Some(s) = seed {
             let f = self.find.as_ref().unwrap();
             f.query.update(cx, |q, cx| {
@@ -121,10 +137,17 @@ impl Editor {
             f.opts.query = typed;
             jump = true;
         }
+        // The "In Selection" range follows edits (replacements inside it move its end).
+        if let Some((v, r)) = f.scope.clone() {
+            if v != version {
+                f.scope = self.buffer.changes_since(v).map(|ch| (version, brisk_text::map_through(r.start, &ch)..brisk_text::map_through(r.end, &ch)));
+            }
+        }
         let f = self.find.as_ref().unwrap();
         if !jump && f.searched.as_ref().is_some_and(|(v, o)| *v == version && *o == f.opts) {
             return;
         }
+        let scope = f.scope.as_ref().filter(|_| f.opts.in_selection).map(|(_, r)| r.clone());
         let opts = f.opts.clone();
         let text = self.text().to_string();
         let (matches, error) = if opts.query.is_empty() {
@@ -134,7 +157,8 @@ impl Editor {
             match brisk_search::Query::new(&o) {
                 Ok(q) => {
                     let rope = self.buffer.rope();
-                    (q.ranges(&text, MAX_MATCHES).into_iter().map(|r| rope.byte_to_char(r.start)..rope.byte_to_char(r.end)).collect(), None)
+                    let all = q.ranges(&text, MAX_MATCHES).into_iter().map(|r| rope.byte_to_char(r.start)..rope.byte_to_char(r.end));
+                    (all.filter(|m| scope.as_ref().is_none_or(|s| m.start >= s.start && m.end <= s.end)).collect(), None)
                 }
                 Err(e) => (Vec::new(), Some(e.trim_start_matches("error: ").to_string())),
             }
@@ -178,7 +202,7 @@ impl Editor {
             // Search without showing the bar, like PyCharm's F3 after Esc.
             let opts = self.last_find.clone();
             let query = field(&opts.query, window, cx);
-            self.find = Some(FindBar { query, replace: None, opts, matches: Vec::new(), current: None, error: None, searched: None, origin: 0, _subs: Vec::new() });
+            self.find = Some(FindBar { query, replace: None, opts, matches: Vec::new(), current: None, error: None, searched: None, origin: 0, scope: None, _subs: Vec::new() });
             self.refresh_find(false, cx);
             self.step_match(forward);
             self.last_find = self.find.take().unwrap().opts;
@@ -253,15 +277,31 @@ impl Editor {
     fn replacement_for(&mut self, i: usize, cx: &mut Context<Self>) -> String {
         let with = self.find.as_ref().and_then(|f| f.replace.as_ref()).map(|r| r.read(cx).buffer.text()).unwrap_or_default();
         let f = self.find.as_ref().unwrap();
-        if !f.opts.regex {
-            return with;
-        }
-        let o = brisk_search::Options { query: f.opts.query.clone(), case_sensitive: f.opts.case_sensitive, whole_words: f.opts.whole_words, regex: true, file_mask: String::new() };
-        let Ok(q) = brisk_search::Query::new(&o) else { return with };
+        let opts = f.opts.clone();
         let m = f.matches[i].clone();
+        let found = self.buffer.slice(m.clone());
+        let keep_case = |w: String| if opts.preserve_case { preserve_case(&found, &w) } else { w };
+        if !opts.regex {
+            return keep_case(with);
+        }
+        let o = brisk_search::Options { query: opts.query.clone(), case_sensitive: opts.case_sensitive, whole_words: opts.whole_words, regex: true, file_mask: String::new() };
+        let Ok(q) = brisk_search::Query::new(&o) else { return keep_case(with) };
         let text = self.text().to_string();
         let rope = self.buffer.rope();
-        q.expand(&text, rope.char_to_byte(m.start)..rope.char_to_byte(m.end), &with)
+        keep_case(q.expand(&text, rope.char_to_byte(m.start)..rope.char_to_byte(m.end), &with))
+    }
+
+    /// What Replace would put in place of the current match (regex groups expanded, case kept),
+    /// when that differs from the typed replacement: shown next to the field, like PyCharm.
+    fn replace_preview(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        let f = self.find.as_ref()?;
+        let typed = f.replace.as_ref()?.read(cx).buffer.text();
+        if !(f.opts.regex || f.opts.preserve_case) {
+            return None;
+        }
+        let i = f.current?;
+        let out = self.replacement_for(i, cx);
+        (out != typed).then_some(out)
     }
 
     pub fn toggle_find_opt(&mut self, which: char, cx: &mut Context<Self>) {
@@ -270,6 +310,19 @@ impl Editor {
             'c' => f.opts.case_sensitive = !f.opts.case_sensitive,
             'w' => f.opts.whole_words = !f.opts.whole_words,
             'x' => f.opts.regex = !f.opts.regex,
+            'p' => f.opts.preserve_case = !f.opts.preserve_case,
+            'e' => {
+                f.opts.in_selection = !f.opts.in_selection;
+                // Turning it on takes the current selection (a selected match is not a scope).
+                let sel = self.buffer.primary().range();
+                if f.opts.in_selection && !sel.is_empty() && !f.matches.contains(&sel) {
+                    f.scope = Some((self.buffer.version(), sel));
+                }
+                if f.opts.in_selection && f.scope.is_none() {
+                    f.opts.in_selection = false;
+                }
+                f.searched = None;
+            }
             _ => return,
         }
         self.refresh_find(true, cx);
@@ -302,7 +355,7 @@ impl Editor {
             }
             ("f", true, false, false) => self.open_find(false, window, cx),
             ("r", true, false, false) => self.open_find(true, window, cx),
-            ("c" | "w" | "x", false, false, true) => self.toggle_find_opt(k.key.chars().next().unwrap(), cx),
+            ("c" | "w" | "x" | "p" | "e", false, false, true) => self.toggle_find_opt(k.key.chars().next().unwrap(), cx),
             _ => return false,
         }
         cx.notify();
@@ -371,6 +424,7 @@ impl Editor {
             .child(toggle("find-case", "Cc", f.opts.case_sensitive, 'c', cx))
             .child(toggle("find-words", "W", f.opts.whole_words, 'w', cx))
             .child(toggle("find-regex", ".*", f.opts.regex, 'x', cx))
+            .child(toggle("find-in-sel", "In selection", f.opts.in_selection, 'e', cx))
             .child(
                 div()
                     .min_w(px(80.))
@@ -383,6 +437,10 @@ impl Editor {
             .child(button("find-next", "↓", cx, |e, w, cx| e.find_next(true, w, cx)))
             .child(div().flex_1())
             .child(button("find-close", "✕", cx, |e, w, cx| e.close_find(w, cx)));
+        let preserve = f.opts.preserve_case;
+        let has_replace = f.replace.is_some();
+        let preview = if has_replace { self.replace_preview(cx) } else { None };
+        let f = self.find.as_ref()?;
         let row2 = f.replace.clone().map(|r| {
             div()
                 .flex()
@@ -390,6 +448,8 @@ impl Editor {
                 .gap(px(4.))
                 .child(div().w(px(16.)))
                 .child(input(r, false))
+                .child(toggle("find-preserve", "Preserve case", preserve, 'p', cx))
+                .children(preview.map(|p| div().max_w(px(220.)).overflow_hidden().text_ellipsis().whitespace_nowrap().text_size(px(12.)).text_color(Theme::text_muted()).child(format!("→ {p}"))))
                 .child(button("find-replace", "Replace", cx, |e, _, cx| e.replace_current(cx)))
                 .child(button("find-replace-all", "Replace All", cx, |e, _, cx| {
                     e.replace_all(cx);
@@ -423,6 +483,47 @@ impl Editor {
     }
 }
 
+
+/// `with` in the case of `found` (Replace with "Preserve case"): all upper, capitalized or all
+/// lower; mixed case leaves the replacement as typed.
+pub fn preserve_case(found: &str, with: &str) -> String {
+    let letters: Vec<char> = found.chars().filter(|c| c.is_alphabetic()).collect();
+    if letters.is_empty() {
+        return with.to_string();
+    }
+    let upper = |c: &char| c.is_uppercase();
+    let lower = |c: &char| c.is_lowercase();
+    if letters.len() > 1 && letters.iter().all(upper) {
+        return with.to_uppercase();
+    }
+    if letters.iter().all(lower) {
+        return with.to_lowercase();
+    }
+    if upper(&letters[0]) && letters[1..].iter().all(lower) {
+        let mut cs = with.chars();
+        return match cs.next() {
+            Some(c) => c.to_uppercase().chain(cs.flat_map(|c| c.to_lowercase())).collect(),
+            None => String::new(),
+        };
+    }
+    with.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preserve_case;
+
+    #[test]
+    fn keeps_case() {
+        assert_eq!(preserve_case("FOO", "bar"), "BAR");
+        assert_eq!(preserve_case("Foo", "bar"), "Bar");
+        assert_eq!(preserve_case("Foo", "BAR"), "Bar");
+        assert_eq!(preserve_case("foo", "Bar"), "bar");
+        assert_eq!(preserve_case("fooBar", "bazQux"), "bazQux");
+        assert_eq!(preserve_case("F", "bar"), "Bar");
+        assert_eq!(preserve_case("42", "x"), "x");
+    }
+}
 
 impl Editor {
     /// Smoke checks: (match count, current index, query, bar open).

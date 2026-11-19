@@ -25,6 +25,8 @@ brisk-dap.workspace = true
 gpui = "0.2.2"
 futures = "0.3"
 serde_json = "1"
+# Already in the binary through gpui (png, usvg): Local History revisions are gzipped.
+flate2 = "1"
 
 [build-dependencies]
 embed-resource = "3"

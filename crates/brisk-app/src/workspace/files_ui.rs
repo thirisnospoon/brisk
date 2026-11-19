@@ -144,7 +144,7 @@ impl Workspace {
         }
     }
 
-    fn rel(&self, p: &Path) -> String {
+    pub(super) fn rel(&self, p: &Path) -> String {
         p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/")
     }
 
@@ -271,7 +271,17 @@ impl Workspace {
                     self.save_all(cx);
                     copy_recursive(src, &target)
                 }
-                FileOp::Delete(p) => to_trash(p),
+                FileOp::Delete(p) => {
+                    // Local History keeps what is deleted (unsaved editor text too).
+                    crate::local_history::record_path(p, crate::local_history::Label::Deleted);
+                    for ed in self.editors() {
+                        let e = ed.read(cx);
+                        if let Some(f) = e.path.as_deref().filter(|f| f.starts_with(p.as_path()) && e.buffer.is_dirty()) {
+                            crate::local_history::record(f, &e.buffer.text(), crate::local_history::Label::Deleted);
+                        }
+                    }
+                    to_trash(p)
+                }
             }
         })();
         if let Err(e) = result {
@@ -458,6 +468,21 @@ impl Workspace {
             });
         }
         v.extend(self.git_menu_entries(&path, None, cx));
+        v.push(Entry::Submenu {
+            label: "Local History".into(),
+            entries: vec![
+                Entry::Item {
+                    label: "Show History".into(),
+                    shortcut: String::new(),
+                    enabled: true,
+                    run: Rc::new({
+                        let p = path.clone();
+                        move |this: &mut Workspace, _, cx| this.show_path_history(p.clone(), cx)
+                    }),
+                },
+                Entry::Item { label: "Put Label…".into(), shortcut: String::new(), enabled: true, run: Rc::new(|this: &mut Workspace, _, _| this.start_put_label()) },
+            ],
+        });
         v.push(self.path_entries(path.clone()));
         v.push(Entry::Item {
             label: "Show in Explorer".into(),
