@@ -298,6 +298,30 @@ impl Editor {
         let tree = self.python_tree().ok_or("Inline works in Python files")?;
         brisk_syntax::inline_at(tree, &text, byte)
     }
+
+    /// Alt+Enter: the intentions at the caret (f-string, 'if' ones), the function a call of an
+    /// unknown name could create, and the variable or function a type hint can go to.
+    pub fn intentions_at_caret(&mut self) -> (Vec<brisk_syntax::Intention>, Option<(String, (Range<usize>, String))>, Option<brisk_syntax::HintTarget>) {
+        let byte = self.buffer.rope().char_to_byte(self.buffer.primary().head);
+        let text = self.text().to_string();
+        let Some(tree) = self.python_tree() else { return (Vec::new(), None, None) };
+        (brisk_syntax::intentions_at(tree, &text, byte), brisk_syntax::create_function(tree, &text, byte), brisk_syntax::hint_target(tree, &text, byte))
+    }
+
+    /// Where an import line goes in this file.
+    pub fn import_edit(&mut self, line: &str) -> Option<(Range<usize>, String)> {
+        let text = self.text().to_string();
+        let tree = self.python_tree()?;
+        Some(brisk_syntax::import_edit(tree, &text, line))
+    }
+
+    /// A byte offset of the text as a line and character column.
+    pub fn byte_pos(&self, byte: usize) -> brisk_lint::Pos {
+        let rope = self.buffer.rope();
+        let ch = rope.byte_to_char(byte.min(rope.len_bytes()));
+        let line = rope.char_to_line(ch);
+        brisk_lint::Pos { line, col: ch - rope.line_to_char(line) }
+    }
 }
 
 #[cfg(test)]

@@ -7,7 +7,8 @@
 //! with inline code); with `=usages`, `=inlay` or `=preview`, with the Find Usages tree, inlay
 //! hints or the rename's Refactoring Preview.
 //! At the end: Rename (Shift+F6) of a local, of a function (comments and strings, Preview, Do
-//! Refactor, one undo in both files) and of a module (its file too).
+//! Refactor, one undo in both files) and of a module (its file too); Alt+Enter intentions on
+//! `intents.py` (import from the project, Create function, type hints, f-string, 'if' ones).
 
 use super::{Target, Workspace};
 use gpui::{AsyncWindowContext, Context, WeakEntity, Window};
@@ -410,6 +411,55 @@ y = [i * 2 for i in x]
                 let ok = this.root.join("welcomer.py").exists() && !this.root.join("greeter.py").exists() && u.starts_with("import welcomer\nfrom welcomer import greet\n");
                 eprintln!("smoke-intel: rename module file {}: {:?} {:?}", pass(ok), this.status, u.lines().collect::<Vec<_>>());
             });
+            // Alt+Enter intentions: import from the project, Create function, type hints from
+            // ty, f-string, split and merge 'if'.
+            let _ = this.update_in(cx, |this, window, cx| {
+                let _ = std::fs::write(this.root.join("shapes.py"), "class Square:\n    pass\n");
+                let _ = std::fs::write(this.root.join("intents.py"), "def area(n: int):\n    if n < 0:\n        return None\n    squares = [n * n]\n    return squares\n\n\ns = Square()\nv = area(3)\ntotal = compute(v, 2)\nmsg = \"{} has {}\".format(s, v)\nif v and s:\n    print(msg, total)\n");
+                this.reindex_files(cx);
+                let f = this.root.join("intents.py");
+                this.open_file(&f, window, cx);
+            });
+            wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| e.read(cx).diagnostics.iter().filter(|d| d.code == "F821" || d.code == "unresolved-reference").count() >= 2)).await;
+            pause(500).await;
+            let steps: [(&str, usize, &str, &str); 7] = [
+                ("Square()", 1, "Import '", "from "),
+                ("compute(v", 2, "Create function 'compute'", "def compute"),
+                ("def area", 5, "Specify return type", "def area"),
+                ("v = area", 0, "Add type hint for variable 'v'", "v"),
+                ("has {}", 2, "Convert to f-string literal", "msg ="),
+                ("if v and", 1, "Split into 2 'if' statements", "if "),
+                ("if v:", 1, "Merge nested 'if's", "if "),
+            ];
+            for (needle, off, label, show) in steps {
+                // Let ruff and ty check the edited text first.
+                pause(1500).await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let Some(ed) = this.active_editor().cloned() else { return };
+                    ed.update(cx, |e, _| {
+                        let t = e.text_string();
+                        let p = t.find(needle).map(|b| t[..b + off].chars().count()).unwrap_or(0);
+                        e.buffer.set_caret(p, false);
+                    });
+                    this.problems.intents.clear();
+                    this.status.clear();
+                    this.show_intentions(window, cx);
+                });
+                wait(&this, cx, &|this, _| !this.problems.intents.is_empty() || this.status.starts_with("No context")).await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let labels: Vec<String> = this.problems.intents.iter().map(|i| format!("{} [{}]", i.label, i.detail)).collect();
+                    let pick = this.problems.intents.iter().find(|i| i.label.starts_with(label)).map(|i| i.target.clone());
+                    this.popup = None;
+                    let ok = pick.is_some();
+                    if let Some(Target::Intention(i)) = pick {
+                        this.apply_intent(*i, window, cx);
+                    }
+                    let t = text(this, cx);
+                    let lines: Vec<&str> = t.lines().filter(|l| l.trim_start().starts_with(show)).collect();
+                    eprintln!("smoke-intel: alt-enter {} {needle:?} -> {labels:?} => {lines:?}", pass(ok));
+                });
+            }
+            let _ = this.update(cx, |this, cx| eprintln!("smoke-intel: intentions result {:?}", text(this, cx).lines().collect::<Vec<_>>()));
             let _ = this.update(cx, |this, cx| {
                 if let Some(ed) = this.active_editor().cloned() {
                     ed.update(cx, |e, _| e.close_insight());
