@@ -2776,6 +2776,9 @@ fn fade_in(id: &'static str, e: impl IntoElement, ms: u64) -> impl IntoElement {
     use gpui::{Animation, AnimationExt};
     // Islands: popups, menus and dialogs take 140 ms (toasts keep 160), still ease-out.
     let ms = if crate::theme::islands() { ms.clamp(140, 160) } else { ms };
+    // The surface's shadow fades in with it: GPUI scales shadow alpha by the element opacity
+    // (from 0 to the `ui_kit::floating` target over the same 140 ms), so no shadow animation of
+    // its own is needed.
     // Toasts and balloons rise a little more than popups and menus.
     let rise = if ms >= 160 { 8. } else if ms >= 110 { 4. } else { 2. };
     div()
