@@ -11,7 +11,7 @@ use crate::py_packages::{self, Package, Tool};
 use crate::theme::{Theme, mono_font};
 use brisk_keymap::Action;
 use gpui::prelude::*;
-use gpui::{div, px, Animation, AnimationExt, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ScrollHandle, Transformation, Window};
+use gpui::{div, px, uniform_list, Animation, AnimationExt, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ScrollStrategy, Transformation, UniformListScrollHandle, Window};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -83,7 +83,7 @@ pub struct Packages {
     pub suggestion: Option<usize>,
     /// The name the suggestions were computed for (or picked).
     suggested_for: String,
-    scroll: ScrollHandle,
+    scroll: UniformListScrollHandle,
 }
 
 fn field(cx: &mut Context<Workspace>) -> Entity<Editor> {
@@ -131,7 +131,7 @@ impl Packages {
             suggestions: Vec::new(),
             suggestion: None,
             suggested_for: String::new(),
-            scroll: ScrollHandle::new(),
+            scroll: UniformListScrollHandle::new(),
         }
     }
 
@@ -520,7 +520,9 @@ impl Workspace {
             "up" | "down" if plain && (in_filter || in_list) && n > 0 => {
                 let p = self.packages.as_mut().unwrap();
                 p.selected = if k.key == "up" { p.selected.saturating_sub(1) } else { (p.selected + 1).min(n - 1) };
-                p.scroll.scroll_to_item(p.selected);
+                // The list shows the new installs above the packages.
+                let pending_n = p.pending_new().len();
+                p.scroll.scroll_to_item(pending_n + p.selected, ScrollStrategy::Top);
             }
             "delete" if plain && in_list => self.ask_uninstall(cx),
             "escape" if plain => self.focus_editor(window, cx),
@@ -528,6 +530,101 @@ impl Workspace {
         }
         cx.notify();
         true
+    }
+
+    /// Rows `range` of the package list: the new installs (pending) first, then the
+    /// packages matching the filter. Only the rows in view are built.
+    fn package_rows(&self, range: std::ops::Range<usize>, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        use crate::ui_kit;
+        let Some(p) = &self.packages else { return Vec::new() };
+        let visible = p.visible(cx);
+        let selected = p.selected.min(visible.len().saturating_sub(1));
+        // Right of the version: a spinner and what runs, or "Queued".
+        let op_state = |op: &Op, running: bool, id: (&'static str, usize)| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .text_size(ui_px(12.))
+                .text_color(if running { Theme::text_muted() } else { Theme::text_dim() })
+                .when(running, |d| d.child(spinner(id)).child(op.verb()))
+                .when(!running, |d| d.child("Queued"))
+        };
+        let pending = p.pending_new();
+        let mut out = Vec::new();
+        for j in range {
+            if let Some((op, running)) = pending.get(j) {
+                let i = j;
+                let version = match op {
+                    Op::Install(_, v) if !v.is_empty() => v.clone(),
+                    _ => "latest".into(),
+                };
+                out.push(div()
+                    .id(("pkg-new", i))
+                    .w_full()
+                    .h(ui_px(22.))
+                    .px(px(10.))
+                    .flex()
+                    .items_center()
+                    .child(div().w(px(320.)).child(op.name().to_string()))
+                    .child(div().w(px(200.)).font_family(mono_font()).text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(version))
+                    .child(op_state(op, *running, ("pkg-new-spin", i)))
+                    .into_any_element());
+                continue;
+            }
+            let i = j - pending.len();
+            let Some(pk) = visible.get(i) else { continue };
+            out.push({
+                let sel = i == selected;
+                let latest = p.latest(&pk.name).cloned();
+                let busy_row = p.op_on(&pk.name).map(|(op, running)| op_state(op, running, ("pkg-spin", i)));
+                let can_up = latest.is_some() && busy_row.is_none();
+                div()
+                    .id(("pkg-row", i))
+                    .group("pkg-row")
+                    .w_full()
+                    .h(ui_px(22.))
+                    .px(px(10.))
+                    .flex()
+                    .items_center()
+                    .when(sel, |d| d.bg(Theme::selection_row()))
+                    .when(!sel, |d| d.hover(|s| s.bg(Theme::hover_row())))
+                    .child(div().w(px(320.)).child(pk.name.clone()))
+                    .child(
+                        div()
+                            .w(px(200.))
+                            .flex()
+                            .gap(px(6.))
+                            .font_family(mono_font())
+                            .text_size(ui_px(12.5))
+                            .text_color(Theme::text_muted())
+                            .child(pk.version.clone())
+                            .when_some(latest, |d, l| d.child(div().text_color(Theme::accent()).child(format!("→ {l}")))),
+                    )
+                    .children(busy_row)
+                    .when(can_up, |d| {
+                        let name = pk.name.clone();
+                        d.child(
+                            div().invisible().when(sel, |d| d.visible()).group_hover("pkg-row", |s| s.visible()).child(
+                                ui_kit::button("pkg-row-upgrade", "Upgrade", true, false).h(ui_px(18.)).on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.package_op(Op::Upgrade(name.clone()), cx);
+                                    cx.notify();
+                                })),
+                            ),
+                        )
+                    })
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, w, cx| {
+                        if let Some(p) = this.packages.as_mut() {
+                            p.selected = i;
+                            w.focus(&p.focus.clone());
+                        }
+                        cx.notify();
+                    }))
+            .into_any_element()
+            });
+        }
+        out
     }
 
     pub(super) fn render_python_packages(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -654,100 +751,27 @@ impl Workspace {
         } else {
             p.error.clone().map(|e| div().px(px(10.)).h(ui_px(24.)).flex().items_center().text_size(ui_px(12.5)).text_color(Theme::error()).border_b_1().border_color(Theme::divider()).child(e).into_any_element())
         };
-        // Right of the version: a spinner and what runs, or "Queued".
-        let op_state = |op: &Op, running: bool, id: (&'static str, usize)| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .text_size(ui_px(12.))
-                .text_color(if running { Theme::text_muted() } else { Theme::text_dim() })
-                .when(running, |d| d.child(spinner(id)).child(op.verb()))
-                .when(!running, |d| d.child("Queued"))
-        };
-        let pending = p.pending_new();
-        let pending_rows: Vec<gpui::AnyElement> = pending
-            .iter()
-            .enumerate()
-            .map(|(i, (op, running))| {
-                let version = match op {
-                    Op::Install(_, v) if !v.is_empty() => v.clone(),
-                    _ => "latest".into(),
-                };
-                div()
-                    .id(("pkg-new", i))
-                    .w_full()
-                    .h(ui_px(22.))
-                    .px(px(10.))
-                    .flex()
-                    .items_center()
-                    .child(div().w(px(320.)).child(op.name().to_string()))
-                    .child(div().w(px(200.)).font_family(mono_font()).text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(version))
-                    .child(op_state(op, *running, ("pkg-new-spin", i)))
-                    .into_any_element()
-            })
-            .collect();
+        let pending_n = p.pending_new().len();
+        let n_rows = pending_n + visible.len();
         let rows = div()
             .id("pkg-list")
             .track_focus(&p.focus)
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&p.scroll)
+            .flex()
+            .flex_col()
             .text_size(ui_px(13.))
-            .children(pending_rows)
-            .when(visible.is_empty() && pending.is_empty(), |d| {
+            .when(n_rows == 0, |d| {
                 let msg = if p.loading { "Loading packages…" } else if p.list.is_empty() { "No packages" } else { "No packages match the filter" };
                 d.child(div().p(px(10.)).text_color(Theme::text_dim()).child(msg))
             })
-            .children(visible.iter().enumerate().map(|(i, pk)| {
-                let sel = i == selected;
-                let latest = p.latest(&pk.name).cloned();
-                let busy_row = p.op_on(&pk.name).map(|(op, running)| op_state(op, running, ("pkg-spin", i)));
-                let can_up = latest.is_some() && busy_row.is_none();
-                div()
-                    .id(("pkg-row", i))
-                    .group("pkg-row")
-                    .w_full()
-                    .h(ui_px(22.))
-                    .px(px(10.))
-                    .flex()
-                    .items_center()
-                    .when(sel, |d| d.bg(Theme::selection_row()))
-                    .when(!sel, |d| d.hover(|s| s.bg(Theme::hover_row())))
-                    .child(div().w(px(320.)).child(pk.name.clone()))
-                    .child(
-                        div()
-                            .w(px(200.))
-                            .flex()
-                            .gap(px(6.))
-                            .font_family(mono_font())
-                            .text_size(ui_px(12.5))
-                            .text_color(Theme::text_muted())
-                            .child(pk.version.clone())
-                            .when_some(latest, |d, l| d.child(div().text_color(Theme::accent()).child(format!("→ {l}")))),
-                    )
-                    .children(busy_row)
-                    .when(can_up, |d| {
-                        let name = pk.name.clone();
-                        d.child(
-                            div().invisible().when(sel, |d| d.visible()).group_hover("pkg-row", |s| s.visible()).child(
-                                ui_kit::button("pkg-row-upgrade", "Upgrade", true, false).h(ui_px(18.)).on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.package_op(Op::Upgrade(name.clone()), cx);
-                                    cx.notify();
-                                })),
-                            ),
-                        )
-                    })
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, w, cx| {
-                        if let Some(p) = this.packages.as_mut() {
-                            p.selected = i;
-                            w.focus(&p.focus.clone());
-                        }
-                        cx.notify();
-                    }))
-            }));
+            .when(n_rows > 0, |d| {
+                d.child(
+                    uniform_list("pkg-rows", n_rows, cx.processor(|this, range: std::ops::Range<usize>, _window, cx| this.package_rows(range, cx)))
+                        .flex_1()
+                        .track_scroll(p.scroll.clone()),
+                )
+            });
         let busy_note = match (&p.busy, p.queue.len()) {
             (Some(b), 0) => b.clone(),
             (Some(b), q) => format!("{b} ({q} more queued)"),

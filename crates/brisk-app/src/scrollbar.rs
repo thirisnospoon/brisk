@@ -59,6 +59,24 @@ impl Source {
         Source::Handle(h.0.borrow().base_handle.clone())
     }
 
+    /// A variable-height `gpui::list` (console output). Heights of rows not yet in view are
+    /// unknown, so the thumb is approximate, as in any lazily measured list.
+    pub fn list_state(s: &gpui::ListState) -> Self {
+        let (a, b) = (s.clone(), s.clone());
+        Source::Custom {
+            metrics: Rc::new(move |_| {
+                let view = f32::from(a.viewport_bounds().size.height);
+                let max = f32::from(a.max_offset_for_scrollbar().height);
+                let top = (-f32::from(a.scroll_px_offset_for_scrollbar().y)).clamp(0., max.max(0.));
+                (max > 0.5 && view > 0.).then(|| Metrics { top, max, view, page: (view - 20.).max(view * 0.5) })
+            }),
+            set: Rc::new(move |top, window, _| {
+                b.set_offset_from_scrollbar(gpui::point(gpui::px(0.), gpui::px(-top)));
+                window.refresh();
+            }),
+        }
+    }
+
     pub fn metrics(&self, cx: &App) -> Option<Metrics> {
         match self {
             Source::Handle(h) => {

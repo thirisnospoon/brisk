@@ -9,7 +9,7 @@ use crate::py_console::{Console, Event, Var};
 use crate::theme::{Theme, mono_font};
 use brisk_keymap::Action;
 use gpui::prelude::*;
-use gpui::{div, px, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ScrollHandle, Window};
+use gpui::{div, list, px, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ListAlignment, ListOffset, ListState, Window};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -66,7 +66,14 @@ pub struct PyConsole {
     /// Position while walking the history, and the unsent text it replaced.
     hist_pos: Option<usize>,
     draft: String,
-    scroll: ScrollHandle,
+    /// The output, virtualized: only the lines in view are laid out (5000 lines of a flood
+    /// were 5000 elements per frame). Rows keep their wrapping, so heights vary: `gpui::list`.
+    out: ListState,
+    /// Lines dropped from the front (the cap) and whether `lines` changed since the list
+    /// state last matched it; `follow`: scroll to the end on the next frame.
+    out_dropped: usize,
+    out_dirty: bool,
+    follow: bool,
     bar: crate::scrollbar::BarState,
 }
 
@@ -97,7 +104,10 @@ impl PyConsole {
             runs: 0,
             hist_pos: None,
             draft: String::new(),
-            scroll: ScrollHandle::new(),
+            out: ListState::new(0, ListAlignment::Bottom, px(400.)),
+            out_dropped: 0,
+            out_dirty: false,
+            follow: false,
             bar: Default::default(),
         }
     }
@@ -129,18 +139,47 @@ impl PyConsole {
                 }
             }
         }
-        if self.lines.len() > MAX_LINES {
-            self.lines.drain(..self.lines.len() - MAX_LINES);
-        }
-        self.scroll.scroll_to_bottom();
+        self.cap_and_follow();
     }
 
     fn info(&mut self, text: impl Into<String>) {
         self.lines.push((format!("{}\n", text.into()), Kind::Info));
+        self.cap_and_follow();
+    }
+
+    /// After adding output: keep the last MAX_LINES and stick to the end.
+    pub(super) fn cap_and_follow(&mut self) {
         if self.lines.len() > MAX_LINES {
-            self.lines.drain(..self.lines.len() - MAX_LINES);
+            let n = self.lines.len() - MAX_LINES;
+            self.lines.drain(..n);
+            self.out_dropped += n;
         }
-        self.scroll.scroll_to_bottom();
+        self.out_dirty = true;
+        self.follow = true;
+    }
+
+    /// Bring the list state in line with `lines`: the dropped front, the last line (it may
+    /// have grown by a chunk), new lines; a clear resets it.
+    fn sync_out(&mut self) {
+        if !self.out_dirty {
+            return;
+        }
+        self.out_dirty = false;
+        let dropped = std::mem::take(&mut self.out_dropped);
+        let count = self.out.item_count();
+        if dropped > 0 {
+            self.out.splice(0..dropped.min(count), 0);
+        }
+        let (count, n) = (self.out.item_count(), self.lines.len());
+        if count > n {
+            self.out.reset(n);
+        } else {
+            let from = count.saturating_sub(1);
+            self.out.splice(from..count, n - from);
+        }
+        if std::mem::take(&mut self.follow) {
+            self.out.scroll_to(ListOffset { item_ix: n, offset_in_item: px(0.) });
+        }
     }
 }
 
@@ -257,7 +296,7 @@ impl Workspace {
         let Some(p) = self.pyc.as_mut() else { return };
         p.lines.extend(echo_lines(&code));
         p.runs += 1;
-        p.scroll.scroll_to_bottom();
+        p.cap_and_follow();
         if p.history.last() != Some(&code) {
             p.history.push(code.clone());
             if p.history.len() > MAX_HISTORY {
@@ -305,7 +344,7 @@ impl Workspace {
         }
         if text.trim().is_empty() {
             p.lines.push((">>> \n".into(), Kind::Code(Vec::new())));
-            p.scroll.scroll_to_bottom();
+            p.cap_and_follow();
             return;
         }
         // A block ends with an empty line, as in the Python REPL.
@@ -438,6 +477,7 @@ impl Workspace {
             Action::ClearPythonConsole => {
                 if let Some(p) = self.pyc.as_mut() {
                     p.lines.clear();
+                    p.out_dirty = true;
                 }
             }
             _ => {}
@@ -449,6 +489,9 @@ impl Workspace {
     }
 
     pub(super) fn render_python_console(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        if let Some(p) = self.pyc.as_mut() {
+            p.sync_out();
+        }
         let Some(p) = &self.pyc else { return div().into_any_element() };
         let running = p.running();
         let tool = |id: &'static str, glyph: &'static str, tip: &'static str, on: bool, color: gpui::Hsla, action: Action, cx: &mut Context<Self>| {
@@ -499,26 +542,10 @@ impl Workspace {
             .id("pyc-output")
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&p.scroll)
-            .px(px(8.))
             .py(px(4.))
             .font_family(mono_font())
             .text_size(ui_px(12.5))
-            .children(p.lines.iter().map(|(t, k)| {
-                let text = t.trim_end_matches('\n').to_string();
-                let color = match k {
-                    Kind::Out => Theme::text(),
-                    Kind::Err => Theme::error(),
-                    Kind::Info => Theme::text_muted(),
-                    Kind::Code(hl) => {
-                        let mut styles: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = vec![(0..3.min(text.len()), gpui::HighlightStyle { color: Some(Theme::accent()), ..Default::default() })];
-                        styles.extend(hl.iter().filter(|(r, _)| r.end <= text.len()).map(|(r, h)| (r.clone(), gpui::HighlightStyle { color: Some(Theme::syntax(*h)), ..Default::default() })));
-                        return div().text_color(Theme::text()).child(gpui::StyledText::new(text).with_highlights(styles)).into_any_element();
-                    }
-                };
-                div().text_color(color).child(text).into_any_element()
-            }));
+            .child(list(p.out.clone(), cx.processor(|this, ix: usize, _window, _cx| pyc_line(this.pyc.as_ref().and_then(|p| p.lines.get(ix))))).size_full());
         let focused = p.input.read(cx).focus_handle(cx).is_focused(window);
         let n_lines = p.input.read(cx).buffer.len_lines().clamp(1, 6);
         let empty = p.input.read(cx).buffer.len_chars() == 0;
@@ -583,7 +610,7 @@ impl Workspace {
                     .child(div().text_color(Theme::text_dim()).child(ty))
                     .child(div().text_color(Theme::text()).child(v.value.clone()))
             }));
-        let left = div().flex_1().min_w_0().h_full().flex().flex_col().child(div().relative().flex_1().min_h_0().flex().flex_col().child(lines).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::Handle(p.scroll.clone()), p.bar.clone()))).child(input);
+        let left = div().flex_1().min_w_0().h_full().flex().flex_col().child(div().relative().flex_1().min_h_0().flex().flex_col().child(lines).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list_state(&p.out), p.bar.clone()))).child(input);
         div()
             .id("pyc-window")
             .track_focus(&p.focus)
@@ -702,4 +729,21 @@ impl Workspace {
         })
         .detach();
     }
+}
+
+/// One output line of the Python Console (`list` builds only the lines in view).
+fn pyc_line(line: Option<&(String, Kind)>) -> gpui::AnyElement {
+    let Some((t, k)) = line else { return div().into_any_element() };
+    let text = t.trim_end_matches('\n').to_string();
+    let color = match k {
+        Kind::Out => Theme::text(),
+        Kind::Err => Theme::error(),
+        Kind::Info => Theme::text_muted(),
+        Kind::Code(hl) => {
+            let mut styles: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = vec![(0..3.min(text.len()), gpui::HighlightStyle { color: Some(Theme::accent()), ..Default::default() })];
+            styles.extend(hl.iter().filter(|(r, _)| r.end <= text.len()).map(|(r, h)| (r.clone(), gpui::HighlightStyle { color: Some(Theme::syntax(*h)), ..Default::default() })));
+            return div().px(px(8.)).text_color(Theme::text()).child(gpui::StyledText::new(text).with_highlights(styles)).into_any_element();
+        }
+    };
+    div().px(px(8.)).text_color(color).child(text).into_any_element()
 }

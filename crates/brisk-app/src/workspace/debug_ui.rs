@@ -14,7 +14,7 @@ use brisk_keymap::Action;
 use brisk_run::RunConfig;
 use futures::StreamExt;
 use gpui::prelude::*;
-use gpui::{div, px, Context, Entity, FocusHandle, ScrollHandle, Task, Window};
+use gpui::{div, list, px, uniform_list, Context, Entity, FocusHandle, ListAlignment, ListOffset, ListState, Task, UniformListScrollHandle, Window};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -203,7 +203,16 @@ pub struct Debug {
     pub cwd: PathBuf,
     pub tab: DebugTab,
     pub focus: FocusHandle,
-    console_scroll: ScrollHandle,
+    /// The Debug Console output, virtualized (`console` holds up to 5000 lines; only the
+    /// lines in view are built, with their link checks). See `console_changed`.
+    console_out: ListState,
+    console_dropped: usize,
+    console_dirty: bool,
+    console_follow: bool,
+    /// Variables / Watches: a uniform_list (an expanded dict or DataFrame has thousands of
+    /// rows); ↑/↓ keep the selection in view.
+    vars_scroll: UniformListScrollHandle,
+    vars_bar: crate::scrollbar::BarState,
     /// Lines with exec marks, to clear them.
     marked: Vec<PathBuf>,
     /// The configuration of the last session (Rerun).
@@ -262,7 +271,12 @@ impl Debug {
             cwd: root.to_path_buf(),
             tab: DebugTab::Debugger,
             focus: cx.focus_handle(),
-            console_scroll: ScrollHandle::new(),
+            console_out: ListState::new(0, ListAlignment::Bottom, px(300.)),
+            console_dropped: 0,
+            console_dirty: false,
+            console_follow: false,
+            vars_scroll: UniformListScrollHandle::new(),
+            vars_bar: Default::default(),
             marked: Vec::new(),
             last: None,
             pending: false,
@@ -325,8 +339,39 @@ impl Debug {
         }
         if self.console.len() > 5000 {
             self.console.drain(..1000);
+            self.console_dropped += 1000;
         }
-        self.console_scroll.scroll_to_bottom();
+        self.console_changed(true);
+    }
+
+    /// `console` changed (lines added at the end, `follow`: and the view sticks to the end;
+    /// or the whole of it replaced or cleared, `follow` false).
+    pub(super) fn console_changed(&mut self, follow: bool) {
+        self.console_dirty = true;
+        self.console_follow |= follow;
+    }
+
+    /// Bring the list state in line with `console` before a frame.
+    fn sync_console(&mut self) {
+        if !std::mem::take(&mut self.console_dirty) {
+            return;
+        }
+        let dropped = std::mem::take(&mut self.console_dropped);
+        if dropped > 0 {
+            let count = self.console_out.item_count();
+            self.console_out.splice(0..dropped.min(count), 0);
+        }
+        let (count, n) = (self.console_out.item_count(), self.console.len());
+        if count > n {
+            self.console_out.reset(n);
+        } else {
+            // The last line may have grown by a chunk: measure it again.
+            let from = count.saturating_sub(1);
+            self.console_out.splice(from..count, n - from);
+        }
+        if std::mem::take(&mut self.console_follow) {
+            self.console_out.scroll_to(ListOffset { item_ix: n, offset_in_item: px(0.) });
+        }
     }
 
     /// Rows before the first scope: the Watches section and what is expanded under it.
@@ -371,7 +416,7 @@ impl Debug {
         let mut t: String = text.into();
         t.push('\n');
         self.console.push((t, Line::Info));
-        self.console_scroll.scroll_to_bottom();
+        self.console_changed(true);
     }
 }
 
@@ -1702,6 +1747,7 @@ impl Workspace {
         self.debug.exception = None;
         let name = cfg.name.clone();
         self.debug.console.clear();
+        self.debug.console_changed(false);
         self.debug.frames.clear();
         self.debug.idle_watches();
         self.debug.tab = DebugTab::Console;
@@ -2118,6 +2164,7 @@ impl Workspace {
         self.debug.last_attach = Some((pid, label.clone()));
         self.debug.exception = None;
         self.debug.console.clear();
+        self.debug.console_changed(false);
         self.debug.frames.clear();
         self.debug.idle_watches();
         self.debug.tab = DebugTab::Console;
@@ -2809,6 +2856,7 @@ impl Workspace {
         }
         let n = self.debug.vars.len();
         let sel = self.debug.sel.filter(|&s| s < n);
+        let before = self.debug.sel;
         match (k.key.as_str(), ctrl) {
             ("c", true) => {
                 if let Some(s) = sel {
@@ -2854,6 +2902,11 @@ impl Workspace {
                 }
             }
             _ => return false,
+        }
+        if self.debug.sel != before {
+            if let Some(s) = self.debug.sel {
+                self.debug.vars_scroll.scroll_to_item(s, gpui::ScrollStrategy::Top);
+            }
         }
         cx.notify();
         true
@@ -3153,7 +3206,124 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn render_debugger_tab(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// One row of the Variables / Watches list (only the rows in view are built).
+    fn debug_var_row(&self, i: usize, focused: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let d = &self.debug;
+        let Some(r) = d.vars.get(i) else { return div().into_any_element() };
+        let paused = d.paused_thread().is_some();
+        let edit = d.edit.clone();
+        let input = Self::var_input;
+        let arrow = crate::icons::tree_arrow(r.var.reference > 0, r.expanded, Theme::text_dim());
+        let header = matches!(r.kind, RowKind::Scope | RowKind::WatchHeader);
+        let watch = matches!(r.kind, RowKind::Watch(_));
+        let editing_name = matches!((r.kind, edit.as_ref().map(|e| e.target)), (RowKind::Watch(w), Some(EditTarget::Watch(x))) if w == x);
+        let editing_value = edit.as_ref().is_some_and(|e| e.target == EditTarget::Value(i));
+        let error = r.var.value.starts_with("<error: ") && watch;
+        let returned = r.return_label();
+        let name_color = if header {
+            Theme::text_muted()
+        } else if watch {
+            Theme::accent()
+        } else if returned.is_some() {
+            Theme::syntax(brisk_syntax::Highlight::Function)
+        } else {
+            Theme::syntax(brisk_syntax::Highlight::Property)
+        };
+        let value: gpui::AnyElement = if editing_value {
+            input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
+        } else if watch && r.var.value.is_empty() && !paused {
+            div().text_color(Theme::text_dim()).child("not available: the program is not paused").into_any_element()
+        } else {
+            {
+            // One line: a DataFrame's or array's repr spans lines, and a row must not.
+            let flat: String = if r.var.value.contains('\n') { r.var.value.split_whitespace().collect::<Vec<_>>().join(" ") } else { r.var.value.clone() };
+            div().text_color(if error { Theme::error() } else { Theme::text() }).child(flat.chars().take(300).collect::<String>()).into_any_element()
+        }
+        };
+        div()
+                .id(("dbg-var", i))
+                .w_full()
+                .h(ui_px(21.))
+                .pl(px(8. + 16. * r.depth as f32))
+                .pr(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .whitespace_nowrap()
+                .overflow_hidden()
+                .when(r.var.reference > 0, |x| x.cursor_pointer())
+                .when(d.sel == Some(i), |x| x.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
+                .when(d.sel != Some(i), |x| x.hover(|s| s.bg(Theme::hover_row())))
+                .child(arrow)
+                .child(if editing_name {
+                    input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
+                } else {
+                    div().text_color(name_color).child(returned.clone().unwrap_or_else(|| r.var.name.clone())).into_any_element()
+                })
+                .when(!header, |x| {
+                    x.child(div().text_color(Theme::text_dim()).child("="))
+                        .when(!r.var.type_name.is_empty(), |x| x.child(div().text_color(Theme::text_dim()).child(format!("{{{}}}", r.var.type_name))))
+                        .child(div().flex_1().min_w_0().overflow_hidden().child(value))
+                })
+                // PyCharm's "...View as DataFrame" link at the end of a frame or array row.
+                .when_some(viewable(&r.var.type_name).filter(|_| paused && !header), |x, label| {
+                    x.child(
+                        div()
+                            .id(("dbg-view-data", i))
+                            .flex_shrink_0()
+                            .ml(px(8.))
+                            .font_family(crate::theme::ui_font())
+                            .text_size(px(12.))
+                            .text_color(Theme::accent())
+                            .cursor_pointer()
+                            .hover(|s| s.underline())
+                            .child(label)
+                            .on_click(cx.listener(move |this, _, w, cx| {
+                                cx.stop_propagation();
+                                this.debug.sel = Some(i);
+                                this.view_as_data(i, w, cx);
+                            })),
+                    )
+                })
+                .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
+                    this.debug.sel = Some(i);
+                    this.var_menu(i, e.position, cx);
+                }))
+                .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, _, cx| {
+                    if this.debug.edit.as_ref().is_some_and(|e| e.target != EditTarget::Value(i)) {
+                        this.commit_edit(cx);
+                    }
+                    if ev.click_count() >= 2 {
+                        this.begin_edit(i);
+                    } else {
+                        this.toggle_var(i, cx);
+                    }
+                    cx.notify();
+                }))
+                .into_any_element()
+    }
+
+    /// The in-place editor of a watch name, a value or a new watch.
+    fn var_input(text: &str, focused: bool) -> gpui::Div {
+        let caret = || div().w(px(1.5)).h(ui_px(14.)).bg(Theme::caret());
+        div().flex().items_center().px(px(3.)).border_1().border_color(Theme::accent()).rounded(px(3.)).child(text.to_string()).when(focused, |x| x.child(caret()))
+    }
+
+    /// The "+ new watch" row while it is being typed.
+    fn new_watch_row(text: &str, focused: bool) -> gpui::AnyElement {
+        div()
+            .id("dbg-new-watch")
+            .h(ui_px(21.))
+            .pl(px(8. + 16.))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .child(div().w(px(12.)).text_color(Theme::text_dim()).child("+"))
+            .child(Self::var_input(text, focused))
+            .into_any_element()
+    }
+
+    fn render_debugger_tab(&mut self, _window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let threads = self.render_threads(cx);
         let d = &self.debug;
         let frames = div()
@@ -3188,129 +3358,10 @@ impl Workspace {
                     }))
             }));
         let paused = d.paused_thread().is_some();
-        let focused = d.focus.is_focused(window);
-        let caret = || div().w(px(1.5)).h(ui_px(14.)).bg(Theme::caret());
-        let input = |text: &str, focused: bool| div().flex().items_center().px(px(3.)).border_1().border_color(Theme::accent()).rounded(px(3.)).child(text.to_string()).when(focused, |x| x.child(caret()));
         let edit = d.edit.clone();
-        let mut rows: Vec<gpui::AnyElement> = Vec::new();
-        let new_watch_at = d.watch_len();
-        let new_watch_row = |text: &str| {
-            div()
-                .id("dbg-new-watch")
-                .h(ui_px(21.))
-                .pl(px(8. + 16.))
-                .flex()
-                .items_center()
-                .gap(px(4.))
-                .child(div().w(px(12.)).text_color(Theme::text_dim()).child("+"))
-                .child(input(text, focused))
-                .into_any_element()
-        };
-        for (i, r) in d.vars.iter().enumerate() {
-            if i == new_watch_at {
-                if let Some(e) = edit.as_ref().filter(|e| e.target == EditTarget::NewWatch) {
-                    rows.push(new_watch_row(&e.text));
-                }
-            }
-            let arrow = crate::icons::tree_arrow(r.var.reference > 0, r.expanded, Theme::text_dim());
-            let header = matches!(r.kind, RowKind::Scope | RowKind::WatchHeader);
-            let watch = matches!(r.kind, RowKind::Watch(_));
-            let editing_name = matches!((r.kind, edit.as_ref().map(|e| e.target)), (RowKind::Watch(w), Some(EditTarget::Watch(x))) if w == x);
-            let editing_value = edit.as_ref().is_some_and(|e| e.target == EditTarget::Value(i));
-            let error = r.var.value.starts_with("<error: ") && watch;
-            let returned = r.return_label();
-            let name_color = if header {
-                Theme::text_muted()
-            } else if watch {
-                Theme::accent()
-            } else if returned.is_some() {
-                Theme::syntax(brisk_syntax::Highlight::Function)
-            } else {
-                Theme::syntax(brisk_syntax::Highlight::Property)
-            };
-            let value: gpui::AnyElement = if editing_value {
-                input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
-            } else if watch && r.var.value.is_empty() && !paused {
-                div().text_color(Theme::text_dim()).child("not available: the program is not paused").into_any_element()
-            } else {
-                {
-                // One line: a DataFrame's or array's repr spans lines, and a row must not.
-                let flat: String = if r.var.value.contains('\n') { r.var.value.split_whitespace().collect::<Vec<_>>().join(" ") } else { r.var.value.clone() };
-                div().text_color(if error { Theme::error() } else { Theme::text() }).child(flat.chars().take(300).collect::<String>()).into_any_element()
-            }
-            };
-            rows.push(
-                div()
-                    .id(("dbg-var", i))
-                    .w_full()
-                    .h(ui_px(21.))
-                    .pl(px(8. + 16. * r.depth as f32))
-                    .pr(px(8.))
-                    .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    .whitespace_nowrap()
-                    .overflow_hidden()
-                    .when(r.var.reference > 0, |x| x.cursor_pointer())
-                    .when(d.sel == Some(i), |x| x.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
-                    .when(d.sel != Some(i), |x| x.hover(|s| s.bg(Theme::hover_row())))
-                    .child(arrow)
-                    .child(if editing_name {
-                        input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
-                    } else {
-                        div().text_color(name_color).child(returned.clone().unwrap_or_else(|| r.var.name.clone())).into_any_element()
-                    })
-                    .when(!header, |x| {
-                        x.child(div().text_color(Theme::text_dim()).child("="))
-                            .when(!r.var.type_name.is_empty(), |x| x.child(div().text_color(Theme::text_dim()).child(format!("{{{}}}", r.var.type_name))))
-                            .child(div().flex_1().min_w_0().overflow_hidden().child(value))
-                    })
-                    // PyCharm's "...View as DataFrame" link at the end of a frame or array row.
-                    .when_some(viewable(&r.var.type_name).filter(|_| paused && !header), |x, label| {
-                        x.child(
-                            div()
-                                .id(("dbg-view-data", i))
-                                .flex_shrink_0()
-                                .ml(px(8.))
-                                .font_family(crate::theme::ui_font())
-                                .text_size(px(12.))
-                                .text_color(Theme::accent())
-                                .cursor_pointer()
-                                .hover(|s| s.underline())
-                                .child(label)
-                                .on_click(cx.listener(move |this, _, w, cx| {
-                                    cx.stop_propagation();
-                                    this.debug.sel = Some(i);
-                                    this.view_as_data(i, w, cx);
-                                })),
-                        )
-                    })
-                    .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
-                        this.debug.sel = Some(i);
-                        this.var_menu(i, e.position, cx);
-                    }))
-                    .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, _, cx| {
-                        if this.debug.edit.as_ref().is_some_and(|e| e.target != EditTarget::Value(i)) {
-                            this.commit_edit(cx);
-                        }
-                        if ev.click_count() >= 2 {
-                            this.begin_edit(i);
-                        } else {
-                            this.toggle_var(i, cx);
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
-        }
-        if new_watch_at >= d.vars.len() {
-            if let Some(e) = edit.as_ref().filter(|e| e.target == EditTarget::NewWatch) {
-                rows.push(new_watch_row(&e.text));
-            }
-        }
-        if rows.is_empty() {
-            rows.push(div().p(px(8.)).text_color(Theme::text_dim()).child(if paused { "Loading…" } else { "Variables appear when the program is paused. Insert adds a watch." }).into_any_element());
-        }
+        // The new watch being typed shows as a row before the first scope.
+        let new_watch = edit.as_ref().filter(|e| e.target == EditTarget::NewWatch).map(|e| (d.watch_len().min(d.vars.len()), e.text.clone()));
+        let n_rows = d.vars.len() + new_watch.is_some() as usize;
         let sel = d.sel;
         let sel_kind = sel.and_then(|s| d.vars.get(s)).map(|r| (r.kind, r.parent));
         let can_remove = matches!(sel_kind, Some((RowKind::Watch(_), _)));
@@ -3369,7 +3420,38 @@ impl Workspace {
             .flex()
             .flex_col()
             .child(bar)
-            .child(div().id("dbg-vars-list").flex_1().min_h_0().overflow_y_scroll().font_family(mono_font()).text_size(ui_px(12.5)).children(rows));
+            .child(if n_rows == 0 {
+                div().flex_1().min_h_0().font_family(mono_font()).text_size(ui_px(12.5)).child(div().p(px(8.)).text_color(Theme::text_dim()).child(if paused { "Loading…" } else { "Variables appear when the program is paused. Insert adds a watch." })).into_any_element()
+            } else {
+                div()
+                    .id("dbg-vars-list")
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .font_family(mono_font())
+                    .text_size(ui_px(12.5))
+                    .child(
+                        uniform_list(
+                            "dbg-vars-rows",
+                            n_rows,
+                            cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
+                                let focused = this.debug.focus.is_focused(window);
+                                let nw = this.debug.edit.as_ref().filter(|e| e.target == EditTarget::NewWatch).map(|e| (this.debug.watch_len().min(this.debug.vars.len()), e.text.clone()));
+                                range
+                                    .map(|j| match &nw {
+                                        Some((at, text)) if j == *at => Self::new_watch_row(text, focused),
+                                        Some((at, _)) if j > *at => this.debug_var_row(j - 1, focused, cx),
+                                        _ => this.debug_var_row(j, focused, cx),
+                                    })
+                                    .collect()
+                            }),
+                        )
+                        .size_full()
+                        .track_scroll(d.vars_scroll.clone()),
+                    )
+                    .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&d.vars_scroll), d.vars_bar.clone()))
+                    .into_any_element()
+            });
         let banner = d.exception.clone().map(|e| {
             div()
                 .flex_shrink_0()
@@ -3388,7 +3470,47 @@ impl Workspace {
         div().size_full().flex().flex_col().children(banner).child(div().flex_1().min_h_0().flex().child(frames).child(vars)).into_any_element()
     }
 
+    /// One Debug Console line (the list builds only the lines in view, links included).
+    fn debug_console_line(&self, ln: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let Some((t, k)) = self.debug.console.get(ln) else { return div().into_any_element() };
+        let color = match k {
+            Line::Out => Theme::text(),
+            Line::Err => Theme::error(),
+            Line::Info => Theme::text_muted(),
+            Line::Input => Theme::accent(),
+            Line::Result => Theme::syntax(brisk_syntax::Highlight::String),
+        };
+        let line = t.trim_end_matches('\n');
+        let chars: Vec<char> = line.chars().collect();
+        let mut pieces: Vec<gpui::AnyElement> = Vec::new();
+        let mut at = 0;
+        if matches!(k, Line::Out | Line::Err) {
+            for (j, l) in brisk_run::find_links(line).into_iter().enumerate() {
+                let Some((path, n)) = self.console_link(&l.path, l.line) else { continue };
+                if l.cols.start > at {
+                    pieces.push(div().child(chars[at..l.cols.start].iter().collect::<String>()).into_any_element());
+                }
+                pieces.push(
+                    div()
+                        .id(("dbg-link", ln * 64 + j))
+                        .text_color(Theme::accent())
+                        .underline()
+                        .cursor_pointer()
+                        .child(chars[l.cols.clone()].iter().collect::<String>())
+                        .on_click(cx.listener(move |this, _, w, cx| this.open_console_link(&path, n, w, cx)))
+                        .into_any_element(),
+                );
+                at = l.cols.end;
+            }
+        }
+        if at < chars.len() || pieces.is_empty() {
+            pieces.push(div().child(chars[at.min(chars.len())..].iter().collect::<String>()).into_any_element());
+        }
+        div().px(px(8.)).min_h(ui_px(17.)).flex().text_color(color).whitespace_nowrap().children(pieces).into_any_element()
+    }
+
     fn render_console_tab(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        self.debug.sync_console();
         let d = &self.debug;
         let focused = d.focus.is_focused(window);
         let can_eval = d.paused_thread().is_some();
@@ -3396,48 +3518,10 @@ impl Workspace {
             .id("dbg-console")
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&d.console_scroll)
-            .px(px(8.))
             .py(px(4.))
             .font_family(mono_font())
             .text_size(ui_px(12.5))
-            .children(d.console.iter().enumerate().map(|(ln, (t, k))| {
-                let color = match k {
-                    Line::Out => Theme::text(),
-                    Line::Err => Theme::error(),
-                    Line::Info => Theme::text_muted(),
-                    Line::Input => Theme::accent(),
-                    Line::Result => Theme::syntax(brisk_syntax::Highlight::String),
-                };
-                let line = t.trim_end_matches('\n');
-                let chars: Vec<char> = line.chars().collect();
-                let mut pieces: Vec<gpui::AnyElement> = Vec::new();
-                let mut at = 0;
-                if matches!(k, Line::Out | Line::Err) {
-                    for (j, l) in brisk_run::find_links(line).into_iter().enumerate() {
-                        let Some((path, n)) = self.console_link(&l.path, l.line) else { continue };
-                        if l.cols.start > at {
-                            pieces.push(div().child(chars[at..l.cols.start].iter().collect::<String>()).into_any_element());
-                        }
-                        pieces.push(
-                            div()
-                                .id(("dbg-link", ln * 64 + j))
-                                .text_color(Theme::accent())
-                                .underline()
-                                .cursor_pointer()
-                                .child(chars[l.cols.clone()].iter().collect::<String>())
-                                .on_click(cx.listener(move |this, _, w, cx| this.open_console_link(&path, n, w, cx)))
-                                .into_any_element(),
-                        );
-                        at = l.cols.end;
-                    }
-                }
-                if at < chars.len() || pieces.is_empty() {
-                    pieces.push(div().child(chars[at.min(chars.len())..].iter().collect::<String>()).into_any_element());
-                }
-                div().min_h(ui_px(17.)).flex().text_color(color).whitespace_nowrap().children(pieces)
-            }));
+            .child(list(d.console_out.clone(), cx.processor(|this, ln: usize, _window, cx| this.debug_console_line(ln, cx))).size_full());
         let input = div()
             .h(ui_px(26.))
             .px(px(8.))

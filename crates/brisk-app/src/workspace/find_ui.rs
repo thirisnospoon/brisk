@@ -76,6 +76,11 @@ impl FindWindow {
 }
 
 impl Find {
+    /// The results list (the scroll smoke points the wheel at its bounds).
+    pub(super) fn list_handle(&self) -> UniformListScrollHandle {
+        self.scroll.clone()
+    }
+
     pub fn new() -> Self {
         Self {
             open: false,

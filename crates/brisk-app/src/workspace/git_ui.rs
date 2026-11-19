@@ -69,6 +69,11 @@ pub struct Git {
 }
 
 impl Git {
+    /// The Log list (the scroll smoke points the wheel at its bounds).
+    pub(super) fn log_handle(&self) -> UniformListScrollHandle {
+        self.log_scroll.clone()
+    }
+
     pub fn new(repo: Repo, cx: &mut Context<Workspace>) -> Self {
         Self {
             repo,
