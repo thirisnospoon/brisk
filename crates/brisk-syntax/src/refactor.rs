@@ -459,6 +459,31 @@ fn inline_function(def: Node, nodes: &[Node], at: Node, text: &str, name: String
     Ok(Inline::Function { name, all, this, calls: calls.len() })
 }
 
+/// Whole-word occurrences of `name` in comments and strings (Rename's "Search in comments and
+/// strings"), as byte ranges in text order.
+pub fn text_occurrences(tree: &Tree, text: &str, name: &str) -> Vec<Range<usize>> {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = Vec::new();
+    let mut stack = vec![tree.root_node()];
+    while let Some(n) = stack.pop() {
+        if matches!(n.kind(), "comment" | "string_content") {
+            let (base, s) = (n.start_byte(), src(n, text));
+            for (i, _) in s.match_indices(name) {
+                let before = s[..i].chars().next_back().is_some_and(ident);
+                let after = s[i + name.len()..].chars().next().is_some_and(ident);
+                if !before && !after {
+                    out.push(base + i..base + i + name.len());
+                }
+            }
+            continue;
+        }
+        let mut c = n.walk();
+        stack.extend(n.children(&mut c));
+    }
+    out.sort_by_key(|r| r.start);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,5 +534,16 @@ mod tests {
         let s = "def sq(x, k=2):\n    return x ** k\n\n\nprint(sq(a + 1), sq(3, k=4))\n";
         let Ok(Inline::Function { all: Some(all), calls, .. }) = inline_at(&tree(s), s, 4) else { panic!() };
         assert_eq!((calls, apply(s, all).as_str()), (2, "print((a + 1) ** 2, 3 ** 4)\n"));
+    }
+
+    #[test]
+    fn occurrences_in_comments_and_strings() {
+        let text = "# greet the user
+def greet():
+    return 'greet me, greeter'  # greet
+";
+        let tree = crate::parse_full(crate::Lang::Python, text, None).unwrap();
+        let found: Vec<&str> = text_occurrences(&tree, text, "greet").into_iter().map(|r| &text[r.start - 2..r.end]).collect();
+        assert_eq!(found, ["# greet", " 'greet", "# greet"]);
     }
 }

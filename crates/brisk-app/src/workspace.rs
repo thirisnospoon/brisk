@@ -1575,6 +1575,7 @@ impl Workspace {
             A::NewElement | A::ProjectStructure => {
                 self.status = format!("{} — coming soon", action.info().title);
             }
+            A::Undo if self.undo_refactor(window, cx) => {}
             _ => {
                 let target = self.focused_editor(window, cx).or_else(|| {
                     matches!(action, A::Undo | A::Redo | A::Copy | A::Paste | A::SelectAll | A::CommentLine | A::ShowWhitespaces)

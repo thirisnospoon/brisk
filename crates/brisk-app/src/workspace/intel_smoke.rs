@@ -4,7 +4,10 @@
 //! With `BRISK_SMOKE_INTEL_HOLD=1` it stops with Quick Documentation (Ctrl+Q) open on
 //! `defaultdict`; with `BRISK_SMOKE_INTEL_HOLD=list`, with the completion list and its preview;
 //! with `BRISK_SMOKE_INTEL_HOLD=dumps`, with Quick Documentation on `json.dumps` (prose
-//! with inline code); with `=usages` or `=inlay`, with the Find Usages tree or inlay hints.
+//! with inline code); with `=usages`, `=inlay` or `=preview`, with the Find Usages tree, inlay
+//! hints or the rename's Refactoring Preview.
+//! At the end: Rename (Shift+F6) of a local, of a function (comments and strings, Preview, Do
+//! Refactor, one undo in both files) and of a module (its file too).
 
 use super::{Target, Workspace};
 use gpui::{AsyncWindowContext, Context, WeakEntity, Window};
@@ -327,6 +330,86 @@ y = [i * 2 for i in x]
                 eprintln!("smoke-intel: holding");
                 return;
             }
+            // Rename (Shift+F6): a local in place; a function through the popup with "Search in
+            // comments and strings", Preview and Do Refactor, then one Ctrl+Z in either file;
+            // a module name renames its file.
+            const GREETER: &str = "def greet(name):\n    # greet the user\n    msg = \"hello \" + name\n    return msg\n\n\nGREETING = \"greet\"\n";
+            const USES: &str = "import greeter\nfrom greeter import greet\n\nprint(greet(\"a\"), greeter.GREETING)\n";
+            let _ = this.update_in(cx, |this, window, cx| {
+                let _ = std::fs::write(this.root.join("greeter.py"), GREETER);
+                let _ = std::fs::write(this.root.join("use_greet.py"), USES);
+                this.reindex_files(cx);
+                let f = this.root.join("greeter.py");
+                this.open_file(&f, window, cx);
+            });
+            wait(&this, cx, &|this, _| this.files.as_ref().is_some_and(|f| f.files.iter().any(|f| f == "use_greet.py"))).await;
+            pause(1000).await;
+            let rename_popup = |this: &Self| this.popup.as_ref().is_some_and(|p| p.kind == super::PopupKind::Rename);
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(ed) = this.active_editor().cloned() else { return };
+                ed.update(cx, |e, cx| e.select_on_line(2, 5..5, cx));
+                this.dispatch(brisk_keymap::Action::Rename, window, cx);
+                eprintln!("smoke-intel: rename local -> {} carets, popup {}, {:?}", ed.read(cx).buffer.selections.len(), rename_popup(this), this.status);
+                ed.update(cx, |e, cx| e.select_on_line(0, 5..5, cx));
+                this.dispatch(brisk_keymap::Action::Rename, window, cx);
+            });
+            wait(&this, cx, &|this, _| rename_popup(this)).await;
+            let labels = |this: &Self, q: &str| this.rename_items(q).iter().map(|i| format!("{} [{}]", i.label, i.detail)).collect::<Vec<_>>();
+            let pick = |this: &mut Self, q: &str, prefix: &str, window: &mut Window, cx: &mut Context<Self>| {
+                let t = this.rename_items(q).into_iter().find(|i| i.label.starts_with(prefix)).map(|i| i.target);
+                this.popup = None;
+                match t {
+                    Some(Target::Intention(i)) => this.apply_intent(*i, window, cx),
+                    Some(Target::Rename(n)) => this.apply_rename(n, window, cx),
+                    _ => eprintln!("smoke-intel: rename FAIL: no item {prefix:?}"),
+                }
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                eprintln!("smoke-intel: rename popup query {:?} -> {:?}", this.popup.as_ref().map(|p| p.query.clone()), labels(this, "welcome"));
+                pick(this, "welcome", "☐ Search", window, cx);
+                eprintln!("smoke-intel: rename checkbox -> popup {} {:?}", rename_popup(this), labels(this, "welcome"));
+                pick(this, "welcome", "Preview", window, cx);
+            });
+            wait(&this, cx, &|this, _| this.nav.pending.is_some()).await;
+            if hold.as_deref() == Some("preview") {
+                eprintln!("smoke-intel: holding");
+                return;
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                for r in this.find_window_rows() {
+                    eprintln!("smoke-intel: rename preview | {r}");
+                }
+                this.do_pending_refactor(window, cx);
+                let t = text(this, cx);
+                let u = std::fs::read_to_string(this.root.join("use_greet.py")).unwrap_or_default();
+                eprintln!("smoke-intel: rename done -> {:?}", this.status);
+                eprintln!("smoke-intel: rename greeter.py {:?}", t.lines().collect::<Vec<_>>());
+                eprintln!("smoke-intel: rename use_greet.py {:?}", u.lines().collect::<Vec<_>>());
+                this.dispatch(brisk_keymap::Action::Undo, window, cx);
+                let u = std::fs::read_to_string(this.root.join("use_greet.py")).unwrap_or_default();
+                eprintln!("smoke-intel: rename one undo {}: {:?}", pass(text(this, cx) == GREETER && u == USES), this.status);
+                let f = this.root.join("use_greet.py");
+                this.open_file(&f, window, cx);
+            });
+            pause(1500).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if let Some(ed) = this.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.select_on_line(0, 9..9, cx));
+                }
+                this.dispatch(brisk_keymap::Action::Rename, window, cx);
+            });
+            wait(&this, cx, &|this, _| rename_popup(this)).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                eprintln!("smoke-intel: rename module -> {:?}", labels(this, "welcomer"));
+                pick(this, "welcomer", "Rename module", window, cx);
+            });
+            wait(&this, cx, &|this, _| this.lsp.moved.is_none() && this.root.join("welcomer.py").exists()).await;
+            pause(300).await;
+            let _ = this.update(cx, |this, cx| {
+                let u = text(this, cx);
+                let ok = this.root.join("welcomer.py").exists() && !this.root.join("greeter.py").exists() && u.starts_with("import welcomer\nfrom welcomer import greet\n");
+                eprintln!("smoke-intel: rename module file {}: {:?} {:?}", pass(ok), this.status, u.lines().collect::<Vec<_>>());
+            });
             let _ = this.update(cx, |this, cx| {
                 if let Some(ed) = this.active_editor().cloned() {
                     ed.update(cx, |e, _| e.close_insight());

@@ -44,6 +44,10 @@ pub(super) enum Intent {
     PickExpression(std::ops::Range<usize>, bool),
     /// Byte-range edits of the active editor's text (Inline), one undo step.
     Edits(Vec<(std::ops::Range<usize>, String)>),
+    /// The Rename popup's Preview with this new name.
+    RenamePreview(String),
+    /// The Rename popup's "Search in comments and strings" (the name typed so far).
+    RenameText(String),
     /// Ctrl+Alt+V: extract the selection into a variable; `true`: every occurrence.
     ExtractVariable(bool),
     /// A language server quick fix (ty: import a name, qualify it): title and edits.
@@ -658,6 +662,8 @@ impl Workspace {
                 self.extract_action(a, window, cx);
             }
             Intent::Edits(edits) => ed.update(cx, |e, cx| e.apply_byte_edits(edits, cx)),
+            Intent::RenamePreview(q) => self.rename_with(q, true, window, cx),
+            Intent::RenameText(q) => self.toggle_rename_text(q),
             Intent::Lsp(title, edits) => {
                 let (_, failed) = self.apply_file_edits(edits, cx);
                 self.status = lsp_title(&title);

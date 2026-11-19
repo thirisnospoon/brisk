@@ -217,6 +217,15 @@ pub(super) struct Nav {
     pub completion_gen: u64,
     /// What Shift+F6 renames: file, symbol position, old name.
     pub rename: Option<(PathBuf, Pos, String)>,
+    /// Shift+F6 on a module name: its file (or package folder), renamed along with the usages.
+    pub rename_module: Option<PathBuf>,
+    /// Rename also changes the name in comments and strings (PyCharm's checkbox, remembered).
+    pub rename_text: bool,
+    /// A rename waiting in the Find window's Refactoring Preview: edits, old and new name.
+    pub pending: Option<(Vec<brisk_lsp::FileEdits>, String, String)>,
+    /// The last refactoring, undone at once from any of its files: its name, then each file
+    /// with its text before and after and whether it was open in an editor.
+    pub last_refactor: Option<(String, Vec<(PathBuf, String, String, bool)>)>,
 }
 
 const NAV_LIMIT: usize = 100;
@@ -718,16 +727,44 @@ impl Workspace {
         .detach();
     }
 
-    /// Shift+F6: check the symbol can be renamed, then ask for the new name.
+    /// Shift+F6, as in PyCharm: a local variable or parameter is renamed in place; another
+    /// symbol through the Rename popup (with "Search in comments and strings" and a preview);
+    /// a module name also renames its file.
     fn start_rename(&mut self, ed: Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
+        if ed.update(cx, |e, _| e.name_refs_at_caret()).is_some_and(|r| r.local) {
+            return self.local_rename(ed, cx);
+        }
         let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else { return self.local_rename(ed, cx) };
-        let fut = ty.prepare_rename(&path, p);
+        let line: Vec<char> = ed.read(cx).buffer.line(p.line).chars().collect();
+        let (mut a, mut z) = (p.col.min(line.len()), p.col.min(line.len()));
+        while a > 0 && is_ident(line[a - 1]) {
+            a -= 1;
+        }
+        while z < line.len() && is_ident(line[z]) {
+            z += 1;
+        }
+        let word: String = line[a..z].iter().collect();
+        let (prep, def) = (ty.prepare_rename(&path, p), ty.definition(&path, p));
+        let root = self.root.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let res = fut.await;
+            let (prep, def) = futures::join!(prep, def);
+            // A module of the project: the definition is the start of `word.py` or `word/__init__.py`.
+            let module = def.ok().into_iter().flatten().find_map(|l| {
+                let stem = l.path.file_stem()?.to_str()?;
+                let m = if stem == "__init__" { l.path.parent()?.to_path_buf() } else { l.path.clone() };
+                let name = m.file_stem()?.to_str()?.to_string();
+                (l.start.line == 0 && l.start.col == 0 && name == word && m.starts_with(&root)).then_some(m)
+            });
             let _ = this.update_in(cx, |this, _, cx| {
-                match res {
-                    Ok(Some((s, e))) => {
-                        let old: String = ed.read(cx).buffer.line(s.line).chars().skip(s.col).take(e.col.saturating_sub(s.col)).collect();
+                let old = match (&module, prep) {
+                    (Some(_), _) => Ok(word.clone()),
+                    (None, Ok(Some((s, e)))) => Ok(ed.read(cx).buffer.line(s.line).chars().skip(s.col).take(e.col.saturating_sub(s.col)).collect::<String>()),
+                    (None, Ok(None)) => Err("Cannot rename this element".to_string()),
+                    (None, Err(e)) => Err(format!("ty: {e}")),
+                };
+                match old {
+                    Ok(old) => {
+                        this.nav.rename_module = module;
                         this.nav.rename = Some((path, p, old.clone()));
                         this.open_popup(super::PopupKind::Rename);
                         if let Some(pp) = this.popup.as_mut() {
@@ -735,8 +772,7 @@ impl Workspace {
                         }
                         this.refresh_popup();
                     }
-                    Ok(None) => this.status = "Cannot rename this element".into(),
-                    Err(e) => this.status = format!("ty: {e}"),
+                    Err(e) => this.status = e,
                 }
                 cx.notify();
             });
@@ -745,32 +781,78 @@ impl Workspace {
     }
 
     pub(super) fn rename_items(&self, q: &str) -> Vec<super::PopupItem> {
+        use super::problems_ui::Intent;
+        use super::{PopupItem, Target};
         let Some((_, _, old)) = &self.nav.rename else { return Vec::new() };
         let valid = !q.is_empty() && q.chars().all(is_ident) && !q.starts_with(|c: char| c.is_ascii_digit());
-        if !valid || q == old {
-            return Vec::new();
+        let item = |label: String, detail: String, hint: &str, target: Target| PopupItem { label, detail, hint: hint.into(), target };
+        let mut items = Vec::new();
+        if let Some(m) = &self.nav.rename_module {
+            if valid && q != old {
+                let file = |n: &str| if m.is_dir() { format!("{n}/") } else { format!("{n}.{}", m.extension().and_then(|e| e.to_str()).unwrap_or("py")) };
+                items.push(item(format!("Rename module '{old}' and its usages to '{q}'"), format!("{} → {}", file(old), file(q)), "Enter", Target::Rename(q.to_string())));
+            }
+            return items;
         }
-        vec![super::PopupItem { label: format!("Rename '{old}' to '{q}'"), detail: "in all files".into(), hint: "Enter".into(), target: super::Target::Rename(q.to_string()) }]
+        if valid && q != old {
+            let detail = if self.nav.rename_text { "in all files, comments and strings" } else { "in all files" };
+            items.push(item(format!("Rename '{old}' to '{q}'"), detail.into(), "Enter", Target::Rename(q.to_string())));
+            items.push(item("Preview…".into(), "usages in the Find window, then Do Refactor".into(), "", Target::Intention(Box::new(Intent::RenamePreview(q.to_string())))));
+        }
+        let mark = if self.nav.rename_text { "☑" } else { "☐" };
+        items.push(item(format!("{mark} Search in comments and strings"), String::new(), "", Target::Intention(Box::new(Intent::RenameText(q.to_string())))));
+        items
     }
 
-    /// Apply the rename across the project: open files as one undo step each, the rest on disk.
+    /// The Rename popup's checkbox: flip it and show the popup again with the same name.
+    pub(super) fn toggle_rename_text(&mut self, q: String) {
+        self.nav.rename_text = !self.nav.rename_text;
+        self.open_popup(super::PopupKind::Rename);
+        if let Some(pp) = self.popup.as_mut() {
+            pp.query = q;
+        }
+        self.refresh_popup();
+    }
+
     pub(super) fn apply_rename(&mut self, new_name: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.rename_with(new_name, false, window, cx);
+    }
+
+    /// Rename across the project (open files as one undo step each, the rest on disk), or
+    /// with `preview` show the usages first in the Find window.
+    pub(super) fn rename_with(&mut self, new_name: String, preview: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_editor(window, cx);
         let Some((path, p, old)) = self.nav.rename.take() else { return };
+        if let Some(m) = self.nav.rename_module.take() {
+            let target = if m.is_dir() { m.with_file_name(&new_name) } else { m.with_file_name(format!("{new_name}.{}", m.extension().and_then(|e| e.to_str()).unwrap_or("py"))) };
+            if target.exists() {
+                self.status = format!("Rename: {} already exists", target.display());
+                return;
+            }
+            self.file_op = Some(super::files_ui::FileOp::Rename(m));
+            return self.run_file_op(target, window, cx);
+        }
         let Some(ty) = self.lsp.ty.clone() else { return self.no_ty("Rename") };
         let fut = ty.rename(&path, p, &new_name);
+        let text = self.nav.rename_text;
         cx.spawn_in(window, async move |this, cx| {
             let res = fut.await;
-            let _ = this.update_in(cx, |this, _, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 match res {
-                    Ok(files) if files.is_empty() => this.status = "Nothing to rename".into(),
                     Ok(files) => {
-                        let (count, failed) = this.apply_file_edits(brisk_lsp::merge_file_edits(files), cx);
-                        this.status = format!("Renamed '{old}' to '{new_name}': {count} occurrence(s)");
-                        if !failed.is_empty() {
-                            this.show_toast(format!("Rename could not write: {}", failed.join("; ")), true, cx);
+                        let mut files = brisk_lsp::merge_file_edits(files);
+                        if text {
+                            files = this.with_text_occurrences(files, &old, &new_name, cx);
                         }
-                        this.refresh_git(cx);
+                        if files.is_empty() {
+                            this.status = "Nothing to rename".into();
+                        } else if preview {
+                            let usages = files.iter().flat_map(|(f, es)| es.iter().filter(|e| e.start.line == e.end.line).map(move |e| (f.clone(), e.start.line, e.start.col..e.end.col))).collect();
+                            this.show_usages(format!("Refactoring Preview: rename '{old}' to '{new_name}'"), usages, window, cx);
+                            this.nav.pending = Some((files, old, new_name));
+                        } else {
+                            this.do_rename(files, &old, &new_name, cx);
+                        }
                     }
                     Err(e) => this.status = format!("ty: {e}"),
                 }
@@ -778,6 +860,100 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Whole-word `old` in comments and strings of the project's Python files, added to `files`.
+    fn with_text_occurrences(&self, files: Vec<brisk_lsp::FileEdits>, old: &str, new: &str, cx: &gpui::App) -> Vec<brisk_lsp::FileEdits> {
+        let mut groups = files;
+        for f in python_files_under(&self.root) {
+            let open = self.editors().find(|e| e.read(cx).path.as_deref() == Some(f.as_path())).map(|e| e.read(cx).text_string());
+            let Some(text) = open.or_else(|| std::fs::read_to_string(&f).ok().map(|t| t.replace("\r\n", "\n"))) else { continue };
+            if !text.contains(old) {
+                continue;
+            }
+            let Some(tree) = brisk_syntax::parse_full(brisk_syntax::Lang::Python, &text, None) else { continue };
+            let pos = |b: usize| {
+                let ls = text[..b].rfind('\n').map_or(0, |n| n + 1);
+                Pos { line: text[..ls].matches('\n').count(), col: text[ls..b].chars().count() }
+            };
+            let edits: Vec<brisk_lint::Edit> = brisk_syntax::text_occurrences(&tree, &text, old).into_iter().map(|r| brisk_lint::Edit { start: pos(r.start), end: pos(r.end), content: new.to_string() }).collect();
+            if !edits.is_empty() {
+                groups.push((f, edits));
+            }
+        }
+        brisk_lsp::merge_file_edits(groups)
+    }
+
+    /// The text of a file: its editor's when open, else the disk's.
+    fn file_text_now(&self, f: &Path, cx: &gpui::App) -> Option<String> {
+        match self.editors().find(|e| e.read(cx).path.as_deref() == Some(f)) {
+            Some(e) => Some(e.read(cx).text_string()),
+            None => std::fs::read_to_string(f).ok(),
+        }
+    }
+
+    fn do_rename(&mut self, files: Vec<brisk_lsp::FileEdits>, old: &str, new: &str, cx: &mut Context<Self>) {
+        let before: Vec<(PathBuf, Option<String>, bool)> = files.iter().map(|(f, _)| (f.clone(), self.file_text_now(f, cx), self.editors().any(|e| e.read(cx).path.as_deref() == Some(f.as_path())))).collect();
+        let n = files.len();
+        let (count, failed) = self.apply_file_edits(files, cx);
+        let undo = before.into_iter().filter_map(|(f, b, open)| Some((f.clone(), b?, self.file_text_now(&f, cx)?, open))).collect();
+        self.nav.last_refactor = Some((format!("Rename '{old}' to '{new}'"), undo));
+        self.status = format!("Renamed '{old}' to '{new}': {count} occurrence(s) in {n} file(s)");
+        if !failed.is_empty() {
+            self.show_toast(format!("Rename could not write: {}", failed.join("; ")), true, cx);
+        }
+        self.refresh_git(cx);
+    }
+
+    /// The Refactoring Preview's Do Refactor.
+    pub(super) fn do_pending_refactor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((files, old, new)) = self.nav.pending.take() else { return };
+        self.find.window = None;
+        self.bottom = None;
+        self.focus_editor(window, cx);
+        self.do_rename(files, &old, &new, cx);
+        cx.notify();
+    }
+
+    /// Ctrl+Z in a file the last refactoring changed, while every file it changed is still as
+    /// it left them: undo it in all of them at once (PyCharm's global undo).
+    pub(super) fn undo_refactor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(ed) = self.focused_editor(window, cx).or_else(|| self.active_editor().cloned()) else { return false };
+        let Some(p) = ed.read(cx).path.clone() else { return false };
+        let Some((_, files)) = &self.nav.last_refactor else { return false };
+        if !files.iter().any(|f| f.0 == p) {
+            return false;
+        }
+        if files.iter().any(|(f, _, after, _)| self.file_text_now(f, cx).as_ref() != Some(after)) {
+            self.nav.last_refactor = None;
+            return false;
+        }
+        let Some((what, files)) = self.nav.last_refactor.take() else { return false };
+        let mut on_disk = Vec::new();
+        let n = files.len();
+        for (f, before, _, was_open) in files {
+            match self.editors().find(|e| e.read(cx).path.as_deref() == Some(f.as_path())).cloned() {
+                Some(e) if was_open => e.update(cx, |e, cx| {
+                    e.perform(brisk_keymap::Action::Undo, window, cx);
+                }),
+                Some(e) => e.update(cx, |e, cx| {
+                    let len = e.text_string().len();
+                    e.apply_byte_edits(vec![(0..len, before)], cx);
+                }),
+                None => {
+                    if std::fs::write(&f, before).is_ok() {
+                        on_disk.push(f);
+                    }
+                }
+            }
+        }
+        if let (Some(ty), false) = (&self.lsp.ty, on_disk.is_empty()) {
+            ty.files_changed(&on_disk);
+        }
+        self.status = format!("Undo {what}: {n} file(s)");
+        self.refresh_git(cx);
+        cx.notify();
+        true
     }
 
     /// Edits from the server: open files change in their editors (one undo step each),

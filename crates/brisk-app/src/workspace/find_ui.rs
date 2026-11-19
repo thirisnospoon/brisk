@@ -294,6 +294,8 @@ impl Workspace {
     }
 
     fn open_in_find_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A new search or usages list replaces a Refactoring Preview.
+        self.nav.pending = None;
         let f = &self.find;
         let Some(files) = f.files.clone() else { return };
         if f.results.matches.is_empty() {
@@ -971,6 +973,22 @@ impl Workspace {
                     .child(crate::ui_kit::tool_title("Find").pr(px(0.)))
                     .child(div().text_color(Theme::text_muted()).child(header))
                     .child(div().flex_1())
+                    .when(self.nav.pending.is_some(), |d| {
+                        let button = |id: &'static str, label: &'static str, primary: bool| {
+                            div().id(id).px(px(10.)).py(px(2.)).rounded(px(4.)).cursor_pointer().text_size(ui_px(12.5)).border_1().border_color(Theme::divider())
+                                .when(primary, |d| d.bg(Theme::selection_row()))
+                                .hover(|s| s.bg(Theme::hover_row()))
+                                .child(label)
+                        };
+                        d.child(button("fw-do-refactor", "Do Refactor", true).on_click(cx.listener(|this, _, window, cx| this.do_pending_refactor(window, cx))))
+                            .child(button("fw-cancel-refactor", "Cancel", false).on_click(cx.listener(|this, _, window, cx| {
+                                this.nav.pending = None;
+                                this.find.window = None;
+                                this.bottom = None;
+                                this.focus_editor(window, cx);
+                                cx.notify();
+                            })))
+                    })
                     .child(
                         crate::ui_kit::header_action("fw-rerun").child(crate::icons::ui_icon("rotate-cw", 14., Theme::text_muted()))
                             .on_click(cx.listener(|this, _, window, cx| {
