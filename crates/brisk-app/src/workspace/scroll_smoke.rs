@@ -244,6 +244,7 @@ impl Workspace {
                                 }
                             })
                             .collect();
+                        p.cap_and_follow();
                     }
                     cx.notify();
                 });
