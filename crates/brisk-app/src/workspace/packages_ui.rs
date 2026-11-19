@@ -596,10 +596,11 @@ impl Workspace {
             .flex_shrink_0()
             .items_center()
             .gap(px(6.))
-            .px(px(8.))
+            .pl(px(12.)).pr(px(6.))
             .h(ui_px(CONTROL_H + 10.))
             .border_b_1()
             .border_color(Theme::divider())
+            .child(crate::ui_kit::tool_title("Python Packages"))
             .child(input(&p.filter, 200., "Filter packages", cx))
             .child(
                 ui_kit::icon_button("pkg-refresh", "rotate-cw", !p.loading)

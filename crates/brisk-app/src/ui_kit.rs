@@ -90,6 +90,32 @@ pub fn header_h() -> f32 {
     (if crate::theme::islands() { 32. } else { 34. }) * crate::theme::ui_scale()
 }
 
+/// A tool window's header row: one height, padding and text size in every tool window.
+pub fn tool_header() -> Div {
+    div().h(px(header_h())).flex_none().flex().items_center().gap(px(4.)).pl(px(12.)).pr(px(6.)).text_size(ui_px(13.))
+}
+
+/// A tool window's title in its header (13 px semibold).
+pub fn tool_title(t: impl Into<gpui::SharedString>) -> Div {
+    div().flex_none().pr(px(8.)).text_size(ui_px(13.)).font_weight(gpui::FontWeight::SEMIBOLD).text_color(Theme::text()).whitespace_nowrap().child(t.into())
+}
+
+/// An action in a tool window's header: a 24 px square, radius 4, hover and pressed states.
+pub fn header_action(id: impl Into<gpui::ElementId>) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .size(ui_px(24.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(4.))
+        .cursor_pointer()
+        .text_color(Theme::text_muted())
+        .hover(|s| s.bg(Theme::hover_row()).text_color(Theme::text()))
+        .active(|s| s.bg(Theme::press()))
+}
+
 /// An empty tool window or editor: the message centered; in Islands with a muted icon above.
 pub fn empty_state(icon: &'static str, text: impl Into<gpui::SharedString>) -> Div {
     div()

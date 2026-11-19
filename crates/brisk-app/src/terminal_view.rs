@@ -780,14 +780,9 @@ sys.exit(r)";
     }
 
     fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .h(px(crate::ui_kit::header_h()))
-            .flex()
-            .items_center()
+        crate::ui_kit::tool_header()
             .gap(px(2.))
-            .px(px(8.))
-            .text_size(px(13.))
-            .child(div().pr(px(8.)).font_weight(FontWeight::SEMIBOLD).child(if self.run_mode { "Run" } else { "Terminal" }))
+            .child(crate::ui_kit::tool_title(if self.run_mode { "Run" } else { "Terminal" }))
             .children(self.tabs.iter().enumerate().map(|(i, t)| {
                 let active = i == self.active;
                 let name = match &t.run {

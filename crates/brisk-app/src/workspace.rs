@@ -44,6 +44,7 @@ mod big_smoke;
 mod local_refs;
 mod mouse_smoke;
 mod gutter_smoke;
+mod splitter_ui;
 mod bars_smoke;
 mod scope_smoke;
 mod w7_smoke;
@@ -435,6 +436,8 @@ pub struct Workspace {
     closed: Vec<PathBuf>,
     /// Pinned tabs (both groups): kept first and spared by Close Other / All / Left / Right.
     pinned: std::collections::HashSet<gpui::EntityId>,
+    /// Tool window sizes set by dragging the splitters.
+    splits: splitter_ui::Splits,
     /// Expanded folders' modification times (the disk poll).
     dir_stamps: disk_ui::DirStamps,
     left: Option<LeftTool>,
@@ -820,6 +823,7 @@ impl Workspace {
             split: None,
             closed: Vec::new(),
             pinned: Default::default(),
+            splits: Default::default(),
             dir_stamps: Default::default(),
             left: Some(LeftTool::Project),
             bottom: None,
@@ -1966,22 +1970,11 @@ impl Workspace {
             ToolSide::Bottom => "hide-bottom",
             ToolSide::Right => "hide-right",
         };
-        div().w(px(28.)).h_full().flex_shrink_0().flex().flex_col().items_center().pt(px(6.)).child(
-            div()
-                .id(id)
-                .w(px(22.))
-                .h(ui_px(22.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(4.))
-                .text_size(ui_px(13.))
-                .text_color(Theme::text_muted())
-                .cursor_pointer()
-                .hover(|s| s.bg(Theme::hover_row()).text_color(Theme::text()))
-                .active(|s| s.bg(Theme::press()))
+        let top = (crate::ui_kit::header_h() - 24. * crate::theme::ui_scale()) / 2.;
+        div().w(ui_px(30.)).h_full().flex_shrink_0().flex().flex_col().items_center().pt(px(top)).child(
+            crate::ui_kit::header_action(id)
                 .tooltip(|_, cx| cx.new(|_| Tip("Hide  Shift+Esc".into())).into())
-                .child("—")
+                .child(crate::icons::ui_icon("minus", 14., Theme::text_muted()))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _, window, cx| this.hide_tool_window(side, window, cx))),
         )
@@ -2114,15 +2107,7 @@ impl Workspace {
     }
 
     fn panel_header(title: &str) -> impl IntoElement {
-        div()
-            .h(px(crate::ui_kit::header_h()))
-            .flex()
-            .items_center()
-            .px(px(12.))
-            .text_size(ui_px(13.))
-            .font_weight(gpui::FontWeight::SEMIBOLD)
-            .text_color(Theme::text())
-            .child(title.to_string())
+        crate::ui_kit::tool_header().child(crate::ui_kit::tool_title(title.to_string()))
     }
 
     fn render_project(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2333,8 +2318,7 @@ impl Workspace {
                     cx.stop_propagation();
                 }
             })
-            // Islands: pills on the editor's own background.
-            .when(islands, |d| d.items_center().px(px(6.)).gap_x(px(2.)))
+            .when(islands, |d| d.px(px(4.)))
             .children(tabs.iter().enumerate().map(|(i, t)| {
                 let active = current == Some(i);
                 let (title, icon, color, name_color, dirty) = match t {
@@ -2358,8 +2342,8 @@ impl Workspace {
                 let dragged = tabs_ui::DraggedTab { ix: i, second, title: title.clone().into() };
                 let tab = div()
                     .id(("tab", i))
-                    .h(px(if islands { 26. } else { 36. }))
-                    .when(islands, |d| d.rounded(px(6.)))
+                    .h(ui_px(if islands { 34. } else { 36. }))
+                    .group("tab")
                     .flex_shrink_0()
                     // Long names are cut with an ellipsis, as in PyCharm, so one tab cannot
                     // take the whole strip.
@@ -2371,8 +2355,11 @@ impl Workspace {
                     .px(px(12.))
                     .text_size(ui_px(13.))
                     .text_color(if active { Theme::text() } else { Theme::text_muted() })
-                    .when(active && !islands, |d| d.border_b_2().border_color(if focused { Theme::accent() } else { Theme::text_dim() }).bg(Theme::editor_bg()))
-                    .when(active && islands, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
+                    // The active tab: a 2 px underline (accent while its group has focus); the
+                    // others none, a background on hover.
+                    .border_b_2()
+                    .border_color(if !active { gpui::transparent_black() } else if focused { Theme::accent() } else { Theme::text_dim() })
+                    .when(active && !islands, |d| d.bg(Theme::editor_bg()))
                     .when(!active, |d| d.hover(|s| s.bg(Theme::hover_row())))
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
@@ -2433,6 +2420,8 @@ impl Workspace {
                             .text_color(Theme::text_dim())
                             .hover(|s| s.bg(Theme::press()))
                             .group("close-x")
+                            // Shown on the active tab and under the pointer, as in PyCharm.
+                            .when(!active, |d| d.opacity(0.).group_hover("tab", |s| s.opacity(1.)))
                             .child(crate::icons::close_x("close-x", 12.))
                             // The press must not also activate the tab underneath.
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -2441,8 +2430,7 @@ impl Workspace {
                                 this.focus_pane(second, window, cx);
                                 this.close_tab(i, window, cx);
                             })),
-                    ))
-                    .map(|d| crate::ui_kit::pill_in(d, ("tab-pill", i + 1000 * second as usize), active, if focused { Theme::selection_row() } else { Theme::hover_row() }));
+                    ));
                 // Drag to reorder. The drag lives on a wrapper: the pill's fade-in wraps an
                 // active tab in an animation element, which changes the tab's element id path
                 // on the press that activates it (GPUI would forget the pending drag).
@@ -2934,12 +2922,10 @@ impl Render for Workspace {
             Some(LeftTool::Bookmarks) => Some(self.render_bookmarks(cx)),
             None => None,
         };
-        let bottom_h = match self.bottom {
-            Some(BottomTool::Git) => 320.,
-            Some(BottomTool::Services) => 280.,
-            Some(BottomTool::Debug) | Some(BottomTool::PythonConsole) => 300.,
-            _ => 240.,
-        };
+        let bottom_h = self.bottom.map(|b| self.bottom_height(b)).unwrap_or(240.);
+        let (left_w, right_w) = (self.left_width(), self.right_width());
+        let (split_l, split_b, split_r) = (self.splitter(ToolSide::Left, cx), self.splitter(ToolSide::Bottom, cx), self.splitter(ToolSide::Right, cx));
+        let island_gap = || div().flex_none().w(px(crate::ui_kit::ISLAND_GAP));
         let right = self.db.open.then(|| self.render_database(cx));
         let bottom = self.bottom.map(|b| match (b, &self.terminal) {
             (BottomTool::Terminal, Some(t)) => t.clone().into_any_element(),
@@ -2965,6 +2951,8 @@ impl Render for Workspace {
             .track_focus(&self.focus)
             .capture_key_down(cx.listener(Self::on_key_down))
             .on_modifiers_changed(cx.listener(Self::on_modifiers))
+            .on_drag_move(cx.listener(Self::split_drag_move))
+            .capture_any_mouse_up(cx.listener(|this, _: &gpui::MouseUpEvent, _, _| this.split_drag_end()))
             .size_full()
             .flex()
             .flex_col()
@@ -2977,14 +2965,15 @@ impl Render for Workspace {
                     .flex_1()
                     .flex()
                     .min_h_0()
-                    .when(islands, |d| d.gap(px(crate::ui_kit::ISLAND_GAP)).pb(px(crate::ui_kit::ISLAND_GAP)))
+                    .when(islands, |d| d.pb(px(crate::ui_kit::ISLAND_GAP)))
                     .child(self.render_left_stripe(cx))
+                    .when(islands, |d| d.child(island_gap()))
+                    // The gaps next to the editor are splitters (see `splitter_ui`).
                     .when_some(left, |d, panel| {
-                        let p = div().w(px(300.)).h_full().flex_shrink_0().flex().bg(Theme::panel())
-                            .when(!islands, |d| d.border_r_1().border_color(Theme::border()))
+                        let p = div().w(px(left_w)).h_full().flex_shrink_0().flex().bg(Theme::panel())
                             .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-left-in", panel)))
                             .child(self.hide_column(ToolSide::Left, cx));
-                        d.child(if islands { crate::ui_kit::island(p) } else { p })
+                        d.child(if islands { crate::ui_kit::island(p) } else { p }).child(split_l)
                     })
                     .child(
                         div()
@@ -2992,25 +2981,24 @@ impl Render for Workspace {
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .when(islands, |d| d.gap(px(crate::ui_kit::ISLAND_GAP)))
                             .child(center)
                             .when_some(bottom, |d, panel| {
                                 let p = div().h(px(bottom_h)).flex_shrink_0().flex().bg(Theme::panel())
-                                    .when(!islands, |d| d.border_t_1().border_color(Theme::divider()))
                                     .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-bottom-in", panel)))
                                     .child(self.hide_column(ToolSide::Bottom, cx));
-                                d.child(if islands { crate::ui_kit::island(p) } else { p })
+                                d.child(split_b).child(if islands { crate::ui_kit::island(p) } else { p })
                             }),
                     )
                     .when_some(right, |d, panel| {
-                        let p = div().w(px(320.)).h_full().flex_shrink_0().flex().bg(Theme::panel())
-                            .when(!islands, |d| d.border_l_1().border_color(Theme::border()))
+                        let p = div().w(px(right_w)).h_full().flex_shrink_0().flex().bg(Theme::panel())
                             .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-right-in", panel)))
                             .child(self.hide_column(ToolSide::Right, cx));
-                        d.child(if islands { crate::ui_kit::island(p) } else { p })
+                        d.child(split_r).child(if islands { crate::ui_kit::island(p) } else { p })
                     })
+                    .when(islands, |d| d.child(island_gap()))
                     .child(self.render_right_stripe(cx)),
             )
+            .children(self.split_cursor())
             .child(self.render_status(cx))
             .children(self.render_toast().map(|e| fade_in("toast-in", e, 160)))
             .children(self.render_venv_offer(cx).map(|e| fade_in("venv-offer-in", e, 160)))
