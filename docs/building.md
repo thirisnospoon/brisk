@@ -33,7 +33,7 @@ powershell -ExecutionPolicy Bypass -File scripts\fetch-tools.ps1     # [-Ty 0.0.
 powershell -ExecutionPolicy Bypass -File scripts\fetch-debugpy.ps1   # [-Version 1.8.22]
 ```
 
-- `scripts\fetch-tools.ps1` puts `ty.exe` and `ruff.exe` from the Windows x64 wheels into `vendor\tools`. A tool already present at the requested version is not downloaded again.
+- `scripts\fetch-tools.ps1` puts `ty.exe` and `ruff.exe` from the Windows x64 wheels into `vendor\tools`, each with its license from the wheel (`ty.LICENSE.txt`, `ruff.LICENSE.txt`). A tool already present at the requested version is not downloaded again.
 - `scripts\fetch-debugpy.ps1` unpacks the pure-Python debugpy wheel into `vendor\debugpy-lib`.
 
 Development builds look for the tools in these folders. The portable package copies them into `lib\`.
@@ -44,15 +44,18 @@ Development builds look for the tools in these folders. The portable package cop
 powershell -ExecutionPolicy Bypass -File scripts\package-portable.ps1   # -NoBuild packages an already built exe
 ```
 
-The script builds the release binary (unless `-NoBuild`), runs both fetch scripts, and writes `dist\Brisk-<version>-windows-x64.zip` (about 37 MB). The version comes from `Cargo.toml`.
+The script builds the release binary (unless `-NoBuild`), runs both fetch scripts, and writes `dist\Brisk-<version>-windows-x64.zip` (about 39 MB). The version comes from `Cargo.toml`.
 
 The zip contains:
 
 - `brisk.exe`
-- `README.md`
-- `lib\debugpy`, the debugger
-- `lib\ty.exe` and `lib\ruff.exe`, so code insight and inspections work without installing anything
+- `README.md`, `LICENSE-MIT`, `LICENSE-APACHE`
+- `THIRD-PARTY-NOTICES.txt`, the licenses of the Rust crates and icons compiled into `brisk.exe`
+- `lib\debugpy`, the debugger, with its license files
+- `lib\ty.exe` and `lib\ruff.exe` with their licenses, so code insight and inspections work without installing anything
 - `portable`, a marker file that switches on portable mode
+
+`THIRD-PARTY-NOTICES.txt` is committed to the repository. After changing dependencies, regenerate it with `scripts\third-party-notices.ps1`, which reads `cargo metadata` and the license files in the crate sources.
 
 Unpack it anywhere (a USB stick, a folder without admin rights) and run `brisk.exe`. Nothing is installed.
 

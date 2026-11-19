@@ -1,6 +1,7 @@
 # Puts ty and ruff (the Windows x64 wheels from PyPI) into vendor\tools, where development
 # builds look for them and the portable package copies them from (lib\ty.exe, lib\ruff.exe).
 # Brisk prefers the ones in the project interpreter or on PATH; these are the fallback.
+# Each tool's license from its wheel is kept next to it as <name>.LICENSE.txt.
 # Usage (from the repository root): powershell -ExecutionPolicy Bypass -File scripts\fetch-tools.ps1 [-Ty 0.0.105] [-Ruff 0.17.5]
 param([string]$Ty = "0.0.105", [string]$Ruff = "0.17.5")
 $ErrorActionPreference = 'Stop'
@@ -17,7 +18,8 @@ foreach ($tool in @(@{ Name = 'ty'; Version = $Ty }, @{ Name = 'ruff'; Version =
     $version = $tool.Version
     $exe = Join-Path $target "$name.exe"
     $stamp = Join-Path $target "$name.version"
-    if ((Test-Path $exe) -and (Test-Path $stamp) -and ((Get-Content $stamp -Raw).Trim() -eq $version)) {
+    $license = Join-Path $target "$name.LICENSE.txt"
+    if ((Test-Path $exe) -and (Test-Path $license) -and (Test-Path $stamp) -and ((Get-Content $stamp -Raw).Trim() -eq $version)) {
         "$name $version is already in $target"
         continue
     }
@@ -35,6 +37,11 @@ foreach ($tool in @(@{ Name = 'ty'; Version = $Ty }, @{ Name = 'ruff'; Version =
         $found = Get-ChildItem $unpacked -Recurse -Filter "$name.exe" | Select-Object -First 1
         if (-not $found) { throw "$name.exe is not in $($wheel.Name)" }
         Copy-Item $found.FullName $exe -Force
+        $lic = Get-ChildItem $unpacked -Recurse -File |
+            Where-Object { $_.Directory.FullName -match '\.dist-info' -and $_.Name -match '^(LICEN[CS]E|COPYING)' } |
+            Select-Object -First 1
+        if (-not $lic) { throw "no license file in $($wheel.Name)" }
+        Copy-Item $lic.FullName $license -Force
         Set-Content -Path $stamp -Value $version -Encoding ascii
         "$name $version -> $exe"
     } finally {

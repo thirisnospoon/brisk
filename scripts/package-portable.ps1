@@ -26,7 +26,12 @@ Copy-Item -Recurse (Join-Path $root 'vendor\debugpy-lib') (Join-Path $dir 'lib')
 # Code insight: ty (completion, navigation, type checks) and ruff (lint, format) in lib\, used
 # when neither the project interpreter nor PATH has them.
 & (Join-Path $PSScriptRoot 'fetch-tools.ps1')
-foreach ($t in 'ty', 'ruff') { Copy-Item (Join-Path $root "vendor\tools\$t.exe") (Join-Path $dir 'lib') }
+foreach ($t in 'ty', 'ruff') {
+    Copy-Item (Join-Path $root "vendor\tools\$t.exe") (Join-Path $dir 'lib')
+    Copy-Item (Join-Path $root "vendor\tools\$t.LICENSE.txt") (Join-Path $dir 'lib')
+}
+# Licenses of the Rust crates and icons compiled into brisk.exe (scripts\third-party-notices.ps1).
+Copy-Item 'THIRD-PARTY-NOTICES.txt' $dir
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 [IO.File]::WriteAllText((Join-Path $dir 'portable'),
     "This file switches Brisk to portable mode: settings, database consoles and saved passwords`r`n" +

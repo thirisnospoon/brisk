@@ -128,4 +128,6 @@ Licensed under either of [Apache License 2.0](LICENSE-APACHE) or
 [MIT license](LICENSE-MIT) at your option.
 
 Bundled third-party components keep their own licenses: Lucide icons (ISC),
-ty and ruff (MIT), debugpy (MIT).
+ty and ruff (MIT), debugpy (MIT), and the Rust crates compiled into `brisk.exe`.
+Their full texts are in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt), which
+`scripts\third-party-notices.ps1` regenerates and the release zip includes.

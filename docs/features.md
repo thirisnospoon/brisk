@@ -6,7 +6,7 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 
 ### Layout
 
-- The window follows PyCharm's New UI: a toolbar with the project, the Git branch (read from `.git/HEAD`) and the run configuration; tool window stripes on the left and right; a status bar with `Ln:Col`, line separator (LF/CRLF), encoding, indent, language and interpreter.
+- The window layout follows PyCharm's New UI: a toolbar with the project, the Git branch (read from `.git/HEAD`) and the run configuration; tool window stripes on the left and right; a status bar with `Ln:Col`, line separator (LF/CRLF), encoding, indent, language and interpreter.
 - Tool windows resize by dragging their edge. In Islands the gap between a tool window and the editor is the splitter, in Classic it is a line. The width of the left and right tool windows and the height of each bottom one are saved per project.
 - All tool window headers have the same height, with the title on the left and 24 px buttons on the right.
 - The active editor tab is underlined. The close button on inactive tabs shows on hover.
@@ -28,7 +28,7 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 
 ### Icons
 
-- Icons are SVG files embedded in the executable (`crates/brisk-app/assets/icons`, about 13 KB). They are line icons (stroke 1.75) based on [Lucide](https://lucide.dev) (ISC license, see `LICENSE-lucide.txt` in the same folder), plus a few of our own in the same style (debugger steps, breakpoints).
+- Icons are SVG files embedded in the executable (`crates/brisk-app/assets/icons`, about 13 KB). General-purpose icons come from [Lucide](https://lucide.dev) (ISC license). Tool window, Run / Debug toolbar, file type and folder icons are Brisk's own, drawn in a matching line style. `LICENSE-lucide.txt` in the same folder lists which is which.
 - Sizes: 16 px in toolbars and tool window stripes, 12 to 14 px in the gutter. Breakpoint circles and gutter icons snap to the physical pixel grid, so their edges stay sharp at any Windows scale.
 - File type icons (16 px): Python, stubs, Jupyter, JSON, TOML, YAML, ini / cfg / `.env`, Markdown, text, requirements, Rust, JS / TS, HTML, CSS / SCSS, SQL, shell / bat / PowerShell, XML, CSV, lock files, `.gitignore` / `.dockerignore`, Dockerfile, images, archives. Folders: plain, sources (`src`), tests (`tests`), excluded (`.venv`, `node_modules`, `__pycache__`, `build`, `dist` and similar). The same icons are used in Project, tabs, Commit, Log, Find, Recent Files, Search Everywhere and breadcrumbs.
 - Tool window and Run / Debug toolbar icons use the same line style (24×24 grid, stroke 1.6) and scale with the UI.
@@ -45,7 +45,7 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 
 - Syntax highlighting by tree-sitter, computed only for the visible range: Python, JSON, TOML, YAML, Markdown, HTML, CSS, JavaScript, TypeScript / TSX, shell. SQL uses its own lexer.
 - Line numbers, indent guides, multiple carets, IME input.
-- Colours follow PyCharm's New UI Dark (Islands) scheme: keywords `CF8E6D`, strings `6AAB73`, numbers `2AACB8`, comments `7A7E85`, function declarations `56A8F5`, builtins `8888C6`, decorators `B3AE60`, `self` `94558D`, keyword arguments `AA4926`, f-string braces in the keyword colour. Calls, attributes and class names use the text colour, as in PyCharm.
+- The default dark colour scheme is Brisk's own, kept close to what PyCharm users are used to so that code reads the same at a glance: keywords orange, strings green, numbers cyan, comments grey, function declarations blue, decorators olive, `self` purple. Calls, attributes and class names use the plain text colour.
 - Indent guides follow blocks: continuation lines inside brackets get no guides of their own, guides do not break on empty lines, and the guide of the block with the caret is brighter.
 - The selection is drawn as one shape with rounded (3 px) outer corners. Search matches, occurrences of the name under the caret and matching brackets are small rounded boxes inset 1 px from the line edges. All edges are aligned to screen pixels.
 - The caret is 2 px wide, pixel-aligned, and blinks with a fade.

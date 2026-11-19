@@ -1,7 +1,15 @@
-Icons in this folder that are not listed below come from Lucide (https://lucide.dev),
-drawn on a 24 px grid with 1.75 px strokes. Brisk's own icons in the same style:
-step-over, step-into, step-out, mute-breakpoints, rerun-failed, dot, ring, dot-hole,
-play-solid, stop-solid, breakpoints.
+Where the icons in this folder come from:
+
+- Brisk's own, drawn for this project and covered by Brisk's license (MIT OR Apache-2.0):
+  tw-* (tool window and Run / Debug toolbar icons), ft-* (file types and folders),
+  island-* (panel corners), dot, play-solid, stop-solid.
+  ft-py-a / ft-py-b and ft-nb-a / ft-nb-b are simplified drawings of the Python and Jupyter
+  logos, used only to mark files of those types. "Python" and the Python logos are trademarks
+  of the Python Software Foundation; "Jupyter" is a trademark of LF Charities. Brisk is not
+  affiliated with either.
+- Modified Lucide icons: check-bold (check with a heavier stroke) and sort-failed (built from
+  Lucide's arrow-up and x).
+- Every other icon is from Lucide (https://lucide.dev), unmodified, under the license below.
 
 ISC License
 

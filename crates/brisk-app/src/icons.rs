@@ -1,5 +1,5 @@
-//! SVG icons built into the binary (Lucide, ISC, and a few of Brisk's own in the same style:
-//! see `assets/icons/LICENSE-lucide.txt`). GPUI renders them as alpha masks, so one file
+//! SVG icons built into the binary: Lucide (ISC) plus Brisk's own tool window, file type and
+//! panel icons. `assets/icons/LICENSE-lucide.txt` says which is which. GPUI renders them as alpha masks, so one file
 //! serves every color.
 
 use std::borrow::Cow;
