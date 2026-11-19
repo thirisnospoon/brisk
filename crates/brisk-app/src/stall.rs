@@ -26,7 +26,56 @@ fn now_ms() -> u64 {
 
 pub fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| cfg!(debug_assertions) || std::env::var_os("BRISK_WATCHDOG").is_some() || std::env::var_os("BRISK_SMOKE_HANG").is_some())
+    *ON.get_or_init(|| {
+        cfg!(debug_assertions)
+            || std::env::var_os("BRISK_WATCHDOG").is_some()
+            || std::env::var_os("BRISK_SMOKE_HANG").is_some()
+            || frames_enabled()
+    })
+}
+
+/// Frame timing for `BRISK_SMOKE_SCROLL`: the CPU time of each window frame, from the start of
+/// the Workspace render (the root view renders on every frame) to the paint of a probe
+/// element placed last in the tree. Nothing is recorded, and no probe is added, otherwise.
+pub fn frames_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("BRISK_SMOKE_SCROLL").is_some())
+}
+
+static FRAME_START: Mutex<Option<Instant>> = Mutex::new(None);
+static FRAMES: Mutex<Vec<f32>> = Mutex::new(Vec::new());
+
+pub fn frame_begin() {
+    if frames_enabled() {
+        if let Ok(mut s) = FRAME_START.lock() {
+            *s = Some(Instant::now());
+        }
+    }
+}
+
+/// The probe: an empty canvas whose paint closes the frame started by [`frame_begin`].
+pub fn frame_probe() -> Option<gpui::AnyElement> {
+    use gpui::{IntoElement, Styled};
+    frames_enabled().then(|| {
+        gpui::canvas(
+            |_, _, _| (),
+            |_, _, _, _| {
+                if let Some(t) = FRAME_START.lock().ok().and_then(|mut s| s.take()) {
+                    if let Ok(mut f) = FRAMES.lock() {
+                        f.push(t.elapsed().as_secs_f32() * 1000.0);
+                    }
+                }
+            },
+        )
+        .absolute()
+        .size_0()
+        .into_any_element()
+    })
+}
+
+/// Frame times (ms) recorded since the last call.
+pub fn take_frames() -> Vec<f32> {
+    FRAMES.lock().map(|mut f| std::mem::take(&mut *f)).unwrap_or_default()
 }
 
 /// What the UI thread is about to do. Cheap; call it before anything that might be slow.
