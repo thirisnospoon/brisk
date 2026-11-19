@@ -129,6 +129,29 @@ fn comment_toggle_blank_lines_and_partial_selection() {
 }
 
 #[test]
+fn mouse_carets_and_unit_drags() {
+    let mut b = buf("alpha beta gamma\nsecond line\nthird");
+    b.selections = vec![Selection::caret(0)];
+    b.toggle_caret(6);
+    assert_eq!(b.selections.len(), 2);
+    // Again on the same spot: removed; the last caret is never removed.
+    b.toggle_caret(6);
+    assert_eq!(b.selections.len(), 1);
+    b.toggle_caret(0);
+    assert_eq!(b.selections.len(), 1);
+    b.toggle_caret(3);
+    assert_eq!(b.selections.len(), 2);
+    // Double click on "beta" then drag to "gamma" / back to "alpha": whole words.
+    b.select_units_to(6..10, 13, false);
+    assert_eq!(b.primary().range(), 6..16);
+    b.select_units_to(6..10, 2, false);
+    assert_eq!((b.primary().anchor, b.primary().head), (10, 0));
+    // Triple click on line 1, drag into line 2: whole lines.
+    b.select_units_to(17..29, 31, true);
+    assert_eq!(b.primary().range(), 17..34);
+}
+
+#[test]
 fn comment_style_options() {
     // "Line comment at first column" off: at the block's indent; no space when asked.
     let mut b = buf("    x = 1\n        y = 2");

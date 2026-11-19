@@ -187,6 +187,31 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::ToggleSoftWrap, window, cx));
             tick().await;
             eprintln!("smoke-w7: wrap toggled {}", probe(&this, cx));
+            // --- E12 mouse: double / triple click and drag, Alt+Shift+click twice, Alt+drag ----
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(ed) = this.active_editor().cloned() else { return };
+                let none = gpui::Modifiers::default();
+                let sel = |ed: &gpui::Entity<crate::editor::Editor>, cx: &gpui::App| {
+                    let b = &ed.read(cx).buffer;
+                    b.selections.iter().map(|s| b.slice(s.range())).collect::<Vec<_>>()
+                };
+                ed.update(cx, |e, cx| e.smoke_mouse((1, 5), none, 2, None, window, cx));
+                eprintln!("smoke-w7: mouse double click {:?}", sel(&ed, cx));
+                ed.update(cx, |e, cx| e.smoke_mouse((1, 5), none, 2, Some((1, 16)), window, cx));
+                eprintln!("smoke-w7: mouse double click + drag {:?}", sel(&ed, cx));
+                ed.update(cx, |e, cx| e.smoke_mouse((2, 4), none, 3, Some((3, 1)), window, cx));
+                eprintln!("smoke-w7: mouse triple click + drag lines {:?}", ed.read(cx).buffer.selections.iter().map(|s| { let b = &ed.read(cx).buffer; (b.pos_to_line_col(s.range().start), b.pos_to_line_col(s.range().end)) }).collect::<Vec<_>>());
+                ed.update(cx, |e, cx| e.smoke_mouse((5, 0), none, 1, None, window, cx));
+                let alt_shift = gpui::Modifiers { alt: true, shift: true, ..Default::default() };
+                ed.update(cx, |e, cx| e.smoke_mouse((5, 4), alt_shift, 1, None, window, cx));
+                let n1 = ed.read(cx).buffer.selections.len();
+                ed.update(cx, |e, cx| e.smoke_mouse((5, 4), alt_shift, 1, None, window, cx));
+                eprintln!("smoke-w7: mouse alt+shift click carets {n1} -> again {}", ed.read(cx).buffer.selections.len());
+                let alt = gpui::Modifiers { alt: true, ..Default::default() };
+                ed.update(cx, |e, cx| e.smoke_mouse((5, 3), alt, 1, Some((7, 8)), window, cx));
+                eprintln!("smoke-w7: mouse alt+drag block {:?}", sel(&ed, cx));
+                ed.update(cx, |e, cx| e.smoke_mouse((0, 0), none, 1, None, window, cx));
+            });
             if std::env::var_os("BRISK_SMOKE_W7_HOLD").is_some() {
                 // For a look: wraps back on and a selection across rows.
                 let _ = this.update_in(cx, |this, window, cx| {

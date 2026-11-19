@@ -222,7 +222,7 @@ impl Editor {
         if self.column_anchor.is_some() {
             self.drag_column(e.position);
         } else if let Some(pos) = self.pos_for_point(e.position) {
-            self.buffer.set_caret(pos, true);
+            self.drag_select_to(pos);
         }
         let outside = self.layout.as_ref().is_some_and(|l| {
             let b = l.bounds;
@@ -236,8 +236,35 @@ impl Editor {
         cx.notify();
     }
 
+    /// Smoke checks: a left press at `at` (line, column) with these modifiers and click count,
+    /// a drag to `to`, and the release, through the same handlers as the mouse.
+    pub fn smoke_mouse(&mut self, at: (usize, usize), mods: gpui::Modifiers, clicks: usize, to: Option<(usize, usize)>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(l) = self.layout.as_ref() else { return };
+        let (top, text_x, cw) = (l.bounds.top(), l.text_x, l.char_w);
+        let point_of = |ed: &Self, (line, col): (usize, usize)| gpui::point(text_x + cw * (col as f32 + 0.3), top + gpui::px((ed.row_of(line) as f32 + 0.5) * super::line_height() - ed.scroll_y));
+        let p = point_of(self, at);
+        let down = gpui::MouseDownEvent { button: gpui::MouseButton::Left, position: p, modifiers: mods, click_count: clicks, first_mouse: false };
+        self.on_mouse_down(&down, window, cx);
+        if let Some(to) = to {
+            let q = point_of(self, to);
+            let mv = MouseMoveEvent { position: q, pressed_button: Some(gpui::MouseButton::Left), modifiers: mods };
+            self.global_drag(&mv, window, cx);
+        }
+        self.end_drag();
+    }
+
+    /// A selection drag reached `pos`: by characters, or by the words / lines of a double /
+    /// triple click.
+    pub(super) fn drag_select_to(&mut self, pos: usize) {
+        match self.drag_unit.clone() {
+            Some((unit, lines)) => self.buffer.select_units_to(unit, pos, lines),
+            None => self.buffer.set_caret(pos, true),
+        }
+    }
+
     pub(super) fn end_drag(&mut self) {
         self.drag = None;
+        self.drag_unit = None;
         self.selecting = false;
         self.drag_pos = None;
         self.column_anchor = None;
@@ -268,7 +295,7 @@ impl Editor {
                         if ed.column_anchor.is_some() {
                             ed.drag_column(p);
                         } else if let Some(pos) = ed.pos_for_point(p) {
-                            ed.buffer.set_caret(pos, true);
+                            ed.drag_select_to(pos);
                         }
                         cx.notify();
                         true

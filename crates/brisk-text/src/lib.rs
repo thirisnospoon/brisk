@@ -1036,6 +1036,38 @@ impl Buffer {
         normalize(&mut self.selections, len);
     }
 
+    /// Alt+Shift+click: a caret there, or, when one is already there (and not the only one),
+    /// remove it, as in PyCharm.
+    pub fn toggle_caret(&mut self, pos: usize) {
+        let pos = pos.min(self.len_chars());
+        if self.selections.len() > 1 {
+            if let Some(i) = self.selections.iter().position(|s| s.head == pos || (!s.is_empty() && s.range().contains(&pos))) {
+                self.selections.remove(i);
+                return;
+            }
+        }
+        self.add_caret(pos);
+    }
+
+    /// Mouse drag after a double / triple click: from `unit` (the word or line clicked) to the
+    /// word or line at `pos`, keeping `unit` selected.
+    pub fn select_units_to(&mut self, unit: Range<usize>, pos: usize, lines: bool) {
+        let at = if lines {
+            let l = self.pos_to_line_col(pos.min(self.len_chars())).0;
+            let end = if l + 1 < self.len_lines() { self.line_start(l + 1) } else { self.len_chars() };
+            self.line_start(l)..end
+        } else {
+            let r = self.word_range_at(pos);
+            if r.is_empty() { pos..pos } else { r }
+        };
+        let sel = if at.start < unit.start {
+            Selection { anchor: unit.end, head: at.start, goal_col: None }
+        } else {
+            Selection { anchor: unit.start, head: at.end.max(unit.end), goal_col: None }
+        };
+        self.selections = vec![sel];
+    }
+
     pub fn select_all(&mut self) {
         self.selections = vec![Selection { anchor: 0, head: self.len_chars(), goal_col: None }];
     }

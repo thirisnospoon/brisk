@@ -124,6 +124,8 @@ pub struct Editor {
     column_block: Option<((usize, usize), (usize, usize))>,
     layout: Option<LayoutCache>,
     selecting: bool,
+    /// Dragging after a double / triple click: the word or line clicked, and whether lines.
+    drag_unit: Option<(Range<usize>, bool)>,
     marked: Option<Range<usize>>,
     pub read_error: Option<String>,
     /// File contents at HEAD (None: not in git / untracked). Drives the gutter change markers.
@@ -339,6 +341,7 @@ impl Editor {
             column_block: None,
             layout: None,
             selecting: false,
+            drag_unit: None,
             marked: None,
             read_error: err,
             vcs_base: None,
@@ -421,6 +424,7 @@ impl Editor {
             column_block: None,
             layout: None,
             selecting: false,
+            drag_unit: None,
             marked: None,
             read_error: None,
             vcs_base: None,
@@ -1168,14 +1172,19 @@ impl Editor {
             self.buffer.set_caret(pos, false);
             self.selecting = true;
         } else if e.modifiers.alt && e.modifiers.shift {
-            self.buffer.add_caret(pos);
+            self.buffer.toggle_caret(pos);
         } else if e.click_count == 2 {
             let r = self.buffer.word_range_at(pos);
             self.buffer.selections = vec![Selection { anchor: r.start, head: r.end, goal_col: None }];
+            // Dragging on selects whole words.
+            self.drag_unit = Some((r, false));
+            self.selecting = true;
         } else if e.click_count >= 3 {
             let (line, _) = self.buffer.pos_to_line_col(pos);
             let end = if line + 1 < self.buffer.len_lines() { self.buffer.line_start(line + 1) } else { self.buffer.len_chars() };
             self.buffer.selections = vec![Selection { anchor: self.buffer.line_start(line), head: end, goal_col: None }];
+            self.drag_unit = Some((self.buffer.line_start(line)..end, true));
+            self.selecting = true;
         } else {
             self.buffer.set_caret(pos, e.modifiers.shift);
             self.selecting = true;
