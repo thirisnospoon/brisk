@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 mod tests_view;
 mod console_find;
+mod console_prefs;
 mod scroll_bar;
 mod dashboard;
 pub use dashboard::RunInfo;
@@ -125,6 +126,8 @@ pub struct TerminalPanel {
     pub scroll_to_end: bool,
     /// Soft wrap off: first visible column.
     h_scroll: usize,
+    /// The two toggles above, per run configuration.
+    prefs: console_prefs::ConsolePrefs,
     /// Ctrl+F in the Run console.
     search: console_find::ConsoleSearch,
     /// "Rerun Failed Tests First": pytest runs start with the last run's failures.
@@ -221,10 +224,8 @@ impl TerminalPanel {
                             }
                             TermEvent::Wakeup | TermEvent::Bell => {}
                         }
-                        if this.search.open {
-                            this.search.dirty = true;
-                        }
                     }
+                    this.search_output_changed(cx);
                     PUMP_NOTIFIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     cx.notify();
                 });
@@ -251,6 +252,7 @@ impl TerminalPanel {
             soft_wrap: true,
             scroll_to_end: true,
             h_scroll: 0,
+            prefs: Default::default(),
             search: Default::default(),
             failed_first: false,
             history_open: false,
@@ -355,10 +357,12 @@ sys.exit(r)";
     pub fn toggle_soft_wrap(&mut self) {
         self.soft_wrap = !self.soft_wrap;
         self.h_scroll = 0;
+        self.store_console_prefs(true);
     }
 
     pub fn toggle_scroll_to_end(&mut self) {
         self.scroll_to_end = !self.scroll_to_end;
+        self.store_console_prefs(false);
         if self.scroll_to_end {
             if let Some(s) = self.session() {
                 s.scroll(-(1 << 30));
@@ -938,6 +942,9 @@ impl Focusable for TerminalPanel {
 impl Render for TerminalPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         PANEL_RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if self.run_mode {
+            self.sync_console_prefs();
+        }
         div()
             .id("terminal")
             .key_context("Terminal")

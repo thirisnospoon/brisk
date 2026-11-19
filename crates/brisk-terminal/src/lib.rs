@@ -192,7 +192,11 @@ pub struct SearchRow {
 
 /// Matches of `needle` (case-insensitive unless `case`) in rows joined into logical lines.
 pub fn find_in_rows(rows: impl IntoIterator<Item = SearchRow>, needle: &str, case: bool) -> Vec<Found> {
-    let fold = |c: char| if case { c } else { c.to_lowercase().next().unwrap_or(c) };
+    let fold = |c: char| match c {
+        _ if case => c,
+        _ if c.is_ascii() => c.to_ascii_lowercase(),
+        _ => c.to_lowercase().next().unwrap_or(c),
+    };
     let pat: Vec<char> = needle.chars().map(fold).collect();
     let mut out = Vec::new();
     if pat.is_empty() {
@@ -205,7 +209,8 @@ pub fn find_in_rows(rows: impl IntoIterator<Item = SearchRow>, needle: &str, cas
             return;
         }
         let chars: Vec<char> = logical.iter().map(|&(_, _, c)| fold(c)).collect();
-        let text: String = logical.iter().map(|&(_, _, c)| c).collect::<String>().trim_end().to_string();
+        // The line's text, built once and only for a line that has a match.
+        let mut text: Option<String> = None;
         let row = logical[0].0;
         let mut i = 0;
         while i + pat.len() <= chars.len() {
@@ -222,7 +227,8 @@ pub fn find_in_rows(rows: impl IntoIterator<Item = SearchRow>, needle: &str, cas
                 }
             }
             let (line, cols) = parts.remove(0);
-            out.push(Found { line, cols, more: parts, row, text: text.clone() });
+            let text = text.get_or_insert_with(|| logical.iter().map(|&(_, _, c)| c).collect::<String>().trim_end().to_string()).clone();
+            out.push(Found { line, cols, more: parts, row, text });
             i += pat.len();
         }
         logical.clear();
@@ -510,11 +516,13 @@ impl Session {
         let top = -(grid.history_size() as i32);
         let rows = (top..grid.screen_lines() as i32).map(|l| {
             let row = &grid[Line(l)];
-            let cells = (0..grid.columns()).filter_map(|c| {
+            let wrapped = row[Column(grid.columns() - 1)].flags.contains(Flags::WRAPLINE);
+            // Trailing blanks of a row that ends its line never take part in a match.
+            let end = if wrapped { grid.columns() } else { (0..grid.columns()).rev().find(|&c| row[Column(c)].c != ' ').map_or(0, |c| c + 1) };
+            let cells = (0..end).filter_map(|c| {
                 let cell = &row[Column(c)];
                 (!cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)).then_some((c, cell.c))
             });
-            let wrapped = row[Column(grid.columns() - 1)].flags.contains(Flags::WRAPLINE);
             SearchRow { line: l, cells: cells.collect(), wrapped }
         });
         find_in_rows(rows, needle, case)

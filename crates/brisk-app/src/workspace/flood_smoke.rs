@@ -2,7 +2,8 @@
 //! as fast as it can for 4 s while the smoke types into an editor. Reports how many lines the
 //! script wrote, how far behind the console was when it ended, and the UI thread's stalls:
 //! the gaps of a 5 ms ticker on the UI thread (max, p99, count over 50 ms) and the time each
-//! typed character took.
+//! typed character took. `=find`: the same with the console's Ctrl+F bar open on a query that
+//! matches every line, then the time one search over the full 20 000-line buffer takes.
 
 use super::Workspace;
 use brisk_run::RunConfig;
@@ -24,6 +25,7 @@ impl Workspace {
     pub(super) fn flood_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let pty = std::env::var("BRISK_SMOKE_FLOOD").as_deref() == Ok("pty");
+        let find = std::env::var("BRISK_SMOKE_FLOOD").as_deref() == Ok("find");
         let _ = std::fs::write(root.join("flood.py"), FLOOD);
         let _ = std::fs::write(root.join("notes.py"), "# typing here during the flood\n");
         let root2 = root.clone();
@@ -49,6 +51,13 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| {
                 let cfg = RunConfig { name: "flood".into(), target: "flood.py".into(), emulate_terminal: pty, ..Default::default() };
                 this.run_config(cfg, window, cx);
+                if find {
+                    if let Some(p) = this.runs.panel.clone() {
+                        window.focus(&gpui::Focusable::focus_handle(p.read(cx), cx));
+                        this.smoke_press("ctrl-f", window, cx);
+                        p.update(cx, |p, _| p.search_type("longer"));
+                    }
+                }
                 // The editor keeps the focus, as with "Show Run window".
                 if let Some(ed) = this.active_editor().cloned() {
                     window.focus(&gpui::Focusable::focus_handle(ed.read(cx), cx));
@@ -96,6 +105,15 @@ impl Workspace {
                 let typed = this.active_editor().map(|e| e.read(cx).text_string().matches('x').count()).unwrap_or(0);
                 eprintln!("smoke-flood: mode {}, script {report:?}, seen after {:?}, total {:?}", if pty { "pty" } else { "pipe" }, done_at, started.elapsed());
                 eprintln!("smoke-flood: ui ticker gaps (minus 5 ms): {}", stats(gaps));
+                if let Some(p) = this.runs.panel.clone().filter(|_| find) {
+                    let t = Instant::now();
+                    let n = p.update(cx, |p, _| {
+                        p.search_type("");
+                        p.search_summary()
+                    });
+                    let ms = t.elapsed().as_secs_f64() * 1000.0;
+                    eprintln!("smoke-flood: search over {} lines: {n:?} in {ms:.1} ms", p.read(cx).active_text().unwrap_or_default().lines().count());
+                }
                 eprintln!("smoke-flood: typed chars {typed}, per key: {}", stats(keys));
                 cx.quit();
             });
