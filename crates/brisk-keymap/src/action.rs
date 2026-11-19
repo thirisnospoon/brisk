@@ -85,6 +85,7 @@ actions! {
     CommentBlock => "Comment with Block Comment", "Code";
     ReformatCode => "Reformat Code", "Code";
     OptimizeImports => "Optimize Imports", "Code";
+    CodeCleanup => "Code Cleanup", "Code";
     ExpandRegion => "Expand", "Code";
     CollapseRegion => "Collapse", "Code";
     ExpandAll => "Expand All", "Code";

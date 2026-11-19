@@ -147,6 +147,10 @@ impl Workspace {
         eprintln!("smoke-edit2: actions on save -> disk {disk:?}, dirty {}", ed.read(cx).buffer.is_dirty());
         (s.reformat_on_save, s.optimize_imports_on_save) = (false, false);
         crate::settings::apply(&s);
+        // Code Cleanup: every safe ruff fix (the unused import goes).
+        ed.update(cx, |e, cx| e.replace_all_text("import sys\nx = 1\n", cx));
+        self.dispatch(Action::CodeCleanup, window, cx);
+        eprintln!("smoke-edit2: code cleanup -> {:?} | status {:?}", ed.read(cx).text_string(), self.status);
     }
 
     fn edit2_rest(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -771,7 +771,8 @@ impl Workspace {
         }
     }
 
-    /// Ctrl+Alt+L (the selected lines, else the file) and Ctrl+Alt+O, with ruff.
+    /// Ctrl+Alt+L (the selected lines, else the file), Ctrl+Alt+O and Code Cleanup (every safe
+    /// ruff fix in the file, PyCharm's "fix all problems"), with ruff.
     pub(super) fn format_action(&mut self, action: brisk_keymap::Action, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ed) = self.focused_editor(window, cx).or_else(|| self.active_editor().cloned()) else { return };
         let (path, python) = {
@@ -779,7 +780,7 @@ impl Workspace {
             (e.path.clone(), e.is_python())
         };
         let Some(path) = path.filter(|_| python) else {
-            self.status = "Reformat Code and Optimize Imports work on Python files (ruff)".into();
+            self.status = "Reformat Code, Optimize Imports and Code Cleanup work on Python files (ruff)".into();
             cx.notify();
             return;
         };
@@ -799,8 +800,11 @@ impl Workspace {
             (e.text_string(), lines)
         };
         let reformat = action == brisk_keymap::Action::ReformatCode;
+        let cleanup = action == brisk_keymap::Action::CodeCleanup;
         let result = if reformat {
             brisk_lint::format_text(&ruff, &self.root, &path, &text, lines)
+        } else if cleanup {
+            brisk_lint::fix_all(&ruff, &self.root, &path, &text, None)
         } else {
             brisk_lint::optimize_imports(&ruff, &self.root, &path, &text)
         };
@@ -813,7 +817,9 @@ impl Workspace {
                     crate::local_history::record(&path, &text.replace("\r\n", "\n"), crate::local_history::Label::BeforeReformat);
                     ed.update(cx, |e, cx| e.replace_all_text(&out, cx));
                 }
-                if reformat {
+                if cleanup {
+                    self.status = if changed { "Code Cleanup: applied ruff's fixes".into() } else { "Code Cleanup: nothing to fix".into() };
+                } else if reformat {
                     self.status = if changed { format!("{what} (ruff)") } else { "No changes: the code is already formatted".into() };
                 } else {
                     // PyCharm reports what Optimize Imports did in a balloon.

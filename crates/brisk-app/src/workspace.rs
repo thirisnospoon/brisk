@@ -1418,7 +1418,7 @@ impl Workspace {
             | A::SplitHorizontally | A::Unsplit | A::MoveToOppositeGroup | A::NextSplitter => {
                 self.tab_action(action, window, cx);
             }
-            A::ReformatCode | A::OptimizeImports => self.format_action(action, window, cx),
+            A::ReformatCode | A::OptimizeImports | A::CodeCleanup => self.format_action(action, window, cx),
             A::FindInFiles => self.open_find(false, window, cx),
             A::ReplaceInFiles => self.open_find(true, window, cx),
             A::HideAllToolWindows => {
