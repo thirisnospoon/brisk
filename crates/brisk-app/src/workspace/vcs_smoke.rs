@@ -3,7 +3,8 @@
 //! a real project: it commits there. `BRISK_SMOKE_VCS_HOLD=<phase>` stops at that phase with
 //! the window open (`diff`: the live side-by-side diff; `unified`: the unified one; `merge`:
 //! the merge window as it opens; `merged`: after resolving, before Apply; `annotate`: a file
-//! annotated; `previous`: Annotate Previous Revision's tab; `popup`: a change marker's popup).
+//! annotated; `previous`: Annotate Previous Revision's tab; `popup`: a change marker's popup;
+//! `partial`: a diff with one block left out of the commit).
 
 use super::git_smoke::{commit_as, sh};
 use super::{Tab, Workspace};
@@ -70,6 +71,9 @@ impl Workspace {
             }
             if held(&["popup"]) {
                 Self::smoke_vcs_hunks(&this, cx, &bg, &root).await;
+            }
+            if held(&["partial"]) {
+                Self::smoke_vcs_partial(&this, cx, &bg, &root).await;
             }
             let _ = this.update(cx, |_, cx| {
                 eprintln!("smoke-vcs: done");
@@ -158,6 +162,52 @@ added = True
                 this.close_tab(i, window, cx);
             }
             this.dispatch(brisk_keymap::Action::SaveAll, window, cx);
+        });
+    }
+
+    /// V6: partial commit by hunks: the second block of a file's diff is left out.
+    async fn smoke_vcs_partial(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
+        let base: String = (1..=12).map(|i| format!("p{i} = {i}\n")).collect();
+        let _ = std::fs::write(root.join("partial.py"), &base);
+        commit_as(root, "Alice", "2024-04-01T10:00:00", "Add partial.py");
+        let cur = base.replace("p2 = 2\n", "p2 = 20\n").replace("p10 = 10\n", "p10 = 100\n");
+        let _ = std::fs::write(root.join("partial.py"), &cur);
+        let _ = this.update(cx, |this, cx| this.refresh_git(cx));
+        pause(bg, 1500).await;
+        let change = brisk_git::FileChange { path: "partial.py".into(), old_path: None, status: brisk_git::FileStatus::Modified };
+        let c2 = change.clone();
+        let _ = this.update_in(cx, |this, window, cx| this.show_change_diff(&c2, window, cx));
+        pause(bg, 1500).await;
+        let _ = this.update_in(cx, |this, _, cx| {
+            let Some(d) = this.active_diff_view() else { return eprintln!("smoke-vcs: partial: no diff tab") };
+            eprintln!("smoke-vcs: partial diff -> {} blocks", d.read(cx).hunk_keys(cx).len());
+            d.update(cx, |d, cx| d.toggle_hunk(1, cx));
+            let partial = this.git.as_ref().is_some_and(|g| g.partial(&change));
+            eprintln!("smoke-vcs: second block left out -> commit row partial {partial}");
+        });
+        if hold("partial") {
+            return;
+        }
+        let _ = this.update_in(cx, |this, window, cx| {
+            if let Some(g) = this.git.as_ref() {
+                g.message.update(cx, |e, cx| e.replace_all_text("Partial commit", cx));
+            }
+            this.do_commit(false, window, cx);
+        });
+        pause(bg, 2500).await;
+        let repo = brisk_git::Repo::discover(root);
+        let head = repo.as_ref().and_then(|r| r.file_at("HEAD", "partial.py").ok().flatten()).unwrap_or_default();
+        let disk = std::fs::read_to_string(root.join("partial.py")).unwrap_or_default();
+        let modified = repo.and_then(|r| r.status().ok()).is_some_and(|st| st.changes.iter().any(|c| c.path == "partial.py" && c.status == brisk_git::FileStatus::Modified));
+        eprintln!(
+            "smoke-vcs: partial commit -> HEAD has only the first block {}, disk keeps both {}, still modified {modified}",
+            head == base.replace("p2 = 2\n", "p2 = 20\n"),
+            disk == cur
+        );
+        let _ = this.update_in(cx, |this, window, cx| {
+            if let Some(i) = this.active {
+                this.close_tab(i, window, cx);
+            }
         });
     }
 
