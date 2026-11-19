@@ -177,6 +177,8 @@ pub struct TestTree {
     pub rootdir: Option<PathBuf>,
     /// pytest's exit status once the session finished.
     pub done: Option<i32>,
+    /// Bumped by every change `apply` makes: views cache their rows by it.
+    pub revision: u64,
 }
 
 impl Default for TestTree {
@@ -220,7 +222,7 @@ impl TestTree {
             message: String::new(),
             output: String::new(),
         };
-        TestTree { nodes: vec![root], index: HashMap::new(), rootdir: None, done: None }
+        TestTree { nodes: vec![root], index: HashMap::new(), rootdir: None, done: None, revision: 0 }
     }
 
     fn file_for(&self, module: &str) -> Option<PathBuf> {
@@ -277,6 +279,14 @@ impl TestTree {
 
     /// Apply one line of the plugin's output. Returns false for lines it doesn't understand.
     pub fn apply(&mut self, line: &str) -> bool {
+        let changed = self.apply_line(line);
+        if changed {
+            self.revision += 1;
+        }
+        changed
+    }
+
+    fn apply_line(&mut self, line: &str) -> bool {
         let Ok(ev) = serde_json::from_str::<Event>(line) else { return false };
         match ev {
             Event::Session { rootdir } => self.rootdir = Some(PathBuf::from(rootdir)),

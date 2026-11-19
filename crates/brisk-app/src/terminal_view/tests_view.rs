@@ -27,7 +27,13 @@ pub(super) struct TestsView {
     pub finished: bool,
     /// Show Passed / Show Ignored / Sort by Duration.
     pub view: TreeView,
+    /// The visible rows for (tree revision, view, collapsed set): rebuilt when one of them
+    /// changes, not on every frame.
+    rows_cache: std::cell::RefCell<Option<(RowsKey, std::rc::Rc<Vec<usize>>)>>,
 }
+
+/// (tree revision, view options, collapsed count, collapsed fingerprint).
+type RowsKey = (u64, TreeView, usize, u64);
 
 impl Drop for TestsView {
     fn drop(&mut self) {
@@ -84,7 +90,7 @@ impl TestsView {
                 }
             });
         }
-        TestsView { feed, stop, selected: 0, collapsed: HashSet::new(), scroll: UniformListScrollHandle::new(), bar: Default::default(), details_scroll: ScrollHandle::new(), finished: false, view: TreeView::default() }
+        TestsView { feed, stop, selected: 0, collapsed: HashSet::new(), scroll: UniformListScrollHandle::new(), bar: Default::default(), details_scroll: ScrollHandle::new(), finished: false, view: TreeView::default(), rows_cache: Default::default() }
     }
 
     /// A finished run from the Test History.
@@ -99,6 +105,7 @@ impl TestsView {
             details_scroll: ScrollHandle::new(),
             finished: true,
             view: TreeView::default(),
+            rows_cache: Default::default(),
         };
         let first = t.tree().tree.first_failed();
         if let Some(i) = first {
@@ -108,8 +115,24 @@ impl TestsView {
     }
 
     /// Visible rows with the view options.
-    pub fn rows(&self) -> Vec<usize> {
-        self.tree().tree.rows_view(&self.collapsed, self.view)
+    pub fn rows(&self) -> std::rc::Rc<Vec<usize>> {
+        let f = self.tree();
+        self.rows_of(&f)
+    }
+
+    /// `rows` with the feed already locked; cached.
+    pub fn rows_of(&self, f: &TestFeed) -> std::rc::Rc<Vec<usize>> {
+        // The collapsed set is small (folded nodes): an order-independent fingerprint of it.
+        let fp = self.collapsed.iter().fold(0u64, |a, &x| a.wrapping_add((x as u64 ^ 0x9e37_79b9_7f4a_7c15).wrapping_mul(0xbf58_476d_1ce4_e5b9)));
+        let key = (f.tree.revision, self.view, self.collapsed.len(), fp);
+        if let Some((k, rows)) = &*self.rows_cache.borrow() {
+            if *k == key {
+                return rows.clone();
+            }
+        }
+        let rows = std::rc::Rc::new(f.tree.rows_view(&self.collapsed, self.view));
+        *self.rows_cache.borrow_mut() = Some((key, rows.clone()));
+        rows
     }
 
     pub fn tree(&self) -> std::sync::MutexGuard<'_, TestFeed> {
@@ -492,7 +515,7 @@ impl TerminalPanel {
                     cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
                         let Some(t) = this.tests() else { return Vec::new() };
                         let f = t.tree();
-                        let rows = f.tree.rows_view(&t.collapsed, t.view);
+                        let rows = t.rows_of(&f);
                         range
                             .filter_map(|ix| rows.get(ix).copied())
                             .map(|i| {
