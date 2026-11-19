@@ -111,6 +111,7 @@ impl Workspace {
         let (c, path, text) = ed.update(cx, |e, _| (e.class_at_caret(), e.path.clone(), e.text_string()));
         let (Some(c), Some(path)) = (c, path) else {
             self.status = format!("{what}: put the caret inside a Python class");
+            self.problems.intents.clear();
             cx.notify();
             return;
         };

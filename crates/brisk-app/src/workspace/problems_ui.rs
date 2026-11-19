@@ -38,6 +38,12 @@ pub(super) enum Intent {
     Overrides(bool),
     /// Ctrl+Shift+Delete: unwrap or remove the enclosing statement.
     Unwrap(brisk_syntax::Unwrap),
+    /// Ctrl+Alt+C: extract the selection into a module constant; `true`: every occurrence.
+    ExtractConstant(bool),
+    /// Extract Variable / Constant: this expression (chars), then extract (`true`: constant).
+    PickExpression(std::ops::Range<usize>, bool),
+    /// Byte-range edits of the active editor's text (Inline), one undo step.
+    Edits(Vec<(std::ops::Range<usize>, String)>),
     /// Ctrl+Alt+V: extract the selection into a variable; `true`: every occurrence.
     ExtractVariable(bool),
     /// A language server quick fix (ty: import a name, qualify it): title and edits.
@@ -643,6 +649,15 @@ impl Workspace {
             Intent::ExtractVariable(all) => {
                 ed.update(cx, |e, cx| e.extract_variable(all, cx));
             }
+            Intent::ExtractConstant(all) => {
+                ed.update(cx, |e, cx| e.extract_constant(all, cx));
+            }
+            Intent::PickExpression(r, constant) => {
+                ed.update(cx, |e, _| e.buffer.selections = vec![brisk_text::Selection { anchor: r.start, head: r.end, goal_col: None }]);
+                let a = if constant { brisk_keymap::Action::ExtractConstant } else { brisk_keymap::Action::ExtractVariable };
+                self.extract_action(a, window, cx);
+            }
+            Intent::Edits(edits) => ed.update(cx, |e, cx| e.apply_byte_edits(edits, cx)),
             Intent::Lsp(title, edits) => {
                 let (_, failed) = self.apply_file_edits(edits, cx);
                 self.status = lsp_title(&title);

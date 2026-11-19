@@ -4,10 +4,12 @@
 
 mod scope;
 mod generate;
+mod refactor;
 mod sql;
 mod structure;
 pub use scope::{name_refs_of, occurrences_of, NameRefs};
 pub use structure::{statement_move, unwrap_options, Unwrap};
+pub use refactor::{constant_row, expressions_at, extract_method, inline_at, Inline, MethodPlan};
 pub use generate::{class_at, class_named, data_fields, gen_eq, gen_init, gen_override, gen_property, gen_repr, object_methods, property_candidates, ClassInfo, Field, Method};
 pub use sql::highlight_sql;
 pub use tree_sitter::Tree;

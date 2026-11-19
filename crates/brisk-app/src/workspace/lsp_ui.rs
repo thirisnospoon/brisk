@@ -296,6 +296,10 @@ impl Workspace {
                 self.extract_action(action, window, cx);
                 return true;
             }
+            A::Inline => {
+                self.inline_action(window, cx);
+                return true;
+            }
             A::GotoDeclaration | A::GotoTypeDeclaration | A::QuickDefinition | A::QuickDocumentation | A::ParameterInfo | A::CodeCompletion | A::SmartCompletion | A::FindUsages | A::ShowUsages | A::Rename => {}
             _ => return false,
         }
@@ -437,32 +441,94 @@ impl Workspace {
         .detach();
     }
 
-    /// Ctrl+Alt+V: Extract Variable; with several identical expressions in the function, a
-    /// popup asks whether to replace this one or all, as PyCharm does. Extract Method and
-    /// Extract Constant are not there yet.
-    fn extract_action(&mut self, action: brisk_keymap::Action, window: &mut Window, cx: &mut Context<Self>) {
+    /// Extract Variable (Ctrl+Alt+V), Constant (Ctrl+Alt+C) and Method (Ctrl+Alt+M), as in
+    /// PyCharm: without a selection the "Expressions" popup picks one of the expressions at the
+    /// caret; with several identical ones a popup asks whether to replace this one or all.
+    pub(super) fn extract_action(&mut self, action: brisk_keymap::Action, window: &mut Window, cx: &mut Context<Self>) {
         use super::problems_ui::Intent;
         use super::{PopupItem, PopupKind, Target};
-        if action != brisk_keymap::Action::ExtractVariable {
-            self.status = format!("{} is not available yet; Extract Variable (Ctrl+Alt+V) is", action.info().title);
-            cx.notify();
-            return;
-        }
+        use brisk_keymap::Action as A;
+        let title = action.info().title;
         let Some(ed) = self.editor_for_lsp(window, cx) else {
-            self.status = "Extract Variable works in Python files".into();
+            self.status = format!("{title} works in Python files");
             cx.notify();
             return;
         };
-        let n = ed.read(cx).extract_count();
-        if n == 0 {
-            self.status = "Extract Variable: select an expression first".into();
-        } else if n == 1 {
-            ed.update(cx, |e, cx| e.extract_variable(false, cx));
+        if action == A::ExtractMethod {
+            self.status = ed.update(cx, |e, cx| e.extract_method(cx)).unwrap_or_else(|e| format!("Extract Method: {e}"));
+            cx.notify();
+            return;
+        }
+        let constant = action == A::ExtractConstant;
+        let item = |label: String, intent: Intent| PopupItem { label, detail: String::new(), hint: String::new(), target: Target::Intention(Box::new(intent)) };
+        if ed.read(cx).extract_count() == 0 {
+            let choices = ed.update(cx, |e, _| e.expression_choices());
+            match choices.len() {
+                0 => self.status = format!("{title}: no expression here"),
+                1 => {
+                    ed.update(cx, |e, _| e.buffer.selections = vec![brisk_text::Selection { anchor: choices[0].start, head: choices[0].end, goal_col: None }]);
+                    return self.extract_action(action, window, cx);
+                }
+                _ => {
+                    let chars: Vec<char> = ed.read(cx).text_string().chars().collect();
+                    self.problems.intents = choices
+                        .into_iter()
+                        .map(|r| {
+                            let s: String = chars[r.clone()].iter().collect();
+                            let one = s.split_whitespace().collect::<Vec<_>>().join(" ");
+                            let label = if one.chars().count() > 60 { format!("{}…", one.chars().take(59).collect::<String>()) } else { one };
+                            item(label, Intent::PickExpression(r, constant))
+                        })
+                        .collect();
+                    self.problems.intents_title = Some("Expressions");
+                    self.open_popup(PopupKind::Intentions);
+                }
+            }
+            cx.notify();
+            return;
+        }
+        let n = if constant { ed.read(cx).constant_count() } else { ed.read(cx).extract_count() };
+        if n == 1 {
+            ed.update(cx, |e, cx| if constant { e.extract_constant(false, cx) } else { e.extract_variable(false, cx) });
         } else {
-            let item = |label: String, all: bool| PopupItem { label, detail: String::new(), hint: String::new(), target: Target::Intention(Box::new(Intent::ExtractVariable(all))) };
-            self.problems.intents = vec![item("Replace this occurrence only".into(), false), item(format!("Replace all {n} occurrences"), true)];
+            let pick = |all: bool| if constant { Intent::ExtractConstant(all) } else { Intent::ExtractVariable(all) };
+            self.problems.intents = vec![item("Replace this occurrence only".into(), pick(false)), item(format!("Replace all {n} occurrences"), pick(true))];
             self.problems.intents_title = Some("Multiple occurrences found");
             self.open_popup(PopupKind::Intentions);
+        }
+        cx.notify();
+    }
+
+    /// Inline (Ctrl+Alt+N): a variable set once, or a function whose body is one `return`
+    /// (PyCharm asks: all invocations and remove it, or this one only).
+    pub(super) fn inline_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use super::problems_ui::Intent;
+        use super::{PopupItem, PopupKind, Target};
+        use brisk_syntax::Inline;
+        let Some(ed) = self.editor_for_lsp(window, cx) else {
+            self.status = "Inline works in Python files".into();
+            cx.notify();
+            return;
+        };
+        match ed.update(cx, |e, _| e.inline_at_caret()) {
+            Err(e) => self.status = format!("Inline: {e}"),
+            Ok(Inline::Variable { name, edits, uses }) => {
+                ed.update(cx, |e, cx| e.apply_byte_edits(edits, cx));
+                self.status = format!("Inlined variable '{name}' ({uses} usage{})", if uses == 1 { "" } else { "s" });
+            }
+            Ok(Inline::Function { name, all, this, calls }) => {
+                let item = |label: String, edits: Vec<_>| PopupItem { label, detail: String::new(), hint: String::new(), target: Target::Intention(Box::new(Intent::Edits(edits))) };
+                let mut items = Vec::new();
+                if let Some(a) = all {
+                    items.push(item(format!("Inline all {calls} invocation{} and remove '{name}'", if calls == 1 { "" } else { "s" }), a));
+                }
+                if let Some(t) = this {
+                    items.push(item("Inline this invocation only and keep the function".into(), t));
+                }
+                self.problems.intents = items;
+                self.problems.intents_title = Some("Inline Function");
+                self.open_popup(PopupKind::Intentions);
+            }
         }
         cx.notify();
     }
