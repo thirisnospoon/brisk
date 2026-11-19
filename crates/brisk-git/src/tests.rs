@@ -236,3 +236,28 @@ fn branch_merge_and_delete() {
     assert!(repo.branches().unwrap().iter().all(|b| b.name != "spike" && b.name != "topic"));
     let _ = fs::remove_dir_all(&d);
 }
+
+#[test]
+fn partial_commit_by_hunks() {
+    let (d, repo) = temp_repo("partial");
+    fs::write(d.join("p.py"), "a\nb\nc\nd\ne\n").unwrap();
+    fs::write(d.join("q.py"), "q\n").unwrap();
+    let both = vec!["p.py".to_string(), "q.py".to_string()];
+    repo.commit("first", &both, false, &both).unwrap();
+    fs::write(d.join("p.py"), "a\nB\nc\nd\nE\nf\n").unwrap();
+    fs::write(d.join("q.py"), "q2\n").unwrap();
+    fs::write(d.join("staged.py"), "s\n").unwrap();
+    sh(&d, &["add", "staged.py"]);
+    // Exclude the second hunk of p.py; q.py goes whole; staged.py stays out.
+    let excluded = std::collections::HashSet::from([hunk_key(&(4..5), ["E", "f"])]);
+    repo.commit_partial("second", &["q.py".to_string()], &[("p.py".to_string(), excluded)], false).unwrap();
+    assert_eq!(repo.file_at("HEAD", "p.py").unwrap().as_deref(), Some("a\nB\nc\nd\ne\n"));
+    assert_eq!(repo.file_at("HEAD", "q.py").unwrap().as_deref(), Some("q2\n"));
+    assert_eq!(repo.file_at("HEAD", "staged.py").unwrap(), None);
+    assert_eq!(fs::read_to_string(d.join("p.py")).unwrap(), "a\nB\nc\nd\nE\nf\n");
+    let st = repo.status().unwrap();
+    let mut got: Vec<(String, FileStatus)> = st.changes.iter().map(|c| (c.path.clone(), c.status)).collect();
+    got.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(got, vec![("p.py".into(), FileStatus::Modified), ("staged.py".into(), FileStatus::Added)]);
+    assert!(!d.join(".git").join("brisk-partial-index").exists());
+}
