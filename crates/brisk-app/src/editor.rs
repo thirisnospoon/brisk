@@ -2030,9 +2030,11 @@ impl Element for EditorElement {
             let snap = |v: Pixels| px((f32::from(v) * scale).round() / scale);
             for &l in rows.iter() {
                 let Some(cols) = ed.whitespace_of(l) else { continue };
-                let mid = y_of(l) + lh / 2.;
                 for &(c, tab) in cols.iter() {
-                    let (x0, x1) = (x_of(l, c as usize), x_of(l, c as usize + 1));
+                    // With soft wraps: on the visual row that shows the column (both edges on it).
+                    let (c, sub) = (c as usize, ed.wrap_sub(l, c as usize));
+                    let (x0, x1) = (x_in(l, sub, c), x_in(l, sub, c + 1));
+                    let mid = yc(l, c) + lh / 2.;
                     if tab {
                         let (a, z) = (snap(x0 + px(2.)), snap(x1 - px(2.)));
                         if z - a < px(4.) {
