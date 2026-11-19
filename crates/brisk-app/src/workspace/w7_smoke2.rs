@@ -191,7 +191,10 @@ impl Workspace {
                 }
             });
             let _ = this.update_in(cx, |this, window, cx| this.smoke_press("ctrl-end", window, cx));
-            tick().await;
+            // Smooth scrolling glides there in ~170 ms.
+            for _ in 0..12 {
+                tick().await;
+            }
             eprintln!("smoke-w7: wrap ctrl-end {}", probe(&this, cx));
             let _ = this.update_in(cx, |this, window, cx| {
                 this.smoke_press("ctrl-home", window, cx);
@@ -207,6 +210,56 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::ToggleSoftWrap, window, cx));
             tick().await;
             eprintln!("smoke-w7: wrap toggled {}", probe(&this, cx));
+            // --- E11 with sticky lines: a wrapped .py, the view inside a method ---------------
+            let _ = this.update_in(cx, |this, window, cx| {
+                let long = "word ".repeat(60);
+                let mut t = String::from("class A:
+    def m(self):
+");
+                for i in 0..30 {
+                    t.push_str(&format!("        x{i} = \"{long}\"
+"));
+                }
+                t.push_str("        return x0
+
+
+def g():
+    pass
+");
+                let p = this.root.join("wrapsticky.py");
+                let _ = std::fs::write(&p, t);
+                this.open_file(&p, window, cx);
+                this.dispatch(Action::ToggleSoftWrap, window, cx);
+            });
+            tick().await;
+            tick().await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(ed) = this.active_editor().cloned() {
+                    let y = ed.read(cx).line_top_for_smoke(20);
+                    ed.update(cx, |e, cx| e.set_scroll_for_smoke(y, cx));
+                }
+            });
+            tick().await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(ed) = this.active_editor().cloned() {
+                    let e = ed.read(cx);
+                    eprintln!("smoke-w7: wrap + sticky {} | at line 21 -> {:?}", e.wrap_smoke(), e.sticky_shown());
+                    let y = e.line_top_for_smoke(32) + e.scroll_state().1;
+                    ed.update(cx, |e, cx| e.set_scroll_for_smoke(y - 20.0, cx));
+                }
+            });
+            tick().await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(ed) = this.active_editor().cloned() {
+                    eprintln!("smoke-w7: wrap + sticky, method's last line under the panel -> {:?}", ed.read(cx).sticky_shown());
+                }
+            });
+            let _ = this.update_in(cx, |this, window, cx| {
+                let md = this.root.join("notes.md");
+                this.open_file(&md, window, cx);
+            });
+            tick().await;
+
             // --- E12 mouse: double / triple click and drag, Alt+Shift+click twice, Alt+drag ----
             let _ = this.update_in(cx, |this, window, cx| {
                 let Some(ed) = this.active_editor().cloned() else { return };
