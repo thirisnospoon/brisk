@@ -39,14 +39,25 @@ pub fn enabled() -> bool {
 /// element placed last in the tree. Nothing is recorded, and no probe is added, otherwise.
 pub fn frames_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("BRISK_SMOKE_SCROLL").is_some())
+    *ON.get_or_init(|| std::env::var_os("BRISK_SMOKE_SCROLL").is_some() || std::env::var_os("BRISK_SMOKE_OPEN").is_some())
 }
+
+/// The next frame is timed from `t` (an action before the render, e.g. opening a file), not
+/// from the start of its Workspace render.
+pub fn pin_frame_start(t: Instant) {
+    if let Ok(mut s) = FRAME_START.lock() {
+        *s = Some(t);
+        PINNED.store(true, Ordering::Relaxed);
+    }
+}
+
+static PINNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 static FRAME_START: Mutex<Option<Instant>> = Mutex::new(None);
 static FRAMES: Mutex<Vec<f32>> = Mutex::new(Vec::new());
 
 pub fn frame_begin() {
-    if frames_enabled() {
+    if frames_enabled() && !PINNED.load(Ordering::Relaxed) {
         if let Ok(mut s) = FRAME_START.lock() {
             *s = Some(Instant::now());
         }
@@ -60,6 +71,7 @@ pub fn frame_probe() -> Option<gpui::AnyElement> {
         gpui::canvas(
             |_, _, _| (),
             |_, _, _, _| {
+                PINNED.store(false, Ordering::Relaxed);
                 if let Some(t) = FRAME_START.lock().ok().and_then(|mut s| s.take()) {
                     if let Ok(mut f) = FRAMES.lock() {
                         f.push(t.elapsed().as_secs_f32() * 1000.0);
