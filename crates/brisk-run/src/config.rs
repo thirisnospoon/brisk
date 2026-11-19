@@ -69,6 +69,10 @@ pub struct RunConfig {
     /// instead of pipes (colors, `\r` progress bars, `getpass`).
     #[serde(default, skip_serializing_if = "is_false")]
     pub emulate_terminal: bool,
+    /// PyCharm's "Store as project file": also kept in `.run/<name>.run.xml` (PyCharm's
+    /// format), which goes to VCS; that file wins over `run.json` when they differ.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub project_file: bool,
 }
 
 /// When a configuration starts: PyCharm's "Activate tool window" / "Focus tool window",
@@ -343,26 +347,31 @@ pub fn compound_names(target: &str) -> Vec<String> {
     target.split(';').map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).collect()
 }
 
-/// Load `.brisk/run.json`, or import from `.idea` when it does not exist yet.
+/// Load `.brisk/run.json`, or import from `.idea` when it does not exist yet; the
+/// project files (`.run/*.run.xml`) are taken in either way.
 /// Returns the file and the number of imported configurations.
 pub fn load(root: &Path) -> (RunFile, usize) {
     if let Ok(s) = std::fs::read_to_string(root.join(CONFIG_FILE)) {
-        if let Ok(f) = serde_json::from_str::<RunFile>(&s) {
+        if let Ok(mut f) = serde_json::from_str::<RunFile>(&s) {
+            crate::project_files::merge(root, &mut f);
             return (f, 0);
         }
     }
-    let f = import_idea(root);
+    let mut f = import_idea(root);
+    crate::project_files::merge(root, &mut f);
     let n = f.configurations.len();
     (f, n)
 }
 
+/// Write `.brisk/run.json` and the project files of the shared configurations.
 pub fn save(root: &Path, f: &RunFile) -> std::io::Result<()> {
     let path = root.join(CONFIG_FILE);
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d)?;
     }
     let json = serde_json::to_string_pretty(f).map_err(std::io::Error::other)?;
-    std::fs::write(path, json + "\n")
+    std::fs::write(path, json + "\n")?;
+    crate::project_files::sync(root, f)
 }
 
 /// PyCharm stores pytest options as Python string literals: `"tests/test_x.py"`.

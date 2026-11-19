@@ -19,8 +19,15 @@ pub struct ConsoleSearch {
     pub filter: bool,
     pub found: Vec<Found>,
     pub current: usize,
-    /// The output (or the tab) changed since `found` was computed.
+    /// The query, the case or the tab changed since `found` was computed.
     pub dirty: bool,
+    /// New output since `found` was computed: searched again at most every few hundred ms
+    /// (a search over 20 000 lines on every frame of a flood would freeze the window).
+    pub output_changed: bool,
+    /// A redraw is scheduled for when the throttle allows the next search.
+    pub tick_pending: bool,
+    last_search: Option<std::time::Instant>,
+    last_cost: std::time::Duration,
     /// The tab and grid size `found` belongs to (Soft-wrap and resizing re-wrap the rows).
     tab: u64,
     size: (usize, usize),
@@ -53,10 +60,13 @@ impl TerminalPanel {
     pub(super) fn refresh_search(&mut self) {
         let tab = self.tabs.get(self.active).map(|t| t.id).unwrap_or(0);
         let size = self.session().map(|s| s.size()).unwrap_or_default();
-        if !self.search.open || (!self.search.dirty && self.search.tab == tab && self.search.size == size) {
+        let due = self.search.output_changed && self.search.last_search.is_none_or(|t| t.elapsed() >= Self::search_interval(self.search.last_cost));
+        if !self.search.open || (!self.search.dirty && !due && self.search.tab == tab && self.search.size == size) {
             return;
         }
+        let started = std::time::Instant::now();
         self.search.dirty = false;
+        self.search.output_changed = false;
         self.search.tab = tab;
         self.search.size = size;
         self.search.found = match self.session() {
@@ -64,6 +74,34 @@ impl TerminalPanel {
             _ => Vec::new(),
         };
         self.search.current = self.search.current.min(self.search.found.len().saturating_sub(1));
+        self.search.last_search = Some(std::time::Instant::now());
+        self.search.last_cost = started.elapsed();
+    }
+
+    /// How often new output is searched: 300 ms, or ten times as long as a search takes.
+    pub(super) fn search_interval(cost: std::time::Duration) -> std::time::Duration {
+        std::time::Duration::from_millis(300).max(cost * 10)
+    }
+
+    /// New output with the bar open: search it once the throttle allows (a redraw then).
+    pub(super) fn search_output_changed(&mut self, cx: &mut Context<Self>) {
+        if !self.search.open {
+            return;
+        }
+        self.search.output_changed = true;
+        if self.search.tick_pending {
+            return;
+        }
+        self.search.tick_pending = true;
+        let wait = Self::search_interval(self.search.last_cost);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            let _ = this.update(cx, |this, cx| {
+                this.search.tick_pending = false;
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// The query or Match Case changed: the first match from the top of the view.

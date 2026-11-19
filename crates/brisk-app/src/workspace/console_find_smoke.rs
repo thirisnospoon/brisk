@@ -118,6 +118,43 @@ impl Workspace {
                 this.smoke_press("escape", window, cx);
                 let focused = this.run_panel_focused(window, cx);
                 show(this, cx, &format!("escape (run panel still focused {focused})"));
+                // Soft-Wrap and Scroll to End per configuration: off for "split", "out" keeps both on.
+                if let Some(p) = this.runs.panel.clone() {
+                    p.update(cx, |p, _| {
+                        p.toggle_soft_wrap();
+                        // Clicked off (it may already show off: the search scrolled up).
+                        p.toggle_scroll_to_end();
+                        if p.scroll_to_end {
+                            p.toggle_scroll_to_end();
+                        }
+                    });
+                }
+            });
+            let toggles = |this: &Workspace, cx: &gpui::App| this.runs.panel.as_ref().map(|p| (p.read(cx).soft_wrap, p.read(cx).scroll_to_end));
+            let tabs_key = |this: &mut Workspace, cx: &mut Context<Workspace>| {
+                if let Some(p) = this.runs.panel.clone() {
+                    p.update(cx, |p, cx| p.key(&gpui::Keystroke::parse("alt-left").unwrap(), cx));
+                }
+            };
+            let mut seen = Vec::new();
+            for _ in 0..3 {
+                let _ = this.update(cx, |this, cx| {
+                    tabs_key(this, cx);
+                    cx.notify();
+                });
+                pause(200).await;
+                let _ = this.update(cx, |this, cx| {
+                    let name = this.runs.panel.as_ref().and_then(|p| p.read(cx).run_tabs_detail().into_iter().nth(0).map(|t| t.0));
+                    seen.push((name, toggles(this, cx)));
+                });
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.run_config(brisk_run::RunConfig { name: "split".into(), target: "split.py".into(), ..Default::default() }, window, cx);
+            });
+            pause(800).await;
+            let _ = this.update(cx, |this, cx| {
+                let file = std::fs::read_to_string(this.root.join(".brisk/run-console.json")).unwrap_or_default().split_whitespace().collect::<String>();
+                eprintln!("smoke-cfind: per-configuration toggles while switching tabs {:?}; split run again {:?}; file {file}", seen.iter().map(|s| s.1).collect::<Vec<_>>(), toggles(this, cx));
                 cx.quit();
             });
         })

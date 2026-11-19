@@ -20,10 +20,14 @@ pub(crate) struct PipeIo {
     exited: Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// The terminal lock is taken per 32 KB, so a backlog of output never keeps the UI (which
+/// takes the same lock to draw) waiting for more than a moment.
 fn feed(term: &SharedTerm, parser: &Mutex<Processor>, bytes: &[u8]) {
     let mut p = parser.lock().unwrap_or_else(|e| e.into_inner());
-    let mut t = term.lock();
-    p.advance(&mut *t, bytes);
+    for chunk in bytes.chunks(32 * 1024) {
+        let mut t = term.lock();
+        p.advance(&mut *t, chunk);
+    }
 }
 
 /// Program output: a bare LF also returns the carriage, as a tty would.
@@ -74,10 +78,15 @@ impl PipeIo {
             child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
         ];
         let mut open = 0;
+        // Streams still being read: once both are closed, the rest of the output is queued and
+        // the exit waits for it to reach the console, however far behind the parser is.
+        let reading = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         for (i, stream) in streams.into_iter().enumerate() {
             let Some(mut stream) = stream else { continue };
             open += 1;
+            reading.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let tx = chunk_tx.clone();
+            let reading = reading.clone();
             std::thread::spawn(move || {
                 let mut buf = vec![0u8; 16 * 1024];
                 loop {
@@ -90,6 +99,7 @@ impl PipeIo {
                         }
                     }
                 }
+                reading.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                 let _ = tx.send((i, None));
             });
         }
@@ -179,7 +189,15 @@ impl PipeIo {
             exited.store(true, std::sync::atomic::Ordering::SeqCst);
             // Normally the pipes close with the process. A detached grandchild may keep them
             // open: report the exit anyway after a moment and let its output keep coming.
-            let _ = done_rx.recv_timeout(Duration::from_secs(1));
+            let t = Instant::now();
+            while reading.load(std::sync::atomic::Ordering::SeqCst) > 0 && t.elapsed() < Duration::from_secs(1) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if reading.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                let _ = done_rx.recv();
+            } else {
+                let _ = done_rx.recv_timeout(Duration::from_millis(1));
+            }
             cb(TermEvent::ChildExit(code));
             cb(TermEvent::Exit);
         });
