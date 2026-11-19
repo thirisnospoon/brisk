@@ -13,7 +13,7 @@ macro_rules! icons {
 }
 
 icons![
-    "arrow-down", "arrow-down-to-line", "arrow-left-right", "arrow-right-to-line", "arrow-up", "bookmark", "breakpoints", "bug", "calculator", "chart-pie", "check",
+    "ft-archive", "ft-config", "ft-css", "ft-csv", "ft-docker", "ft-file", "ft-folder", "ft-html", "ft-ignore", "ft-image", "ft-js", "ft-json", "ft-letter-t", "ft-letter-y", "ft-lock", "ft-md", "ft-nb-a", "ft-nb-b", "ft-py-a", "ft-py-b", "ft-req-mark", "ft-rs", "ft-shell", "ft-sql", "ft-text", "ft-ts", "ft-xml", "arrow-down", "arrow-down-to-line", "arrow-left-right", "arrow-right-to-line", "arrow-up", "bookmark", "breakpoints", "bug", "calculator", "chart-pie", "check",
     "check-bold", "chevron-down", "chevron-right", "chevron-up", "circle", "circle-alert", "circle-check", "circle-slash", "circle-x", "clipboard",
     "cloud", "copy", "database", "diamond", "dot", "eraser", "external-link", "file", "file-text", "folder", "git-branch", "git-commit", "island-bl", "island-br", "island-tl", "island-tr",
     "history", "lightbulb", "list", "list-todo", "list-tree", "minus", "power", "undo-2", "loader-circle", "menu", "mute-breakpoints", "package", "pause", "pencil", "pin",
@@ -103,6 +103,10 @@ pub fn glyph_icon(g: &str) -> Option<&'static str> {
 pub fn glyph(g: impl Into<SharedString>, size: f32, color: impl Into<Hsla>) -> gpui::AnyElement {
     let g: SharedString = g.into();
     let color = color.into();
+    // A file type (`file_kind`): its own colors, 16 px where glyphs are 14, at the UI scale.
+    if g.starts_with("ft:") {
+        return file_icon_el(&g, size + 2.);
+    }
     match glyph_icon(&g) {
         Some(name) => icon(name, size, color).into_any_element(),
         None => gpui::div().text_color(color).child(g).into_any_element(),
@@ -140,6 +144,111 @@ pub fn snap_bounds(b: Bounds<Pixels>, scale: f32) -> Bounds<Pixels> {
     let (x0, y0) = (r(b.left()), r(b.top()));
     let (x1, y1) = (r(b.right()).max(x0 + 1.), r(b.bottom()).max(y0 + 1.));
     Bounds::from_corners(gpui::point(px(x0 / scale), px(y0 / scale)), gpui::point(px(x1 / scale), px(y1 / scale)))
+}
+
+/// The icon kind of a file or folder for `glyph` ("ft:py", "ft:dir-test", ...): one style for
+/// the Project tree, tabs, Commit / Log, Find, Recent Files, Search Everywhere, breadcrumbs.
+pub fn file_kind(name: &str, is_dir: bool) -> &'static str {
+    let lower = name.to_ascii_lowercase();
+    if is_dir {
+        return match lower.as_str() {
+            "src" | "lib" | "source" => "ft:dir-src",
+            "test" | "tests" | "testing" => "ft:dir-test",
+            ".venv" | "venv" | "env" | ".env" | ".tox" | ".nox" | "node_modules" | "__pycache__" | ".pytest_cache" | ".mypy_cache" | ".ruff_cache" | "build" | "dist" | "target" | ".idea" | ".git" => "ft:dir-ex",
+            _ => "ft:dir",
+        };
+    }
+    if lower == "dockerfile" || lower.ends_with(".dockerfile") || lower.starts_with("dockerfile.") {
+        return "ft:docker";
+    }
+    if lower.starts_with("requirements") && lower.ends_with(".txt") {
+        return "ft:req";
+    }
+    if lower == ".env" || lower.starts_with(".env.") {
+        return "ft:env";
+    }
+    match lower.as_str() {
+        ".gitignore" | ".gitattributes" | ".gitmodules" => return "ft:gitignore",
+        ".dockerignore" => return "ft:dockerignore",
+        _ => {}
+    }
+    match lower.rsplit('.').next().unwrap_or("") {
+        "py" | "pyw" => "ft:py",
+        "pyi" => "ft:pyi",
+        "ipynb" => "ft:ipynb",
+        "json" | "jsonc" | "json5" => "ft:json",
+        "toml" => "ft:toml",
+        "yaml" | "yml" => "ft:yaml",
+        "ini" | "cfg" | "conf" | "properties" | "editorconfig" => "ft:cfg",
+        "md" | "markdown" | "rst" => "ft:md",
+        "txt" | "log" => "ft:txt",
+        "rs" => "ft:rs",
+        "js" | "jsx" | "mjs" | "cjs" => "ft:js",
+        "ts" | "tsx" | "mts" | "cts" => "ft:ts",
+        "html" | "htm" => "ft:html",
+        "css" => "ft:css",
+        "scss" | "sass" | "less" => "ft:scss",
+        "sql" => "ft:sql",
+        "sh" | "bash" | "zsh" | "bat" | "cmd" => "ft:sh",
+        "ps1" | "psm1" | "psd1" => "ft:ps1",
+        "xml" | "xsd" | "xsl" | "plist" => "ft:xml",
+        "csv" | "tsv" => "ft:csv",
+        "lock" => "ft:lock",
+        "png" | "jpg" | "jpeg" | "gif" | "svg" | "ico" | "webp" | "bmp" => "ft:image",
+        "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar" | "whl" | "egg" => "ft:archive",
+        _ => "ft:file",
+    }
+}
+
+/// A file kind's layers: SVG masks and their colors (two for two-color marks).
+fn file_layers(kind: &str) -> &'static [(&'static str, u32)] {
+    const GRAY: u32 = 0x9aa0a6;
+    match kind {
+        "ft:py" => &[("ft-py-a", 0x3d7ab8), ("ft-py-b", 0xf2c744)],
+        "ft:pyi" => &[("ft-py-a", 0x7f95b3), ("ft-py-b", 0xb8a96e)],
+        "ft:ipynb" => &[("ft-nb-a", 0xf0812b), ("ft-nb-b", GRAY)],
+        "ft:json" => &[("ft-json", 0xe0b84a)],
+        "ft:toml" => &[("ft-file", GRAY), ("ft-letter-t", 0xd08a4f)],
+        "ft:yaml" => &[("ft-file", GRAY), ("ft-letter-y", 0xd9534f)],
+        "ft:cfg" => &[("ft-file", GRAY), ("ft-config", 0x6f9fd8)],
+        "ft:env" => &[("ft-file", GRAY), ("ft-config", 0xe0b84a)],
+        "ft:md" => &[("ft-md", 0x6a9ad8)],
+        "ft:txt" => &[("ft-text", GRAY)],
+        "ft:req" => &[("ft-file", GRAY), ("ft-req-mark", 0x3d7ab8)],
+        "ft:rs" => &[("ft-rs", 0xdea584)],
+        "ft:js" => &[("ft-js", 0xe8c547)],
+        "ft:ts" => &[("ft-ts", 0x3d8fe0)],
+        "ft:html" => &[("ft-html", 0xe8663d)],
+        "ft:css" => &[("ft-css", 0x8a6fd6)],
+        "ft:scss" => &[("ft-css", 0xcf649a)],
+        "ft:sql" => &[("ft-sql", 0x5ba6d6)],
+        "ft:sh" => &[("ft-shell", GRAY)],
+        "ft:ps1" => &[("ft-shell", 0x4f8fd6)],
+        "ft:xml" => &[("ft-xml", 0xf0a050)],
+        "ft:csv" => &[("ft-csv", 0x5fb865)],
+        "ft:lock" => &[("ft-lock", GRAY)],
+        "ft:gitignore" => &[("ft-file", GRAY), ("ft-ignore", 0xf05133)],
+        "ft:dockerignore" => &[("ft-file", GRAY), ("ft-ignore", 0x2496ed)],
+        "ft:docker" => &[("ft-docker", 0x2496ed)],
+        "ft:image" => &[("ft-image", 0x4fb3a6)],
+        "ft:archive" => &[("ft-archive", 0xc9a052)],
+        "ft:dir" => &[("ft-folder", GRAY)],
+        "ft:dir-src" => &[("ft-folder", 0x4b8bbe)],
+        "ft:dir-test" => &[("ft-folder", 0x5fb865)],
+        "ft:dir-ex" => &[("ft-folder", 0xc48a3c)],
+        _ => &[("ft-file", GRAY)],
+    }
+}
+
+/// A file kind's icon, `size` UI px: its layers stacked in one square.
+pub fn file_icon_el(kind: &str, size: f32) -> gpui::AnyElement {
+    let s = size * crate::theme::ui_scale();
+    let mut d = gpui::div().relative().size(px(s)).flex_none();
+    for (i, &(name, c)) in file_layers(kind).iter().enumerate() {
+        let layer = icon(name, s, gpui::rgb(c));
+        d = if i == 0 { d.child(layer) } else { d.child(gpui::div().absolute().top_0().left_0().child(layer)) };
+    }
+    d.into_any_element()
 }
 
 /// A round mark centered on `center`: filled, or a ring `ring` px wide. An analytic quad
@@ -225,6 +334,23 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn file_kinds_have_icons() {
+        for (name, dir, kind) in [
+            ("main.py", false, "ft:py"), ("stubs.pyi", false, "ft:pyi"), ("a.ipynb", false, "ft:ipynb"), ("package.json", false, "ft:json"),
+            ("pyproject.toml", false, "ft:toml"), ("ci.yml", false, "ft:yaml"), ("setup.cfg", false, "ft:cfg"), (".env", false, "ft:env"),
+            ("README.md", false, "ft:md"), ("notes.txt", false, "ft:txt"), ("requirements-dev.txt", false, "ft:req"), ("lib.rs", false, "ft:rs"),
+            ("app.tsx", false, "ft:ts"), ("index.html", false, "ft:html"), ("db.sql", false, "ft:sql"), ("run.ps1", false, "ft:ps1"),
+            ("Dockerfile", false, "ft:docker"), (".gitignore", false, "ft:gitignore"), ("poetry.lock", false, "ft:lock"), ("logo.PNG", false, "ft:image"),
+            ("x.whl", false, "ft:archive"), ("LICENSE", false, "ft:file"), ("tests", true, "ft:dir-test"), (".venv", true, "ft:dir-ex"), ("pkg", true, "ft:dir"),
+        ] {
+            assert_eq!(file_kind(name, dir), kind, "{name}");
+            for (layer, _) in file_layers(kind) {
+                assert!(Assets.load(&format!("icons/{layer}.svg")).unwrap().is_some(), "{kind}: {layer}");
             }
         }
     }

@@ -312,8 +312,9 @@ impl Workspace {
                 row = row.child(crate::icons::ui_icon("chevron-right", 10., Theme::text_dim()));
             }
             if i == file {
-                // The file: its top-level classes and functions.
+                // The file (its icon first): its top-level classes and functions.
                 let ed = e.clone();
+                row = row.child(crate::icons::glyph(crate::icons::file_kind(&p, false), 12., Theme::text_muted()));
                 row = row.child(crumb(i, p, if i == last { Theme::text() } else { Theme::text_muted() }).on_click(cx.listener(move |this, _, w, cx| this.open_crumb_popup(&ed, None, w, cx))));
             } else {
                 // A folder (the first crumb is the project root): its contents.
