@@ -108,6 +108,11 @@ pub struct Editor {
     /// File contents at HEAD (None: not in git / untracked). Drives the gutter change markers.
     vcs_base: Option<String>,
     vcs_changes: Vec<brisk_git::LineChange>,
+    /// Set by a diff viewer before each render of this editor in it: changed lines get the
+    /// diff backgrounds for that frame (the same editor in its own tab stays plain).
+    pub diff_bg: bool,
+    /// Set with `diff_bg`: changed words to highlight, as (line, byte range in the line).
+    pub diff_words: Vec<(usize, Range<usize>)>,
     /// Run with Coverage marks.
     coverage: Option<coverage::CoverageMarks>,
     vcs_version: u64,
@@ -299,6 +304,8 @@ impl Editor {
             read_error: err,
             vcs_base: None,
             vcs_changes: Vec::new(),
+            diff_bg: false,
+            diff_words: Vec::new(),
             coverage: None,
             vcs_version: u64::MAX,
             show_gutter: true,
@@ -370,6 +377,8 @@ impl Editor {
             read_error: None,
             vcs_base: None,
             vcs_changes: Vec::new(),
+            diff_bg: false,
+            diff_words: Vec::new(),
             coverage: None,
             vcs_version: u64::MAX,
             show_gutter: false,
@@ -434,6 +443,20 @@ impl Editor {
 
     pub fn text_string(&self) -> String {
         self.buffer.text()
+    }
+
+    /// Vertical scroll in pixels, and the line height it is measured in (diff sync).
+    pub fn scroll_top(&self) -> f32 {
+        self.scroll_y
+    }
+
+    pub fn set_scroll_top(&mut self, y: f32, cx: &mut Context<Self>) {
+        let y = y.clamp(0.0, self.max_scroll_y().max(0.0));
+        if (y - self.scroll_y).abs() > 0.01 {
+            self.scroll_y = y;
+            self.smooth = None;
+            cx.notify();
+        }
     }
 
     pub fn is_sql(&self) -> bool {
@@ -1342,7 +1365,7 @@ impl Render for Editor {
                     }
                 }
             }))
-            .child(EditorElement { editor: cx.entity() })
+            .child(EditorElement { editor: cx.entity(), diff_bg: std::mem::take(&mut self.diff_bg), diff_words: std::mem::take(&mut self.diff_words) })
             .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))
             .when_some(self.render_tooltip(), |d, t| d.child(t))
             .when_some(self.render_inlay_tip(), |d, t| d.child(t))
@@ -1468,6 +1491,8 @@ impl EntityInputHandler for Editor {
 
 struct EditorElement {
     editor: Entity<Editor>,
+    diff_bg: bool,
+    diff_words: Vec<(usize, Range<usize>)>,
 }
 
 struct Prepaint {
@@ -1744,6 +1769,43 @@ impl Element for EditorElement {
         // The debugger's execution point.
         if let Some(l) = ed.exec_line.filter(|l| idx_of(*l).is_some()) {
             under.push(fill(Bounds::new(point(bounds.left(), y_of(l)), size(bounds.size.width, lh)), Theme::exec_line()));
+        }
+        // In a diff viewer: the changed lines' backgrounds, as in PyCharm's diff.
+        if self.diff_bg {
+            for ch in &ed.vcs_changes {
+                use brisk_git::LineChangeKind as K;
+                match ch.kind {
+                    K::Added | K::Modified => {
+                        // One rounded block per change, as in PyCharm's diff.
+                        let color = if ch.kind == K::Added { Theme::diff_added_bg() } else { Theme::diff_modified_bg() };
+                        if ch.lines.start < last && ch.lines.end > first {
+                            let (y0, y1) = (y_of(ch.lines.start), y_of(ch.lines.end));
+                            let x0 = bounds.left() + pp.gutter_w - px(4.);
+                            under.push(fill(Bounds::from_corners(point(x0, y0), point(bounds.right() - px(14.), y1)), color).corner_radii(px(4.)));
+                        }
+                    }
+                    K::Deleted => {
+                        let l = ch.lines.start;
+                        if l >= first && l <= last {
+                            under.push(fill(Bounds::new(point(bounds.left(), y_of(l) - px(1.)), size(bounds.size.width, px(2.))), Theme::vcs_deleted()));
+                        }
+                    }
+                }
+            }
+        }
+        // Changed words inside changed lines (live diff), over the line backgrounds.
+        if self.diff_bg {
+            for (l, r) in &self.diff_words {
+                if idx_of(*l).is_none() {
+                    continue;
+                }
+                let t = b.line(*l);
+                if t.contains('\t') || r.end > t.len() || !t.is_char_boundary(r.start) || !t.is_char_boundary(r.end) {
+                    continue;
+                }
+                let (a, z) = (x_of(*l, byte_to_char(&t, r.start)), x_of(*l, byte_to_char(&t, r.end)));
+                under.push(fill(Bounds::from_corners(point(a, y_of(*l) + px(1.)), point(z, y_of(*l) + lh - px(1.))), Theme::diff_modified_word_bg()).corner_radii(px(3.)));
+            }
         }
         // Indent guides: one at each enclosing indentation level (columns 0, 4, 8, ...).
         let unit = b.indent_unit.chars().count().max(1);
