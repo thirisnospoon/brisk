@@ -1,4 +1,4 @@
-//! `BRISK_BUDGET=<report.json>`, for `scriptsudget.ps1`: records named startup moments and
+//! `BRISK_BUDGET=<report.json>`, for `scripts\budget.ps1`: records named startup moments and
 //! when the first window frame was drawn (wall clock; the script subtracts the process start),
 //! then after 5 s idle (`BRISK_BUDGET_IDLE_MS`) the working set, holds a moment so the script can
 //! sample the child processes (`BRISK_BUDGET_HOLD`, ms) and exits.

@@ -19,6 +19,7 @@ New-Item -ItemType Directory -Force $dir | Out-Null
 
 Copy-Item 'target\release\brisk.exe' $dir
 Copy-Item 'README.md' $dir
+Copy-Item 'LICENSE-MIT', 'LICENSE-APACHE' $dir
 # The debugger: debugpy next to brisk.exe (lib\debugpy), used when the project's Python has none.
 & (Join-Path $PSScriptRoot 'fetch-debugpy.ps1')
 Copy-Item -Recurse (Join-Path $root 'vendor\debugpy-lib') (Join-Path $dir 'lib')

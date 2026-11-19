@@ -20,7 +20,7 @@ members = [
 [workspace.package]
 version = "0.2.6"
 edition = "2021"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 brisk-proc = { path = "crates/brisk-proc" }
