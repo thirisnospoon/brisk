@@ -1,4 +1,4 @@
-//! Git log filters (text, author, branch) and the lists the filter popups offer.
+//! Git log filters (text, author, branch, date, path) and the lists the filter popups offer.
 
 use crate::{parse_log, Commit, Repo, Result};
 
@@ -9,11 +9,15 @@ pub struct LogQuery {
     pub author: Option<String>,
     /// Only commits reachable from this branch; `None`: all branches.
     pub branch: Option<String>,
+    /// Only commits of the last N days (the Date filter).
+    pub since_days: Option<u32>,
+    /// Only commits that touch this file or folder (repository-relative; the Paths filter).
+    pub path: Option<String>,
 }
 
 impl LogQuery {
     pub fn is_empty(&self) -> bool {
-        self.text.trim().is_empty() && self.author.is_none() && self.branch.is_none()
+        self.text.trim().is_empty() && self.author.is_none() && self.branch.is_none() && self.since_days.is_none() && self.path.is_none()
     }
 }
 
@@ -39,8 +43,24 @@ impl Repo {
             None => args.extend(["--branches", "--remotes", "--tags", "HEAD"].map(String::from)),
         }
         args.push("--".into());
-        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        let mut v = match self.git(&refs) {
+        if let Some(p) = q.path.as_ref().filter(|p| !p.is_empty()) {
+            args.push(p.clone());
+        }
+        // The Date filter. `--since` stops walking a branch at its first older commit;
+        // `--since-as-filter` (git 2.37+) filters, the plain cut-off is the fallback.
+        let run = |flag: &str| {
+            let mut a: Vec<&str> = args.iter().map(String::as_str).collect();
+            let since = q.since_days.map(|d| format!("{flag}={d} days ago"));
+            if let Some(s) = &since {
+                a.insert(1, s);
+            }
+            self.git(&a)
+        };
+        let mut res = run("--since-as-filter");
+        if q.since_days.is_some() && res.as_ref().is_err_and(|e| e.0.contains("since-as-filter")) {
+            res = run("--since");
+        }
+        let mut v = match res {
             Ok(out) => parse_log(&out),
             Err(e) if e.0.contains("does not have any commits") || e.0.contains("unknown revision") => Vec::new(),
             Err(e) => return Err(e),

@@ -32,6 +32,7 @@ mod git_push_ui;
 mod git_compare_ui;
 mod git_history_ui;
 mod git_log_filter;
+mod git_log_menu;
 mod git_merge_ui;
 mod git_stash_ui;
 mod git_smoke;

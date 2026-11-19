@@ -4,7 +4,7 @@
 //! the window open (`diff`: the live side-by-side diff; `unified`: the unified one; `merge`:
 //! the merge window as it opens; `merged`: after resolving, before Apply; `annotate`: a file
 //! annotated; `previous`: Annotate Previous Revision's tab; `popup`: a change marker's popup;
-//! `partial`: a diff with one block left out of the commit).
+//! `partial`: a diff with one block left out of the commit; `log`: a commit's menu in the log).
 
 use super::git_smoke::{commit_as, sh};
 use super::{Tab, Workspace};
@@ -74,6 +74,9 @@ impl Workspace {
             }
             if held(&["partial"]) {
                 Self::smoke_vcs_partial(&this, cx, &bg, &root).await;
+            }
+            if held(&["log"]) {
+                Self::smoke_vcs_log(&this, cx, &bg, &root).await;
             }
             let _ = this.update(cx, |_, cx| {
                 eprintln!("smoke-vcs: done");
@@ -207,6 +210,89 @@ added = True
         let _ = this.update_in(cx, |this, window, cx| {
             if let Some(i) = this.active {
                 this.close_tab(i, window, cx);
+            }
+        });
+    }
+
+    /// V3: the log's commit menu: Copy Revision Number, Cherry-Pick, Revert Commit, Undo
+    /// Commit, Reset Current Branch to Here.
+    async fn smoke_vcs_log(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
+        let _ = this.update(cx, |this, cx| this.save_all(cx));
+        sh(root, &["checkout", "-q", "-b", "pick"]);
+        let _ = std::fs::write(root.join("pick.py"), "picked = True
+");
+        sh(root, &["add", "pick.py"]);
+        commit_as(root, "Bob", "2024-05-01T10:00:00", "Add pick.py");
+        sh(root, &["checkout", "-q", "main"]);
+        let Some(repo) = brisk_git::Repo::discover(root) else { return };
+        let head = || sh(root, &["rev-parse", "HEAD"]).trim().to_string();
+        let orig = head();
+        let log = repo.log(100).unwrap_or_default();
+        let find = |pred: &dyn Fn(&brisk_git::Commit) -> bool| log.iter().find(|c| pred(c)).cloned();
+        let (Some(top), Some(pick)) = (find(&|c| c.hash == orig), find(&|c| c.subject == "Add pick.py")) else {
+            return eprintln!("smoke-vcs: FAIL log commits not found");
+        };
+        let at = gpui::point(gpui::px(500.), gpui::px(400.));
+        if hold("log") {
+            // The Git log open, the menu of the other branch's commit over it.
+            let _ = this.update(cx, |this, cx| {
+                this.bottom = Some(super::BottomTool::Git);
+                this.refresh_git(cx);
+            });
+            pause(bg, 2500).await;
+            let _ = this.update(cx, |this, cx| {
+                let i = this.git.as_ref().and_then(|g| g.log.iter().position(|c| c.hash == pick.hash));
+                if let Some(i) = i {
+                    this.select_log(i, cx);
+                }
+                this.log_commit_menu(pick.clone(), gpui::point(gpui::px(700.), gpui::px(560.)), cx);
+            });
+            return;
+        }
+        let _ = this.update_in(cx, |this, _, cx| {
+            this.log_commit_menu(top.clone(), at, cx);
+            eprintln!("smoke-vcs: log menu on HEAD -> {:?}", this.menu_labels());
+            this.log_commit_menu(pick.clone(), at, cx);
+            eprintln!("smoke-vcs: log menu on another branch's commit -> {:?}", this.menu_labels());
+            this.menu = None;
+            this.copy_revision(&pick.hash, cx);
+            let clip = cx.read_from_clipboard().and_then(|c| c.text());
+            eprintln!("smoke-vcs: copy revision number -> {}", clip.as_deref() == Some(pick.hash.as_str()));
+            this.cherry_pick(pick.clone(), cx);
+        });
+        pause(bg, 2000).await;
+        let message = |this: &WeakEntity<Self>, cx: &mut AsyncWindowContext| this.update(cx, |this, cx| this.git.as_ref().map(|g| g.message.read(cx).text_string())).ok().flatten().unwrap_or_default();
+        let picked = head();
+        eprintln!("smoke-vcs: cherry-pick -> pick.py {}, new commit {}, message box kept {:?}", root.join("pick.py").exists(), picked != orig, message(this, cx));
+        let c = repo.log(1).ok().and_then(|l| l.into_iter().next());
+        let _ = this.update(cx, |this, cx| {
+            if let Some(c) = c {
+                this.revert_commit(c, cx);
+            }
+        });
+        pause(bg, 2000).await;
+        let reverted = head();
+        eprintln!("smoke-vcs: revert -> pick.py {}, new commit {}", root.join("pick.py").exists(), reverted != picked);
+        let c = repo.log(1).ok().and_then(|l| l.into_iter().next());
+        let _ = this.update(cx, |this, cx| {
+            if let Some(c) = c {
+                this.undo_commit(c, cx);
+            }
+        });
+        pause(bg, 2000).await;
+        eprintln!("smoke-vcs: undo commit -> HEAD back {}, message box {:?}", head() == picked, message(this, cx));
+        let _ = this.update(cx, |this, cx| {
+            this.open_reset(&top, cx);
+            let labels: Vec<String> = this.popup.as_ref().map(|p| p.items.iter().map(|i| i.label.clone()).collect()).unwrap_or_default();
+            eprintln!("smoke-vcs: reset popup -> {labels:?}");
+            this.popup = None;
+            this.run_reset(top.hash.clone(), brisk_git::ResetMode::Hard, cx);
+        });
+        pause(bg, 2000).await;
+        eprintln!("smoke-vcs: hard reset to the first commit's place -> HEAD {}, pick.py {}", head() == orig, root.join("pick.py").exists());
+        let _ = this.update(cx, |this, cx| {
+            if let Some(g) = this.git.as_ref() {
+                g.message.update(cx, |e, cx| e.replace_all_text("", cx));
             }
         });
     }

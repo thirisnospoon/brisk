@@ -9,7 +9,7 @@
 
 use crate::editor::Editor;
 use crate::settings::{font_size, line_height};
-use crate::theme::{mono_font, ui_font, Theme};
+use crate::theme::{mono_font, ui_font, ui_px, ui_scale, Theme};
 use brisk_git::{AlignedRow, RowKind, UnifiedRow};
 use gpui::prelude::*;
 use gpui::{canvas, div, point, px, uniform_list, App, Context, Entity, FocusHandle, Focusable, Hsla, SharedString, StyledText, Subscription, TextRun, UniformListScrollHandle, Window};
@@ -251,7 +251,7 @@ struct Live {
 /// The "include into commit" checkbox of a change block (the Commit window's look).
 fn hunk_checkbox(on: bool) -> gpui::Div {
     div()
-        .size(px(14.))
+        .size(ui_px(14.))
         .rounded(px(3.))
         .border_1()
         .border_color(if on { Theme::accent() } else { Theme::text_dim() })
@@ -259,7 +259,7 @@ fn hunk_checkbox(on: bool) -> gpui::Div {
         .flex()
         .items_center()
         .justify_center()
-        .when(on, |d| d.child(crate::icons::icon("check-bold", 10., gpui::white())))
+        .when(on, |d| d.child(crate::icons::ui_icon("check-bold", 10., gpui::white())))
 }
 
 /// A change block's "include into commit" checkbox was clicked.
@@ -661,8 +661,8 @@ impl DiffView {
                     div()
                         .id(("hunk-chk", i))
                         .absolute()
-                        .left(px(7.))
-                        .top(px(y + (lh - 14.) / 2.))
+                        .left(px((28. - 14. * ui_scale()) / 2.))
+                        .top(px(y + (lh - 14. * ui_scale()) / 2.))
                         .cursor_pointer()
                         .child(hunk_checkbox(!excluded))
                         .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _, cx| {
@@ -823,7 +823,7 @@ pub(crate) fn side(num: Option<usize>, text: gpui::AnyElement, bg: Hsla, edges: 
 pub(crate) fn tool(id: &'static str, icon: &'static str, tip: &'static str, on: bool) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
-        .size(px(24.))
+        .size(ui_px(24.))
         .flex()
         .items_center()
         .justify_center()
@@ -832,7 +832,7 @@ pub(crate) fn tool(id: &'static str, icon: &'static str, tip: &'static str, on: 
         .when(on, |d| d.bg(Theme::selection_row()))
         .when(!on, |d| d.hover(|s| s.bg(Theme::hover_row())))
         .tooltip(move |_, cx| cx.new(|_| crate::workspace::Tip(tip.into())).into())
-        .child(crate::icons::icon(icon, 15., if on { Theme::text() } else { Theme::text_muted() }))
+        .child(crate::icons::ui_icon(icon, 15., if on { Theme::text() } else { Theme::text_muted() }))
 }
 
 impl Render for DiffView {
@@ -862,7 +862,7 @@ impl Render for DiffView {
             .bg(Theme::editor_bg())
             .child(
                 div()
-                    .h(px(32.))
+                    .h(ui_px(32.))
                     .flex()
                     .items_center()
                     .gap(px(4.))
@@ -871,27 +871,27 @@ impl Render for DiffView {
                     .border_b_1()
                     .border_color(Theme::divider())
                     .font_family(ui_font())
-                    .text_size(px(12.))
+                    .text_size(ui_px(12.))
                     .text_color(Theme::text_muted())
                     .child(tool("diff-prev", "arrow-up", "Previous Difference (Shift+F7)", false).on_click(cx.listener(|this, _, _, cx| this.jump(false, cx))))
                     .child(tool("diff-next", "arrow-down", "Next Difference (F7)", false).on_click(cx.listener(|this, _, _, cx| this.jump(true, cx))))
-                    .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(Theme::divider()))
+                    .child(div().w(px(1.)).h(ui_px(16.)).mx(px(4.)).bg(Theme::divider()))
                     .child(tool("diff-sbs", "columns-2", "Side-by-side viewer", !unified).on_click(cx.listener(|this, _, _, cx| this.set_unified(false, cx))))
                     .child(tool("diff-uni", "align-justify", "Unified viewer", unified).on_click(cx.listener(|this, _, _, cx| this.set_unified(true, cx))))
                     .child(
                         tool("diff-collapse", "fold-vertical", "Collapse Unchanged Fragments", collapse)
                             .on_click(cx.listener(move |this, _, _, cx| this.set_collapse(!collapse, cx))),
                     )
-                    .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(Theme::divider()))
+                    .child(div().w(px(1.)).h(ui_px(16.)).mx(px(4.)).bg(Theme::divider()))
                     .child(if diffs == 0 { "Contents are identical".to_string() } else { format!("{diffs} difference{}", if diffs == 1 { "" } else { "s" }) }),
             )
             .child(
                 div()
                     .flex()
-                    .h(px(24.))
+                    .h(ui_px(24.))
                     .items_center()
                     .font_family(ui_font())
-                    .text_size(px(12.))
+                    .text_size(ui_px(12.))
                     .text_color(Theme::text_muted())
                     .border_b_1()
                     .border_color(Theme::divider())

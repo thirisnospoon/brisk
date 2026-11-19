@@ -9,7 +9,7 @@
 use crate::diff_view::{line_text, right_to_left, side, tool, Block, Side};
 use crate::editor::Editor;
 use crate::settings::{font_size, line_height};
-use crate::theme::{mono_font, ui_font, Theme};
+use crate::theme::{mono_font, ui_font, ui_px, Theme};
 use brisk_git::Chunk;
 use gpui::prelude::*;
 use gpui::{canvas, div, point, px, uniform_list, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, Subscription, UniformListScrollHandle, Window};
@@ -674,7 +674,7 @@ const STRIP: f32 = 60.;
 fn mini(id: (&'static str, usize), icon: &'static str, color: Hsla, tip: &'static str) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
-        .size(px(18.))
+        .size(ui_px(18.))
         .flex()
         .items_center()
         .justify_center()
@@ -685,7 +685,7 @@ fn mini(id: (&'static str, usize), icon: &'static str, color: Hsla, tip: &'stati
         .cursor_pointer()
         .hover(|s| s.bg(Theme::hover_row()))
         .tooltip(move |_, cx| cx.new(|_| crate::workspace::Tip(tip.into())).into())
-        .child(crate::icons::icon(icon, 12., color))
+        .child(crate::icons::ui_icon(icon, 12., color))
 }
 
 /// A dialog-style button at the bottom.
@@ -693,7 +693,7 @@ fn button(id: &'static str, label: &'static str, primary: bool) -> gpui::Statefu
     div()
         .id(id)
         .px(px(14.))
-        .h(px(28.))
+        .h(ui_px(28.))
         .flex()
         .items_center()
         .justify_center()
@@ -759,7 +759,7 @@ impl Render for MergeView {
             .bg(Theme::editor_bg())
             .child(
                 div()
-                    .h(px(32.))
+                    .h(ui_px(32.))
                     .flex()
                     .items_center()
                     .gap(px(4.))
@@ -768,11 +768,11 @@ impl Render for MergeView {
                     .border_b_1()
                     .border_color(Theme::divider())
                     .font_family(ui_font())
-                    .text_size(px(12.))
+                    .text_size(ui_px(12.))
                     .text_color(Theme::text_muted())
                     .child(tool("merge-prev", "arrow-up", "Previous Difference (Shift+F7)", false).on_click(cx.listener(|this, _, _, cx| this.jump(false, cx))))
                     .child(tool("merge-next", "arrow-down", "Next Difference (F7)", false).on_click(cx.listener(|this, _, _, cx| this.jump(true, cx))))
-                    .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(Theme::divider()))
+                    .child(div().w(px(1.)).h(ui_px(16.)).mx(px(4.)).bg(Theme::divider()))
                     .child(
                         tool("merge-nc-left", "arrow-right-to-line", "Apply Non-Conflicting Changes from the Left Side", false)
                             .on_click(cx.listener(|this, _, _, cx| this.apply_non_conflicting(Some(true), cx))),
@@ -782,7 +782,7 @@ impl Render for MergeView {
                         tool("merge-nc-right", "arrow-left-to-line", "Apply Non-Conflicting Changes from the Right Side", false)
                             .on_click(cx.listener(|this, _, _, cx| this.apply_non_conflicting(Some(false), cx))),
                     )
-                    .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(Theme::divider()))
+                    .child(div().w(px(1.)).h(ui_px(16.)).mx(px(4.)).bg(Theme::divider()))
                     .child(tool("merge-simple", "wand-sparkles", "Resolve Simple Conflicts", false).on_click(cx.listener(|this, _, _, cx| {
                         this.resolve_simple(cx);
                     })))
@@ -791,11 +791,11 @@ impl Render for MergeView {
             )
             .child(
                 div()
-                    .h(px(24.))
+                    .h(ui_px(24.))
                     .flex()
                     .items_center()
                     .font_family(ui_font())
-                    .text_size(px(12.))
+                    .text_size(ui_px(12.))
                     .text_color(Theme::text_muted())
                     .border_b_1()
                     .border_color(Theme::divider())
@@ -818,7 +818,7 @@ impl Render for MergeView {
             )
             .child(
                 div()
-                    .h(px(44.))
+                    .h(ui_px(44.))
                     .px(px(12.))
                     .flex()
                     .items_center()
@@ -827,7 +827,7 @@ impl Render for MergeView {
                     .border_t_1()
                     .border_color(Theme::divider())
                     .font_family(ui_font())
-                    .text_size(px(13.))
+                    .text_size(ui_px(13.))
                     .text_color(Theme::text())
                     .child(button("merge-accept-left", "Accept Left", false).on_click(cx.listener(|this, _, _, cx| this.accept_all(true, cx))))
                     .child(button("merge-accept-right", "Accept Right", false).on_click(cx.listener(|this, _, _, cx| this.accept_all(false, cx))))
@@ -838,7 +838,7 @@ impl Render for MergeView {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .text_size(px(12.))
+                            .text_size(ui_px(12.))
                             .text_color(if confirm { Theme::error() } else { Theme::text_dim() })
                             .child(if confirm {
                                 format!("{left} change(s) are not resolved. Apply again to save the result as it is.")

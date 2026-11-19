@@ -8,6 +8,7 @@ mod branch_ops;
 mod diff;
 mod graph;
 mod log_query;
+mod log_ops;
 mod merge;
 mod partial;
 mod remote;
@@ -16,6 +17,7 @@ mod stash;
 pub use blame::{parse_blame, BlameLine};
 pub use diff::{align, foldable, inline_diff, line_changes, line_ops, unified, AlignedRow, LineChange, LineChangeKind, RowKind, UnifiedRow};
 pub use stash::StashEntry;
+pub use log_ops::ResetMode;
 pub use partial::{compose, hunk_key, hunks};
 pub use remote::Outgoing;
 pub use log_query::LogQuery;
@@ -319,6 +321,15 @@ impl Repo {
             let mut args = vec!["add", "--"];
             args.extend(untracked.iter().map(String::as_str));
             self.git(&args)?;
+        }
+        // During a merge, cherry-pick or revert git refuses a commit of some paths: stage
+        // them and commit the index (the operation's own changes are staged already).
+        if !files.is_empty() && !amend && self.pending_operation().is_some() {
+            let mut args = vec!["add", "-A", "--"];
+            args.extend(files.iter().map(String::as_str));
+            self.git(&args)?;
+            self.git(&["commit", "-m", message])?;
+            return self.git(&["rev-parse", "--short", "HEAD"]).map(|s| s.trim().to_string());
         }
         let mut args = vec!["commit", "-m", message];
         if amend {

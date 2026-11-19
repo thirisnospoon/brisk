@@ -6,7 +6,7 @@
 use super::{line_height, Editor, EditorEvent};
 use crate::diff_view::{line_text, tool, Side};
 use crate::settings::font_size;
-use crate::theme::{mono_font, ui_font, Theme};
+use crate::theme::{mono_font, ui_font, ui_px, Theme};
 use gpui::prelude::*;
 use gpui::{div, px, ClipboardItem, MouseButton, Pixels, Point};
 use std::ops::Range;
@@ -174,8 +174,8 @@ impl Editor {
                 .absolute()
                 .left(px(x.max(0.)))
                 .top(px(y))
-                .min_w(px(320.))
-                .max_w(px(760.))
+                .min_w(ui_px(320.))
+                .max_w(ui_px(760.))
                 .rounded(px(6.))
                 .overflow_hidden()
                 .border_1()
@@ -187,13 +187,13 @@ impl Editor {
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
-                        .h(px(30.))
+                        .h(ui_px(30.))
                         .px(px(4.))
                         .flex()
                         .items_center()
                         .gap(px(2.))
                         .font_family(ui_font())
-                        .text_size(px(12.))
+                        .text_size(ui_px(12.))
                         .text_color(Theme::text_muted())
                         .child(tool("vcs-prev", "arrow-up", "Previous Change", false).on_click(cx.listener(|this, _, _, cx| this.move_vcs_popup(false, cx))))
                         .child(tool("vcs-next", "arrow-down", "Next Change", false).on_click(cx.listener(|this, _, _, cx| this.move_vcs_popup(true, cx))))
