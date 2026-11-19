@@ -722,6 +722,11 @@ impl Workspace {
         for (file, edits) in files {
             count += edits.len();
             let open = self.editors().find(|e| e.read(cx).path.as_deref() == Some(file.as_path())).cloned();
+            // Local History: every file as it was before the refactoring.
+            match &open {
+                Some(ed) => crate::local_history::record(&file, &ed.read(cx).buffer.text(), crate::local_history::Label::BeforeRefactor),
+                None => crate::local_history::record_path(&file, crate::local_history::Label::BeforeRefactor),
+            }
             match open {
                 Some(ed) => {
                     let fix = brisk_lint::Fix { message: String::new(), safe: true, edits };

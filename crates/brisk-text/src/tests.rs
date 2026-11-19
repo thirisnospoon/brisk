@@ -252,3 +252,26 @@ fn undo_history_is_capped() {
     }
     assert_eq!(n, UNDO_LIMIT);
 }
+
+#[test]
+fn paste_spreads_over_carets() {
+    let mut b = buf("a\nb\nc\n");
+    // Carets at the end of each line, added in another order than the text's.
+    b.selections = vec![Selection::caret(5), Selection::caret(1), Selection::caret(3)];
+    b.insert_each(&["1".into(), "2".into(), "3".into()]);
+    assert_eq!(b.text(), "a1\nb2\nc3\n");
+    // Counts differ: every caret gets the joined text.
+    let mut b = buf("x\ny");
+    b.selections = vec![Selection::caret(1), Selection::caret(3)];
+    b.insert_each(&["p".into(), "q".into(), "r".into()]);
+    assert_eq!(b.text(), "xp\nq\nr\nyp\nq\nr");
+}
+
+#[test]
+fn multi_caret_copy_is_in_text_order() {
+    let mut b = buf("one two three");
+    b.selections = vec![Selection { anchor: 8, head: 13, goal_col: None }, Selection { anchor: 0, head: 3, goal_col: None }];
+    assert_eq!(b.selected_text(), "one\nthree");
+    b.selections = vec![Selection::caret(9), Selection::caret(0)];
+    assert_eq!(b.caret_lines(), vec![0]);
+}

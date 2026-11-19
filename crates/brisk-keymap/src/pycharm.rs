@@ -97,6 +97,7 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("alt-j", A::AddCaretNextOccurrence, ED);
     k.bind("alt-shift-j", A::UnselectOccurrence, ED);
     k.bind("ctrl-alt-shift-j", A::SelectAllOccurrences, ED);
+    k.bind("alt-shift-insert", A::ToggleColumnSelectionMode, ED);
     // CloneCaretAbove/Below: "Ctrl, Ctrl+Up/Down" (double Ctrl, held) is detected by the workspace.
     k.bind("shift-enter", A::StartNewLine, ED);
     k.bind("ctrl-alt-enter", A::StartNewLineBefore, ED);

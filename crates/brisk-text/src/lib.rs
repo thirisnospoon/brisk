@@ -217,11 +217,20 @@ impl Buffer {
         (pos < self.len_chars()).then(|| self.rope.char(pos))
     }
 
-    /// Selected text, joined by newlines for multiple carets (like PyCharm copy).
+    /// Selected text, joined by newlines for multiple carets in text order (like PyCharm copy).
     pub fn selected_text(&self) -> String {
-        let parts: Vec<String> =
-            self.selections.iter().filter(|s| !s.is_empty()).map(|s| self.slice(s.range())).collect();
+        let mut sels: Vec<&Selection> = self.selections.iter().filter(|s| !s.is_empty()).collect();
+        sels.sort_by_key(|s| s.range().start);
+        let parts: Vec<String> = sels.iter().map(|s| self.slice(s.range())).collect();
         parts.join("\n")
+    }
+
+    /// The lines of all carets (each once, in text order), for copy/cut with no selection.
+    pub fn caret_lines(&self) -> Vec<usize> {
+        let mut lines: Vec<usize> = self.selections.iter().map(|s| self.pos_to_line_col(s.head).0).collect();
+        lines.sort_unstable();
+        lines.dedup();
+        lines
     }
 
     // --- Low-level edit machinery -------------------------------------------
@@ -397,6 +406,25 @@ impl Buffer {
         self.apply(edits, kind, |map, _| {
             starts.iter().map(|&st| Selection::caret(map(st, false) + n)).collect()
         });
+    }
+
+    /// Paste with as many carets as pieces: the i-th caret in text order gets `texts[i]`
+    /// (PyCharm spreads a multi-caret copy over the same number of carets). Falls back to
+    /// [`Self::insert`] of the joined text when the counts differ.
+    pub fn insert_each(&mut self, texts: &[String]) {
+        if texts.len() != self.selections.len() {
+            return self.insert(&texts.join("\n"));
+        }
+        let mut order: Vec<usize> = (0..self.selections.len()).collect();
+        order.sort_by_key(|&i| self.selections[i].range().start);
+        // The i-th selection in text order gets texts[i]; the selections keep their own order.
+        let mut piece = vec![String::new(); texts.len()];
+        for (k, &i) in order.iter().enumerate() {
+            piece[i] = texts[k].clone();
+        }
+        let edits: Vec<_> = self.selections.iter().zip(&piece).map(|(s, t)| (s.range(), t.clone())).collect();
+        let ends: Vec<(usize, usize)> = self.selections.iter().zip(&piece).map(|(s, t)| (s.range().start, t.chars().count())).collect();
+        self.apply(edits, EditKind::Other, |map, _| ends.iter().map(|&(st, n)| Selection::caret(map(st, false) + n)).collect());
     }
 
     /// Type a char with PyCharm-like auto-pairing for brackets and quotes.

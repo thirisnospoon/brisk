@@ -30,6 +30,7 @@ mod fold;
 mod marks;
 mod lsp;
 mod inlay;
+mod column;
 mod middle_click;
 mod middle_scroll;
 mod big;
@@ -97,6 +98,9 @@ pub struct Editor {
     autoscrolling: bool,
     /// Alt+drag column selection: the (line, column) where it started.
     column_anchor: Option<(usize, usize)>,
+    /// Column selection mode (Shift+Alt+Insert) and its block: anchor and head (line, column).
+    column_mode: bool,
+    column_block: Option<((usize, usize), (usize, usize))>,
     layout: Option<LayoutCache>,
     selecting: bool,
     marked: Option<Range<usize>>,
@@ -287,6 +291,8 @@ impl Editor {
             drag_pos: None,
             autoscrolling: false,
             column_anchor: None,
+            column_mode: false,
+            column_block: None,
             layout: None,
             selecting: false,
             marked: None,
@@ -356,6 +362,8 @@ impl Editor {
             drag_pos: None,
             autoscrolling: false,
             column_anchor: None,
+            column_mode: false,
+            column_block: None,
             layout: None,
             selecting: false,
             marked: None,
@@ -784,6 +792,17 @@ impl Editor {
         if !matches!(action, A::EditorBackspace | A::EditorDelete | A::MoveLeft | A::MoveRight | A::SelectLeft | A::SelectRight | A::MoveWordLeft | A::MoveWordRight) {
             self.insight.signature = None;
         }
+        if action == A::ToggleColumnSelectionMode && !self.is_field {
+            self.toggle_column_mode();
+            cx.notify();
+            return true;
+        }
+        if self.column_key(action) {
+            self.ensure_caret_visible();
+            cx.notify();
+            return true;
+        }
+        self.column_block = None;
         match action {
             // Live templates, block comments (editor/templates.rs).
             A::EditorTab if !self.is_field && self.template_next(true, cx) => return true,
@@ -890,8 +909,8 @@ impl Editor {
                 // PyCharm: with no selection, copy/cut the whole line.
                 let whole_line = b.selections.iter().all(|s| s.is_empty());
                 let text = if whole_line {
-                    let (line, _) = b.pos_to_line_col(b.primary().head);
-                    format!("{}\n", b.line(line))
+                    // Every caret's line (each once), so pasting into as many carets spreads them.
+                    b.caret_lines().iter().map(|&l| format!("{}\n", b.line(l))).collect()
                 } else {
                     b.selected_text()
                 };
@@ -910,7 +929,19 @@ impl Editor {
                     let t = t.replace("\r\n", "\n");
                     remember_clip(&t);
                     let line_paste = t.ends_with('\n') && t.matches('\n').count() == 1 && b.selections.iter().all(|s| s.is_empty());
-                    if line_paste {
+                    // One line per caret (a multi-caret copy): each caret gets its own line.
+                    let pieces: Vec<String> = t.strip_suffix('\n').unwrap_or(&t).split('\n').map(str::to_string).collect();
+                    if b.selections.len() > 1 && pieces.len() == b.selections.len() {
+                        if t.ends_with('\n') && b.selections.iter().all(|s| s.is_empty()) {
+                            // Whole lines from a multi-caret line copy: each above its caret's line.
+                            let starts: Vec<usize> = b.selections.iter().map(|s| b.line_start(b.pos_to_line_col(s.head).0)).collect();
+                            b.selections = starts.into_iter().map(Selection::caret).collect();
+                            let lines: Vec<String> = pieces.iter().map(|p| format!("{p}\n")).collect();
+                            b.insert_each(&lines);
+                        } else {
+                            b.insert_each(&pieces);
+                        }
+                    } else if line_paste {
                         // Whole-line paste goes above the current line, like PyCharm.
                         let carets: Vec<usize> = b.selections.iter().map(|s| s.head).collect();
                         b.selections = carets.iter().map(|&p| { let (l, _) = b.pos_to_line_col(p); Selection::caret(b.line_start(l)) }).collect();
@@ -996,8 +1027,9 @@ impl Editor {
             cx.notify();
             return;
         }
-        if e.modifiers.alt && !e.modifiers.shift && !e.modifiers.control && e.click_count == 1 {
-            // Alt+drag: column (block) selection.
+        let plain = !e.modifiers.alt && !e.modifiers.shift && !e.modifiers.control;
+        if (e.modifiers.alt && !e.modifiers.shift && !e.modifiers.control || self.column_mode && plain) && e.click_count == 1 {
+            // Alt+drag (or any drag in column selection mode): column (block) selection.
             let (line, col) = self.line_col_for_point(e.position);
             self.column_anchor = Some((line, col));
             self.buffer.set_caret(pos, false);
@@ -1120,20 +1152,9 @@ impl Editor {
 
     /// Alt+drag: one selection per line between the anchor and the pointer.
     pub(super) fn drag_column(&mut self, p: Point<Pixels>) {
-        let Some((al, ac)) = self.column_anchor else { return };
-        let (line, col) = self.line_col_for_point(p);
-        let (l0, l1) = (al.min(line), al.max(line));
-        let sels: Vec<Selection> = (l0..=l1)
-            .map(|l| {
-                let len = self.buffer.line_len(l);
-                let a = self.buffer.line_col_to_pos(l, ac.min(len));
-                let h = self.buffer.line_col_to_pos(l, col.min(len));
-                Selection { anchor: a, head: h, goal_col: None }
-            })
-            .collect();
-        if !sels.is_empty() {
-            self.buffer.selections = sels;
-        }
+        let Some(anchor) = self.column_anchor else { return };
+        let head = self.line_col_for_point(p);
+        self.set_column_block(anchor, head);
     }
 
     fn on_scroll(&mut self, e: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {

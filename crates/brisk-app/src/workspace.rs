@@ -42,6 +42,7 @@ mod local_refs;
 mod mouse_smoke;
 mod bars_smoke;
 mod scope_smoke;
+mod w7_smoke;
 mod lsp_ui;
 mod main_menu;
 mod menu_ui;
@@ -176,6 +177,8 @@ enum PopupKind {
     PasteHistory,
     /// Show Local History.
     LocalHistory,
+    /// Local History → Put Label: the label's name.
+    PutLabel,
     /// A breakpoint's condition.
     BreakpointCondition,
     /// A directory breadcrumb: the folder's contents (`Workspace::crumb_dir`).
@@ -274,6 +277,8 @@ enum Target {
     Clip(usize),
     /// A Local History revision: file and time (ms).
     History(PathBuf, u64),
+    /// Put a Local History label with this name.
+    PutLabel(String),
     /// Set the edited breakpoint's condition (empty: none).
     BpCondition(String),
     BpRemove,
@@ -446,6 +451,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_MOUSE").is_some() {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.mouse_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_W7").is_some() {
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.w7_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_SCOPE").is_some() {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.scope_smoke(window, cx));
@@ -1331,6 +1339,7 @@ impl Workspace {
             A::ToggleFindWindow => self.toggle_find_window(window, cx),
             A::PasteFromHistory if self.focused_editor(window, cx).is_some() => self.open_popup(PopupKind::PasteHistory),
             A::ShowLocalHistory => self.show_local_history(cx),
+            A::PutLabel => self.start_put_label(),
             A::ToggleBreakpoint | A::ViewBreakpoints | A::Debug | A::DebugContext | A::Resume | A::StepOver | A::StepInto | A::StepOut | A::RunToCursor | A::EvaluateExpression
             | A::PauseProgram | A::RerunDebug | A::AddToWatches | A::MuteBreakpoints | A::SmartStepInto | A::AttachToProcess | A::SetNextStatement => {
                 self.debug_action(action, window, cx);
@@ -1610,6 +1619,7 @@ impl Workspace {
             PopupKind::Intentions => self.intention_items(&q),
             PopupKind::Rename => self.rename_items(&q),
             PopupKind::FolderCrumb => self.folder_items(&q),
+            PopupKind::PutLabel => self.put_label_items(&q),
         };
         let p = self.popup.as_mut().unwrap();
         p.items = items;
@@ -1710,6 +1720,10 @@ impl Workspace {
                     Some(Target::Bookmark(path, line)) => self.open_symbol(path, line, 0, window, cx),
                     Some(Target::Mnemonic(c)) => self.pick_mnemonic(c, window, cx),
                     Some(Target::History(path, at)) => self.history_diff(path, at, window, cx),
+                    Some(Target::PutLabel(name)) => {
+                        self.put_label(name, cx);
+                        self.focus_editor(window, cx);
+                    }
                     Some(t @ (Target::BpCondition(_) | Target::BpRemove)) => self.pick_condition(t, window, cx),
                     Some(Target::Clip(i)) => {
                         self.focus_editor(window, cx);
@@ -2334,7 +2348,11 @@ impl Workspace {
                     .and_then(|p| p.strip_prefix(&self.root).ok())
                     .map(|p| format!("{} › {}", self.project_name(), p.to_string_lossy().replace(['\\', '/'], " › ")))
                     .unwrap_or_default();
-                (format!("{}:{}", l + 1, c + 1), eol, e.language_name(), crumbs)
+                // PyCharm: "3 carets" with several, and the column selection mode.
+                let n = e.buffer.selections.len();
+                let carets = if n > 1 { format!("{n} carets  ") } else { String::new() };
+                let pos = format!("{carets}{}:{}{}", l + 1, c + 1, if e.column_mode() { "  Column" } else { "" });
+                (pos, eol, e.language_name(), crumbs)
             }
             None => (String::new(), "", "", self.project_name()),
         };
@@ -2398,7 +2416,8 @@ impl Workspace {
             PopupKind::Bookmarks => ("Bookmarks", "Type to filter"),
             PopupKind::BookmarkMnemonic => ("Add Bookmark with Mnemonic", "Type a digit or letter, then Enter"),
             PopupKind::PasteHistory => ("Paste from History", "Type to filter"),
-            PopupKind::LocalHistory => ("Local History", "Enter: show diff · Ctrl+Enter: revert"),
+            PopupKind::LocalHistory => ("Local History", "Enter: show diff · Ctrl+Enter: revert or restore"),
+            PopupKind::PutLabel => ("Put Label", "Label name"),
             PopupKind::BreakpointCondition => ("Breakpoint Condition", "Python expression, e.g. i == 3"),
             PopupKind::FileName | PopupKind::FileDelete => match &self.file_op {
                 Some(op) => (op.title(), op.placeholder()),
@@ -2562,6 +2581,7 @@ impl Workspace {
             Target::Bookmark(..) | Target::Mnemonic(_) => ("▮", Theme::bookmark()),
             Target::Clip(_) => ("¶", Theme::text_muted()),
             Target::History(..) => ("◷", Theme::text_muted()),
+            Target::PutLabel(_) => ("▮", Theme::bookmark()),
             Target::BpCondition(_) | Target::BpRemove => ("●", Theme::breakpoint()),
         };
         let branch = matches!(it.target, Target::Branch(_));

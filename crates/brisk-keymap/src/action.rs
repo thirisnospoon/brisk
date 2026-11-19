@@ -125,6 +125,7 @@ actions! {
     SelectAllOccurrences => "Select All Occurrences", "Edit";
     CloneCaretAbove => "Clone Caret Above", "Edit";
     CloneCaretBelow => "Clone Caret Below", "Edit";
+    ToggleColumnSelectionMode => "Column Selection Mode", "Edit";
     StartNewLine => "Start New Line", "Edit";
     StartNewLineBefore => "Start New Line Before Current", "Edit";
     EditorNewline => "Enter", "Edit";
@@ -237,6 +238,7 @@ actions! {
     CompareWithBranch => "Compare with Branch…", "Git";
     Fetch => "Fetch", "Git";
     ShowLocalHistory => "Show Local History", "Git";
+    PutLabel => "Local History: Put Label…", "Git";
 
     // Database
     ExecuteQuery => "Execute", "Database";

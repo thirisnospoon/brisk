@@ -46,6 +46,10 @@ fn main() {
 
     workspace::project_ui::remember_project(&root);
     settings::load();
+    // Local History: old revisions and the over-budget oldest go, once per start, off the UI.
+    std::thread::Builder::new().name("local-history-cleanup".into()).spawn(|| {
+        local_history::cleanup();
+    }).ok();
 
     Application::new().with_assets(icons::Assets).run(move |cx: &mut App| {
         // Fonts shipped next to the exe (or in BRISK_FONT_DIR): .ttf / .otf files are added to

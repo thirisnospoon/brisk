@@ -739,6 +739,9 @@ impl Workspace {
             Ok(out) => {
                 let changed = out.replace("\r\n", "\n") != text.replace("\r\n", "\n");
                 if changed {
+                    crate::local_history::record(&path, &text.replace("
+", "
+"), crate::local_history::Label::BeforeReformat);
                     ed.update(cx, |e, cx| e.replace_all_text(&out, cx));
                 }
                 if reformat {
