@@ -117,6 +117,10 @@ fn file_symbols(path: &Path) -> Vec<Sym> {
         });
         stack.push(o.name);
     }
+    for o in tree.module_variables(&text) {
+        let line_start = text[..o.byte].rfind('\n').map(|n| n + 1).unwrap_or(0);
+        out.push(Sym { name: o.name.as_str().into(), kind: o.kind, container: "".into(), file: 0, line: o.line, col: text[line_start..o.byte].chars().count() });
+    }
     out
 }
 
@@ -213,10 +217,23 @@ impl Workspace {
         if q.is_empty() {
             return Vec::new();
         }
+        // `Repo.add` (or `Re.ad`): the member part against the name, the rest against the
+        // innermost container, as in PyCharm.
+        let (outer, member) = match q.rsplit_once('.') {
+            Some((o, m)) if !o.is_empty() => (Some(o.rsplit('.').next().unwrap_or(o)), m),
+            _ => (None, q),
+        };
         let mut scored: Vec<(i32, &Sym)> = list
             .iter()
             .filter(|s| !classes_only || s.kind == OutlineKind::Class)
-            .filter_map(|s| name_score(&s.name, q).map(|sc| (sc, s)))
+            .filter_map(|s| {
+                let own = name_score(&s.name, member)?;
+                let score = match outer {
+                    Some(o) => own + name_score(s.container.rsplit('.').next().unwrap_or(""), o)?,
+                    None => own,
+                };
+                Some((score, s))
+            })
             .collect();
         scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| files.files[a.1.file].cmp(&files.files[b.1.file])));
         scored
@@ -426,7 +443,7 @@ impl Workspace {
             eprintln!("smoke-ui: click outside -> {}", this.update(cx, |this, _| this.smoke_state()).unwrap_or_default());
 
             let _ = this.update(cx, |this, cx| {
-                for (tab, q) in [(super::SeTab::Classes, "user"), (super::SeTab::Symbols, "fbp"), (super::SeTab::All, "repo")] {
+                for (tab, q) in [(super::SeTab::Classes, "user"), (super::SeTab::Symbols, "fbp"), (super::SeTab::All, "repo"), (super::SeTab::Symbols, "Repo.ad"), (super::SeTab::Symbols, "max_r")] {
                     this.open_popup(PopupKind::SearchEverywhere(tab));
                     if let Some(p) = this.popup.as_mut() {
                         p.query = q.into();

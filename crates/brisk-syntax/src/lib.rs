@@ -532,6 +532,34 @@ impl SyntaxTree {
         }
         out
     }
+
+    /// Module-level assignments (`NAME = ...`, `x: int = ...`, `a, b = ...`), each name once,
+    /// for Go to Symbol (PyCharm lists module variables and constants there too).
+    pub fn module_variables(&self, text: &str) -> Vec<OutlineItem> {
+        let mut out: Vec<OutlineItem> = Vec::new();
+        let Some(tree) = &self.tree else { return out };
+        let root = tree.root_node();
+        let mut c = root.walk();
+        for st in root.children(&mut c).filter(|n| n.kind() == "expression_statement") {
+            let Some(a) = st.named_child(0).filter(|a| a.kind() == "assignment") else { continue };
+            let Some(left) = a.child_by_field_name("left") else { continue };
+            let mut names = Vec::new();
+            if left.kind() == "identifier" {
+                names.push(left);
+            } else if matches!(left.kind(), "pattern_list" | "tuple_pattern") {
+                let mut lc = left.walk();
+                names.extend(left.named_children(&mut lc).filter(|n| n.kind() == "identifier"));
+            }
+            for n in names {
+                let name = &text[n.byte_range()];
+                if name == "__all__" || out.iter().any(|o| o.name == name) {
+                    continue;
+                }
+                out.push(OutlineItem { name: name.to_string(), kind: OutlineKind::Variable, depth: 0, byte: n.start_byte(), line: n.start_position().row, end_line: st.end_position().row });
+            }
+        }
+        out
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -539,6 +567,8 @@ pub enum OutlineKind {
     Class,
     Function,
     Method,
+    /// A module-level variable or constant (Go to Symbol only; not in `outline`).
+    Variable,
 }
 
 #[derive(Clone, Debug)]
@@ -836,6 +866,25 @@ mod incremental_tests {
         check(&mut inc, "class A:\n    x = 'é ö'\n");
         check(&mut inc, "");
         check(&mut inc, &base);
+    }
+
+    #[test]
+    fn module_variables_for_go_to_symbol() {
+        let src = "import os
+MAX: int = 3
+a, b = 1, 2
+__all__ = []
+MAX = 4
+x += 1
+def f():
+    local = 1
+class C:
+    attr = 2
+";
+        let mut t = SyntaxTree::new(Lang::Python);
+        t.parse(src);
+        let v: Vec<(String, usize)> = t.module_variables(src).into_iter().map(|o| (o.name, o.line)).collect();
+        assert_eq!(v, [("MAX".to_string(), 1), ("a".to_string(), 2), ("b".to_string(), 2)]);
     }
 
     #[test]

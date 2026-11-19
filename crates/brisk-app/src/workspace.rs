@@ -2072,6 +2072,7 @@ impl Workspace {
                 brisk_syntax::OutlineKind::Class => ("C", gpui::rgb(0x6c9be8)),
                 brisk_syntax::OutlineKind::Function => ("f", gpui::rgb(0xe0a85a)),
                 brisk_syntax::OutlineKind::Method => ("m", gpui::rgb(0xcf8e6d)),
+                brisk_syntax::OutlineKind::Variable => ("v", gpui::rgb(0x9876aa)),
             };
             let ed = ed.clone();
             let line = it.line;
@@ -2555,6 +2556,7 @@ impl Workspace {
             Target::Project(_) => ("▣", gpui::rgb(0x4b8bbe).into()),
             Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Class) => ("C", gpui::rgb(0x4b8bbe).into()),
             Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Method) => ("m", gpui::rgb(0xe0a85a).into()),
+            Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Variable) => ("v", gpui::rgb(0x9876aa).into()),
             Target::Symbol(..) => ("ƒ", gpui::rgb(0xb07fd5).into()),
             Target::FileDo(_) => ("✓", Theme::file_added()),
             Target::Bookmark(..) | Target::Mnemonic(_) => ("▮", Theme::bookmark()),

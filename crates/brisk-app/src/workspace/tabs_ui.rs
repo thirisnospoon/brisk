@@ -329,6 +329,7 @@ impl Workspace {
                 brisk_syntax::OutlineKind::Class => ("C", gpui::rgb(0x4b8bbe).into()),
                 brisk_syntax::OutlineKind::Method => ("m", gpui::rgb(0xe0a85a).into()),
                 brisk_syntax::OutlineKind::Function => ("ƒ", gpui::rgb(0xb07fd5).into()),
+                brisk_syntax::OutlineKind::Variable => ("v", gpui::rgb(0x9876aa).into()),
             };
             let ed = e.clone();
             row = row.child(crate::icons::icon("chevron-right", 10., Theme::text_dim())).child(
