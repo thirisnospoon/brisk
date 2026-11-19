@@ -45,6 +45,7 @@ mod doc_view;
 mod scroll;
 mod motion;
 mod sticky;
+mod guides;
 pub mod templates;
 pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
@@ -91,6 +92,8 @@ pub struct Editor {
     motion: motion::Motion,
     /// Headers of the enclosing blocks pinned at the top (editor/sticky.rs).
     sticky: sticky::Sticky,
+    /// The caret's block for the brighter indent guide (editor/guides.rs).
+    guides: guides::Guides,
     /// (buffer version, longest line in chars): the horizontal scroll range.
     max_line: (u64, usize),
     big: big::BigFile,
@@ -311,6 +314,7 @@ impl Editor {
             scroll_x: 0.0,
             motion: Default::default(),
             sticky: Default::default(),
+            guides: Default::default(),
             max_line: (u64::MAX, 0),
             big: Default::default(),
             occ: Default::default(),
@@ -389,6 +393,7 @@ impl Editor {
             scroll_x: 0.0,
             motion: Default::default(),
             sticky: Default::default(),
+            guides: Default::default(),
             max_line: (u64::MAX, 0),
             big: Default::default(),
             occ: Default::default(),
@@ -1591,6 +1596,7 @@ impl Element for EditorElement {
             ed.sync_bookmarks();
             ed.refresh_run_marks(cx);
             ed.update_sticky();
+            ed.update_guides();
             let h = if ed.show_gutter {
                 ed.fold_headers()
             } else {
@@ -1859,14 +1865,18 @@ impl Element for EditorElement {
                 under.push(fill(Bounds::from_corners(point(a, y_of(*l) + px(1.)), point(z, y_of(*l) + lh - px(1.))), Theme::diff_modified_word_bg()).corner_radii(px(3.)));
             }
         }
-        // Indent guides: one at each enclosing indentation level (columns 0, 4, 8, ...).
+        // Indent guides (editor/guides.rs): one at each enclosing block's level, none of their
+        // own on continuation lines, kept through blank lines; the caret's block brighter.
         let unit = b.indent_unit.chars().count().max(1);
+        let scale = window.scale_factor();
         for &l in rows.iter() {
-            let t = b.line(l);
-            let ws = if t.trim().is_empty() { 0 } else { t.chars().take_while(|c| *c == ' ').count() };
+            let ws = ed.guide_indent(l);
             for c in (0..ws).step_by(unit) {
-                let x = text_x + pp.char_w * c as f32;
-                under.push(fill(Bounds::new(point(x, y_of(l)), size(px(1.), lh)), Theme::indent_guide()));
+                // Snapped to a device pixel so the 1-px line stays crisp.
+                let x = px((f32::from(text_x + pp.char_w * c as f32) * scale).round() / scale);
+                let active = ed.guides.active.is_some_and(|(col, a, z)| col == c && (a..=z).contains(&l));
+                let color = if active { Theme::indent_guide_active() } else { Theme::indent_guide() };
+                under.push(fill(Bounds::new(point(x, y_of(l)), size(px(1. / scale), lh)), color));
             }
         }
         // The right margin (PyCharm's "Hard wrap at" column), a thin line across the text area.
