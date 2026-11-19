@@ -671,6 +671,7 @@ impl Workspace {
                         .when(focused, |d| d.child(div().w(px(1.5)).h(ui_px(16.)).bg(Theme::caret())))
                         .into_any_element()
                 })
+                .when(focused, |d| d.child(crate::ui_kit::focus_ring(crate::ui_kit::RADIUS, 0.)))
         };
 
         let header = div()

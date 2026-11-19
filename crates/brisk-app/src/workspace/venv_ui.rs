@@ -151,8 +151,7 @@ impl Workspace {
                 .cursor_pointer()
                 .when(primary, |d| d.bg(Theme::accent()).text_color(gpui::white()))
                 .when(!primary, |d| d.border_1().border_color(Theme::border()))
-                .hover(|s| s.opacity(0.9))
-                .active(|s| s.bg(Theme::press()))
+                .map(|d| crate::ui_kit::button_states(d, primary))
                 .child(label)
                 .child(track(if primary { 0 } else { 1 }))
         };

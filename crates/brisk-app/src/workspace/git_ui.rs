@@ -1178,7 +1178,7 @@ impl Workspace {
                 .cursor_pointer()
                 .when(primary, |d| d.bg(Theme::accent()))
                 .when(!primary, |d| d.border_1().border_color(Theme::divider()))
-                .hover(|s| s.opacity(0.85))
+                .map(|d| crate::ui_kit::button_states(d, primary))
                 .child(label)
                 .on_click(cx.listener(move |this, _, window, cx| this.do_commit(push, window, cx)))
         };

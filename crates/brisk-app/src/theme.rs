@@ -36,6 +36,11 @@ impl Theme {
     pub fn inlay_fg() -> Hsla { ui("inlay_fg", 0x8c8f99, 0x6c707e) }
     /// A button while the mouse is pressed on it.
     pub fn press() -> Hsla { ui("press", 0x43454a, 0xd3d5db) }
+    /// The keyboard focus ring around a field, button or checkbox (2 px).
+    pub fn focus_ring() -> Hsla { ui("focus_ring", 0x3574f0, 0x3574f0) }
+    /// A filled (default) button under the pointer and while pressed.
+    pub fn accent_hover() -> Hsla { ui("accent_hover", 0x3369d6, 0x315fbd) }
+    pub fn accent_press() -> Hsla { ui("accent_press", 0x2f5fc4, 0x2b55a8) }
     pub fn excluded() -> Hsla { pick(0xc77c32, 0xb35f00) }
     pub fn modified() -> Hsla { ui("modified", 0x6c9be8, 0x0a50a1) }
     /// The background of warning banners (file changed on disk).
