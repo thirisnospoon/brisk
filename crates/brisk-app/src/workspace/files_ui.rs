@@ -133,7 +133,7 @@ fn under(p: &Path, base: &Path) -> bool {
 }
 
 impl Workspace {
-    fn selected_path(&self) -> Option<(NodeId, PathBuf, bool)> {
+    pub(super) fn selected_path(&self) -> Option<(NodeId, PathBuf, bool)> {
         let id = self.tree_selected?;
         let n = self.tree.nodes.get(id)?;
         Some((id, n.path.clone(), n.is_dir))

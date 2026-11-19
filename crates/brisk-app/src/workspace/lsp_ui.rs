@@ -1112,7 +1112,7 @@ impl Workspace {
 }
 
 /// `.py` / `.pyi` files under `dir`, skipping hidden folders (`.venv`, `.git`) and caches.
-fn python_files_under(dir: &Path) -> Vec<PathBuf> {
+pub(super) fn python_files_under(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {

@@ -803,7 +803,101 @@ impl Workspace {
 
     /// Ctrl+Alt+L (the selected lines, else the file), Ctrl+Alt+O and Code Cleanup (every safe
     /// ruff fix in the file, PyCharm's "fix all problems"), with ruff.
+    /// Reformat Code / Optimize Imports with a folder or file selected in the Project tree, as
+    /// in PyCharm: every Python file under it, open ones in their editors (one undo step each),
+    /// the rest on disk; ruff runs off the UI thread. False when the tree is not focused.
+    fn format_tree_action(&mut self, action: brisk_keymap::Action, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        use brisk_keymap::Action as A;
+        if !matches!(action, A::ReformatCode | A::OptimizeImports) || !self.tree_focus.is_focused(window) {
+            return false;
+        }
+        let Some((_, path, _)) = self.selected_path() else { return false };
+        let reformat = action == A::ReformatCode;
+        let title = if reformat { "Reformat Code" } else { "Optimize Imports" };
+        let files: Vec<PathBuf> = if path.is_dir() {
+            super::lsp_ui::python_files_under(&path)
+        } else if matches!(path.extension().and_then(|e| e.to_str()), Some("py" | "pyi")) {
+            vec![path.clone()]
+        } else {
+            Vec::new()
+        };
+        if files.is_empty() {
+            self.status = format!("{title}: no Python files in {}", path.display());
+            cx.notify();
+            return true;
+        }
+        let Some(ruff) = self.ruff() else {
+            self.show_toast("ruff not found: install it in the project interpreter (pip install ruff)".into(), true, cx);
+            return true;
+        };
+        let open: HashMap<PathBuf, String> = self.editors().filter_map(|e| Some((e.read(cx).path.clone()?, e.read(cx).text_string()))).collect();
+        let inputs: Vec<(PathBuf, String, bool)> = files
+            .into_iter()
+            .filter_map(|f| match open.get(&f) {
+                Some(t) => Some((f, t.clone(), true)),
+                None => std::fs::read_to_string(&f).ok().map(|t| (f, t, false)),
+            })
+            .collect();
+        let total = inputs.len();
+        let root = self.root.clone();
+        let task = cx.background_executor().spawn(async move {
+            inputs
+                .into_iter()
+                .filter_map(|(f, text, open)| {
+                    let out = if reformat { brisk_lint::format_text(&ruff, &root, &f, &text, None) } else { brisk_lint::optimize_imports(&ruff, &root, &f, &text) }.ok()?;
+                    (!out.is_empty() && out != text).then_some((f, text, out, open))
+                })
+                .collect::<Vec<_>>()
+        });
+        self.status = format!("{title}: {total} file(s)…");
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let changed = task.await;
+            let _ = this.update(cx, |this, cx| {
+                let mut on_disk = Vec::new();
+                let mut n = 0;
+                for (f, before, out, open) in changed {
+                    let ed = this.editors().find(|e| e.read(cx).path.as_deref() == Some(f.as_path())).cloned();
+                    // Skip a file that changed meanwhile.
+                    let now = match &ed {
+                        Some(e) if open => e.read(cx).text_string(),
+                        None if !open => std::fs::read_to_string(&f).unwrap_or_default(),
+                        _ => continue,
+                    };
+                    if now != before {
+                        continue;
+                    }
+                    crate::local_history::record(&f, &before.replace("\r\n", "\n"), crate::local_history::Label::BeforeReformat);
+                    match ed {
+                        Some(e) => e.update(cx, |e, cx| e.replace_all_text(&out, cx)),
+                        None if std::fs::write(&f, &out).is_ok() => on_disk.push(f),
+                        None => continue,
+                    }
+                    n += 1;
+                }
+                if let (Some(ty), false) = (&this.lsp.ty, on_disk.is_empty()) {
+                    ty.files_changed(&on_disk);
+                }
+                let msg = match (reformat, n) {
+                    (_, 0) if reformat => format!("No changes: {total} file(s) already formatted"),
+                    (_, 0) => format!("Imports are already optimized in {total} file(s)"),
+                    (true, _) => format!("Reformatted {n} of {total} file(s) (ruff)"),
+                    (false, _) => format!("Optimized imports in {n} of {total} file(s)"),
+                };
+                this.status = msg.clone();
+                this.show_toast(msg, false, cx);
+                this.refresh_git(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        true
+    }
+
     pub(super) fn format_action(&mut self, action: brisk_keymap::Action, window: &mut Window, cx: &mut Context<Self>) {
+        if self.format_tree_action(action, window, cx) {
+            return;
+        }
         let Some(ed) = self.focused_editor(window, cx).or_else(|| self.active_editor().cloned()) else { return };
         let (path, python) = {
             let e = ed.read(cx);

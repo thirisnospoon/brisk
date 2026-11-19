@@ -138,10 +138,54 @@ impl Workspace {
                     eprintln!("smoke-edit2: {key} inserted -> {:?}", t.lines().skip(13).collect::<Vec<_>>());
                 });
             }
+            // Optimize Imports (Ctrl+Alt+O) on a folder in the Project tree: isort groups,
+            // `__future__` first, `# noqa` kept; an open file changes in its editor, a closed
+            // one on disk.
             let _ = this.update_in(cx, |this, window, cx| {
                 this.refactor_smoke(window, cx);
-                this.edit2_rest(window, cx);
+                let (oi, pkg) = (this.root.join("oi"), this.root.join("mypkg"));
+                let _ = std::fs::create_dir_all(oi.join("sub"));
+                let _ = std::fs::create_dir_all(&pkg);
+                let _ = std::fs::write(pkg.join("__init__.py"), "helper = 1\n");
+                let _ = std::fs::write(oi.join("a.py"), "\"\"\"Doc.\"\"\"\nfrom __future__ import annotations\nimport sys\nimport requests\nimport os, json\nfrom mypkg import helper\nfrom . import sibling\nimport re  # noqa\nfrom typing import List\nfrom typing import Dict\nx: Dict = {}\nprint(os.sep, requests, helper, sibling)\n");
+                let _ = std::fs::write(oi.join("sub").join("b.py"), "import sys\nimport os\nprint(os.sep)\n");
+                let _ = std::fs::write(oi.join("notes.txt"), "import sys\n");
+                this.open_file(&oi.join("a.py"), window, cx);
+                this.reindex_files(cx);
             });
+            for _ in 0..50 {
+                if this.read_with(cx, |this, _| this.files.as_ref().is_some_and(|f| f.files.iter().any(|f| f == "oi/sub/b.py"))).unwrap_or(true) {
+                    break;
+                }
+                bg.timer(std::time::Duration::from_millis(100)).await;
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.left = Some(super::LeftTool::Project);
+                this.tree.reload(0);
+                this.tree_selected = this.tree.reveal(&this.root.join("oi"));
+                window.focus(&this.tree_focus);
+                cx.notify();
+            });
+            bg.timer(std::time::Duration::from_millis(300)).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                eprintln!("smoke-edit2: tree focused {}", this.tree_focus.is_focused(window));
+                this.status.clear();
+                this.smoke_press("ctrl-alt-o", window, cx);
+            });
+            for _ in 0..100 {
+                if this.read_with(cx, |this, _| this.status.starts_with("Optimized imports in") || this.status.starts_with("Imports are")).unwrap_or(true) {
+                    break;
+                }
+                bg.timer(std::time::Duration::from_millis(100)).await;
+            }
+            let _ = this.update_in(cx, |this, _, cx| {
+                let a = this.active_editor().map(|e| e.read(cx).text_string()).unwrap_or_default();
+                let b = std::fs::read_to_string(this.root.join("oi").join("sub").join("b.py")).unwrap_or_default();
+                eprintln!("smoke-edit2: tree optimize imports -> {:?}", this.status);
+                eprintln!("smoke-edit2: tree optimize a.py (editor, dirty {}) {:?}", this.active_editor().is_some_and(|e| e.read(cx).buffer.is_dirty()), a.lines().collect::<Vec<_>>());
+                eprintln!("smoke-edit2: tree optimize sub/b.py (disk) {:?}", b.lines().collect::<Vec<_>>());
+            });
+            let _ = this.update_in(cx, |this, window, cx| this.edit2_rest(window, cx));
         })
         .detach();
     }
