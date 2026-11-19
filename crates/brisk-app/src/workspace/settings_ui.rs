@@ -1,4 +1,4 @@
-//! Settings dialog (Ctrl+Alt+S): theme, editor font, font size, line spacing, inlay hints; font zoom
+//! Settings dialog (Ctrl+Alt+S): theme, editor font, font size, line spacing, inlay hints, editor tabs, actions on save; font zoom
 //! (Alt+Shift+. / Alt+Shift+, / Ctrl+wheel) and the quick theme switch.
 
 use crate::theme::ui_px;
@@ -195,31 +195,35 @@ impl Workspace {
                 cx.notify();
             })))
             .into_any_element();
-        let on = s.inlay_hints;
-        let inlay = div()
-            .id("set-inlay")
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .cursor_pointer()
-            .child(
-                div()
-                    .size(ui_px(16.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(3.))
-                    .border_1()
-                    .border_color(if on { Theme::accent() } else { Theme::divider() })
-                    .when(on, |x| x.bg(Theme::accent()).child(crate::icons::ui_icon("check-bold", 12., gpui::white()))),
-            )
-            .child("Show inlay hints")
-            .child(div().text_color(Theme::text_dim()).child("(inferred types, parameter names)"))
-            .on_click(cx.listener(|this, _, w, cx| {
-                this.settings_edit(|s| s.inlay_hints = !s.inlay_hints, w);
-                cx.notify();
-            }))
-            .into_any_element();
+        let checkbox = |id: &'static str, on: bool, label: &'static str, note: &'static str, flip: fn(&mut Settings), cx: &mut Context<Self>| {
+            div()
+                .id(id)
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .cursor_pointer()
+                .child(
+                    div()
+                        .size(ui_px(16.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(3.))
+                        .border_1()
+                        .border_color(if on { Theme::accent() } else { Theme::divider() })
+                        .when(on, |x| x.bg(Theme::accent()).child(crate::icons::ui_icon("check-bold", 12., gpui::white()))),
+                )
+                .child(label)
+                .when(!note.is_empty(), |x| x.child(div().text_color(Theme::text_dim()).child(note)))
+                .on_click(cx.listener(move |this, _, w, cx| {
+                    this.settings_edit(flip, w);
+                    cx.notify();
+                }))
+                .into_any_element()
+        };
+        let inlay = checkbox("set-inlay", s.inlay_hints, "Show inlay hints", "(inferred types, parameter names)", |s| s.inlay_hints = !s.inlay_hints, cx);
+        let reformat = checkbox("set-reformat", s.reformat_on_save, "Reformat code", "(ruff format)", |s| s.reformat_on_save = !s.reformat_on_save, cx);
+        let imports = checkbox("set-imports", s.optimize_imports_on_save, "Optimize imports", "(ruff: unused, sorted)", |s| s.optimize_imports_on_save = !s.optimize_imports_on_save, cx);
         let preview = div()
             .mt(px(6.))
             .p(px(10.))
@@ -286,6 +290,9 @@ impl Workspace {
                         .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › EDITOR TABS"))
                         .child(row("Show tabs in", tab_rows))
                         .child(row("Tab limit", tab_limit))
+                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("TOOLS › ACTIONS ON SAVE"))
+                        .child(row("", reformat))
+                        .child(row("", imports))
                         .child(
                             div()
                                 .pt(px(12.))

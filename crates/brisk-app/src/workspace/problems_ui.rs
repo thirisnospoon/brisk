@@ -735,6 +735,42 @@ impl Workspace {
 }
 
 impl Workspace {
+    /// Settings › Tools › Actions on Save, as in PyCharm: Optimize imports, then Reformat code,
+    /// on the modified Python files about to be saved (Ctrl+S and the autosave on leaving the
+    /// window). A file ruff cannot parse is saved as it is.
+    pub(super) fn actions_on_save(&mut self, cx: &mut Context<Self>) {
+        let s = crate::settings::current();
+        if !s.reformat_on_save && !s.optimize_imports_on_save {
+            return;
+        }
+        let eds: Vec<_> = self
+            .editors()
+            .filter(|e| {
+                let e = e.read(cx);
+                e.buffer.is_dirty() && e.is_python() && e.path.is_some() && e.read_error.is_none() && e.disk_conflict.is_none()
+            })
+            .cloned()
+            .collect();
+        if eds.is_empty() {
+            return;
+        }
+        let Some(ruff) = self.ruff() else { return };
+        for ed in eds {
+            let (Some(path), text) = ({ let e = ed.read(cx); (e.path.clone(), e.text_string()) }) else { continue };
+            let mut out = text.clone();
+            let keep = |r: Result<String, String>, cur: &str| r.ok().filter(|t| !t.is_empty() || cur.is_empty());
+            if s.optimize_imports_on_save {
+                out = keep(brisk_lint::optimize_imports(&ruff, &self.root, &path, &out), &out).unwrap_or(out);
+            }
+            if s.reformat_on_save {
+                out = keep(brisk_lint::format_text(&ruff, &self.root, &path, &out, None), &out).unwrap_or(out);
+            }
+            if out.replace("\r\n", "\n") != text.replace("\r\n", "\n") {
+                ed.update(cx, |e, cx| e.replace_all_text(&out, cx));
+            }
+        }
+    }
+
     /// Ctrl+Alt+L (the selected lines, else the file) and Ctrl+Alt+O, with ruff.
     pub(super) fn format_action(&mut self, action: brisk_keymap::Action, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ed) = self.focused_editor(window, cx).or_else(|| self.active_editor().cloned()) else { return };
@@ -774,9 +810,7 @@ impl Workspace {
             Ok(out) => {
                 let changed = out.replace("\r\n", "\n") != text.replace("\r\n", "\n");
                 if changed {
-                    crate::local_history::record(&path, &text.replace("
-", "
-"), crate::local_history::Label::BeforeReformat);
+                    crate::local_history::record(&path, &text.replace("\r\n", "\n"), crate::local_history::Label::BeforeReformat);
                     ed.update(cx, |e, cx| e.replace_all_text(&out, cx));
                 }
                 if reformat {

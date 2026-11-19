@@ -137,6 +137,16 @@ impl Workspace {
         eprintln!("smoke-edit2: reformat file -> {:?} | status {:?}", ed.read(cx).text_string(), self.status);
         self.dispatch(Action::Undo, window, cx);
         eprintln!("smoke-edit2: undo -> back to the selection format: {}", ed.read(cx).text_string().contains("x=f(1,2)"));
+        // Actions on Save: Optimize imports + Reformat code on Ctrl+S.
+        let mut s = crate::settings::current();
+        (s.reformat_on_save, s.optimize_imports_on_save) = (true, true);
+        crate::settings::apply(&s);
+        ed.update(cx, |e, cx| e.replace_all_text("import sys\nimport os\nx=os.sep\n", cx));
+        self.dispatch(Action::SaveAll, window, cx);
+        let disk = std::fs::read_to_string(&file).unwrap_or_default();
+        eprintln!("smoke-edit2: actions on save -> disk {disk:?}, dirty {}", ed.read(cx).buffer.is_dirty());
+        (s.reformat_on_save, s.optimize_imports_on_save) = (false, false);
+        crate::settings::apply(&s);
     }
 
     fn edit2_rest(&mut self, window: &mut Window, cx: &mut Context<Self>) {

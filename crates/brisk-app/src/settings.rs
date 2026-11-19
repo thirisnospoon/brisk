@@ -30,11 +30,14 @@ pub struct Settings {
     pub ui_font_size: f32,
     /// View › Appearance › Zoom IDE (Ctrl+Alt+= / Ctrl+Alt+- / Ctrl+Alt+0): 1.0 = 100%.
     pub ui_zoom: f32,
+    /// Tools › Actions on Save (PyCharm): Reformat code and Optimize imports, with ruff.
+    pub reformat_on_save: bool,
+    pub optimize_imports_on_save: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false, ui_font_size: DEFAULT_UI_FONT_SIZE, ui_zoom: 1.0 }
+        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false, ui_font_size: DEFAULT_UI_FONT_SIZE, ui_zoom: 1.0, reformat_on_save: false, optimize_imports_on_save: false }
     }
 }
 
@@ -96,6 +99,12 @@ pub fn load() -> Settings {
             if let Some(n) = v.get("ui_font_size").and_then(|t| t.as_f64()) {
                 s.ui_font_size = (n as f32).clamp(MIN_UI_FONT_SIZE, MAX_UI_FONT_SIZE);
             }
+            if let Some(b) = v.get("reformat_on_save").and_then(|t| t.as_bool()) {
+                s.reformat_on_save = b;
+            }
+            if let Some(b) = v.get("optimize_imports_on_save").and_then(|t| t.as_bool()) {
+                s.optimize_imports_on_save = b;
+            }
             if let Some(n) = v.get("ui_zoom").and_then(|t| t.as_f64()) {
                 s.ui_zoom = (n as f32).clamp(MIN_UI_ZOOM, MAX_UI_ZOOM);
             }
@@ -133,6 +142,8 @@ pub fn save(s: &Settings) -> std::io::Result<()> {
         "tab_rows": s.tab_rows,
         "ui_font_size": (s.ui_font_size as f64 * 10.0).round() / 10.0,
         "ui_zoom": (s.ui_zoom as f64 * 100.0).round() / 100.0,
+        "reformat_on_save": s.reformat_on_save,
+        "optimize_imports_on_save": s.optimize_imports_on_save,
     });
     let p = path();
     if let Some(d) = p.parent() {

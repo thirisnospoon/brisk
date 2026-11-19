@@ -858,6 +858,7 @@ impl Workspace {
     }
 
     fn save_all(&mut self, cx: &mut Context<Self>) {
+        self.actions_on_save(cx);
         let mut saved = 0;
         let mut saved_paths = Vec::new();
         let mut problem = None;
