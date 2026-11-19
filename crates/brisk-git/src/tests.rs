@@ -167,6 +167,23 @@ fn log_filters() {
     assert_eq!(subjects(&by_hash), vec!["Add parser"]);
     let authors = repo.authors().unwrap();
     assert!(authors.contains(&"Bob".to_string()) && authors.contains(&"Test".to_string()), "{authors:?}");
+    // Paths and Date: an old commit of another file.
+    fs::write(d.join("old.py"), "o = 1
+").unwrap();
+    sh(&d, &["add", "old.py"]);
+    let out = git_cmd()
+        .arg("-C")
+        .arg(&d)
+        .args(["commit", "-q", "-m", "Old file"])
+        .env("GIT_AUTHOR_DATE", "2020-01-01T10:00:00")
+        .env("GIT_COMMITTER_DATE", "2020-01-01T10:00:00")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let path = LogQuery { path: Some("old.py".into()), ..Default::default() };
+    assert_eq!(subjects(&path), vec!["Old file"]);
+    let recent = LogQuery { since_days: Some(30), ..Default::default() };
+    assert_eq!(subjects(&recent), vec!["Fix PARSER bug", "Add parser"]);
     let _ = fs::remove_dir_all(&d);
 }
 

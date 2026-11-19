@@ -1,5 +1,6 @@
-//! Filters of the Git log: a text field (message or hash), Branch and User popups. The log
-//! is reloaded through `git log` with the filters, so the graph follows the filtered list.
+//! Filters of the Git log: a text field (message or hash), Branch, User, Date and Paths
+//! popups. The log is reloaded through `git log` with the filters, so the graph follows the
+//! filtered list.
 
 use crate::theme::ui_px;
 use super::menu_ui::Entry;
@@ -34,8 +35,9 @@ impl LogFilter {
 }
 
 thread_local! {
-    /// Where the Branch and User chips were painted (window pixels): smoke clicks aim here.
-    pub static CHIP_BOUNDS: std::cell::RefCell<[Option<gpui::Bounds<gpui::Pixels>>; 2]> = const { std::cell::RefCell::new([None, None]) };
+    /// Where the Branch, User, Date and Paths chips were painted (window pixels): smoke clicks
+    /// aim here.
+    pub static CHIP_BOUNDS: std::cell::RefCell<[Option<gpui::Bounds<gpui::Pixels>>; 4]> = const { std::cell::RefCell::new([None; 4]) };
 }
 
 /// A canvas filling its parent that records the parent's bounds in `CHIP_BOUNDS[i]`.
@@ -81,6 +83,22 @@ impl Workspace {
     pub(super) fn set_log_author(&mut self, author: Option<String>, cx: &mut Context<Self>) {
         if let Some(g) = self.git.as_mut() {
             g.filter.query.author = author;
+        }
+        self.refresh_git(cx);
+        cx.notify();
+    }
+
+    pub(super) fn set_log_since(&mut self, days: Option<u32>, cx: &mut Context<Self>) {
+        if let Some(g) = self.git.as_mut() {
+            g.filter.query.since_days = days;
+        }
+        self.refresh_git(cx);
+        cx.notify();
+    }
+
+    pub(super) fn set_log_path(&mut self, path: Option<String>, cx: &mut Context<Self>) {
+        if let Some(g) = self.git.as_mut() {
+            g.filter.query.path = path;
         }
         self.refresh_git(cx);
         cx.notify();
@@ -178,6 +196,61 @@ impl Workspace {
         self.open_menu(pos, v, cx);
     }
 
+    /// PyCharm's Date filter: All, Last 24 hours, Last 7 days, and so on.
+    pub(super) fn date_filter_menu(&mut self, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+        let Some(g) = self.git.as_ref() else { return };
+        let cur = g.filter.query.since_days;
+        let v = DATES
+            .iter()
+            .map(|&(label, days)| Entry::Item {
+                label: if cur == days { format!("✓ {label}") } else { format!("   {label}") },
+                shortcut: String::new(),
+                enabled: true,
+                run: Rc::new(move |this: &mut Workspace, _, cx| this.set_log_since(days, cx)),
+            })
+            .collect();
+        self.open_menu(pos, v, cx);
+    }
+
+    /// The Paths filter: the active file, its folder, the project's top-level folders.
+    pub(super) fn path_filter_menu(&mut self, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+        let Some(g) = self.git.as_ref() else { return };
+        let cur = g.filter.query.path.clone();
+        let item = |label: String, value: Option<String>| Entry::Item {
+            label: if cur == value { format!("✓ {label}") } else { format!("   {label}") },
+            shortcut: String::new(),
+            enabled: true,
+            run: Rc::new(move |this: &mut Workspace, _, cx| this.set_log_path(value.clone(), cx)),
+        };
+        let mut v = vec![item("All".into(), None), Entry::Separator];
+        let file = self.active_editor().and_then(|e| e.read(cx).path.clone()).and_then(|p| g.repo.rel(&p));
+        let mut shown: Vec<String> = Vec::new();
+        if let Some(f) = file {
+            if let Some((dir, _)) = f.rsplit_once('/') {
+                shown.push(format!("{dir}/"));
+            }
+            shown.insert(0, f);
+        }
+        // The chosen path stays in the list even when it is none of the others.
+        if let Some(c) = cur.clone().filter(|c| !shown.contains(c)) {
+            shown.push(c);
+        }
+        let mut dirs: Vec<String> = std::fs::read_dir(g.repo.root())
+            .map(|rd| rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| !n.starts_with('.')).map(|n| format!("{n}/")).collect())
+            .unwrap_or_default();
+        dirs.sort_by_key(|d| d.to_lowercase());
+        let n = shown.len();
+        dirs.retain(|d| !shown.contains(d));
+        shown.extend(dirs.into_iter().take(30));
+        for (i, p) in shown.into_iter().enumerate() {
+            if i == n && i > 0 {
+                v.push(Entry::Separator);
+            }
+            v.push(item(p.clone(), Some(p)));
+        }
+        self.open_menu(pos, v, cx);
+    }
+
     /// The filter bar in the Git log header.
     pub(super) fn render_log_filters(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let Some(g) = self.git.as_ref() else { return div().into_any_element() };
@@ -216,6 +289,23 @@ impl Workspace {
             .relative()
             .child(track(1))
             .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| this.author_filter_menu(e.position, cx)));
+        let date_label = DATES.iter().find(|d| d.1 == q.since_days).map_or("All", |d| d.0);
+        let date = chip("log-filter-date", format!("Date: {date_label}"), q.since_days.is_some())
+            .child(crate::icons::ui_icon("chevron-down", 12., Theme::text_muted()))
+            .relative()
+            .child(track(2))
+            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| this.date_filter_menu(e.position, cx)));
+        let path_label = match q.path.as_deref() {
+            None => "All".to_string(),
+            // Long paths: the end of them.
+            Some(p) if p.chars().count() > 28 => format!("…{}", p.chars().rev().take(27).collect::<Vec<_>>().into_iter().rev().collect::<String>()),
+            Some(p) => p.to_string(),
+        };
+        let paths = chip("log-filter-path", format!("Paths: {path_label}"), q.path.is_some())
+            .child(crate::icons::ui_icon("chevron-down", 12., Theme::text_muted()))
+            .relative()
+            .child(track(3))
+            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| this.path_filter_menu(e.position, cx)));
         div()
             .flex()
             .items_center()
@@ -223,9 +313,14 @@ impl Workspace {
             .child(field)
             .child(branch)
             .child(user)
+            .child(date)
+            .child(paths)
             .when(!q.is_empty(), |d| {
                 d.child(chip("log-filter-clear", "✕".into(), false).on_click(cx.listener(|this, _, w, cx| this.clear_log_filters(w, cx))))
             })
             .into_any_element()
     }
 }
+
+/// The Date filter's choices (PyCharm's list), as days back.
+const DATES: [(&str, Option<u32>); 6] = [("All", None), ("Last 24 hours", Some(1)), ("Last 7 days", Some(7)), ("Last 30 days", Some(30)), ("Last 90 days", Some(90)), ("Last year", Some(365))];

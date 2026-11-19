@@ -458,6 +458,23 @@ impl Workspace {
         });
         pause(bg, 1200).await;
         let _ = this.update(cx, |this, _| eprintln!("smoke-gitx: log filters cleared -> {} commits", subjects(this).len()));
+        // Date (clicks): the smoke's commits are dated 2024, so the last 30 days have none.
+        Self::smoke_pick(this, cx, bg, 2, "Last 30 days").await;
+        let _ = this.update(cx, |this, _| eprintln!("smoke-gitx: log date last 30 days (clicks) -> {:?}", subjects(this)));
+        Self::smoke_pick(this, cx, bg, 2, "All").await;
+        // Paths: the menu, then one file's history.
+        let _ = this.update(cx, |this, cx| {
+            this.path_filter_menu(gpui::point(gpui::px(600.), gpui::px(500.)), cx);
+            eprintln!("smoke-gitx: paths menu -> {:?}", this.menu_labels());
+            this.menu = None;
+            this.set_log_path(Some("merge.py".into()), cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-gitx: log path merge.py -> {:?}", subjects(this));
+            this.clear_log_filters(window, cx);
+        });
+        pause(bg, 1200).await;
     }
 
     async fn smoke_compare(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {

@@ -11,7 +11,9 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
-const LOG_LIMIT: usize = 3000;
+/// Commits the Git log loads (git log, parsing and the graph run off the UI thread; the
+/// list draws only the rows on screen).
+const LOG_LIMIT: usize = 20_000;
 const LOG_ROW_H: f32 = 24.0;
 const LANE_W: f32 = 14.0;
 
@@ -339,7 +341,11 @@ impl Workspace {
         let task = cx.background_executor().spawn(async move {
             let st = repo.status();
             let br = repo.branches().unwrap_or_default();
-            let log = want_log.then(|| repo.log_query(LOG_LIMIT, &query).unwrap_or_default());
+            let log = want_log.then(|| {
+                let log = repo.log_query(LOG_LIMIT, &query).unwrap_or_default();
+                let graph = brisk_git::layout(log.iter().map(|c| (c.hash.as_str(), c.parents.as_slice())));
+                (log, graph)
+            });
             (st, br, log, query)
         });
         cx.spawn(async move |this, cx| {
@@ -353,7 +359,7 @@ impl Workspace {
         .detach();
     }
 
-    fn apply_git(&mut self, st: brisk_git::Result<Status>, br: Vec<Branch>, log: Option<Vec<Commit>>, cx: &mut Context<Self>) {
+    fn apply_git(&mut self, st: brisk_git::Result<Status>, br: Vec<Branch>, log: Option<(Vec<Commit>, Vec<GraphRow>)>, cx: &mut Context<Self>) {
         crate::stall::note("apply git status");
         let Some(g) = self.git.as_mut() else { return };
         g.refreshing = false;
@@ -375,9 +381,9 @@ impl Workspace {
             Err(e) => self.status = format!("git: {e}"),
         }
         g.branches = br;
-        if let Some(log) = log {
+        if let Some((log, graph)) = log {
             let sel_hash = g.log_selected.and_then(|i| g.log.get(i)).map(|c| c.hash.clone());
-            g.graph = brisk_git::layout(log.iter().map(|c| (c.hash.as_str(), c.parents.as_slice())));
+            g.graph = graph;
             let lanes = g.graph.iter().map(|r| r.width).max().unwrap_or(1).min(16);
             g.graph_w = lanes as f32 * LANE_W + 8.;
             g.log = log;
