@@ -2,6 +2,9 @@
 //! Ctrl+End / Ctrl+Home, Go to Line, an arrow key at the edge, smooth scrolling off), the
 //! caret's fading blink (and how many frames an idle second costs) and the smooth caret
 //! movement setting. Prints one line per check; `=hold` leaves the window open.
+//! BRISK_SMOKE_PALETTE: a selection over three lines, find hits and a bracket match (all
+//! rounded) and the caret block's indent guide; `=hold` leaves them on screen, `=caret` holds
+//! with a plain caret at a bracket (bracket match and identifier occurrences).
 
 use super::Workspace;
 use crate::editor::Editor;
@@ -245,6 +248,37 @@ impl Workspace {
             eprintln!("smoke-sticky: setting off -> {s:?}");
             crate::settings::apply(&crate::settings::Settings::default());
             eprintln!("smoke-sticky: done");
+            let _ = this.update(cx, |_, cx| cx.quit());
+        })
+        .detach();
+    }
+
+    pub(super) fn palette_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let file = self.root.join("palette.py");
+        let text = long_python();
+        let _ = std::fs::write(&file, &text);
+        self.open_file(&file, window, cx);
+        let anchor = text.find("value, *args").unwrap_or(0);
+        let head = text.find("range(value)").map_or(0, |i| i + 5);
+        let mode = std::env::var("BRISK_SMOKE_PALETTE").unwrap_or_default();
+        // `=caret`: a plain caret at the bracket instead (bracket match and occurrences show).
+        let anchor = if mode == "caret" { head } else { anchor };
+        let hold = mode == "hold" || mode == "caret";
+        cx.spawn_in(window, async move |this, cx| {
+            let bg = cx.background_executor().clone();
+            bg.timer(Duration::from_millis(800)).await;
+            let Ok(Some(ed)) = this.update(cx, |t, _| t.active_editor().cloned()) else { return };
+            let _ = cx.update(|window, cx| ed.update(cx, |e, cx| e.find_for_smoke("total", window, cx)));
+            bg.timer(Duration::from_millis(300)).await;
+            let _ = cx.update(|window, cx| ed.update(cx, |e, cx| e.select_for_smoke(anchor, head, window, cx)));
+            bg.timer(Duration::from_millis(300)).await;
+            let (hits, guide, marks) = ed.update(cx, |e, _| (e.find_hits_for_smoke(), e.active_guide_for_smoke(), e.caret_marks_for_smoke())).unwrap_or_default();
+            eprintln!("smoke-palette: find hits {hits}, caret block guide {guide:?} (column, lines), caret marks {marks:?}");
+            if hold {
+                eprintln!("smoke-palette: holding");
+                return;
+            }
+            eprintln!("smoke-palette: done");
             let _ = this.update(cx, |_, cx| cx.quit());
         })
         .detach();

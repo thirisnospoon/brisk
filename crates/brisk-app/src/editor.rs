@@ -46,6 +46,7 @@ mod scroll;
 mod motion;
 mod sticky;
 mod guides;
+mod rounded;
 pub mod templates;
 pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
@@ -1893,13 +1894,17 @@ impl Element for EditorElement {
             for (r, cur) in ed.visible_matches(lo, hi) {
                 let (l1, c1) = b.pos_to_line_col(r.start);
                 let (l2, c2) = b.pos_to_line_col(r.end);
+                let mut shape = Vec::new();
                 for l in (l1.max(first)..=l2.min(last.saturating_sub(1))).filter(|&l| idx_of(l).is_some()) {
                     let sx = if l == l1 { x_of(l, c1) } else { text_x };
                     let ex = if l == l2 { x_of(l, c2) } else { x_of(l, b.line_len(l)) + pp.char_w };
                     if ex > sx {
-                        under.push(fill(Bounds::from_corners(point(sx, y_of(l)), point(ex, y_of(l) + lh)), if cur { Theme::search_current() } else { Theme::search_hit() }));
+                        // 1 px in at the hit's top and bottom, so hits on adjacent lines stay apart.
+                        let (t, z) = (if l == l1 { px(1.) } else { px(0.) }, if l == l2 { px(1.) } else { px(0.) });
+                        shape.push(rounded::row(y_of(l) + t, y_of(l) + lh - z, sx, ex));
                     }
                 }
+                rounded::push(&shape, rounded::MARK, scale, if cur { Theme::search_current() } else { Theme::search_hit() }, &mut under);
             }
         }
         // Identifier occurrences and the matching brackets under the caret.
@@ -1907,7 +1912,7 @@ impl Element for EditorElement {
             let (l1, c1) = b.pos_to_line_col(r.start);
             let (l2, c2) = b.pos_to_line_col(r.end);
             if l1 == l2 && idx_of(l1).is_some() {
-                under.push(fill(Bounds::from_corners(point(x_of(l1, c1), y_of(l1)), point(x_of(l1, c2), y_of(l1) + lh)), color));
+                rounded::push(&[rounded::row(y_of(l1) + px(1.), y_of(l1) + lh - px(1.), x_of(l1, c1), x_of(l1, c2))], rounded::MARK, scale, color, under);
             }
         };
         for r in &pp.marks.occurrences {
@@ -1924,13 +1929,16 @@ impl Element for EditorElement {
             let r = s.range();
             let (l1, c1) = b.pos_to_line_col(r.start);
             let (l2, c2) = b.pos_to_line_col(r.end);
+            // One shape per selection: rounded outer corners, the rows joined.
+            let mut shape = Vec::new();
             for l in (l1.max(first)..=l2.min(last.saturating_sub(1))).filter(|&l| idx_of(l).is_some()) {
                 let sx = if l == l1 { x_of(l, c1) } else { text_x };
                 let ex = if l == l2 { x_of(l, c2) } else { x_of(l, b.line_len(l)) + pp.char_w };
                 if ex > sx {
-                    under.push(fill(Bounds::from_corners(point(sx, y_of(l)), point(ex, y_of(l) + lh)), Theme::selection()));
+                    shape.push(rounded::row(y_of(l), y_of(l) + lh, sx, ex));
                 }
             }
+            rounded::push(&shape, rounded::SELECTION, scale, Theme::selection(), &mut under);
         }
         // Carets: fading blink, optional slide of the primary one, 2 px snapped to device pixels.
         let caret_look = focused.then(|| {
