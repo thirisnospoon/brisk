@@ -47,6 +47,7 @@ mod motion;
 mod sticky;
 mod guides;
 mod rounded;
+mod stripe;
 pub mod templates;
 pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
@@ -95,6 +96,8 @@ pub struct Editor {
     sticky: sticky::Sticky,
     /// The caret's block for the brighter indent guide (editor/guides.rs).
     guides: guides::Guides,
+    /// Error stripe marks on the vertical scrollbar (editor/stripe.rs).
+    stripe: stripe::Stripe,
     /// (buffer version, longest line in chars): the horizontal scroll range.
     max_line: (u64, usize),
     big: big::BigFile,
@@ -316,6 +319,7 @@ impl Editor {
             motion: Default::default(),
             sticky: Default::default(),
             guides: Default::default(),
+            stripe: Default::default(),
             max_line: (u64::MAX, 0),
             big: Default::default(),
             occ: Default::default(),
@@ -395,6 +399,7 @@ impl Editor {
             motion: Default::default(),
             sticky: Default::default(),
             guides: Default::default(),
+            stripe: Default::default(),
             max_line: (u64::MAX, 0),
             big: Default::default(),
             occ: Default::default(),
@@ -1076,6 +1081,9 @@ impl Editor {
         self.insight.completion = None;
         self.insight.doc = None;
         self.insight.signature = None;
+        if e.button == MouseButton::Left && self.stripe_click(e.position, cx) {
+            return;
+        }
         if self.scrollbar_down(e.position) {
             cx.notify();
             return;
@@ -1142,6 +1150,7 @@ impl Editor {
         }
         self.hover_scrollbar(Some(e.position), cx);
         self.sticky_hover(Some(e.position), cx);
+        self.stripe_hover(Some(e.position), cx);
         if in_gutter != self.gutter_hover {
             self.gutter_hover = in_gutter;
             cx.notify();
@@ -1381,6 +1390,7 @@ impl Render for Editor {
                 if !*hovered {
                     this.hover_scrollbar(None, cx);
                     this.sticky_hover(None, cx);
+                    this.stripe_hover(None, cx);
                     if this.inlays.tip.take().is_some() {
                         cx.notify();
                     }
@@ -1389,6 +1399,7 @@ impl Render for Editor {
             .child(EditorElement { editor: cx.entity(), diff_bg: std::mem::take(&mut self.diff_bg), diff_words: std::mem::take(&mut self.diff_words), diff_blocks: std::mem::take(&mut self.diff_blocks) })
             .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))
             .when_some(self.render_tooltip(), |d, t| d.child(t))
+            .when_some(self.render_stripe_tip(), |d, t| d.child(t))
             .when_some(self.render_breakpoint_tip(), |d, t| d.child(t))
             .when_some(self.render_inlay_tip(), |d, t| d.child(t))
             .when_some(self.render_middle_anchor(), |d, a| d.child(a))
@@ -1598,6 +1609,7 @@ impl Element for EditorElement {
             ed.refresh_run_marks(cx);
             ed.update_sticky();
             ed.update_guides();
+            ed.update_stripe();
             let h = if ed.show_gutter {
                 ed.fold_headers()
             } else {
@@ -2021,33 +2033,28 @@ impl Element for EditorElement {
                     waves.push((point(sx, y_of(l) + lh - px(3.)), ex - sx, color));
                 }
             }
-            let y = bounds.top() + px(ed.row_of(d.start.line) as f32 * line_height() / total * f32::from(bounds.size.height));
-            stripe.push(fill(Bounds::new(point(bounds.right() - px(8.), y), size(px(6.), px(3.))), color));
         }
         let mut thumbs: Vec<gpui::PaintQuad> = Vec::new();
         if ed.show_gutter {
             let vh = f32::from(bounds.size.height);
             let line_y = |l: usize| bounds.top() + px(ed.row_of(l) as f32 * line_height() / total * vh);
-            // Changed lines and search matches on the track too, like PyCharm's error stripe.
-            for ch in &ed.vcs_changes {
-                use brisk_git::LineChangeKind as K;
-                let color = match ch.kind {
-                    K::Added => Theme::vcs_added(),
-                    K::Modified => Theme::vcs_modified(),
-                    K::Deleted => Theme::vcs_deleted(),
-                };
-                let h = (f32::from(line_y(ch.lines.end) - line_y(ch.lines.start))).max(2.0);
-                stripe.insert(0, fill(Bounds::new(point(bounds.right() - px(11.), line_y(ch.lines.start)), size(px(2.), px(h))), color));
-            }
-            if ed.find.is_some() {
-                let mut last_y = -10.0f32;
-                for (r, _) in ed.visible_matches(0, b.len_chars()) {
-                    let y = line_y(b.pos_to_line_col(r.start).0);
-                    if f32::from(y) - last_y >= 2.0 {
-                        stripe.push(fill(Bounds::new(point(bounds.right() - px(8.), y), size(px(6.), px(2.))), Theme::search_current()));
-                        last_y = f32::from(y);
-                    }
+            // The error stripe (editor/stripe.rs): changes as a thin strip on the left of the track,
+            // the rest as small marks, errors on top; marks closer than 2 px to the previous one of
+            // the same kind are skipped. Then the caret line's tick.
+            let mut last: Option<(stripe::Kind, f32)> = None;
+            for m in &ed.stripe.marks {
+                let (t, h) = ed.stripe_y(m, vh, total);
+                let vcs = matches!(m.kind, stripe::Kind::Added | stripe::Kind::Modified | stripe::Kind::Deleted);
+                if !vcs && last.is_some_and(|(k, y)| k == m.kind && t - y < 2.0) {
+                    continue;
                 }
+                last = Some((m.kind, t));
+                let (x, w) = if vcs { (11., 2.) } else { (8., 6.) };
+                stripe.push(fill(Bounds::new(point(bounds.right() - px(x), bounds.top() + px(t)), size(px(w), px(h))), m.kind.color()));
+            }
+            if !ed.stripe.marks.is_empty() || !ed.diagnostics.is_empty() {
+                let t = ed.stripe_caret_y(vh, total);
+                stripe.push(fill(Bounds::new(point(bounds.right() - px(9.), bounds.top() + px(t)), size(px(8.), px(1.))), Theme::caret().opacity(0.7)));
             }
             if pp.marks.occurrence_lines.len() > 1 {
                 let mut last_y = -10.0f32;

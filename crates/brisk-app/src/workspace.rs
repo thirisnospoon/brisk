@@ -19,6 +19,7 @@ mod ansi_smoke;
 mod latency_smoke;
 mod flood_smoke;
 mod motion_smoke;
+mod stripe_smoke;
 mod test_runners_smoke;
 mod debug_ui;
 mod disk_ui;
@@ -584,6 +585,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_STICKY").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.sticky_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_STRIPE").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.stripe_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_PALETTE").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.palette_smoke(window, cx));

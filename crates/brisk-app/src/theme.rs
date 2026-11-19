@@ -102,6 +102,8 @@ impl Theme {
     pub fn occurrence_mark() -> Hsla { pick(0xa7a77c, 0x9b8fe0) }
     /// Bookmark marks in the gutter.
     pub fn bookmark() -> Hsla { ui("bookmark", 0x5f8dd3, 0x3574f0) }
+    /// TODO comments (marks on the error stripe).
+    pub fn todo() -> Hsla { ui("todo", 0x8bb33d, 0x008dde) }
     pub fn error() -> Hsla { pick(0xe55765, 0xd5301f) }
     /// Breakpoint circles in the gutter.
     pub fn breakpoint() -> Hsla { pick(0xdb5c5c, 0xe55765) }
