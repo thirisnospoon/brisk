@@ -42,6 +42,7 @@ mod complete_smoke;
 mod big_smoke;
 mod local_refs;
 mod mouse_smoke;
+mod gutter_smoke;
 mod bars_smoke;
 mod scope_smoke;
 mod w7_smoke;
@@ -464,6 +465,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_BARS").is_some() {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.bars_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_GUTTER").is_some() {
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.gutter_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_MOUSE").is_some() {
             cx.defer_in(window, move |this: &mut Self, window, cx| this.mouse_smoke(window, cx));
@@ -2304,7 +2308,7 @@ impl Workspace {
                     }))
                     .child(div().flex_shrink_0().flex().items_center().child(crate::icons::glyph(icon, 14., color)))
                     .child(div().min_w_0().overflow_hidden().text_ellipsis().text_color(name_color).child(title))
-                    .when(dirty, |d| d.child(div().flex_shrink_0().text_color(Theme::text_muted()).child("•")))
+                    .when(dirty, |d| d.child(crate::icons::dot(6., Theme::text_muted())))
                     .when(pinned, |d| {
                         d.child(
                             div()

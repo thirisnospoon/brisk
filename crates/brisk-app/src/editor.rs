@@ -1088,6 +1088,9 @@ impl Editor {
             self.run_hover = run_hover;
             cx.notify();
         }
+        if self.gutter_pointer_move(e.position, in_gutter) {
+            cx.notify();
+        }
         if self.annotation.is_some() {
             self.annotation_hover(e.position, cx);
         }
@@ -1337,13 +1340,7 @@ impl Render for Editor {
             .flex_1()
             .min_h(px(0.))
             .relative()
-            .cursor(if self.middle_active() {
-                gpui::CursorStyle::ResizeUpDown
-            } else if self.bar_hover.is_some() || self.drag.is_some() {
-                gpui::CursorStyle::Arrow
-            } else {
-                gpui::CursorStyle::IBeam
-            })
+            .cursor(self.pointer_style())
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_down))
             .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_middle_down))
@@ -1358,6 +1355,9 @@ impl Render for Editor {
                     this.run_hover = None;
                     cx.notify();
                 }
+                if !*hovered && this.gutter_pointer_leave() {
+                    cx.notify();
+                }
                 if !*hovered {
                     this.hover_scrollbar(None, cx);
                     if this.inlays.tip.take().is_some() {
@@ -1368,6 +1368,7 @@ impl Render for Editor {
             .child(EditorElement { editor: cx.entity(), diff_bg: std::mem::take(&mut self.diff_bg), diff_words: std::mem::take(&mut self.diff_words) })
             .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))
             .when_some(self.render_tooltip(), |d, t| d.child(t))
+            .when_some(self.render_breakpoint_tip(), |d, t| d.child(t))
             .when_some(self.render_inlay_tip(), |d, t| d.child(t))
             .when_some(self.render_middle_anchor(), |d, a| d.child(a))
             .when_some(self.render_annotation_tip(), |d, t| d.child(t))
@@ -1508,6 +1509,8 @@ struct Prepaint {
     bookmark_marks: Vec<(usize, Option<ShapedLine>)>,
     /// Breakpoints on screen: (row index, has a condition, verified by the debugger, enabled).
     breakpoint_marks: Vec<(usize, bool, Option<bool>, bool)>,
+    /// A faint breakpoint under the pointer, on a line without one: its row index.
+    breakpoint_preview: Option<usize>,
     /// Run icons on screen: (row index, last test status: passed?, under the mouse), and
     /// the width of their column.
     run_icons: Vec<(usize, Option<bool>, bool)>,
@@ -1700,6 +1703,7 @@ impl Element for EditorElement {
                 }
             }
         }
+        let breakpoint_preview = ed.breakpoint_preview_line().and_then(|l| rows.binary_search(&l).ok());
         let mut run_icons = Vec::new();
         for m in ed.run_marks_now() {
             if let Ok(i) = rows.binary_search(&m.line) {
@@ -1721,7 +1725,7 @@ impl Element for EditorElement {
                 }
             }
         }
-        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, run_icons, run_slot, annotations, inline_vals, chips, gutter_w, char_w, marks }
+        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, breakpoint_preview, run_icons, run_slot, annotations, inline_vals, chips, gutter_w, char_w, marks }
     }
 
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), pp: &mut Prepaint, window: &mut Window, cx: &mut App) {
@@ -2038,26 +2042,32 @@ impl Element for EditorElement {
             }
             for (row, (n, y)) in pp.numbers.iter().zip(&line_ys).enumerate() {
                 // A breakpoint takes the number's place, as in PyCharm.
-                if pp.breakpoint_marks.iter().any(|b| b.0 == row) {
+                if pp.breakpoint_marks.iter().any(|b| b.0 == row) || pp.breakpoint_preview == Some(row) {
                     continue;
                 }
                 let x = bounds.left() + pp.gutter_w - px(30.) - pp.run_slot - n.width;
                 let _ = n.paint(point(x, *y), lh, window, cx);
             }
             for &(i, conditional, verified, enabled) in &pp.breakpoint_marks {
-                // A circle over the line number, snapped to device pixels (an SVG, so the edge is
-                // evenly antialiased): a ring when disabled or the debugger cannot stop there,
-                // a hole in it when it has a condition.
+                // A circle over the line number: an analytic quad on whole device pixels, even
+                // at 125% / 150% (see `icons::paint_dot`): a ring when disabled or the debugger
+                // cannot stop there, a hole in it when it has a condition.
                 let d = 11.;
                 let c = point(bounds.left() + pp.gutter_w - px(30.) - pp.run_slot - px(1. + d / 2.), line_ys[i] + lh / 2.);
                 let color = if enabled { Theme::breakpoint() } else { Theme::text_dim() };
                 let solid = (enabled && verified != Some(false)) || (!enabled && verified == Some(true));
-                let name = match (solid, conditional) {
-                    (true, true) => "dot-hole",
-                    (true, false) => "dot",
-                    (false, _) => "ring",
+                let ring = match (solid, conditional) {
+                    (true, true) => Some(d / 3.),
+                    (true, false) => None,
+                    (false, _) => Some(d * 0.15),
                 };
-                crate::icons::paint_icon(window, cx, name, c, d, color);
+                crate::icons::paint_dot(window, c, d, color, ring);
+            }
+            if let Some(i) = pp.breakpoint_preview {
+                // Where a click would set a breakpoint, as in PyCharm: a faint one.
+                let d = 11.;
+                let c = point(bounds.left() + pp.gutter_w - px(30.) - pp.run_slot - px(1. + d / 2.), line_ys[i] + lh / 2.);
+                crate::icons::paint_dot(window, c, d, Theme::breakpoint().opacity(0.4), None);
             }
             if let Some(i) = exec_line.and_then(|l| idx_of(l)) {
                 // ▶ arrow at the bookmark slot.
@@ -2097,8 +2107,8 @@ impl Element for EditorElement {
                 crate::icons::paint_icon(window, cx, "play-solid", c, 12., Theme::run_icon());
                 if let Some(ok) = status {
                     let b = point(c.x + px(4.5), c.y + px(4.5));
-                    crate::icons::paint_icon(window, cx, "dot", b, 8., if hover { Theme::hover_row() } else { Theme::editor_bg() });
-                    crate::icons::paint_icon(window, cx, "dot", b, 6., if ok { Theme::run_passed() } else { Theme::error() });
+                    crate::icons::paint_dot(window, b, 8., if hover { Theme::hover_row() } else { Theme::editor_bg() }, None);
+                    crate::icons::paint_dot(window, b, 6., if ok { Theme::run_passed() } else { Theme::error() }, None);
                 }
             }
             for &(i, folded) in &pp.fold_marks {

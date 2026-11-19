@@ -322,6 +322,17 @@ mod tests {
 }
 
 impl Editor {
+    /// The pointer is on a fold marker in the gutter (the hand cursor).
+    pub(super) fn fold_marker_at(&mut self, p: gpui::Point<gpui::Pixels>) -> bool {
+        let Some(l) = self.layout.as_ref() else { return false };
+        if !self.show_gutter || p.x >= l.text_left || p.x < l.text_left - gpui::px(28.) {
+            return false;
+        }
+        let y = f32::from(p.y - l.bounds.top()) + self.scroll_y;
+        let line = self.line_of_row((y / super::line_height()).floor().max(0.0) as usize);
+        self.is_folded_header(line) || self.fold_headers().binary_search(&line).is_ok()
+    }
+
     /// A click on a fold marker in the gutter, or on the "..." of a collapsed header.
     pub(super) fn fold_click(&mut self, p: gpui::Point<gpui::Pixels>) -> bool {
         let Some(l) = self.layout.as_ref() else { return false };

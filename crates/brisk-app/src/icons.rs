@@ -15,9 +15,9 @@ macro_rules! icons {
 icons![
     "arrow-down", "arrow-down-to-line", "arrow-left-right", "arrow-right-to-line", "arrow-up", "bookmark", "breakpoints", "bug", "calculator", "chart-pie", "check",
     "check-bold", "chevron-down", "chevron-right", "chevron-up", "circle", "circle-alert", "circle-check", "circle-slash", "circle-x", "clipboard",
-    "cloud", "copy", "database", "diamond", "dot", "dot-hole", "eraser", "external-link", "file", "file-text", "folder", "git-branch", "git-commit", "island-bl", "island-br", "island-tl", "island-tr",
+    "cloud", "copy", "database", "diamond", "dot", "eraser", "external-link", "file", "file-text", "folder", "git-branch", "git-commit", "island-bl", "island-br", "island-tl", "island-tr",
     "history", "lightbulb", "list", "list-todo", "list-tree", "minus", "power", "undo-2", "loader-circle", "menu", "mute-breakpoints", "package", "pause", "pencil", "pin",
-    "play", "play-solid", "plus", "rerun-failed", "ring", "rotate-cw", "save", "search", "server", "settings-2", "sort-failed", "square-terminal",
+    "play", "play-solid", "plus", "rerun-failed", "rotate-cw", "save", "search", "server", "settings-2", "sort-failed", "square-terminal",
     "star", "step-into", "step-out", "step-over", "stop-solid", "terminal", "timer", "trash", "triangle-alert", "wrap-text", "x", "zap",
     "align-justify", "columns-2", "fold-vertical", "unfold-vertical",
 ];
@@ -142,6 +142,36 @@ pub fn snap_bounds(b: Bounds<Pixels>, scale: f32) -> Bounds<Pixels> {
     Bounds::from_corners(gpui::point(px(x0 / scale), px(y0 / scale)), gpui::point(px(x1 / scale), px(y1 / scale)))
 }
 
+/// A round mark centered on `center`: filled, or a ring `ring` px wide. An analytic quad
+/// (GPUI's rounded-rect SDF) on an even square of whole device pixels, so the edge is
+/// antialiased alike on every side at any scale; an SVG sprite is resampled and can come
+/// out lopsided at 125% / 150%.
+pub fn paint_dot(window: &mut Window, center: Point<Pixels>, size: f32, color: Hsla, ring: Option<f32>) {
+    let scale = window.scale_factor();
+    let b = snapped_square(center, size, scale);
+    let r = b.size.width / 2.;
+    match ring {
+        None => window.paint_quad(gpui::fill(b, color).corner_radii(r)),
+        Some(w) => {
+            // The ring's width in whole device pixels, leaving a hole of at least two.
+            let d = f32::from(b.size.width) * scale;
+            let w = (w * scale).round().clamp(1., ((d - 2.) / 2.).max(1.));
+            window.paint_quad(gpui::quad(b, r, gpui::transparent_black(), px(w / scale), color, gpui::BorderStyle::Solid));
+        }
+    }
+}
+
+/// A round mark as an element (the dirty dot on a tab, status dots): `size` UI px in a
+/// slot two px wider, painted with `paint_dot`.
+pub fn dot(size: f32, color: impl Into<Hsla>) -> gpui::AnyElement {
+    let color = color.into();
+    let s = size * crate::theme::ui_scale();
+    gpui::canvas(|_, _, _| {}, move |b, _, window, _| paint_dot(window, b.center(), s, color, None))
+        .size(px(s + 2.))
+        .flex_none()
+        .into_any_element()
+}
+
 /// Paints an icon centered on `center` (inside an element's paint phase).
 pub fn paint_icon(window: &mut Window, cx: &gpui::App, name: &str, center: Point<Pixels>, size: f32, color: Hsla) {
     let b = snapped_square(center, size, window.scale_factor());
@@ -164,6 +194,38 @@ mod tests {
         for g in ["▸", "▾", "▴", "×", "✓", "✗", "⚠", "▶", "■", "↻", "↑", "↓", "↧", "⌫", "⊘", "⏱", "🕘", "⇪", "✗↑", "★", "☁", "⎇", "+", "⚡", "▤", "✎", "⎙", "✦", "▰", "▮", "¶", "●", "◆", "⚙", "≡", "•", "⌕", "↶", "⇆", "⏻", "⧉", "−"] {
             let n = glyph_icon(g).unwrap();
             assert!(Assets.load(&format!("icons/{n}.svg")).unwrap().is_some(), "{g} -> {n}");
+        }
+    }
+
+    /// What GPUI's quad shader does for `paint_dot`: per device pixel, coverage of the
+    /// circle inscribed in the snapped square (distance from the pixel center to the edge,
+    /// clamped to 0..1). The mark must come out mirror-symmetric left/right and top/bottom
+    /// at every scale, wherever its center falls.
+    #[test]
+    fn round_marks_are_symmetric_at_fractional_scales() {
+        for scale in [1.0f32, 1.25, 1.5, 1.75, 2.0] {
+            for (cx, cy) in [(100.3f32, 57.77f32), (40.5, 12.125), (7.0, 9.9)] {
+                for size in [6.0f32, 8., 11.] {
+                    let b = snapped_square(gpui::point(px(cx), px(cy)), size, scale);
+                    let (x0, y0) = (f32::from(b.origin.x) * scale, f32::from(b.origin.y) * scale);
+                    let d = f32::from(b.size.width) * scale;
+                    let n = d.round() as i32;
+                    assert!((x0 - x0.round()).abs() < 1e-3 && (y0 - y0.round()).abs() < 1e-3, "{scale} {size}: off-grid");
+                    let (ccx, ccy, r) = (x0 + d / 2., y0 + d / 2., d / 2.);
+                    let cov = |i: i32, j: i32| {
+                        let (px_, py_) = (x0 + i as f32 + 0.5, y0 + j as f32 + 0.5);
+                        let dist = ((px_ - ccx).powi(2) + (py_ - ccy).powi(2)).sqrt() - r;
+                        (0.5 - dist).clamp(0., 1.)
+                    };
+                    for i in 0..n {
+                        for j in 0..n {
+                            let c = cov(i, j);
+                            assert!((c - cov(n - 1 - i, j)).abs() < 1e-4, "{scale} {size}: left/right");
+                            assert!((c - cov(i, n - 1 - j)).abs() < 1e-4, "{scale} {size}: top/bottom");
+                        }
+                    }
+                }
+            }
         }
     }
 
