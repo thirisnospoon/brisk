@@ -8,7 +8,7 @@ use crate::theme::{Theme, mono_font};
 use crate::todo_scan::{self, Item};
 use brisk_keymap::Action;
 use gpui::prelude::*;
-use gpui::{div, px, Context, FocusHandle, KeyDownEvent, ScrollHandle, Window};
+use gpui::{div, px, uniform_list, Context, FocusHandle, KeyDownEvent, ScrollStrategy, UniformListScrollHandle, Window};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -20,7 +20,9 @@ pub struct Todo {
     pub selected: usize,
     pub scanning: bool,
     generation: u64,
-    scroll: ScrollHandle,
+    scroll: UniformListScrollHandle,
+    /// `rows()`, built once per change of `groups` or `collapsed` (see `touch`).
+    rows_cache: std::cell::RefCell<Option<std::rc::Rc<Vec<Row>>>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -30,7 +32,11 @@ pub enum Row {
 }
 
 impl Todo {
-    pub fn rows(&self) -> Vec<Row> {
+    /// The visible rows; cached, so a frame or a key costs no copy of the items.
+    pub fn rows(&self) -> std::rc::Rc<Vec<Row>> {
+        if let Some(r) = &*self.rows_cache.borrow() {
+            return r.clone();
+        }
         let mut out = Vec::new();
         for (p, items) in &self.groups {
             out.push(Row::File(p.clone(), items.len()));
@@ -38,7 +44,14 @@ impl Todo {
                 out.extend(items.iter().cloned().map(Row::Item));
             }
         }
-        out
+        let r = std::rc::Rc::new(out);
+        *self.rows_cache.borrow_mut() = Some(r.clone());
+        r
+    }
+
+    /// `groups` or `collapsed` changed: rebuild the rows on next use.
+    pub fn touch(&mut self) {
+        self.rows_cache.get_mut().take();
     }
 
     pub fn count(&self) -> usize {
@@ -56,7 +69,8 @@ impl Workspace {
                 selected: 0,
                 scanning: false,
                 generation: 0,
-                scroll: ScrollHandle::new(),
+                scroll: UniformListScrollHandle::new(),
+                rows_cache: Default::default(),
             });
         }
         self.toggle_bottom(BottomTool::Todo, window, cx);
@@ -81,6 +95,7 @@ impl Workspace {
             let _ = this.update(cx, |this, cx| {
                 let Some(t) = this.todo.as_mut().filter(|t| t.generation == gen) else { return };
                 t.groups = groups;
+                t.touch();
                 t.scanning = false;
                 t.selected = t.selected.min(t.rows().len().saturating_sub(1));
                 cx.notify();
@@ -112,6 +127,7 @@ impl Workspace {
                         t.groups.insert(at, (p, items));
                     }
                 }
+                t.touch();
                 t.selected = t.selected.min(t.rows().len().saturating_sub(1));
                 cx.notify();
             });
@@ -128,6 +144,7 @@ impl Workspace {
                 if !t.collapsed.remove(&p) {
                     t.collapsed.insert(p);
                 }
+                t.touch();
             }
             Row::Item(i) => {
                 self.open_file(&i.path, window, cx);
@@ -155,7 +172,7 @@ impl Workspace {
             "up" | "down" if n > 0 => {
                 let t = self.todo.as_mut().unwrap();
                 t.selected = if e.keystroke.key == "up" { sel.saturating_sub(1) } else { (sel + 1).min(n - 1) };
-                t.scroll.scroll_to_item(t.selected);
+                t.scroll.scroll_to_item(t.selected, ScrollStrategy::Top);
             }
             "enter" => self.todo_open(sel, window, cx),
             "left" | "right" => {
@@ -166,6 +183,7 @@ impl Workspace {
                     } else {
                         t.collapsed.remove(p);
                     }
+                    t.touch();
                 }
             }
             "escape" => self.focus_editor(window, cx),
@@ -178,7 +196,6 @@ impl Workspace {
     pub(super) fn render_todo(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let Some(t) = &self.todo else { return div().into_any_element() };
         let rows = t.rows();
-        let rel = |p: &Path| p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/");
         let summary = if t.scanning && t.groups.is_empty() {
             "Scanning…".to_string()
         } else {
@@ -211,16 +228,47 @@ impl Workspace {
                     .on_click(cx.listener(|this, _, _, cx| this.refresh_todo(cx))),
             )
             .child(div().text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(summary));
+        let empty = rows.is_empty() && !t.scanning;
         let list = div()
             .id("todo-list")
             .track_focus(&t.focus)
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&t.scroll)
+            .flex()
+            .flex_col()
             .text_size(ui_px(13.))
-            .when(rows.is_empty() && !t.scanning, |d| d.child(div().p(px(10.)).text_color(Theme::text_dim()).child("No TODO or FIXME comments in the project")))
-            .children(rows.iter().enumerate().map(|(i, r)| {
+            .when(empty, |d| d.child(div().p(px(10.)).text_color(Theme::text_dim()).child("No TODO or FIXME comments in the project")))
+            .when(!empty, |d| {
+                d.child(
+                    uniform_list(
+                        "todo-rows",
+                        rows.len(),
+                        cx.processor(|this, range: std::ops::Range<usize>, _window, cx| {
+                            let Some(t) = &this.todo else { return Vec::new() };
+                            let rows = t.rows();
+                            range.filter_map(|i| rows.get(i).map(|r| this.todo_row(i, r, cx))).collect()
+                        }),
+                    )
+                    .flex_1()
+                    .track_scroll(t.scroll.clone()),
+                )
+            });
+        div()
+            .id("todo-window")
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(toolbar)
+            .child(list)
+            .into_any_element()
+    }
+
+    /// One row of the TODO list (only the rows in view are built).
+    fn todo_row(&self, i: usize, r: &Row, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let Some(t) = &self.todo else { return div().into_any_element() };
+        let rel = |p: &Path| p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/");
+        {
+            {
                 let sel = i == t.selected;
                 let row = div()
                     .id(("todo-row", i))
@@ -242,7 +290,7 @@ impl Workspace {
                         // A click opens an item, or folds / unfolds a file.
                         this.todo_open(i, w, cx);
                     }));
-                match r {
+                let el = match r {
                     Row::File(p, n) => {
                         let open = !t.collapsed.contains(p);
                         let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -259,16 +307,10 @@ impl Workspace {
                             .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).font_family(mono_font()).child(format!("({}, {})", it.line + 1, it.col + 1)))
                             .child(div().text_color(if fixme { Theme::warning() } else { Theme::syntax(brisk_syntax::Highlight::Comment) }).child(it.text.clone()))
                     }
-                }
-            }));
-        div()
-            .id("todo-window")
-            .size_full()
-            .flex()
-            .flex_col()
-            .child(toolbar)
-            .child(list)
-            .into_any_element()
+                };
+                el.into_any_element()
+            }
+        }
     }
 
     // --- Smoke --------------------------------------------------------------------------
