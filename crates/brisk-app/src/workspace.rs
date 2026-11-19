@@ -68,6 +68,7 @@ mod hang_smoke;
 mod templates_ui;
 mod win_input;
 
+use crate::theme::ui_px;
 use crate::diff_view::DiffView;
 use crate::editor::Editor;
 use crate::grid_view::GridView;
@@ -427,7 +428,7 @@ fn title_button(id: &'static str, icon: &'static str, color: gpui::Hsla, tip: &'
     div()
         .id(id)
         .w(px(28.))
-        .h(px(28.))
+        .h(ui_px(28.))
         .flex()
         .items_center()
         .justify_center()
@@ -436,7 +437,7 @@ fn title_button(id: &'static str, icon: &'static str, color: gpui::Hsla, tip: &'
         .hover(|s| s.bg(Theme::hover_row()))
         .active(|s| s.bg(Theme::press()))
         .tooltip(move |_, cx| cx.new(|_| Tip(tip.into())).into())
-        .child(crate::icons::icon(icon, 16., color))
+        .child(crate::icons::ui_icon(icon, 16., color))
 }
 
 impl Workspace {
@@ -1422,7 +1423,7 @@ impl Workspace {
                     window.focus(&self.tree_focus);
                 }
             }
-            A::Settings | A::IncreaseFontSize | A::DecreaseFontSize | A::ResetFontSize | A::QuickSwitchTheme => {
+            A::Settings | A::IncreaseFontSize | A::DecreaseFontSize | A::ResetFontSize | A::QuickSwitchTheme | A::ZoomInIde | A::ZoomOutIde | A::ResetIdeZoom => {
                 self.settings_action(action, window, cx);
             }
             A::NewElement | A::ProjectStructure => {
@@ -1799,13 +1800,13 @@ impl Workspace {
         div()
             .id(id)
             .w(px(30.))
-            .h(px(30.))
+            .h(ui_px(30.))
             .flex()
             .items_center()
             .justify_center()
             .rounded(px(5.))
             .when(active && !crate::theme::islands(), |d| d.bg(Theme::selection_row()))
-            .when(crate::theme::islands(), |d| d.size(px(32.)).rounded(px(8.)))
+            .when(crate::theme::islands(), |d| d.size(ui_px(32.)).rounded(px(8.)))
             .when(active && crate::theme::islands(), |d| d.bg(Theme::text().opacity(0.14)))
             .when(!active, |d| d.hover(|s| s.bg(Theme::hover_row())))
             .active(|s| s.bg(Theme::press()))
@@ -1818,7 +1819,7 @@ impl Workspace {
                 }
             }))
             .tooltip(move |_window, cx| cx.new(|_| Tip(tooltip.clone())).into())
-            .child(crate::icons::icon(icon, 16., if active { Theme::text() } else { Theme::text_muted() }))
+            .child(crate::icons::ui_icon(icon, 16., if active { Theme::text() } else { Theme::text_muted() }))
             .map(|d| crate::ui_kit::pill_in(d, gpui::ElementId::Name(format!("pill-{id}").into()), active, Theme::text().opacity(0.14)))
     }
 
@@ -1845,12 +1846,12 @@ impl Workspace {
             div()
                 .id(id)
                 .w(px(22.))
-                .h(px(22.))
+                .h(ui_px(22.))
                 .flex()
                 .items_center()
                 .justify_center()
                 .rounded(px(4.))
-                .text_size(px(13.))
+                .text_size(ui_px(13.))
                 .text_color(Theme::text_muted())
                 .cursor_pointer()
                 .hover(|s| s.bg(Theme::hover_row()).text_color(Theme::text()))
@@ -1867,7 +1868,7 @@ impl Workspace {
         let chip = |id: &'static str, lead: Option<&'static str>, text: String| {
             div()
                 .id(id)
-                .h(px(28.))
+                .h(ui_px(28.))
                 .px(px(8.))
                 .flex()
                 .items_center()
@@ -1876,26 +1877,26 @@ impl Workspace {
                 .hover(|s| s.bg(Theme::hover_row()))
                 .active(|s| s.bg(Theme::press()))
                 .cursor_pointer()
-                .when_some(lead, |d, n| d.child(crate::icons::icon(n, 14., Theme::text_muted())))
+                .when_some(lead, |d, n| d.child(crate::icons::ui_icon(n, 14., Theme::text_muted())))
                 .child(text)
-                .child(crate::icons::icon("chevron-down", 12., Theme::text_muted()))
+                .child(crate::icons::ui_icon("chevron-down", 12., Theme::text_muted()))
         };
         div()
-            .h(px(40.))
+            .h(ui_px(40.))
             .flex()
             .items_center()
             .px(px(10.))
             .gap(px(6.))
             .bg(if crate::theme::islands() { Theme::frame() } else { Theme::panel() })
             .when(!crate::theme::islands(), |d| d.border_b_1().border_color(Theme::border()))
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .text_color(Theme::text())
             // The main menu, as in PyCharm's new UI.
             .child(
                 div()
                     .id("tb-main-menu")
                     .w(px(28.))
-                    .h(px(28.))
+                    .h(ui_px(28.))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -1904,14 +1905,14 @@ impl Workspace {
                     .hover(|s| s.bg(Theme::hover_row()))
                     .active(|s| s.bg(Theme::press()))
                     .tooltip(|_, cx| cx.new(|_| Tip("Main Menu".into())).into())
-                    .child(crate::icons::icon("menu", 16., Theme::text_muted()))
+                    .child(crate::icons::ui_icon("menu", 16., Theme::text_muted()))
                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _, w, cx| {
                         cx.stop_propagation();
                         this.dispatch(Action::MainMenu, w, cx);
                     })),
             )
             .child(
-                div().w(px(24.)).h(px(24.)).rounded(px(5.)).bg(Theme::accent()).flex().items_center().justify_center().text_size(px(11.)).font_weight(gpui::FontWeight::BOLD).child(
+                div().w(px(24.)).h(ui_px(24.)).rounded(px(5.)).bg(Theme::accent()).flex().items_center().justify_center().text_size(ui_px(11.)).font_weight(gpui::FontWeight::BOLD).child(
                     self.project_name().chars().take(2).collect::<String>().to_uppercase(),
                 ),
             )
@@ -1994,7 +1995,7 @@ impl Workspace {
             .flex()
             .items_center()
             .px(px(12.))
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .text_color(Theme::text())
             .child(title.to_string())
@@ -2041,12 +2042,12 @@ impl Workspace {
                                 }
                                 div()
                                     .id(("row", r.id))
-                                    .h(px(24.))
+                                    .h(ui_px(24.))
                                     .flex()
                                     .items_center()
                                     .pl(px(8. + r.depth as f32 * 16.))
                                     .gap(px(4.))
-                                    .text_size(px(13.))
+                                    .text_size(ui_px(13.))
                                     .w_full()
                                     .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
                                     .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
@@ -2115,13 +2116,13 @@ impl Workspace {
             let line = it.line;
             div()
                 .id(("outline", i))
-                .h(px(24.))
+                .h(ui_px(24.))
                 .flex_none()
                 .flex()
                 .items_center()
                 .gap(px(6.))
                 .pl(px(12. + it.depth as f32 * 16.))
-                .text_size(px(13.))
+                .text_size(ui_px(13.))
                 .when(current == Some(i), |d| d.bg(Theme::selection_row()))
                 .hover(|s| s.bg(Theme::hover_row()))
                 .cursor_pointer()
@@ -2131,7 +2132,7 @@ impl Workspace {
                     }
                     this.focus_editor(window, cx);
                 }))
-                .child(div().w(px(16.)).h(px(16.)).rounded(px(8.)).bg(color).text_color(Theme::bg()).text_size(px(10.)).flex().items_center().justify_center().child(glyph))
+                .child(div().w(px(16.)).h(ui_px(16.)).rounded(px(8.)).bg(color).text_color(Theme::bg()).text_size(ui_px(10.)).flex().items_center().justify_center().child(glyph))
                 .child(it.name)
         });
         div()
@@ -2159,7 +2160,7 @@ impl Workspace {
             .map(|d| if crate::theme::islands() {
                 d.child(crate::ui_kit::empty_state("list-todo", body.to_string()))
             } else {
-                d.child(div().px(px(12.)).text_size(px(13.)).text_color(Theme::text_muted()).child(body.to_string()))
+                d.child(div().px(px(12.)).text_size(ui_px(13.)).text_color(Theme::text_muted()).child(body.to_string()))
             })
             .into_any_element()
     }
@@ -2191,9 +2192,9 @@ impl Workspace {
             .min_w_0()
             .flex()
             .map(|d| if rows {
-                d.flex_wrap().min_h(px(36.)).when(islands, |d| d.py(px(4.)).gap_y(px(2.)))
+                d.flex_wrap().min_h(ui_px(36.)).when(islands, |d| d.py(px(4.)).gap_y(px(2.)))
             } else {
-                d.h(px(36.)).overflow_x_scroll().track_scroll(&scroll)
+                d.h(ui_px(36.)).overflow_x_scroll().track_scroll(&scroll)
             })
             .items_end()
             // A plain mouse wheel scrolls the strip sideways, as in PyCharm.
@@ -2240,7 +2241,7 @@ impl Workspace {
                     .items_center()
                     .gap(px(6.))
                     .px(px(12.))
-                    .text_size(px(13.))
+                    .text_size(ui_px(13.))
                     .text_color(if active { Theme::text() } else { Theme::text_muted() })
                     .when(active && !islands, |d| d.border_b_2().border_color(if focused { Theme::accent() } else { Theme::text_dim() }).bg(Theme::editor_bg()))
                     .when(active && islands, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
@@ -2272,12 +2273,12 @@ impl Workspace {
                                 .id(("tab-pin", i))
                                 .flex_shrink_0()
                                 .w(px(16.))
-                                .h(px(16.))
+                                .h(ui_px(16.))
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .rounded(px(4.))
-                                .text_size(px(11.))
+                                .text_size(ui_px(11.))
                                 .text_color(Theme::accent())
                                 .hover(|s| s.bg(Theme::press()))
                                 .tooltip(|_, cx| cx.new(|_| Tip("Unpin Tab".into())).into())
@@ -2296,7 +2297,7 @@ impl Workspace {
                             .id(("tab-close", i))
                             .flex_shrink_0()
                             .w(px(16.))
-                            .h(px(16.))
+                            .h(ui_px(16.))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -2339,7 +2340,7 @@ impl Workspace {
                         .id(("tabs-more", second as usize))
                         .flex_shrink_0()
                         .mx(px(4.))
-                        .size(px(24.))
+                        .size(ui_px(24.))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -2347,7 +2348,7 @@ impl Workspace {
                         .cursor_pointer()
                         .hover(|s| s.bg(Theme::hover_row()))
                         .tooltip(|_, cx| cx.new(|_| Tip("Show Hidden Tabs".into())).into())
-                        .child(crate::icons::icon("chevron-down", 14., Theme::text_muted()))
+                        .child(crate::icons::ui_icon("chevron-down", 14., Theme::text_muted()))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.focus_pane(second, window, cx);
@@ -2373,7 +2374,7 @@ impl Workspace {
             ("Project View", Action::ToggleProjectWindow),
             ("Terminal", Action::ToggleTerminalWindow),
         ];
-        let cell = || div().h(px(30.)).flex().items_center();
+        let cell = || div().h(ui_px(30.)).flex().items_center();
         div()
             .size_full()
             .flex()
@@ -2381,8 +2382,8 @@ impl Workspace {
             .justify_center()
             .bg(Theme::editor_bg())
             .font_family(ui_font())
-            .text_size(px(13.))
-            .when(crate::theme::islands(), |d| d.flex_col().gap(px(20.)).child(crate::icons::icon("file-text", 40., Theme::text_dim().opacity(0.6))))
+            .text_size(ui_px(13.))
+            .when(crate::theme::islands(), |d| d.flex_col().gap(px(20.)).child(crate::icons::ui_icon("file-text", 40., Theme::text_dim().opacity(0.6))))
             .child(
                 div()
                     .flex()
@@ -2392,13 +2393,13 @@ impl Workspace {
                         cell().child(
                             div()
                                 .px(px(6.))
-                                .h(px(20.))
+                                .h(ui_px(20.))
                                 .flex()
                                 .items_center()
                                 .rounded(px(4.))
                                 .bg(Theme::hover_row())
                                 .text_color(Theme::accent())
-                                .text_size(px(12.))
+                                .text_size(ui_px(12.))
                                 .child(km.shortcut_label(*a).unwrap_or_default()),
                         )
                     }))),
@@ -2435,13 +2436,13 @@ impl Workspace {
         };
         let item = |s: String| div().px(px(8.)).child(s);
         div()
-            .h(px(26.))
+            .h(ui_px(26.))
             .flex()
             .items_center()
             .px(px(8.))
             .bg(if crate::theme::islands() { Theme::frame() } else { Theme::panel() })
             .when(!crate::theme::islands(), |d| d.border_t_1().border_color(Theme::border()))
-            .text_size(px(12.))
+            .text_size(ui_px(12.))
             .text_color(Theme::text_muted())
             .when(!crate::theme::islands(), |d| d.child(div().child(crumbs)))
             .child(div().flex_1())
@@ -2536,7 +2537,7 @@ impl Workspace {
                             cx.notify();
                         }))
                         .w(px(680.))
-                        .max_h(px(520.))
+                        .max_h(ui_px(520.))
                         .flex()
                         .flex_col()
                         .bg(Theme::panel())
@@ -2545,7 +2546,7 @@ impl Workspace {
                         .rounded(px(10.))
                         .map(crate::ui_kit::floating)
                         .overflow_hidden()
-                        .text_size(px(13.))
+                        .text_size(ui_px(13.))
                         .text_color(Theme::text())
                         .when_some(tabs, |d, t| {
                             d.child(
@@ -2570,7 +2571,7 @@ impl Workspace {
                                             .child(tab.title())
                                     }))
                                     .child(div().flex_1())
-                                    .child(div().text_color(Theme::text_dim()).text_size(px(11.)).child("Tab to switch")),
+                                    .child(div().text_color(Theme::text_dim()).text_size(ui_px(11.)).child("Tab to switch")),
                             )
                         })
                         .when(!title.is_empty(), |d| d.child(div().px(px(14.)).pt(px(10.)).font_weight(gpui::FontWeight::SEMIBOLD).child(title.to_string())))
@@ -2578,7 +2579,7 @@ impl Workspace {
                             div()
                                 .m(px(10.))
                                 .px(px(10.))
-                                .h(px(32.))
+                                .h(ui_px(32.))
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
@@ -2586,11 +2587,11 @@ impl Workspace {
                                 .border_1()
                                 .border_color(Theme::accent())
                                 .bg(Theme::bg())
-                                .child(crate::icons::icon("search", 14., Theme::text_muted()))
+                                .child(crate::icons::ui_icon("search", 14., Theme::text_muted()))
                                 .child(if p.query.is_empty() {
                                     div().text_color(Theme::text_dim()).child(placeholder).into_any_element()
                                 } else {
-                                    div().flex().child(p.query.clone()).child(div().w(px(1.5)).h(px(16.)).bg(Theme::caret())).into_any_element()
+                                    div().flex().child(p.query.clone()).child(div().w(px(1.5)).h(ui_px(16.)).bg(Theme::caret())).into_any_element()
                                 }),
                         )
                         .child(
@@ -2622,7 +2623,7 @@ impl Workspace {
                                     .track_scroll(self.popup_scroll.clone())
                                     // Rows are drawn only where visible: hundreds of branches or
                                     // packages no longer rebuild every row on each frame.
-                                    .h(px(POPUP_ROW_H * p.items.len().min(POPUP_ROWS_SHOWN) as f32)),
+                                    .h(ui_px(POPUP_ROW_H * p.items.len().min(POPUP_ROWS_SHOWN) as f32)),
                                 ),
                         ),
                 ),
@@ -2679,7 +2680,7 @@ impl Workspace {
         let row = div()
             .id(("item", i))
             .w_full()
-            .h(px(28.))
+            .h(ui_px(28.))
             .flex_shrink_0()
             .px(px(8.))
             .flex()
@@ -2712,14 +2713,14 @@ impl Workspace {
             // left (it goes first when the label is long).
             .child(div().w(px(16.)).flex_shrink_0().flex().items_center().justify_center().child(crate::icons::glyph(icon, 14., color)))
             .child(div().min_w_0().flex_shrink().overflow_hidden().text_ellipsis().child(label))
-            .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().text_color(Theme::text_dim()).text_size(px(12.)).when(show_detail, |d| d.child(it.detail.clone())))
+            .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().text_color(Theme::text_dim()).text_size(ui_px(12.)).when(show_detail, |d| d.child(it.detail.clone())))
             .child(
                 div()
                     .flex_shrink_0()
                     .flex()
                     .justify_end()
                     .text_color(Theme::text_muted())
-                    .text_size(px(12.))
+                    .text_size(ui_px(12.))
                     .when(branch, |d| d.w(px(84.)).font_family(crate::theme::mono_font()))
                     .child(it.hint.clone()),
             );
@@ -2789,7 +2790,7 @@ impl Render for Tip {
             .bg(Theme::panel_alt())
             .border_1()
             .border_color(Theme::divider())
-            .text_size(px(12.))
+            .text_size(ui_px(12.))
             .text_color(Theme::text())
             .child(self.0.clone())
     }
@@ -2804,6 +2805,8 @@ impl Focusable for Workspace {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::stall::note("Workspace render, layout or paint");
+        // Text without a size of its own follows the UI scale too.
+        window.set_rem_size(gpui::px(16. * crate::theme::ui_scale()));
         let viewport = window.viewport_size();
         let left: Option<gpui::AnyElement> = match self.left {
             Some(LeftTool::Project) => Some(self.render_project(cx).into_any_element()),

@@ -152,6 +152,16 @@ fn design() -> u8 {
     })
 }
 
+/// The UI scale (Settings › Appearance › UI font size, times View › Zoom IDE).
+pub fn ui_scale() -> f32 {
+    crate::settings::ui_scale()
+}
+
+/// `x` UI pixels at the current UI scale: font sizes, row and header heights, icon sizes.
+pub fn ui_px(x: f32) -> gpui::Pixels {
+    gpui::px(x * ui_scale())
+}
+
 /// The "Islands" layout: tool windows and the editor are rounded panels with gaps between
 /// them on a darker frame, and editor tabs are pills. The UI style setting picks it (live);
 /// `BRISK_DESIGN=islands` or `=classic` overrides the setting.

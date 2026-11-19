@@ -2,6 +2,7 @@
 //! that touched it, newest first, with the selected commit's patch on the right. Enter or a
 //! double click opens the whole file's diff for that commit.
 
+use crate::theme::ui_px;
 use super::git_merge_ui::{button, dialog_frame, GitDialog};
 use super::git_ui::{file_name, fmt_time};
 use super::menu_ui::Entry;
@@ -233,7 +234,7 @@ impl Workspace {
             div()
                 .id(("hist-row", i))
                 .w_full()
-                .h(px(24.))
+                .h(ui_px(24.))
                 .px(px(8.))
                 .flex()
                 .items_center()
@@ -243,8 +244,8 @@ impl Workspace {
                 .when(on, |x| x.bg(Theme::selection_row()))
                 .when(!on, |x| x.hover(|s| s.bg(Theme::hover_row())))
                 .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(c.subject.clone()))
-                .child(div().text_color(Theme::text_muted()).text_size(px(12.)).whitespace_nowrap().child(c.author.clone()))
-                .child(div().w(px(90.)).text_color(Theme::text_dim()).text_size(px(12.)).whitespace_nowrap().child(fmt_time(c.time)))
+                .child(div().text_color(Theme::text_muted()).text_size(ui_px(12.)).whitespace_nowrap().child(c.author.clone()))
+                .child(div().w(px(90.)).text_color(Theme::text_dim()).text_size(ui_px(12.)).whitespace_nowrap().child(fmt_time(c.time)))
                 .on_mouse_down(
                     gpui::MouseButton::Left,
                     cx.listener(move |this, e: &gpui::MouseDownEvent, w, cx| {
@@ -265,7 +266,7 @@ impl Workspace {
             } else {
                 (None, Theme::text_muted())
             };
-            div().id(("hist-patch", i)).px(px(6.)).h(px(19.)).whitespace_nowrap().when_some(bg, |x, c| x.bg(c)).text_color(fg).child(if l.is_empty() { " ".to_string() } else { l.to_string() })
+            div().id(("hist-patch", i)).px(px(6.)).h(ui_px(19.)).whitespace_nowrap().when_some(bg, |x, c| x.bg(c)).text_color(fg).child(if l.is_empty() { " ".to_string() } else { l.to_string() })
         });
         let selected = d.commits.get(d.selected);
         let what = match d.lines {
@@ -281,7 +282,7 @@ impl Workspace {
         };
         Some(
             dialog_frame("history-dialog", 1100., &what)
-                .h(px(620.))
+                .h(ui_px(620.))
                 .child(div().pb(px(8.)).text_color(Theme::text_muted()).child(info))
                 .child(
                     div()
@@ -299,7 +300,7 @@ impl Workspace {
                                 .children(selected.map(|c| {
                                     div()
                                         .pb(px(6.))
-                                        .text_size(px(12.))
+                                        .text_size(ui_px(12.))
                                         .text_color(Theme::text_muted())
                                         .child(format!("{} · {} <{}> · {}", c.short(), c.author, c.email, fmt_time(c.time)))
                                 }))
@@ -313,7 +314,7 @@ impl Workspace {
                                         .border_color(Theme::divider())
                                         .bg(Theme::editor_bg())
                                         .font_family(crate::settings::editor_font())
-                                        .text_size(px(12.5))
+                                        .text_size(ui_px(12.5))
                                         .children(patch_lines),
                                 ),
                         ),
@@ -324,7 +325,7 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap(px(8.))
-                        .child(div().flex_1().text_size(px(11.)).text_color(Theme::text_dim()).child("↑↓ select · Enter, Ctrl+D or double click: full diff · Esc close"))
+                        .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("↑↓ select · Enter, Ctrl+D or double click: full diff · Esc close"))
                         .child(button("hist-local", "Compare with Local", false).on_click(cx.listener(|this, _, w, cx| this.history_compare_local(w, cx))))
                         .child(button("hist-diff", "Show Diff", false).on_click(cx.listener(|this, _, w, cx| this.history_open_diff(w, cx))))
                         .child(button("hist-close", "Close", true).on_click(cx.listener(|this, _, w, cx| {

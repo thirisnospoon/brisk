@@ -3,6 +3,7 @@
 //! Enter). Keyboard: ↑/↓, Enter, →/← into and out of submenus, Esc. A click outside closes the
 //! menu without reaching what is under it.
 
+use crate::theme::ui_px;
 use super::Workspace;
 use crate::editor::Editor;
 use crate::theme::Theme;
@@ -293,7 +294,7 @@ impl Workspace {
         let selected = m.selected;
         let open = m.child.as_ref().map(|(i, _)| *i);
         let rows = m.entries.iter().enumerate().map(|(i, e)| match e {
-            Entry::Separator => div().h(px(9.)).flex().items_center().child(div().h(px(1.)).w_full().bg(Theme::divider())).into_any_element(),
+            Entry::Separator => div().h(ui_px(9.)).flex().items_center().child(div().h(ui_px(1.)).w_full().bg(Theme::divider())).into_any_element(),
             Entry::Item { .. } | Entry::Submenu { .. } => {
                 let (label, enabled, right, sub) = match e {
                     Entry::Item { label, shortcut, enabled, .. } => (label.clone(), *enabled, shortcut.clone(), false),
@@ -302,7 +303,7 @@ impl Workspace {
                 };
                 div()
                     .id(("menu-item", depth * 1000 + i))
-                    .h(px(ITEM_H))
+                    .h(ui_px(ITEM_H))
                     .flex_shrink_0()
                     .px(px(10.))
                     .flex()
@@ -377,7 +378,7 @@ impl Workspace {
             .border_color(Theme::divider())
             .rounded(px(8.))
             .map(crate::ui_kit::floating)
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             // A press inside a menu panel is not a click outside.
             .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
             .children(rows)

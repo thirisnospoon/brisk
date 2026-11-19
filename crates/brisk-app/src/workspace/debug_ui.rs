@@ -3,6 +3,7 @@
 //! step, F9 resume, Alt+F9 run to cursor, Ctrl+F2 stop, Alt+F8 evaluate. The Debug window
 //! shows frames, variables (expandable) and the console with an evaluate line.
 
+use crate::theme::ui_px;
 use super::{BottomTool, PopupItem, PopupKind, Target, Workspace};
 use crate::editor::breakpoints::Breakpoint;
 use crate::editor::Editor;
@@ -1215,7 +1216,7 @@ impl Workspace {
         let sel = sel.min(rows.len().saturating_sub(1));
         let check = |on: bool| {
             div()
-                .size(px(14.))
+                .size(ui_px(14.))
                 .flex_shrink_0()
                 .flex()
                 .items_center()
@@ -1223,9 +1224,9 @@ impl Workspace {
                 .rounded(px(3.))
                 .border_1()
                 .border_color(if on { Theme::accent() } else { Theme::text_dim() })
-                .when(on, |x| x.bg(Theme::accent()).child(crate::icons::icon("check-bold", 10., gpui::white())))
+                .when(on, |x| x.bg(Theme::accent()).child(crate::icons::ui_icon("check-bold", 10., gpui::white())))
         };
-        let group = |label: &'static str| div().px(px(8.)).pt(px(6.)).pb(px(2.)).text_size(px(11.)).text_color(Theme::text_dim()).child(label);
+        let group = |label: &'static str| div().px(px(8.)).pt(px(6.)).pb(px(2.)).text_size(ui_px(11.)).text_color(Theme::text_dim()).child(label);
         let mut list: Vec<gpui::AnyElement> = vec![group("PYTHON EXCEPTION BREAKPOINTS").into_any_element()];
         let first_line = rows.iter().position(|r| matches!(r, BpRow::Line(..)));
         for (i, r) in rows.iter().enumerate() {
@@ -1255,7 +1256,7 @@ impl Workspace {
             list.push(
                 div()
                     .id(("bp-row", i))
-                    .h(px(24.))
+                    .h(ui_px(24.))
                     .px(px(8.))
                     .flex()
                     .items_center()
@@ -1289,7 +1290,7 @@ impl Workspace {
             div()
                 .id(id)
                 .px(px(14.))
-                .h(px(28.))
+                .h(ui_px(28.))
                 .flex()
                 .items_center()
                 .rounded(px(5.))
@@ -1320,7 +1321,7 @@ impl Workspace {
                     .child(
                         div()
                             .id("bp-condition")
-                            .h(px(28.))
+                            .h(ui_px(28.))
                             .px(px(8.))
                             .flex()
                             .items_center()
@@ -1331,7 +1332,7 @@ impl Workspace {
                             .font_family(mono_font())
                             .cursor_text()
                             .child(cond)
-                            .when(editing, |x| x.child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret())))
+                            .when(editing, |x| x.child(div().w(px(1.5)).h(ui_px(15.)).bg(Theme::caret())))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(d) = this.debug.bp_dialog.as_mut() {
                                     d.editing = true;
@@ -1339,7 +1340,7 @@ impl Workspace {
                                 cx.notify();
                             })),
                     )
-                    .child(div().text_size(px(12.)).text_color(Theme::text_dim()).child("A Python expression: the debugger stops only when it is true. Empty: always."))
+                    .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).child("A Python expression: the debugger stops only when it is true. Empty: always."))
                     .into_any_element()
             }
             Some(BpRow::Class(i, c)) => {
@@ -1355,7 +1356,7 @@ impl Workspace {
                     .child(
                         div()
                             .id("bp-class-name")
-                            .h(px(28.))
+                            .h(ui_px(28.))
                             .px(px(8.))
                             .flex()
                             .items_center()
@@ -1366,7 +1367,7 @@ impl Workspace {
                             .font_family(mono_font())
                             .cursor_text()
                             .child(c.name.clone())
-                            .when(editing, |x| x.child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret())))
+                            .when(editing, |x| x.child(div().w(px(1.5)).h(ui_px(15.)).bg(Theme::caret())))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(d) = this.debug.bp_dialog.as_mut() {
                                     d.editing = true;
@@ -1377,7 +1378,7 @@ impl Workspace {
                     .child(flag("bp-class-enabled", c.enabled, "Enabled", |c| c.enabled = !c.enabled))
                     .child(flag("bp-class-raise", c.raised, "On raise (even when handled)", |c| c.raised = !c.raised))
                     .child(flag("bp-class-uncaught", c.uncaught, "On termination (uncaught)", |c| c.uncaught = !c.uncaught))
-                    .child(div().text_size(px(12.)).text_color(Theme::text_dim()).child("A built-in name (ValueError) or the full name of an importable class (mypkg.errors.MyError); its subclasses stop too. A class defined in the script being run cannot be found by debugpy."))
+                    .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).child("A built-in name (ValueError) or the full name of an importable class (mypkg.errors.MyError); its subclasses stop too. A class defined in the script being run cannot be found by debugpy."))
                     .into_any_element()
             }
             Some(BpRow::Raised) => div()
@@ -1423,13 +1424,13 @@ impl Workspace {
                         .border_color(Theme::divider())
                         .rounded(px(10.))
                         .map(crate::ui_kit::floating)
-                        .text_size(px(13.))
+                        .text_size(ui_px(13.))
                         .text_color(Theme::text())
                         .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("Breakpoints"))
                         .child(
                             div()
                                 .flex()
-                                .h(px(320.))
+                                .h(ui_px(320.))
                                 .gap(px(12.))
                                 .child(
                                     div()
@@ -1450,7 +1451,7 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                .child(div().flex_1().min_w_0().text_size(px(12.)).text_color(Theme::text_dim()).child("Space: on/off · type: edit · Insert: + exception · Delete: remove · Enter: go to · Esc: close"))
+                                .child(div().flex_1().min_w_0().text_size(ui_px(12.)).text_color(Theme::text_dim()).child("Space: on/off · type: edit · Insert: + exception · Delete: remove · Enter: go to · Esc: close"))
                                 .child(button("bp-add-class", "+ Exception", false, true).on_click(cx.listener(|this, _, _, cx| this.bp_add_class(cx))))
                                 .child(button("bp-remove", "Remove", false, removable).on_click(cx.listener(move |this, _, _, cx| match cur_rm.clone() {
                                     Some(BpRow::Line(p, l, _)) => this.bp_remove(&p, l, cx),
@@ -2158,7 +2159,7 @@ impl Workspace {
             let selected = i == st.sel;
             div()
                 .id(("smart-step", i))
-                .h(px(24.))
+                .h(ui_px(24.))
                 .px(px(10.))
                 .flex()
                 .items_center()
@@ -2202,10 +2203,10 @@ impl Workspace {
                         .border_color(Theme::divider())
                         .rounded(px(8.))
                         .map(crate::ui_kit::floating)
-                        .text_size(px(13.))
+                        .text_size(ui_px(13.))
                         .text_color(Theme::text())
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(div().px(px(10.)).pb(px(4.)).text_size(px(12.)).text_color(Theme::text_dim()).child(title))
+                        .child(div().px(px(10.)).pb(px(4.)).text_size(ui_px(12.)).text_color(Theme::text_dim()).child(title))
                         .children(rows),
                 )
                 .into_any_element(),
@@ -2252,7 +2253,7 @@ impl Workspace {
         let name = |id: i64| d.threads.iter().find(|t| t.0 == id).map(|t| t.1.clone()).unwrap_or_else(|| format!("Thread {id}"));
         let head = div()
             .id("dbg-thread")
-            .h(px(24.))
+            .h(ui_px(24.))
             .px(px(8.))
             .flex()
             .items_center()
@@ -2263,7 +2264,7 @@ impl Workspace {
             .hover(|s| s.bg(Theme::hover_row()))
             .child(div().text_color(Theme::text_dim()).child("Thread"))
             .child(div().flex_1().child(name(cur)))
-            .child(crate::icons::icon(if d.threads_open { "chevron-up" } else { "chevron-down" }, 12., Theme::text_dim()))
+            .child(crate::icons::ui_icon(if d.threads_open { "chevron-up" } else { "chevron-down" }, 12., Theme::text_dim()))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.debug.threads_open = !this.debug.threads_open;
                 cx.notify();
@@ -2272,7 +2273,7 @@ impl Workspace {
             let id = *id;
             div()
                 .id(("dbg-thread-row", id as u64))
-                .h(px(22.))
+                .h(ui_px(22.))
                 .pl(px(20.))
                 .flex()
                 .items_center()
@@ -2287,7 +2288,7 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .child(head)
-                .when(d.threads_open, |x| x.children(list).child(div().h(px(1.)).bg(Theme::divider())))
+                .when(d.threads_open, |x| x.children(list).child(div().h(ui_px(1.)).bg(Theme::divider())))
                 .into_any_element(),
         )
     }
@@ -2879,13 +2880,13 @@ impl Workspace {
             div()
                 .id(id)
                 .w(px(26.))
-                .h(px(26.))
+                .h(ui_px(26.))
                 .flex()
                 .items_center()
                 .justify_center()
                 .rounded(px(5.))
                 .when(on, |x| x.cursor_pointer().hover(|s| s.bg(Theme::hover_row())).active(|s| s.bg(Theme::press())))
-                .child(crate::icons::icon(icon, 16., if on { color } else { Theme::text_dim().opacity(0.5) }))
+                .child(crate::icons::ui_icon(icon, 16., if on { color } else { Theme::text_dim().opacity(0.5) }))
                 .tooltip(move |_, cx| cx.new(|_| super::Tip(tip.into())).into())
                 .on_click(cx.listener(move |this, _, w, cx| {
                     if on {
@@ -2900,27 +2901,27 @@ impl Workspace {
             .items_center()
             .gap(px(2.))
             .px(px(6.))
-            .h(px(30.))
+            .h(ui_px(30.))
             .border_b_1()
             .border_color(Theme::divider())
             .child(tool("dbg-rerun", "rotate-cw", "Rerun Debug Session", can_rerun, green, Action::RerunDebug, cx))
             .child(tool("dbg-resume", "play", "Resume Program  F9", paused && !d.pending, green, Action::Resume, cx))
             .child(tool("dbg-pause", "pause", "Pause Program", running, plain, Action::PauseProgram, cx))
             .child(tool("dbg-stop", "stop-solid", "Stop  Ctrl+F2", live, Theme::error(), Action::Stop, cx))
-            .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(Theme::divider()))
+            .child(div().w(px(1.)).h(ui_px(16.)).mx(px(4.)).bg(Theme::divider()))
             .child(tool("dbg-over", "step-over", "Step Over  F8", paused, plain, Action::StepOver, cx))
             .child(tool("dbg-into", "step-into", "Step Into  F7", paused, plain, Action::StepInto, cx))
             .child(tool("dbg-out", "step-out", "Step Out  Shift+F8", paused, plain, Action::StepOut, cx))
             .child(tool("dbg-cursor", "arrow-right-to-line", "Run to Cursor  Alt+F9", paused, plain, Action::RunToCursor, cx))
             .child(tool("dbg-eval", "calculator", "Evaluate Expression  Alt+F8", paused, plain, Action::EvaluateExpression, cx))
-            .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(Theme::divider()))
+            .child(div().w(px(1.)).h(ui_px(16.)).mx(px(4.)).bg(Theme::divider()))
             .child(tool("dbg-bps", "breakpoints", "View Breakpoints  Ctrl+Shift+F8", true, Theme::breakpoint(), Action::ViewBreakpoints, cx))
             .child(
                 // Mute Breakpoints: a crossed-out dot, pressed while on.
                 div()
                     .id("dbg-mute")
                     .w(px(26.))
-                    .h(px(26.))
+                    .h(ui_px(26.))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -2929,16 +2930,16 @@ impl Workspace {
                     .when(d.muted, |x| x.bg(Theme::selection_row()))
                     .when(!d.muted, |x| x.hover(|s| s.bg(Theme::hover_row())))
                     .active(|s| s.bg(Theme::press()))
-                    .child(crate::icons::icon("mute-breakpoints", 16., if d.muted { Theme::text() } else { plain }))
+                    .child(crate::icons::ui_icon("mute-breakpoints", 16., if d.muted { Theme::text() } else { plain }))
                     .tooltip(|_, cx| cx.new(|_| super::Tip("Mute Breakpoints".into())).into())
                     .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::MuteBreakpoints, w, cx))),
             )
-            .child(div().pl(px(10.)).text_size(px(12.)).text_color(Theme::text_muted()).child(title));
+            .child(div().pl(px(10.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(title));
         let tab = |id: &'static str, label: &'static str, t: DebugTab, cur: DebugTab, cx: &mut Context<Self>| {
             div()
                 .id(id)
                 .px(px(10.))
-                .h(px(26.))
+                .h(ui_px(26.))
                 .flex()
                 .items_center()
                 .cursor_pointer()
@@ -2962,7 +2963,7 @@ impl Workspace {
             .size_full()
             .flex()
             .flex_col()
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .child(toolbar)
             .child(tabs)
             .child(div().flex_1().min_h_0().border_t_1().border_color(Theme::divider()).child(body))
@@ -2991,7 +2992,7 @@ impl Workspace {
                 let mine = f.path.as_ref().is_some_and(|p| p.starts_with(&self.root));
                 div()
                     .id(("dbg-frame", i))
-                    .h(px(22.))
+                    .h(ui_px(22.))
                     .px(px(8.))
                     .flex()
                     .items_center()
@@ -3001,7 +3002,7 @@ impl Workspace {
                     .when(i != d.frame, |x| x.hover(|s| s.bg(Theme::hover_row())))
                     .text_color(if mine { Theme::text() } else { Theme::text_muted() })
                     .child(f.name.clone())
-                    .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(format!("{file}:{}", f.line + 1)))
+                    .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(format!("{file}:{}", f.line + 1)))
                     .on_click(cx.listener(move |this, _, w, cx| {
                         this.select_frame(i, w, cx);
                         cx.notify();
@@ -3009,7 +3010,7 @@ impl Workspace {
             }));
         let paused = d.paused_thread().is_some();
         let focused = d.focus.is_focused(window);
-        let caret = || div().w(px(1.5)).h(px(14.)).bg(Theme::caret());
+        let caret = || div().w(px(1.5)).h(ui_px(14.)).bg(Theme::caret());
         let input = |text: &str, focused: bool| div().flex().items_center().px(px(3.)).border_1().border_color(Theme::accent()).rounded(px(3.)).child(text.to_string()).when(focused, |x| x.child(caret()));
         let edit = d.edit.clone();
         let mut rows: Vec<gpui::AnyElement> = Vec::new();
@@ -3017,7 +3018,7 @@ impl Workspace {
         let new_watch_row = |text: &str| {
             div()
                 .id("dbg-new-watch")
-                .h(px(21.))
+                .h(ui_px(21.))
                 .pl(px(8. + 16.))
                 .flex()
                 .items_center()
@@ -3058,7 +3059,7 @@ impl Workspace {
             rows.push(
                 div()
                     .id(("dbg-var", i))
-                    .h(px(21.))
+                    .h(ui_px(21.))
                     .pl(px(8. + 16. * r.depth as f32))
                     .pr(px(8.))
                     .flex()
@@ -3111,11 +3112,11 @@ impl Workspace {
             div()
                 .id(id)
                 .px(px(6.))
-                .h(px(20.))
+                .h(ui_px(20.))
                 .flex()
                 .items_center()
                 .rounded(px(4.))
-                .text_size(px(12.))
+                .text_size(ui_px(12.))
                 .text_color(if on { Theme::text() } else { Theme::text_dim() })
                 .when(on, |x| x.cursor_pointer().hover(|s| s.bg(Theme::hover_row())).active(|s| s.bg(Theme::press())))
                 .child(label)
@@ -3133,7 +3134,7 @@ impl Workspace {
             .items_center()
             .gap(px(2.))
             .px(px(4.))
-            .h(px(24.))
+            .h(ui_px(24.))
             .border_b_1()
             .border_color(Theme::divider())
             .child(mini("dbg-watch-add", "+ Watch", "New Watch  Insert", true, |t, _| t.debug.edit = Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }), cx))
@@ -3159,7 +3160,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .child(bar)
-            .child(div().id("dbg-vars-list").flex_1().min_h_0().overflow_y_scroll().font_family(mono_font()).text_size(px(12.5)).children(rows));
+            .child(div().id("dbg-vars-list").flex_1().min_h_0().overflow_y_scroll().font_family(mono_font()).text_size(ui_px(12.5)).children(rows));
         let banner = d.exception.clone().map(|e| {
             div()
                 .flex_shrink_0()
@@ -3191,7 +3192,7 @@ impl Workspace {
             .px(px(8.))
             .py(px(4.))
             .font_family(mono_font())
-            .text_size(px(12.5))
+            .text_size(ui_px(12.5))
             .children(d.console.iter().enumerate().map(|(ln, (t, k))| {
                 let color = match k {
                     Line::Out => Theme::text(),
@@ -3226,10 +3227,10 @@ impl Workspace {
                 if at < chars.len() || pieces.is_empty() {
                     pieces.push(div().child(chars[at.min(chars.len())..].iter().collect::<String>()).into_any_element());
                 }
-                div().min_h(px(17.)).flex().text_color(color).whitespace_nowrap().children(pieces)
+                div().min_h(ui_px(17.)).flex().text_color(color).whitespace_nowrap().children(pieces)
             }));
         let input = div()
-            .h(px(26.))
+            .h(ui_px(26.))
             .px(px(8.))
             .flex()
             .items_center()
@@ -3237,12 +3238,12 @@ impl Workspace {
             .border_t_1()
             .border_color(Theme::divider())
             .font_family(mono_font())
-            .text_size(px(12.5))
+            .text_size(ui_px(12.5))
             .child(div().text_color(Theme::accent()).child(">>>"))
             .child(if d.input.is_empty() && !focused {
                 div().text_color(Theme::text_dim()).child(if can_eval { "Evaluate an expression in the selected frame (Alt+F8)" } else { "Expressions can be evaluated while the program is paused" }).into_any_element()
             } else {
-                div().flex().items_center().child(d.input.clone()).when(focused, |x| x.child(div().w(px(1.5)).h(px(15.)).bg(Theme::caret()))).into_any_element()
+                div().flex().items_center().child(d.input.clone()).when(focused, |x| x.child(div().w(px(1.5)).h(ui_px(15.)).bg(Theme::caret()))).into_any_element()
             });
         let popup = d.completion.as_ref().map(|c| {
             let shown = c.shown(&d.input);
@@ -3261,18 +3262,18 @@ impl Workspace {
                 .rounded(px(4.))
                 .shadow_md()
                 .font_family(mono_font())
-                .text_size(px(12.5))
+                .text_size(ui_px(12.5))
                 .occlude()
                 .children(shown.into_iter().enumerate().skip(first).take(8).map(|(j, (label, kind))| {
                     div()
-                        .h(px(20.))
+                        .h(ui_px(20.))
                         .px(px(8.))
                         .flex()
                         .items_center()
                         .gap(px(12.))
                         .when(j == c.sel, |x| x.bg(Theme::selection_row()))
                         .child(div().flex_1().whitespace_nowrap().child(label.clone()))
-                        .child(div().text_color(Theme::text_dim()).text_size(px(11.)).child(kind.clone()))
+                        .child(div().text_color(Theme::text_dim()).text_size(ui_px(11.)).child(kind.clone()))
                 }))
         });
         div().size_full().relative().flex().flex_col().child(lines).child(input).children(popup).into_any_element()

@@ -2,6 +2,7 @@
 //! (Alt+3, or Ctrl+Enter from the popup). Searches run in the background, restart on every
 //! keystroke (debounced), and are cancelled when superseded.
 
+use crate::theme::ui_px;
 use super::*;
 use brisk_search::{Match, Options, Query, Results};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -615,7 +616,7 @@ impl Workspace {
                 .px(px(6.))
                 .py(px(1.))
                 .rounded(px(4.))
-                .text_size(px(12.))
+                .text_size(ui_px(12.))
                 .font_family(mono_font())
                 .cursor_pointer()
                 .when(on, |d| d.bg(Theme::selection_row()).text_color(Theme::text()))
@@ -654,7 +655,7 @@ impl Workspace {
                     cx.notify();
                 }))
                 .child(if value.is_empty() {
-                    div().flex().child(div().when(focused, |d| d.w(px(1.5)).h(px(16.)).bg(Theme::caret()))).child(div().text_color(Theme::text_dim()).child(placeholder)).into_any_element()
+                    div().flex().child(div().when(focused, |d| d.w(px(1.5)).h(ui_px(16.)).bg(Theme::caret()))).child(div().text_color(Theme::text_dim()).child(placeholder)).into_any_element()
                 } else {
                     div()
                         .flex()
@@ -662,7 +663,7 @@ impl Workspace {
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .child(div().when(selected, |d| d.bg(Theme::selection())).child(value.to_string()))
-                        .when(focused, |d| d.child(div().w(px(1.5)).h(px(16.)).bg(Theme::caret())))
+                        .when(focused, |d| d.child(div().w(px(1.5)).h(ui_px(16.)).bg(Theme::caret())))
                         .into_any_element()
                 })
         };
@@ -675,7 +676,7 @@ impl Workspace {
             .pt(px(10.))
             .pb(px(6.))
             .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(if f.replace_mode { "Replace in Files" } else { "Find in Files" }))
-            .child(div().pl(px(8.)).text_size(px(12.)).text_color(if f.error.is_some() { Theme::error() } else { Theme::text_muted() }).child(count))
+            .child(div().pl(px(8.)).text_size(ui_px(12.)).text_color(if f.error.is_some() { Theme::error() } else { Theme::text_muted() }).child(count))
             .child(div().flex_1())
             .child(toggle("ft-case", "Cc", f.opts.case_sensitive, "Match Case  Alt+C", 0, cx))
             .child(toggle("ft-words", "W", f.opts.whole_words, "Words  Alt+W", 1, cx))
@@ -686,7 +687,7 @@ impl Workspace {
             .gap(px(4.))
             .px(px(10.))
             .pb(px(6.))
-            .text_size(px(12.))
+            .text_size(ui_px(12.))
             .child(div().px(px(10.)).py(px(3.)).rounded(px(5.)).bg(Theme::selection_row()).child("In Project"))
             .when(f.mask_on, |d| d.child(div().flex_1()).child(div().w(px(220.)).child(field_box("fx-mask", &f.opts.file_mask, "*.py", f.field == Field::Mask, false, Field::Mask, cx))));
 
@@ -702,7 +703,7 @@ impl Workspace {
                         let (name, _) = split_rel(f.rel(m));
                         div()
                             .id(("fr", i))
-                            .h(px(ROW_H))
+                            .h(ui_px(ROW_H))
                             .mx(px(6.))
                             .px(px(8.))
                             .flex()
@@ -724,8 +725,8 @@ impl Workspace {
                                 }
                                 cx.notify();
                             }))
-                            .child(match_line(m).flex_1().font_family(mono_font()).text_size(px(12.5)))
-                            .child(div().flex_shrink_0().text_size(px(12.)).text_color(Theme::text_muted()).whitespace_nowrap().child(format!("{name} {}", m.line + 1)))
+                            .child(match_line(m).flex_1().font_family(mono_font()).text_size(ui_px(12.5)))
+                            .child(div().flex_shrink_0().text_size(ui_px(12.)).text_color(Theme::text_muted()).whitespace_nowrap().child(format!("{name} {}", m.line + 1)))
                     })
                     .collect()
             }),
@@ -744,15 +745,15 @@ impl Workspace {
                 div()
                     .flex()
                     .flex_col()
-                    .h(px(190.))
+                    .h(ui_px(190.))
                     .flex_shrink_0()
                     .border_t_1()
                     .border_color(Theme::divider())
                     .bg(Theme::editor_bg())
-                    .child(div().px(px(12.)).py(px(4.)).text_size(px(12.)).text_color(Theme::text_muted()).child(rel))
+                    .child(div().px(px(12.)).py(px(4.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(rel))
                     .children((lo..hi).map(|l| {
                         let text = lines[l].clone();
-                        let row = div().h(px(18.)).flex().font_family(mono_font()).text_size(px(12.5));
+                        let row = div().h(ui_px(18.)).flex().font_family(mono_font()).text_size(ui_px(12.5));
                         let num = div().w(px(48.)).flex_shrink_0().pr(px(10.)).flex().justify_end().text_color(Theme::gutter_fg()).child((l + 1).to_string());
                         if l == m.line {
                             row.bg(Theme::current_line()).child(num).child(match_line(&Match { text: m.text.clone(), hl: m.hl.clone(), ..m.clone() }).flex_1())
@@ -782,7 +783,7 @@ impl Workspace {
                         .px(px(12.))
                         .py(px(5.))
                         .rounded(px(5.))
-                        .text_size(px(13.))
+                        .text_size(ui_px(13.))
                         .cursor_pointer()
                         .when(f.confirm_replace, |d| d.bg(Theme::error()))
                         .when(!f.confirm_replace, |d| d.bg(Theme::accent()))
@@ -806,7 +807,7 @@ impl Workspace {
                         .id("find-popup")
                         .on_mouse_down_out(cx.listener(|this, _, window, cx| this.close_find(window, cx)))
                         .w(px(860.))
-                        .h(px(620.))
+                        .h(ui_px(620.))
                         .flex()
                         .flex_col()
                         .bg(Theme::panel())
@@ -815,25 +816,25 @@ impl Workspace {
                         .rounded(px(10.))
                         .map(crate::ui_kit::floating)
                         .overflow_hidden()
-                        .text_size(px(13.))
+                        .text_size(ui_px(13.))
                         .text_color(Theme::text())
                         .child(header)
                         .child(scope)
                         .child(field_box("fx-query", &f.opts.query, "Text to find", f.field == Field::Query, f.seed_selected, Field::Query, cx))
                         .children(replace_bar)
-                        .child(div().h(px(6.)))
+                        .child(div().h(ui_px(6.)))
                         .child(list)
                         .children(preview)
                         .child(
                             div()
-                                .h(px(26.))
+                                .h(ui_px(26.))
                                 .flex()
                                 .items_center()
                                 .px(px(12.))
                                 .gap(px(14.))
                                 .border_t_1()
                                 .border_color(Theme::divider())
-                                .text_size(px(11.))
+                                .text_size(ui_px(11.))
                                 .text_color(Theme::text_dim())
                                 .child("Enter — open")
                                 .child("Ctrl+Enter — open in Find window")
@@ -871,11 +872,11 @@ impl Workspace {
                         let selected = w.selected == i;
                         let base = div()
                             .id(("fw", i))
-                            .h(px(22.))
+                            .h(ui_px(22.))
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .text_size(px(13.))
+                            .text_size(ui_px(13.))
                             .w_full()
                             .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
                             .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
@@ -913,7 +914,7 @@ impl Workspace {
                                 .on_click(node_click)
                                 .child(arrow)
                                 .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(tree::USAGE_GROUPS[g as usize]))
-                                .child(div().text_color(Theme::text_muted()).text_size(px(12.)).child(count_label(count))),
+                                .child(div().text_color(Theme::text_muted()).text_size(ui_px(12.)).child(count_label(count))),
                             WRow::File(_, fi, count) => {
                                 let (name, dir) = split_rel(&w.files.files[fi]);
                                 let (icon, color) = file_icon(name, false);
@@ -922,8 +923,8 @@ impl Workspace {
                                     .child(arrow)
                                     .child(div().flex().items_center().child(crate::icons::glyph(icon, 14., color)))
                                     .child(name.to_string())
-                                    .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(dir.to_string()))
-                                    .child(div().text_color(Theme::text_muted()).text_size(px(12.)).child(count_label(count)))
+                                    .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(dir.to_string()))
+                                    .child(div().text_color(Theme::text_muted()).text_size(ui_px(12.)).child(count_label(count)))
                             }
                             WRow::Match(mi) => {
                                 let m = &w.results.matches[mi];
@@ -938,8 +939,8 @@ impl Workspace {
                                         }
                                         cx.notify();
                                     }))
-                                    .child(div().w(px(40.)).flex_shrink_0().flex().justify_end().text_color(Theme::gutter_fg_active()).font_family(mono_font()).text_size(px(12.)).child((m.line + 1).to_string()))
-                                    .child(match_line(m).flex_1().font_family(mono_font()).text_size(px(12.5)))
+                                    .child(div().w(px(40.)).flex_shrink_0().flex().justify_end().text_color(Theme::gutter_fg_active()).font_family(mono_font()).text_size(ui_px(12.)).child((m.line + 1).to_string()))
+                                    .child(match_line(m).flex_1().font_family(mono_font()).text_size(ui_px(12.5)))
                             }
                         }
                     })
@@ -958,19 +959,19 @@ impl Workspace {
             .flex_col()
             .child(
                 div()
-                    .h(px(30.))
+                    .h(ui_px(30.))
                     .flex()
                     .items_center()
                     .px(px(12.))
                     .gap(px(12.))
-                    .text_size(px(13.))
+                    .text_size(ui_px(13.))
                     .border_b_1()
                     .border_color(Theme::divider())
                     .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("Find"))
                     .child(div().text_color(Theme::text_muted()).child(header))
                     .child(div().flex_1())
                     .child(
-                        div().id("fw-rerun").px(px(5.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(crate::icons::icon("rotate-cw", 14., Theme::text_muted()))
+                        div().id("fw-rerun").px(px(5.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(crate::icons::ui_icon("rotate-cw", 14., Theme::text_muted()))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.find.open = true;
                                 this.find.seed_selected = false;

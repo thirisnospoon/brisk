@@ -2,6 +2,7 @@
 //! the selected one (double click: its diff), then Push. A branch without an upstream is
 //! pushed as a new remote branch and starts tracking it.
 
+use crate::theme::ui_px;
 use super::git_merge_ui::{button, dialog_frame, GitDialog};
 use super::git_ui::{dir_name, file_name, fmt_time, status_color};
 use super::Workspace;
@@ -121,7 +122,7 @@ impl Workspace {
                     div()
                         .id(("push-row", i))
                         .w_full()
-                        .h(px(24.))
+                        .h(ui_px(24.))
                         .px(px(8.))
                         .flex()
                         .items_center()
@@ -131,15 +132,15 @@ impl Workspace {
                         .when(on, |x| x.bg(Theme::selection_row()))
                         .when(!on, |x| x.hover(|s| s.bg(Theme::hover_row())))
                         .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(c.subject.clone()))
-                        .child(div().text_color(Theme::text_muted()).text_size(px(12.)).whitespace_nowrap().child(c.author.clone()))
-                        .child(div().w(px(110.)).text_color(Theme::text_dim()).text_size(px(12.)).whitespace_nowrap().child(fmt_time(c.time)))
+                        .child(div().text_color(Theme::text_muted()).text_size(ui_px(12.)).whitespace_nowrap().child(c.author.clone()))
+                        .child(div().w(px(110.)).text_color(Theme::text_dim()).text_size(ui_px(12.)).whitespace_nowrap().child(fmt_time(c.time)))
                         .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _, cx| this.push_select(i, cx)))
                 });
                 let files = d.files.iter().enumerate().map(|(i, f)| {
                     div()
                         .id(("push-file", i))
                         .w_full()
-                        .h(px(22.))
+                        .h(ui_px(22.))
                         .px(px(6.))
                         .flex()
                         .items_center()
@@ -148,7 +149,7 @@ impl Workspace {
                         .cursor_pointer()
                         .hover(|s| s.bg(Theme::hover_row()))
                         .child(div().text_color(status_color(f.status)).whitespace_nowrap().child(file_name(&f.path).to_string()))
-                        .child(div().text_color(Theme::text_dim()).text_size(px(12.)).whitespace_nowrap().child(dir_name(&f.path).to_string()))
+                        .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).whitespace_nowrap().child(dir_name(&f.path).to_string()))
                         .on_click(cx.listener(move |this, e: &gpui::ClickEvent, w, cx| {
                             if e.click_count() >= 2 {
                                 this.push_file_diff(i, w, cx);
@@ -168,12 +169,12 @@ impl Workspace {
                     .gap(px(8.))
                     .text_color(Theme::text_muted())
                     .child(what)
-                    .when(o.new_branch, |x| x.child(div().px(px(6.)).rounded(px(3.)).bg(Theme::diff_added_bg()).text_color(Theme::text()).text_size(px(12.)).child("New branch, upstream will be set")))
+                    .when(o.new_branch, |x| x.child(div().px(px(6.)).rounded(px(3.)).bg(Theme::diff_added_bg()).text_color(Theme::text()).text_size(ui_px(12.)).child("New branch, upstream will be set")))
             }
         };
         Some(
             dialog_frame("push-dialog", 900., &title)
-                .h(px(480.))
+                .h(ui_px(480.))
                 .child(div().pb(px(8.)).child(info))
                 .child(body)
                 .child(
@@ -182,7 +183,7 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap(px(8.))
-                        .child(div().flex_1().text_size(px(11.)).text_color(Theme::text_dim()).child("↑↓ commits · double click a file: diff · Enter Push · Esc cancel"))
+                        .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("↑↓ commits · double click a file: diff · Enter Push · Esc cancel"))
                         .child(button("push-cancel", "Cancel", false).on_click(cx.listener(|this, _, w, cx| {
                             if let Some(g) = this.git.as_mut() {
                                 g.dialog = None;

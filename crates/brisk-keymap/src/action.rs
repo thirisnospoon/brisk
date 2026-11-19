@@ -189,6 +189,9 @@ actions! {
     IncreaseFontSize => "Increase Font Size in All Editors", "View";
     DecreaseFontSize => "Decrease Font Size in All Editors", "View";
     ResetFontSize => "Reset Font Size", "View";
+    ZoomInIde => "Zoom In IDE", "View";
+    ZoomOutIde => "Zoom Out IDE", "View";
+    ResetIdeZoom => "Reset IDE Zoom", "View";
     QuickSwitchTheme => "Switch Light / Dark Theme", "View";
     ProjectStructure => "Project Structure", "File";
     ReloadFromDisk => "Reload All from Disk", "File";

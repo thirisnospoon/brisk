@@ -4,6 +4,7 @@
 //! (`pip list --outdated` in the background). Operations queue up and run one at a time in
 //! the background; the package's row shows a spinner meanwhile.
 
+use crate::theme::ui_px;
 use super::{BottomTool, Workspace};
 use crate::editor::Editor;
 use crate::py_packages::{self, Package, Tool};
@@ -164,7 +165,7 @@ fn text(e: &Entity<Editor>, cx: &gpui::App) -> String {
 
 /// A turning loader icon.
 fn spinner(id: impl Into<gpui::ElementId>) -> impl IntoElement {
-    crate::icons::icon("loader-circle", 13., Theme::text_muted())
+    crate::icons::ui_icon("loader-circle", 13., Theme::text_muted())
         .with_animation(id, Animation::new(std::time::Duration::from_millis(900)).repeat(), |svg, t| svg.with_transformation(Transformation::rotate(gpui::percentage(t))))
 }
 
@@ -552,7 +553,7 @@ impl Workspace {
                 div()
                     .id(("pkg-suggest", i))
                     .w_full()
-                    .h(px(22.))
+                    .h(ui_px(22.))
                     .px(px(8.))
                     .flex()
                     .items_center()
@@ -577,8 +578,8 @@ impl Workspace {
                     .border_color(Theme::divider())
                     .rounded(px(6.))
                     .shadow_md()
-                    .text_size(px(13.))
-                    .when_some(note.clone(), |d, n| d.child(div().px(px(8.)).py(px(3.)).text_size(px(12.)).text_color(Theme::text_muted()).child(n)))
+                    .text_size(ui_px(13.))
+                    .when_some(note.clone(), |d, n| d.child(div().px(px(8.)).py(px(3.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(n)))
                     .children(rows),
             )
             .with_priority(1)
@@ -590,7 +591,7 @@ impl Workspace {
             .items_center()
             .gap(px(6.))
             .px(px(8.))
-            .h(px(CONTROL_H + 10.))
+            .h(ui_px(CONTROL_H + 10.))
             .border_b_1()
             .border_color(Theme::divider())
             .child(input(&p.filter, 200., "Filter packages", cx))
@@ -599,7 +600,7 @@ impl Workspace {
                     .tooltip(|_, cx| cx.new(|_| super::Tip("Reload the list".into())).into())
                     .on_click(cx.listener(|this, _, _, cx| this.refresh_packages(cx))),
             )
-            .child(div().w(px(1.)).h(px(18.)).mx(px(2.)).bg(Theme::divider()))
+            .child(div().w(px(1.)).h(ui_px(18.)).mx(px(2.)).bg(Theme::divider()))
             .child(div().relative().child(input(&p.name, 180., "Package name", cx)).children(popup))
             .child(input(&p.version, 160., "Version", cx))
             .child(ui_kit::button("pkg-install", "Install", true, true).on_click(cx.listener(|this, _, _, cx| {
@@ -618,7 +619,7 @@ impl Workspace {
                     cx.notify();
                 }
             })))
-            .child(div().flex_1().min_w_0().overflow_hidden().text_size(px(12.)).text_color(Theme::text_muted()).whitespace_nowrap().text_ellipsis().child(format!("{tool} · {interp}")));
+            .child(div().flex_1().min_w_0().overflow_hidden().text_size(ui_px(12.)).text_color(Theme::text_muted()).whitespace_nowrap().text_ellipsis().child(format!("{tool} · {interp}")));
         let notice: Option<gpui::AnyElement> = if let Some(pk) = &p.confirm {
             Some(
                 div()
@@ -630,7 +631,7 @@ impl Workspace {
                     .bg(Theme::panel())
                     .border_b_1()
                     .border_color(Theme::divider())
-                    .child(crate::icons::icon("triangle-alert", 14., Theme::warning()))
+                    .child(crate::icons::ui_icon("triangle-alert", 14., Theme::warning()))
                     .child(format!("Uninstall {} {} from this interpreter?", pk.name, pk.version))
                     .child(ui_kit::button("pkg-confirm", "Uninstall", true, true).on_click(cx.listener(|this, _, _, cx| {
                         this.confirm_uninstall(true, cx);
@@ -640,11 +641,11 @@ impl Workspace {
                         this.confirm_uninstall(false, cx);
                         cx.notify();
                     })))
-                    .child(div().text_size(px(12.)).text_color(Theme::text_dim()).child("Enter — uninstall, Esc — cancel"))
+                    .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).child("Enter — uninstall, Esc — cancel"))
                     .into_any_element(),
             )
         } else {
-            p.error.clone().map(|e| div().px(px(10.)).h(px(24.)).flex().items_center().text_size(px(12.5)).text_color(Theme::error()).border_b_1().border_color(Theme::divider()).child(e).into_any_element())
+            p.error.clone().map(|e| div().px(px(10.)).h(ui_px(24.)).flex().items_center().text_size(ui_px(12.5)).text_color(Theme::error()).border_b_1().border_color(Theme::divider()).child(e).into_any_element())
         };
         // Right of the version: a spinner and what runs, or "Queued".
         let op_state = |op: &Op, running: bool, id: (&'static str, usize)| {
@@ -652,7 +653,7 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .gap(px(6.))
-                .text_size(px(12.))
+                .text_size(ui_px(12.))
                 .text_color(if running { Theme::text_muted() } else { Theme::text_dim() })
                 .when(running, |d| d.child(spinner(id)).child(op.verb()))
                 .when(!running, |d| d.child("Queued"))
@@ -669,12 +670,12 @@ impl Workspace {
                 div()
                     .id(("pkg-new", i))
                     .w_full()
-                    .h(px(22.))
+                    .h(ui_px(22.))
                     .px(px(10.))
                     .flex()
                     .items_center()
                     .child(div().w(px(320.)).child(op.name().to_string()))
-                    .child(div().w(px(200.)).font_family(mono_font()).text_size(px(12.5)).text_color(Theme::text_muted()).child(version))
+                    .child(div().w(px(200.)).font_family(mono_font()).text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(version))
                     .child(op_state(op, *running, ("pkg-new-spin", i)))
                     .into_any_element()
             })
@@ -686,7 +687,7 @@ impl Workspace {
             .min_h_0()
             .overflow_y_scroll()
             .track_scroll(&p.scroll)
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .children(pending_rows)
             .when(visible.is_empty() && pending.is_empty(), |d| {
                 let msg = if p.loading { "Loading packages…" } else if p.list.is_empty() { "No packages" } else { "No packages match the filter" };
@@ -701,7 +702,7 @@ impl Workspace {
                     .id(("pkg-row", i))
                     .group("pkg-row")
                     .w_full()
-                    .h(px(22.))
+                    .h(ui_px(22.))
                     .px(px(10.))
                     .flex()
                     .items_center()
@@ -714,7 +715,7 @@ impl Workspace {
                             .flex()
                             .gap(px(6.))
                             .font_family(mono_font())
-                            .text_size(px(12.5))
+                            .text_size(ui_px(12.5))
                             .text_color(Theme::text_muted())
                             .child(pk.version.clone())
                             .when_some(latest, |d, l| d.child(div().text_color(Theme::accent()).child(format!("→ {l}")))),
@@ -724,7 +725,7 @@ impl Workspace {
                         let name = pk.name.clone();
                         d.child(
                             div().invisible().when(sel, |d| d.visible()).group_hover("pkg-row", |s| s.visible()).child(
-                                ui_kit::button("pkg-row-upgrade", "Upgrade", true, false).h(px(18.)).on_click(cx.listener(move |this, _, _, cx| {
+                                ui_kit::button("pkg-row-upgrade", "Upgrade", true, false).h(ui_px(18.)).on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
                                     this.package_op(Op::Upgrade(name.clone()), cx);
                                     cx.notify();
@@ -750,9 +751,9 @@ impl Workspace {
             .flex()
             .flex_shrink_0()
             .px(px(10.))
-            .h(px(22.))
+            .h(ui_px(22.))
             .items_center()
-            .text_size(px(12.))
+            .text_size(ui_px(12.))
             .text_color(Theme::text_muted())
             .border_b_1()
             .border_color(Theme::divider())
@@ -764,7 +765,7 @@ impl Workspace {
             .size_full()
             .flex()
             .flex_col()
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .child(toolbar)
             .children(notice)
             .child(header)

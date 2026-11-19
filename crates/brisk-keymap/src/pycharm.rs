@@ -145,6 +145,13 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("ctrl-alt-s", A::Settings, None);
     k.bind("alt-shift-.", A::IncreaseFontSize, None);
     k.bind("alt-shift-,", A::DecreaseFontSize, None);
+    // View › Appearance › Zoom IDE.
+    k.bind("ctrl-alt-shift-=", A::ZoomInIde, None);
+    k.bind("ctrl-alt-shift--", A::ZoomOutIde, None);
+    k.bind("ctrl-alt-shift-0", A::ResetIdeZoom, None);
+    k.bind("ctrl-alt-=", A::ZoomInIde, None);
+    k.bind("ctrl-alt--", A::ZoomOutIde, None);
+    k.bind("ctrl-alt-0", A::ResetIdeZoom, None);
     k.bind("ctrl-alt-shift-s", A::ProjectStructure, None);
     k.bind("ctrl-alt-y", A::ReloadFromDisk, None);
     k.bind("enter", A::OpenSelected, PV);

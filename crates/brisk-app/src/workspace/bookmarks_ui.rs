@@ -3,6 +3,7 @@
 //! live in their editors (and follow edits); the rest are kept here. They are saved per
 //! project in the config folder.
 
+use crate::theme::ui_px;
 use super::{PopupItem, PopupKind, Target, Workspace};
 use crate::editor::Editor;
 use crate::theme::Theme;
@@ -274,7 +275,7 @@ impl Workspace {
             .overflow_y_scroll()
             .child(Self::panel_header("Bookmarks"))
             .when(rows.is_empty(), |d| {
-                d.child(div().px(px(12.)).text_size(px(13.)).text_color(Theme::text_muted()).child("No bookmarks. F11 sets one on the caret line, Ctrl+F11 with a letter or digit."))
+                d.child(div().px(px(12.)).text_size(ui_px(13.)).text_color(Theme::text_muted()).child("No bookmarks. F11 sets one on the caret line, Ctrl+F11 with a letter or digit."))
             })
             .children(rows.into_iter().enumerate().map(|(i, (b, text))| {
                 let name = b.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -282,23 +283,23 @@ impl Workspace {
                 let (rm_path, rm_line) = (b.path.clone(), b.line);
                 div()
                     .id(("bookmark", i))
-                    .h(px(26.))
+                    .h(ui_px(26.))
                     .flex()
                     .items_center()
                     .gap(px(8.))
                     .px(px(12.))
-                    .text_size(px(13.))
+                    .text_size(ui_px(13.))
                     .hover(|s| s.bg(Theme::hover_row()))
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, window, cx| this.open_symbol(path.clone(), line, 0, window, cx)))
                     .child(
                         div()
                             .w(px(16.))
-                            .h(px(16.))
+                            .h(ui_px(16.))
                             .rounded(px(3.))
                             .bg(Theme::bookmark())
                             .text_color(Theme::bg())
-                            .text_size(px(10.))
+                            .text_size(ui_px(10.))
                             .flex()
                             .items_center()
                             .justify_center()

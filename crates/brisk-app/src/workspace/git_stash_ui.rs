@@ -1,6 +1,7 @@
 //! Git > Stash Changes… (a message, keep untracked files) and Unstash Changes… (the stash
 //! list with Apply / Pop / Drop and the files of the selected stash; a file opens its diff).
 
+use crate::theme::ui_px;
 use super::git_merge_ui::{button, dialog_frame, GitDialog};
 use super::git_ui::{dir_name, file_name, fmt_time, status_color};
 use super::Workspace;
@@ -234,7 +235,7 @@ impl Workspace {
         let n = self.git.as_ref().map(|g| g.status.changes.len()).unwrap_or(0);
         let field = div()
             .id("stash-message")
-            .h(px(30.))
+            .h(ui_px(30.))
             .px(px(8.))
             .flex()
             .items_center()
@@ -244,7 +245,7 @@ impl Workspace {
             .bg(Theme::editor_bg())
             .when(message.is_empty(), |x| x.child(div().text_color(Theme::text_dim()).child(format!("WIP on {branch}"))))
             .when(!message.is_empty(), |x| x.child(message.to_string()))
-            .child(div().w(px(1.5)).h(px(16.)).bg(Theme::accent()));
+            .child(div().w(px(1.5)).h(ui_px(16.)).bg(Theme::accent()));
         let check = div()
             .id("stash-untracked")
             .pt(px(10.))
@@ -254,7 +255,7 @@ impl Workspace {
             .cursor_pointer()
             .child(
                 div()
-                    .size(px(14.))
+                    .size(ui_px(14.))
                     .rounded(px(3.))
                     .border_1()
                     .border_color(if untracked { Theme::accent() } else { Theme::divider() })
@@ -262,9 +263,9 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .text_size(px(10.))
+                    .text_size(ui_px(10.))
                     .text_color(gpui::white())
-                    .when(untracked, |x| x.child(crate::icons::icon("check-bold", 10., gpui::white()))),
+                    .when(untracked, |x| x.child(crate::icons::ui_icon("check-bold", 10., gpui::white()))),
             )
             .child("Include untracked files")
             .on_mouse_down(
@@ -286,7 +287,7 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(div().flex_1().text_size(px(11.)).text_color(Theme::text_dim()).child("Enter create · Alt+U untracked · Esc cancel"))
+                    .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("Enter create · Alt+U untracked · Esc cancel"))
                     .child(button("stash-cancel", "Cancel", false).on_click(cx.listener(|this, _, w, cx| {
                         this.set_stash_dialog(None, cx);
                         this.focus_editor(w, cx);
@@ -302,7 +303,7 @@ impl Workspace {
             div()
                 .id(("stash-row", i))
                 .w_full()
-                .h(px(26.))
+                .h(ui_px(26.))
                 .px(px(8.))
                 .flex()
                 .items_center()
@@ -311,9 +312,9 @@ impl Workspace {
                 .cursor_pointer()
                 .when(on, |x| x.bg(Theme::selection_row()))
                 .when(!on, |x| x.hover(|s| s.bg(Theme::hover_row())))
-                .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(e.name.clone()))
+                .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(e.name.clone()))
                 .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(e.message.clone()))
-                .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(fmt_time(e.time)))
+                .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(fmt_time(e.time)))
                 .on_mouse_down(
                     gpui::MouseButton::Left,
                     cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
@@ -328,7 +329,7 @@ impl Workspace {
             div()
                 .id(("stash-file", i))
                 .w_full()
-                .h(px(24.))
+                .h(ui_px(24.))
                 .px(px(8.))
                 .flex()
                 .items_center()
@@ -337,8 +338,8 @@ impl Workspace {
                 .cursor_pointer()
                 .hover(|s| s.bg(Theme::hover_row()))
                 .child(div().text_color(status_color(c.status)).child(file_name(&c.path).to_string()))
-                .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(dir_name(&c.path).to_string()))
-                .when(c.status == FileStatus::Added, |x| x.child(div().text_color(Theme::text_dim()).text_size(px(11.)).child("new")))
+                .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(dir_name(&c.path).to_string()))
+                .when(c.status == FileStatus::Added, |x| x.child(div().text_color(Theme::text_dim()).text_size(ui_px(11.)).child("new")))
                 .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, w, cx| this.stash_file_diff(i, w, cx)))
         });
         let side = div()
@@ -352,12 +353,12 @@ impl Workspace {
         let branch = self.git.as_ref().and_then(|g| g.status.branch.clone()).unwrap_or_else(|| "HEAD".into());
         dialog_frame("unstash-dialog", 720., "Unstash Changes")
             .child(div().pb(px(8.)).text_color(Theme::text_muted()).child(format!("{} stash(es) · changes go to {branch}", entries.len())))
-            .child(div().flex().gap(px(12.)).child(div().id("stash-list").flex_1().max_h(px(220.)).overflow_y_scroll().children(rows)).child(side))
+            .child(div().flex().gap(px(12.)).child(div().id("stash-list").flex_1().max_h(ui_px(220.)).overflow_y_scroll().children(rows)).child(side))
             .child(div().pt(px(12.)).pb(px(4.)).text_color(Theme::text_muted()).child(format!("Files in {} (click: diff)", entries.get(selected).map(|e| e.name.as_str()).unwrap_or(""))))
             .child(
                 div()
                     .id("stash-files")
-                    .max_h(px(200.))
+                    .max_h(ui_px(200.))
                     .overflow_y_scroll()
                     .border_1()
                     .border_color(Theme::divider())
@@ -370,7 +371,7 @@ impl Workspace {
                     .pt(px(12.))
                     .flex()
                     .items_center()
-                    .child(div().flex_1().text_size(px(11.)).text_color(Theme::text_dim()).child("↑↓ select · Enter Apply · Shift+Enter Pop · Delete Drop · Ctrl+D diff · Esc close"))
+                    .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("↑↓ select · Enter Apply · Shift+Enter Pop · Delete Drop · Ctrl+D diff · Esc close"))
                     .child(button("st-close", "Close", false).on_click(cx.listener(|this, _, w, cx| {
                         this.set_stash_dialog(None, cx);
                         this.focus_editor(w, cx);

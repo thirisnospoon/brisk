@@ -1,6 +1,7 @@
 //! Settings dialog (Ctrl+Alt+S): theme, editor font, font size, line spacing, inlay hints; font zoom
 //! (Alt+Shift+. / Alt+Shift+, / Ctrl+wheel) and the quick theme switch.
 
+use crate::theme::ui_px;
 use super::Workspace;
 use crate::settings::{self, Settings};
 use crate::theme::Theme;
@@ -27,6 +28,15 @@ impl Workspace {
                     _ => None,
                 });
                 self.status = format!("Editor font size: {size}");
+                window.refresh();
+            }
+            Action::ZoomInIde | Action::ZoomOutIde | Action::ResetIdeZoom => {
+                let z = settings::zoom_ide(match action {
+                    Action::ZoomInIde => Some(0.1),
+                    Action::ZoomOutIde => Some(-0.1),
+                    _ => None,
+                });
+                self.status = format!("IDE zoom: {:.0}%", z * 100.);
                 window.refresh();
             }
             Action::QuickSwitchTheme => {
@@ -58,6 +68,7 @@ impl Workspace {
         let Some(d) = self.settings_dialog.as_mut() else { return };
         f(&mut d.draft);
         d.draft.font_size = d.draft.font_size.clamp(settings::MIN_FONT_SIZE, settings::MAX_FONT_SIZE);
+        d.draft.ui_font_size = d.draft.ui_font_size.clamp(settings::MIN_UI_FONT_SIZE, settings::MAX_UI_FONT_SIZE);
         d.draft.line_spacing = (d.draft.line_spacing.clamp(0.8, 2.0) * 10.0).round() / 10.0;
         settings::apply(&d.draft);
         window.refresh();
@@ -94,7 +105,7 @@ impl Workspace {
             div()
                 .id(id)
                 .px(px(10.))
-                .h(px(26.))
+                .h(ui_px(26.))
                 .flex()
                 .items_center()
                 .rounded(px(5.))
@@ -106,7 +117,7 @@ impl Workspace {
                 .child(label)
         };
         let row = |label: &'static str, value: gpui::AnyElement| {
-            div().min_h(px(36.)).flex().items_center().gap(px(12.)).child(div().w(px(110.)).flex_shrink_0().text_color(Theme::text_muted()).child(label)).child(value)
+            div().min_h(ui_px(36.)).flex().items_center().gap(px(12.)).child(div().w(px(110.)).flex_shrink_0().text_color(Theme::text_muted()).child(label)).child(value)
         };
         // − value +: `edit` adds its argument (±1 step) to the setting.
         let stepper = |id: &'static str, value: String, step: f32, edit: fn(&mut Settings, f32), cx: &mut Context<Self>| {
@@ -152,7 +163,7 @@ impl Workspace {
                 cx.notify();
             })))
             .when_some(forced, |d, on| {
-                d.child(div().pl(px(6.)).text_size(px(11.5)).text_color(Theme::text_dim()).child(format!("BRISK_DESIGN sets {} for this run", if on { "Islands" } else { "Classic" })))
+                d.child(div().pl(px(6.)).text_size(ui_px(11.5)).text_color(Theme::text_dim()).child(format!("BRISK_DESIGN sets {} for this run", if on { "Islands" } else { "Classic" })))
             })
             .into_any_element();
         let fonts = div()
@@ -170,6 +181,7 @@ impl Workspace {
             .into_any_element();
         let size = stepper("set-size", format!("{}", s.font_size), 1.0, |s, d| s.font_size += d, cx);
         let spacing = stepper("set-spacing", format!("{:.1}", s.line_spacing), 0.1, |s, d| s.line_spacing += d, cx);
+        let ui_size = stepper("set-ui-size", format!("{}", s.ui_font_size), 1.0, |s, d| s.ui_font_size += d, cx);
         let tab_limit = stepper("set-tab-limit", format!("{}", s.tab_limit), 1.0, |s, d| s.tab_limit = (s.tab_limit as f32 + d).clamp(1., 100.) as u32, cx);
         let tab_rows = div()
             .flex()
@@ -192,14 +204,14 @@ impl Workspace {
             .cursor_pointer()
             .child(
                 div()
-                    .size(px(16.))
+                    .size(ui_px(16.))
                     .flex()
                     .items_center()
                     .justify_center()
                     .rounded(px(3.))
                     .border_1()
                     .border_color(if on { Theme::accent() } else { Theme::divider() })
-                    .when(on, |x| x.bg(Theme::accent()).child(crate::icons::icon("check-bold", 12., gpui::white()))),
+                    .when(on, |x| x.bg(Theme::accent()).child(crate::icons::ui_icon("check-bold", 12., gpui::white()))),
             )
             .child("Show inlay hints")
             .child(div().text_color(Theme::text_dim()).child("(inferred types, parameter names)"))
@@ -224,7 +236,7 @@ impl Workspace {
             div()
                 .id(id)
                 .px(px(14.))
-                .h(px(28.))
+                .h(ui_px(28.))
                 .flex()
                 .items_center()
                 .rounded(px(5.))
@@ -257,20 +269,21 @@ impl Workspace {
                         .border_color(Theme::divider())
                         .rounded(px(10.))
                         .map(crate::ui_kit::floating)
-                        .text_size(px(13.))
+                        .text_size(ui_px(13.))
                         .text_color(Theme::text())
                         .child(div().font_weight(gpui::FontWeight::SEMIBOLD).pb(px(8.)).child("Settings"))
-                        .child(div().text_size(px(11.)).text_color(Theme::text_dim()).pb(px(2.)).child("APPEARANCE"))
+                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pb(px(2.)).child("APPEARANCE"))
                         .child(row("Theme", theme))
                         .child(row("UI style", style))
-                        .child(div().text_size(px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › FONT"))
+                        .child(row("UI font size", ui_size))
+                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › FONT"))
                         .child(row("Font", fonts))
                         .child(row("Size", size))
                         .child(row("Line spacing", spacing))
                         .child(preview)
-                        .child(div().text_size(px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › APPEARANCE"))
+                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › APPEARANCE"))
                         .child(row("Inlay hints", inlay))
-                        .child(div().text_size(px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › EDITOR TABS"))
+                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › EDITOR TABS"))
                         .child(row("Show tabs in", tab_rows))
                         .child(row("Tab limit", tab_limit))
                         .child(
@@ -279,7 +292,7 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                .child(div().flex_1().text_size(px(11.)).text_color(Theme::text_dim()).child("Alt+Shift+. / Alt+Shift+, or Ctrl+wheel: zoom all editors"))
+                                .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("Alt+Shift+. / Alt+Shift+, or Ctrl+wheel: zoom all editors"))
                                 .child(button("set-cancel", "Cancel", false).on_click(cx.listener(|this, _, w, cx| this.settings_close(false, w, cx))))
                                 .child(button("set-ok", "OK", true).on_click(cx.listener(|this, _, w, cx| this.settings_close(true, w, cx)))),
                         ),

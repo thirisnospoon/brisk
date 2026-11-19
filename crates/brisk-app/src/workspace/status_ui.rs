@@ -3,6 +3,7 @@
 //! language, interpreter, branch), each a pill on hover, the clickable ones opening their
 //! popup. Classic keeps its own status bar (`Workspace::render_status`).
 
+use crate::theme::ui_px;
 use super::{PopupItem, PopupKind, Target, Workspace};
 use crate::theme::Theme;
 use gpui::prelude::*;
@@ -68,7 +69,7 @@ impl Workspace {
         let widget = |id: &'static str| {
             div()
                 .id(id)
-                .h(px(22.))
+                .h(ui_px(22.))
                 .px(px(7.))
                 .flex()
                 .items_center()
@@ -102,7 +103,7 @@ impl Workspace {
             right = right.child(
                 widget("sb-branch")
                     .cursor_pointer()
-                    .child(crate::icons::icon("git-branch", 13., Theme::text_muted()))
+                    .child(crate::icons::ui_icon("git-branch", 13., Theme::text_muted()))
                     .child(super::fit_text(cx, &b, 12., 220.))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.dispatch(brisk_keymap::Action::Branches, window, cx);
@@ -114,7 +115,7 @@ impl Workspace {
         let message = ed.and_then(|e| e.caret_problem()).unwrap_or_else(|| self.status.clone());
         let indicator = (!tasks.is_empty()).then(|| {
             let more = tasks.len() - 1;
-            let spinner = crate::icons::icon("loader-circle", 12., Theme::accent())
+            let spinner = crate::icons::ui_icon("loader-circle", 12., Theme::accent())
                 .with_animation("sb-spin", Animation::new(Duration::from_millis(900)).repeat(), |s, d| s.with_transformation(Transformation::rotate(gpui::percentage(d))));
             widget("sb-tasks")
                 .cursor_pointer()
@@ -127,14 +128,14 @@ impl Workspace {
                 }))
         });
         div()
-            .h(px(28.))
+            .h(ui_px(28.))
             .flex_shrink_0()
             .flex()
             .items_center()
             .px(px(8.))
             .gap(px(6.))
             .bg(Theme::frame())
-            .text_size(px(12.))
+            .text_size(ui_px(12.))
             .children(indicator)
             .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().px(px(4.)).text_color(Theme::text_dim()).child(message))
             .child(right)

@@ -26,11 +26,15 @@ pub struct Settings {
     pub tab_limit: u32,
     /// Editor Tabs: "Show tabs in multiple rows" instead of one scrolling row.
     pub tab_rows: bool,
+    /// Appearance: the UI font size (11–16); the whole UI scales with it (13 = 100%).
+    pub ui_font_size: f32,
+    /// View › Appearance › Zoom IDE (Ctrl+Alt+= / Ctrl+Alt+- / Ctrl+Alt+0): 1.0 = 100%.
+    pub ui_zoom: f32,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false }
+        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false, ui_font_size: DEFAULT_UI_FONT_SIZE, ui_zoom: 1.0 }
     }
 }
 
@@ -40,6 +44,13 @@ static ISLANDS: AtomicBool = AtomicBool::new(false);
 static TAB_LIMIT: AtomicU32 = AtomicU32::new(DEFAULT_TAB_LIMIT);
 static TAB_ROWS: AtomicBool = AtomicBool::new(false);
 pub const DEFAULT_TAB_LIMIT: u32 = 10;
+static UI_FONT_SIZE: AtomicU32 = AtomicU32::new(0);
+static UI_ZOOM: AtomicU32 = AtomicU32::new(0);
+pub const DEFAULT_UI_FONT_SIZE: f32 = 13.;
+pub const MIN_UI_FONT_SIZE: f32 = 11.;
+pub const MAX_UI_FONT_SIZE: f32 = 16.;
+pub const MIN_UI_ZOOM: f32 = 0.5;
+pub const MAX_UI_ZOOM: f32 = 2.0;
 /// The font size in use (the setting, or a zoomed size: Alt+Shift+. / Ctrl+wheel).
 static FONT_SIZE: AtomicU32 = AtomicU32::new(0);
 static SPACING: AtomicU32 = AtomicU32::new(0);
@@ -82,6 +93,12 @@ pub fn load() -> Settings {
             if let Some(b) = v.get("tab_rows").and_then(|t| t.as_bool()) {
                 s.tab_rows = b;
             }
+            if let Some(n) = v.get("ui_font_size").and_then(|t| t.as_f64()) {
+                s.ui_font_size = (n as f32).clamp(MIN_UI_FONT_SIZE, MAX_UI_FONT_SIZE);
+            }
+            if let Some(n) = v.get("ui_zoom").and_then(|t| t.as_f64()) {
+                s.ui_zoom = (n as f32).clamp(MIN_UI_ZOOM, MAX_UI_ZOOM);
+            }
         }
     }
     apply(&s);
@@ -95,6 +112,8 @@ pub fn apply(s: &Settings) {
     ISLANDS.store(s.islands, Ordering::Relaxed);
     TAB_LIMIT.store(s.tab_limit.clamp(1, 100), Ordering::Relaxed);
     TAB_ROWS.store(s.tab_rows, Ordering::Relaxed);
+    UI_FONT_SIZE.store(s.ui_font_size.clamp(MIN_UI_FONT_SIZE, MAX_UI_FONT_SIZE).to_bits(), Ordering::Relaxed);
+    UI_ZOOM.store(s.ui_zoom.clamp(MIN_UI_ZOOM, MAX_UI_ZOOM).to_bits(), Ordering::Relaxed);
     FONT_SIZE.store(s.font_size.to_bits(), Ordering::Relaxed);
     SPACING.store(s.line_spacing.to_bits(), Ordering::Relaxed);
     if let Ok(mut c) = CURRENT.write() {
@@ -112,6 +131,8 @@ pub fn save(s: &Settings) -> std::io::Result<()> {
         "ui_style": if s.islands { "islands" } else { "classic" },
         "tab_limit": s.tab_limit,
         "tab_rows": s.tab_rows,
+        "ui_font_size": (s.ui_font_size as f64 * 10.0).round() / 10.0,
+        "ui_zoom": (s.ui_zoom as f64 * 100.0).round() / 100.0,
     });
     let p = path();
     if let Some(d) = p.parent() {
@@ -127,6 +148,29 @@ pub fn is_light() -> bool {
 /// The UI style setting (`theme::islands()` is what is in effect: BRISK_DESIGN overrides it).
 pub fn islands() -> bool {
     ISLANDS.load(Ordering::Relaxed)
+}
+
+/// The UI scale: the UI font size against the default 13, times the IDE zoom. The editor
+/// font has its own size and does not follow it.
+pub fn ui_scale() -> f32 {
+    let f = f32::from_bits(UI_FONT_SIZE.load(Ordering::Relaxed));
+    let z = f32::from_bits(UI_ZOOM.load(Ordering::Relaxed));
+    let f = if f > 0.0 { f } else { DEFAULT_UI_FONT_SIZE };
+    let z = if z > 0.0 { z } else { 1.0 };
+    f / DEFAULT_UI_FONT_SIZE * z
+}
+
+/// Zoom IDE: `delta` (±0.1 = ±10%) or back to 100% with `None`; saved like PyCharm's.
+/// Returns the new zoom.
+pub fn zoom_ide(delta: Option<f32>) -> f32 {
+    let mut s = current();
+    s.ui_zoom = match delta {
+        Some(d) => (((s.ui_zoom + d) * 10.0).round() / 10.0).clamp(MIN_UI_ZOOM, MAX_UI_ZOOM),
+        None => 1.0,
+    };
+    apply(&s);
+    let _ = save(&s);
+    s.ui_zoom
 }
 
 pub fn tab_limit() -> usize {

@@ -6,6 +6,7 @@
 //! "the current tabs" keeps working; the other group waits in `split` and they swap places
 //! when focus moves. A file is open in one group at a time.
 
+use crate::theme::ui_px;
 use super::menu_ui::Entry;
 use super::{PopupItem, PopupKind, Tab, Target, Workspace};
 use crate::editor::Editor;
@@ -302,13 +303,13 @@ impl Workspace {
         let (outline, chain) = e.update(cx, |ed, _| ed.caret_scope());
         let file = parts.len() - 1;
         let last = file + chain.len();
-        let mut row = div().h(px(24.)).flex_shrink_0().flex().items_center().gap(px(4.)).px(px(12.)).text_size(px(12.)).font_family(crate::theme::ui_font()).whitespace_nowrap().overflow_hidden();
+        let mut row = div().h(ui_px(24.)).flex_shrink_0().flex().items_center().gap(px(4.)).px(px(12.)).text_size(ui_px(12.)).font_family(crate::theme::ui_font()).whitespace_nowrap().overflow_hidden();
         let crumb = |id: usize, text: String, color: gpui::Hsla| {
             div().id(("crumb", id)).px(px(3.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).text_color(color).child(text)
         };
         for (i, p) in parts.into_iter().enumerate() {
             if i > 0 {
-                row = row.child(crate::icons::icon("chevron-right", 10., Theme::text_dim()));
+                row = row.child(crate::icons::ui_icon("chevron-right", 10., Theme::text_dim()));
             }
             if i == file {
                 // The file: its top-level classes and functions.
@@ -332,7 +333,7 @@ impl Workspace {
                 brisk_syntax::OutlineKind::Variable => ("v", gpui::rgb(0x9876aa).into()),
             };
             let ed = e.clone();
-            row = row.child(crate::icons::icon("chevron-right", 10., Theme::text_dim())).child(
+            row = row.child(crate::icons::ui_icon("chevron-right", 10., Theme::text_dim())).child(
                 div()
                     .id(("crumb", file + 1 + k))
                     .px(px(3.))
@@ -342,7 +343,7 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap(px(4.))
-                    .child(div().text_color(color).text_size(px(11.)).font_weight(gpui::FontWeight::SEMIBOLD).child(icon))
+                    .child(div().text_color(color).text_size(ui_px(11.)).font_weight(gpui::FontWeight::SEMIBOLD).child(icon))
                     .child(div().text_color(if file + 1 + k == last { Theme::text() } else { Theme::text_muted() }).child(o.name.clone()))
                     .on_click(cx.listener(move |this, _, w, cx| this.open_crumb_popup(&ed, Some(k), w, cx))),
             );
@@ -538,7 +539,7 @@ impl Workspace {
             .when(!s.vertical, |d| d.flex_col())
             .when(islands, |d| d.gap(px(crate::ui_kit::ISLAND_GAP)))
             .child(a)
-            .when(!islands, |d| d.child(if s.vertical { line.w(px(1.)).h_full() } else { line.h(px(1.)).w_full() }))
+            .when(!islands, |d| d.child(if s.vertical { line.w(px(1.)).h_full() } else { line.h(ui_px(1.)).w_full() }))
             .child(b)
             .into_any_element()
     }
@@ -604,7 +605,7 @@ pub(super) struct DraggedTab {
 impl gpui::Render for DraggedTab {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
-            .h(px(26.))
+            .h(ui_px(26.))
             .px(px(12.))
             .flex()
             .items_center()
@@ -612,7 +613,7 @@ impl gpui::Render for DraggedTab {
             .bg(Theme::selection_row())
             .opacity(0.9)
             .font_family(crate::theme::ui_font())
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .text_color(Theme::text())
             .map(crate::ui_kit::floating)
             .child(self.title.clone())

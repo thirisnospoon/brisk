@@ -1,6 +1,7 @@
 //! Filters of the Git log: a text field (message or hash), Branch and User popups. The log
 //! is reloaded through `git log` with the filters, so the graph follows the filtered list.
 
+use crate::theme::ui_px;
 use super::menu_ui::Entry;
 use super::Workspace;
 use crate::editor::Editor;
@@ -187,18 +188,18 @@ impl Workspace {
             .id("log-filter-text")
             .w(px(220.))
             .pl(px(6.))
-            .child(crate::icons::icon("search", 14., Theme::text_dim()))
+            .child(crate::icons::ui_icon("search", 14., Theme::text_dim()))
             .child(crate::ui_kit::editor_slot(&g.filter.field, "Text or hash", focused_hint, h - 2.));
         let chip = |id: &'static str, label: String, active: bool| {
             div()
                 .id(id)
-                .h(px(22.))
+                .h(ui_px(22.))
                 .px(px(8.))
                 .flex()
                 .items_center()
                 .rounded(px(4.))
                 .cursor_pointer()
-                .text_size(px(12.))
+                .text_size(ui_px(12.))
                 .when(active, |d| d.bg(Theme::selection_row()).text_color(Theme::text()))
                 .when(!active, |d| d.text_color(Theme::text_muted()).hover(|s| s.bg(Theme::hover_row())))
                 .active(|s| s.bg(Theme::press()))
@@ -206,12 +207,12 @@ impl Workspace {
                 .child(crate::icons::glyph(label, 14., if active { Theme::text() } else { Theme::text_muted() }))
         };
         let branch = chip("log-filter-branch", format!("Branch: {}", q.branch.as_deref().unwrap_or("All")), q.branch.is_some())
-            .child(crate::icons::icon("chevron-down", 12., Theme::text_muted()))
+            .child(crate::icons::ui_icon("chevron-down", 12., Theme::text_muted()))
             .relative()
             .child(track(0))
             .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| this.branch_filter_menu(e.position, cx)));
         let user = chip("log-filter-user", format!("User: {}", q.author.as_deref().unwrap_or("All")), q.author.is_some())
-            .child(crate::icons::icon("chevron-down", 12., Theme::text_muted()))
+            .child(crate::icons::ui_icon("chevron-down", 12., Theme::text_muted()))
             .relative()
             .child(track(1))
             .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| this.author_filter_menu(e.position, cx)));

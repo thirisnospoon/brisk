@@ -1,6 +1,7 @@
 //! Shared controls: one look for text inputs and buttons (height, padding, radius, border,
 //! placeholder position), so toolbars and dialogs line up.
 
+use crate::theme::ui_px;
 use gpui::{div, px, prelude::*, Div, Entity, Stateful, Styled};
 
 use crate::editor::Editor;
@@ -53,7 +54,7 @@ pub fn editor_slot(e: &Entity<Editor>, placeholder: &'static str, show_placehold
                     .items_center()
                     .whitespace_nowrap()
                     .font_family(ui_font())
-                    .text_size(px(FIELD_TEXT))
+                    .text_size(ui_px(FIELD_TEXT))
                     .text_color(Theme::text_dim())
                     .child(placeholder),
             )
@@ -86,7 +87,7 @@ pub fn island(d: Div) -> Div {
 
 /// Height of a tool window's header row (Islands: 32, Classic: 34).
 pub fn header_h() -> f32 {
-    if crate::theme::islands() { 32. } else { 34. }
+    (if crate::theme::islands() { 32. } else { 34. }) * crate::theme::ui_scale()
 }
 
 /// An empty tool window or editor: the message centered; in Islands with a muted icon above.
@@ -100,9 +101,9 @@ pub fn empty_state(icon: &'static str, text: impl Into<gpui::SharedString>) -> D
         .justify_center()
         .gap(px(10.))
         .px(px(16.))
-        .text_size(px(13.))
+        .text_size(ui_px(13.))
         .text_color(Theme::text_muted())
-        .when(crate::theme::islands(), |d| d.child(crate::icons::icon(icon, 32., Theme::text_dim().opacity(0.7))))
+        .when(crate::theme::islands(), |d| d.child(crate::icons::ui_icon(icon, 32., Theme::text_dim().opacity(0.7))))
         .child(div().max_w(px(460.)).text_center().child(text.into()))
 }
 
@@ -141,14 +142,14 @@ pub fn button(id: &'static str, label: &'static str, enabled: bool, primary: boo
     div()
         .id(id)
         .flex_shrink_0()
-        .h(px(CONTROL_H))
+        .h(ui_px(CONTROL_H))
         .px(px(12.))
         .flex()
         .items_center()
         .justify_center()
         .rounded(px(RADIUS))
         .border_1()
-        .text_size(px(12.5))
+        .text_size(ui_px(12.5))
         .when(primary && enabled, |d| d.bg(Theme::accent()).border_color(Theme::accent()).text_color(gpui::white()))
         .when(!(primary && enabled), |d| d.border_color(Theme::divider()))
         .when(!enabled, |d| d.text_color(Theme::text_dim()))
@@ -161,7 +162,7 @@ pub fn icon_button(id: &'static str, icon: &'static str, enabled: bool) -> State
     div()
         .id(id)
         .flex_shrink_0()
-        .size(px(CONTROL_H))
+        .size(ui_px(CONTROL_H))
         .flex()
         .items_center()
         .justify_center()
@@ -169,5 +170,5 @@ pub fn icon_button(id: &'static str, icon: &'static str, enabled: bool) -> State
         .border_1()
         .border_color(Theme::divider())
         .when(enabled, |d| d.cursor_pointer().hover(|s| s.bg(Theme::hover_row())).active(|s| s.bg(Theme::press())))
-        .child(crate::icons::icon(icon, 16., if enabled { Theme::text_muted() } else { Theme::text_dim().opacity(0.5) }))
+        .child(crate::icons::ui_icon(icon, 16., if enabled { Theme::text_muted() } else { Theme::text_dim().opacity(0.5) }))
 }

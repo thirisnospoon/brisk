@@ -2,6 +2,7 @@
 //! status, ↻ Rerun and ■ Stop per row; the selected run's console (or the database
 //! console's results) on the right.
 
+use crate::theme::ui_px;
 use super::{BottomTool, Workspace};
 use crate::terminal_view::RunInfo;
 use crate::theme::Theme;
@@ -146,7 +147,7 @@ impl Workspace {
                 .id(id)
                 .relative()
                 .w(px(22.))
-                .h(px(20.))
+                .h(ui_px(20.))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -158,7 +159,7 @@ impl Workspace {
                 .tooltip(move |_, cx| cx.new(|_| super::Tip(tip.into())).into())
                 .child(crate::icons::glyph(glyph, 14., color))
         };
-        let group = |title: &str| div().px(px(8.)).pt(px(6.)).pb(px(2.)).text_size(px(11.5)).text_color(Theme::text_dim()).child(title.to_string());
+        let group = |title: &str| div().px(px(8.)).pt(px(6.)).pb(px(2.)).text_size(ui_px(11.5)).text_color(Theme::text_dim()).child(title.to_string());
         let mut tree = div()
             .id("services-tree")
             .track_focus(&self.services.focus)
@@ -168,7 +169,7 @@ impl Workspace {
             .overflow_y_scroll()
             .border_r_1()
             .border_color(Theme::divider())
-            .text_size(px(12.5))
+            .text_size(ui_px(12.5))
             .child(group("Run"));
         if runs.is_empty() {
             tree = tree.child(div().px(px(14.)).py(px(4.)).text_color(Theme::text_muted()).child("Nothing has run yet"));
@@ -181,7 +182,7 @@ impl Workspace {
                 div()
                     .id(("svc-run", id))
                     .w_full()
-                    .h(px(24.))
+                    .h(ui_px(24.))
                     .pl(px(14.))
                     .pr(px(4.))
                     .flex()
@@ -196,7 +197,7 @@ impl Workspace {
                     }))
                     .child(div().w(px(14.)).flex().items_center().child(crate::icons::glyph(glyph, 12., color)))
                     .child(div().flex_shrink_0().whitespace_nowrap().child(r.name.clone()))
-                    .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(px(11.5)).text_color(Theme::text_dim()).child(detail))
+                    .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(ui_px(11.5)).text_color(Theme::text_dim()).child(detail))
                     .child(small(("svc-rerun", id), "↻", Theme::file_added(), "Rerun").child(track(id, "rerun")).on_click(cx.listener(move |this, _, w, cx| {
                         cx.stop_propagation();
                         this.services_rerun(id, w, cx);
@@ -215,7 +216,7 @@ impl Workspace {
                 div()
                     .id("svc-db")
                     .w_full()
-                    .h(px(24.))
+                    .h(ui_px(24.))
                     .pl(px(14.))
                     .flex()
                     .items_center()
@@ -227,7 +228,7 @@ impl Workspace {
                         this.services_select(Item::Database, cx);
                         w.focus(&this.services.focus.clone());
                     }))
-                    .child(crate::icons::icon("database", 12., Theme::accent()))
+                    .child(crate::icons::ui_icon("database", 12., Theme::accent()))
                     .child(format!("{title} · console")),
             );
         }
@@ -245,10 +246,10 @@ impl Workspace {
             .items_center()
             .gap(px(8.))
             .px(px(12.))
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .when(!crate::theme::islands(), |d| d.border_b_1().border_color(Theme::divider()))
             .child(div().font_weight(gpui::FontWeight::SEMIBOLD).text_color(Theme::text()).child("Services"))
-            .when(running > 0, |d| d.child(div().text_size(px(12.)).text_color(Theme::text_muted()).child(format!("{running} running"))));
+            .when(running > 0, |d| d.child(div().text_size(ui_px(12.)).text_color(Theme::text_muted()).child(format!("{running} running"))));
         div()
             .id("services-window")
             .size_full()

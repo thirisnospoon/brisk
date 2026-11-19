@@ -43,6 +43,11 @@ pub fn icon(name: &str, size: f32, color: impl Into<Hsla>) -> Svg {
     svg().path(path(name)).size(px(size)).flex_none().text_color(color.into())
 }
 
+/// `icon` at the UI scale (chrome, panels, popups; the editor's own icons use `icon`).
+pub fn ui_icon(name: &str, size: f32, color: impl Into<Hsla>) -> Svg {
+    icon(name, size * crate::theme::ui_scale(), color)
+}
+
 /// The icon that stands for a UI glyph still used as a short label (tool buttons, popup
 /// rows, file kinds); `None` keeps the glyph as text (letters like "C", "m", "{").
 pub fn glyph_icon(g: &str) -> Option<&'static str> {

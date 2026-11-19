@@ -2,6 +2,7 @@
 //! functions (Name, Call Count, Own Time, Time) sortable by a click on a column header;
 //! a double click or Enter opens the function.
 
+use crate::theme::ui_px;
 use super::{BottomTool, Workspace};
 use crate::profile::{self, Row, SortBy};
 use crate::theme::Theme;
@@ -186,7 +187,7 @@ impl Workspace {
 
     pub(super) fn render_profiler(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let Some(p) = &self.profile else {
-            return div().p(px(10.)).text_size(px(13.)).text_color(Theme::text_dim()).child("No profile yet: Run › Profile").into_any_element();
+            return div().p(px(10.)).text_size(ui_px(13.)).text_color(Theme::text_dim()).child("No profile yet: Run › Profile").into_any_element();
         };
         let root = self.root.clone();
         let col = |i: usize, by: SortBy, title: &'static str, w: Option<f32>| {
@@ -215,14 +216,14 @@ impl Workspace {
             .items_center()
             .gap(px(6.))
             .px(px(8.))
-            .h(px(30.))
+            .h(ui_px(30.))
             .border_b_1()
             .border_color(Theme::divider())
             .child(
                 div()
                     .id("prof-rerun")
                     .w(px(26.))
-                    .h(px(24.))
+                    .h(ui_px(24.))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -235,13 +236,13 @@ impl Workspace {
                     .tooltip(|_, cx| cx.new(|_| super::Tip("Profile again".into())).into())
                     .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Profile, w, cx))),
             )
-            .child(div().text_size(px(12.5)).text_color(Theme::text_muted()).child(format!("'{}': {} functions, {} ms total (times in ms)", p.name, p.rows.len(), ms(p.total))));
+            .child(div().text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(format!("'{}': {} functions, {} ms total (times in ms)", p.name, p.rows.len(), ms(p.total))));
         let header = div()
             .flex()
             .flex_shrink_0()
-            .h(px(24.))
+            .h(ui_px(24.))
             .px(px(2.))
-            .text_size(px(12.))
+            .text_size(ui_px(12.))
             .text_color(Theme::text_dim())
             .border_b_1()
             .border_color(Theme::divider())
@@ -256,7 +257,7 @@ impl Workspace {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .text_size(px(12.5))
+            .text_size(ui_px(12.5))
             .font_family(crate::theme::mono_font())
             .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, w, cx| {
                 if !e.keystroke.modifiers.modified() {
@@ -270,7 +271,7 @@ impl Workspace {
                 div()
                     .id(("prof-row", i))
                     .w_full()
-                    .h(px(20.))
+                    .h(ui_px(20.))
                     .px(px(2.))
                     .flex()
                     .items_center()

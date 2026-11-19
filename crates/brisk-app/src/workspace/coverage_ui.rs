@@ -1,6 +1,7 @@
 //! Run with Coverage: the run goes through coverage.py, then the Coverage tool window lists
 //! the project files with their percentage and the editors show green / red gutter bars.
 
+use crate::theme::ui_px;
 use super::run_marks_ui::norm;
 use super::{BottomTool, Workspace};
 use crate::coverage::{self, Report};
@@ -194,7 +195,7 @@ impl Workspace {
 
     pub(super) fn render_coverage(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let Some(c) = &self.coverage else {
-            return div().p(px(10.)).text_size(px(13.)).text_color(Theme::text_dim()).child("No coverage data: Run › Run with Coverage").into_any_element();
+            return div().p(px(10.)).text_size(ui_px(13.)).text_color(Theme::text_dim()).child("No coverage data: Run › Run with Coverage").into_any_element();
         };
         let rel = |p: &std::path::Path| p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/");
         let toolbar = div()
@@ -203,14 +204,14 @@ impl Workspace {
             .items_center()
             .gap(px(6.))
             .px(px(8.))
-            .h(px(30.))
+            .h(ui_px(30.))
             .border_b_1()
             .border_color(Theme::divider())
             .child(
                 div()
                     .id("cov-rerun")
                     .w(px(26.))
-                    .h(px(24.))
+                    .h(ui_px(24.))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -227,7 +228,7 @@ impl Workspace {
                 div()
                     .id("cov-clear")
                     .w(px(26.))
-                    .h(px(24.))
+                    .h(ui_px(24.))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -240,14 +241,14 @@ impl Workspace {
                     .tooltip(|_, cx| cx.new(|_| super::Tip("Hide coverage (gutter marks and this report)".into())).into())
                     .on_click(cx.listener(|this, _, w, cx| this.clear_coverage(w, cx))),
             )
-            .child(div().text_size(px(12.5)).text_color(Theme::text_muted()).child(format!("'{}': {:.0}% of lines covered", c.name, c.report.percent)));
+            .child(div().text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(format!("'{}': {:.0}% of lines covered", c.name, c.report.percent)));
         let header = div()
             .flex()
             .flex_shrink_0()
-            .h(px(22.))
+            .h(ui_px(22.))
             .items_center()
             .px(px(8.))
-            .text_size(px(12.))
+            .text_size(ui_px(12.))
             .text_color(Theme::text_dim())
             .border_b_1()
             .border_color(Theme::divider())
@@ -258,7 +259,7 @@ impl Workspace {
             let w = 60.0f64;
             div()
                 .w(px(w as f32))
-                .h(px(6.))
+                .h(ui_px(6.))
                 .rounded(px(3.))
                 .bg(Theme::coverage_miss())
                 .child(div().h_full().rounded(px(3.)).w(px((w * pct / 100.0) as f32)).bg(Theme::coverage_hit()))
@@ -269,7 +270,7 @@ impl Workspace {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, w, cx| {
                 let k = e.keystroke.key.clone();
                 if !e.keystroke.modifiers.modified() {
@@ -282,7 +283,7 @@ impl Workspace {
                 div()
                     .id(("cov-row", i))
                     .w_full()
-                    .h(px(22.))
+                    .h(ui_px(22.))
                     .px(px(8.))
                     .flex()
                     .items_center()
@@ -302,8 +303,8 @@ impl Workspace {
                         cx.notify();
                     }))
                     .child(div().flex_1().overflow_hidden().text_ellipsis().text_color(Theme::text()).child(rel(&f.path)))
-                    .child(div().w(px(120.)).flex().items_center().gap(px(6.)).child(bar(f.percent)).child(div().text_size(px(12.)).child(format!("{:.0}%", f.percent))))
-                    .child(div().w(px(110.)).text_size(px(12.)).text_color(Theme::text_muted()).child(format!("{} / {}", f.covered.len(), f.statements)))
+                    .child(div().w(px(120.)).flex().items_center().gap(px(6.)).child(bar(f.percent)).child(div().text_size(ui_px(12.)).child(format!("{:.0}%", f.percent))))
+                    .child(div().w(px(110.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(format!("{} / {}", f.covered.len(), f.statements)))
             }));
         div().id("coverage-window").size_full().flex().flex_col().child(toolbar).child(header).child(list).into_any_element()
     }
@@ -315,7 +316,7 @@ impl Workspace {
         let button = |id: &'static str, text: &'static str, primary: bool| {
             div()
                 .id(id)
-                .h(px(24.))
+                .h(ui_px(24.))
                 .px(px(10.))
                 .flex()
                 .items_center()
@@ -344,7 +345,7 @@ impl Workspace {
                 .border_1()
                 .border_color(Theme::divider())
                 .map(crate::ui_kit::floating)
-                .text_size(px(13.))
+                .text_size(ui_px(13.))
                 .text_color(Theme::text())
                 .child(div().child(format!("coverage.py is not installed in {label}. Install it and run '{}' with coverage?", cfg.name)))
                 .child(

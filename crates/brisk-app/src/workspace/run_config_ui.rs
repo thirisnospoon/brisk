@@ -2,6 +2,7 @@
 //! chip, Alt+Shift+F10 › Edit): configurations on the left, the selected one's form on the
 //! right. OK writes `.brisk/run.json`.
 
+use crate::theme::ui_px;
 use super::Workspace;
 use crate::theme::Theme;
 use brisk_run::{RunConfig, RunKind};
@@ -756,7 +757,7 @@ impl Workspace {
             div()
                 .id(id)
                 .px(px(14.))
-                .h(px(28.))
+                .h(ui_px(28.))
                 .flex()
                 .items_center()
                 .rounded(px(5.))
@@ -770,7 +771,7 @@ impl Workspace {
             div()
                 .id(id)
                 .px(px(6.))
-                .h(px(24.))
+                .h(ui_px(24.))
                 .flex()
                 .items_center()
                 .rounded(px(4.))
@@ -814,7 +815,7 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .gap(px(4.))
-                .text_size(px(12.))
+                .text_size(ui_px(12.))
                 .text_color(Theme::text_dim())
                 .child("Templates: what new configurations start with")
                 .child(
@@ -838,7 +839,7 @@ impl Workspace {
             .id("rc-tpl-link")
             .px(px(6.))
             .py(px(4.))
-            .text_size(px(12.))
+            .text_size(ui_px(12.))
             .cursor_pointer()
             .text_color(Theme::accent())
             .hover(|s| s.underline())
@@ -866,7 +867,7 @@ impl Workspace {
                 div()
                     .id(("rc-item", i))
                     .w_full()
-                    .h(px(24.))
+                    .h(ui_px(24.))
                     .px(px(6.))
                     .flex()
                     .items_center()
@@ -891,7 +892,7 @@ impl Workspace {
                 .id("rc-templates")
                 .flex_1()
                 .overflow_y_scroll()
-                .child(div().px(px(6.)).pb(px(4.)).text_size(px(12.)).text_color(Theme::text_dim()).child("Add New Configuration"))
+                .child(div().px(px(6.)).pb(px(4.)).text_size(ui_px(12.)).text_color(Theme::text_dim()).child("Add New Configuration"))
                 .children(Kind::ALL.iter().enumerate().map(|(i, &k)| {
                     let on = i == sel;
                     div()
@@ -904,7 +905,7 @@ impl Workspace {
                         .when(on, |x| x.bg(Theme::selection_row()))
                         .when(!on, |x| x.hover(|s| s.bg(Theme::hover_row())))
                         .child(div().child(k.title()))
-                        .child(div().text_size(px(11.5)).text_color(Theme::text_dim()).child(k.hint()))
+                        .child(div().text_size(ui_px(11.5)).text_color(Theme::text_dim()).child(k.hint()))
                         .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _, cx| {
                             if let Some(d) = this.runs.dialog.as_mut() {
                                 d.adding = None;
@@ -930,7 +931,7 @@ impl Workspace {
             .child(back_link);
 
         // Right: the form.
-        let caret = || div().w(px(1.5)).h(px(16.)).bg(Theme::caret());
+        let caret = || div().w(px(1.5)).h(ui_px(16.)).bg(Theme::caret());
         let mut rows: Vec<gpui::AnyElement> = Vec::new();
         if let Some(dr) = d.drafts.get(d.current) {
             for f in if d.templates { template_fields(kind) } else { fields(kind, dr.cfg.temporary) } {
@@ -1104,7 +1105,7 @@ impl Workspace {
                 rows.push(
                     div()
                         .id(("rc-field", f as usize))
-                        .h(px(32.))
+                        .h(ui_px(32.))
                         .flex()
                         .items_center()
                         .gap(px(10.))
@@ -1139,7 +1140,7 @@ impl Workspace {
             .flex_col()
             .pl(px(12.))
             .children(rows)
-            .when(!preview.is_empty(), |x| x.child(div().pt(px(8.)).text_size(px(11.)).text_color(Theme::text_dim()).overflow_hidden().child(preview)));
+            .when(!preview.is_empty(), |x| x.child(div().pt(px(8.)).text_size(ui_px(11.)).text_color(Theme::text_dim()).overflow_hidden().child(preview)));
 
         Some(
             div()
@@ -1157,7 +1158,7 @@ impl Workspace {
                     div()
                         .id("run-config-dialog")
                         .w(px(980.))
-                        .h(px(600.))
+                        .h(ui_px(600.))
                         .flex()
                         .flex_col()
                         .p(px(16.))
@@ -1166,7 +1167,7 @@ impl Workspace {
                         .border_color(Theme::divider())
                         .rounded(px(10.))
                         .map(crate::ui_kit::floating)
-                        .text_size(px(13.))
+                        .text_size(ui_px(13.))
                         .text_color(Theme::text())
                         .child(div().font_weight(gpui::FontWeight::SEMIBOLD).pb(px(10.)).child("Run/Debug Configurations"))
                         .child(div().flex_1().min_h_0().flex().child(left).child(right))
@@ -1177,7 +1178,7 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                .child(div().flex_1().text_size(px(11.)).text_color(Theme::text_dim()).child("Tab / ↑↓ fields · Alt+↑↓ configurations · Enter OK · Esc Cancel"))
+                                .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("Tab / ↑↓ fields · Alt+↑↓ configurations · Enter OK · Esc Cancel"))
                                 .child(button("rc-cancel", "Cancel", false).on_click(cx.listener(|this, _, w, cx| this.run_dialog_cancel(w, cx))))
                                 .child(button("rc-apply", "Apply", false).on_click(cx.listener(|this, _, w, cx| {
                                     this.run_dialog_save(false, w, cx);

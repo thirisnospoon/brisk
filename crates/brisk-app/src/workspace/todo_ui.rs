@@ -2,6 +2,7 @@
 //! Enter) opens the line. Rescanned when the window opens, on Refresh, and for each file
 //! saved while the window exists.
 
+use crate::theme::ui_px;
 use super::{BottomTool, Workspace};
 use crate::theme::{Theme, mono_font};
 use crate::todo_scan::{self, Item};
@@ -189,14 +190,14 @@ impl Workspace {
             .items_center()
             .gap(px(6.))
             .px(px(8.))
-            .h(px(30.))
+            .h(ui_px(30.))
             .border_b_1()
             .border_color(Theme::divider())
             .child(
                 div()
                     .id("todo-refresh")
                     .w(px(26.))
-                    .h(px(24.))
+                    .h(ui_px(24.))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -209,7 +210,7 @@ impl Workspace {
                     .tooltip(|_, cx| cx.new(|_| super::Tip("Rescan the project".into())).into())
                     .on_click(cx.listener(|this, _, _, cx| this.refresh_todo(cx))),
             )
-            .child(div().text_size(px(12.5)).text_color(Theme::text_muted()).child(summary));
+            .child(div().text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(summary));
         let list = div()
             .id("todo-list")
             .track_focus(&t.focus)
@@ -217,14 +218,14 @@ impl Workspace {
             .min_h_0()
             .overflow_y_scroll()
             .track_scroll(&t.scroll)
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .when(rows.is_empty() && !t.scanning, |d| d.child(div().p(px(10.)).text_color(Theme::text_dim()).child("No TODO or FIXME comments in the project")))
             .children(rows.iter().enumerate().map(|(i, r)| {
                 let sel = i == t.selected;
                 let row = div()
                     .id(("todo-row", i))
                     .w_full()
-                    .h(px(22.))
+                    .h(ui_px(22.))
                     .flex()
                     .items_center()
                     .gap(px(6.))
@@ -249,13 +250,13 @@ impl Workspace {
                         row.pl(px(8.))
                             .child(crate::icons::tree_arrow(true, open, Theme::text_dim()))
                             .child(div().text_color(Theme::text()).child(name))
-                            .child(div().text_size(px(12.)).text_color(Theme::text_dim()).child(dir))
-                            .child(div().text_size(px(12.)).text_color(Theme::text_muted()).child(format!("{n} item{}", if *n == 1 { "" } else { "s" })))
+                            .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).child(dir))
+                            .child(div().text_size(ui_px(12.)).text_color(Theme::text_muted()).child(format!("{n} item{}", if *n == 1 { "" } else { "s" })))
                     }
                     Row::Item(it) => {
                         let fixme = it.text.to_lowercase().starts_with("fixme");
                         row.pl(px(34.))
-                            .child(div().text_size(px(12.)).text_color(Theme::text_dim()).font_family(mono_font()).child(format!("({}, {})", it.line + 1, it.col + 1)))
+                            .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).font_family(mono_font()).child(format!("({}, {})", it.line + 1, it.col + 1)))
                             .child(div().text_color(if fixme { Theme::warning() } else { Theme::syntax(brisk_syntax::Highlight::Comment) }).child(it.text.clone()))
                     }
                 }

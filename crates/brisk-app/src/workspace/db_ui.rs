@@ -5,6 +5,7 @@
 //! or query). Every driver call runs on the background executor; a connection is a mutex,
 //! so statements on the same data source queue up as in a single JDBC session.
 
+use crate::theme::ui_px;
 use super::*;
 use crate::grid_view::{GridEvent, GridView};
 use brisk_db::{Canceller, Connection, DataSource, Driver, Schema, Ssl, TableKind};
@@ -938,7 +939,7 @@ impl Workspace {
             .items_center()
             .px(px(12.))
             .gap(px(2.))
-            .child(div().text_size(px(13.)).font_weight(gpui::FontWeight::SEMIBOLD).text_color(Theme::text()).child("Database"))
+            .child(div().text_size(ui_px(13.)).font_weight(gpui::FontWeight::SEMIBOLD).text_color(Theme::text()).child("Database"))
             .child(div().flex_1())
             .child(tool("db-new", "+", Action::NewDataSource, cx))
             .child(tool("db-refresh", "⟳", Action::RefreshDatabase, cx))
@@ -951,7 +952,7 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .gap(px(8.))
-                .text_size(px(13.))
+                .text_size(ui_px(13.))
                 .text_color(Theme::text_muted())
                 .child("No data sources")
                 .child(
@@ -962,7 +963,7 @@ impl Workspace {
                         .child("+ New Data Source  (Alt+Insert)")
                         .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::NewDataSource, w, cx))),
                 )
-                .child(div().text_size(px(12.)).child("PostgreSQL, MySQL / MariaDB, SQLite. Paste a connection URL into Host to fill the form."))
+                .child(div().text_size(ui_px(12.)).child("PostgreSQL, MySQL / MariaDB, SQLite. Paste a connection URL into Host to fill the form."))
                 .into_any_element()
         } else {
             uniform_list(
@@ -1013,13 +1014,13 @@ impl Workspace {
                             let is_source = matches!(row.kind, RowKind::Source(_));
                             div()
                                 .id(("db-row", ix))
-                                .h(px(24.))
+                                .h(ui_px(24.))
                                 .flex()
                                 .items_center()
                                 .gap(px(4.))
                                 .pl(px(8. + row.depth as f32 * 16.))
                                 .pr(px(8.))
-                                .text_size(px(13.))
+                                .text_size(ui_px(13.))
                                 .w_full()
                                 .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
                                 .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
@@ -1037,11 +1038,11 @@ impl Workspace {
                                 .child(if is_source {
                                     div()
                                         .w(px(20.))
-                                        .h(px(16.))
+                                        .h(ui_px(16.))
                                         .rounded(px(4.))
                                         .bg(icon_color)
                                         .text_color(Theme::bg())
-                                        .text_size(px(9.))
+                                        .text_size(ui_px(9.))
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .flex()
                                         .items_center()
@@ -1051,7 +1052,7 @@ impl Workspace {
                                     div().w(px(16.)).text_color(icon_color).child(icon)
                                 })
                                 .child(div().text_color(label_color).whitespace_nowrap().child(label))
-                                .child(div().text_color(Theme::text_dim()).text_size(px(12.)).whitespace_nowrap().overflow_hidden().child(detail))
+                                .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).whitespace_nowrap().overflow_hidden().child(detail))
                         })
                         .collect()
                 }),
@@ -1097,7 +1098,7 @@ impl Workspace {
         let field_row = |f: Field, value: gpui::AnyElement, active: bool, cx: &mut Context<Self>| {
             div()
                 .id(("ds-field", f as usize))
-                .h(px(32.))
+                .h(ui_px(32.))
                 .flex()
                 .items_center()
                 .gap(px(10.))
@@ -1121,7 +1122,7 @@ impl Workspace {
                     cx.notify();
                 }))
         };
-        let caret = || div().w(px(1.5)).h(px(16.)).bg(Theme::caret());
+        let caret = || div().w(px(1.5)).h(ui_px(16.)).bg(Theme::caret());
         // One option of a choice field: a button that picks this value.
         fn choice(
             id: (&'static str, usize),
@@ -1214,7 +1215,7 @@ impl Workspace {
             div()
                 .id(id)
                 .px(px(14.))
-                .h(px(28.))
+                .h(ui_px(28.))
                 .flex()
                 .items_center()
                 .rounded(px(5.))
@@ -1248,12 +1249,12 @@ impl Workspace {
                         .border_color(Theme::divider())
                         .rounded(px(10.))
                         .map(crate::ui_kit::floating)
-                        .text_size(px(13.))
+                        .text_size(ui_px(13.))
                         .text_color(Theme::text())
                         .child(div().font_weight(gpui::FontWeight::SEMIBOLD).pb(px(6.)).child(title))
                         .when_some(d.note.clone(), |x, n| x.child(div().pb(px(4.)).text_color(Theme::modified()).child(n)))
                         .children(rows)
-                        .child(div().pt(px(6.)).text_size(px(12.)).child(test_line))
+                        .child(div().pt(px(6.)).text_size(ui_px(12.)).child(test_line))
                         .child(
                             div()
                                 .pt(px(10.))
@@ -1276,7 +1277,7 @@ impl Workspace {
                                 })))
                                 .child(button("ds-ok", "OK", true).on_click(cx.listener(|this, _, w, cx| this.dialog_ok(w, cx)))),
                         )
-                        .child(div().pt(px(6.)).text_size(px(11.)).text_color(Theme::text_dim()).child("Tab / ↑↓ fields · ←→ or Space switch options · Enter OK · Esc Cancel")),
+                        .child(div().pt(px(6.)).text_size(ui_px(11.)).text_color(Theme::text_dim()).child("Tab / ↑↓ fields · ←→ or Space switch options · Enter OK · Esc Cancel")),
                 )
                 .into_any_element(),
         )

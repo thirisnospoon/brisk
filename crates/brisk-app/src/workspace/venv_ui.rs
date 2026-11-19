@@ -2,6 +2,7 @@
 //! background, progress in the status bar), made the project interpreter; then an offer to
 //! install the project's requirements into it.
 
+use crate::theme::ui_px;
 use super::{PopupItem, Target, Workspace};
 use crate::py_venv::{self, Requirements};
 use crate::theme::Theme;
@@ -142,7 +143,7 @@ impl Workspace {
             div()
                 .id(id)
                 .relative()
-                .h(px(24.))
+                .h(ui_px(24.))
                 .px(px(10.))
                 .flex()
                 .items_center()
@@ -172,7 +173,7 @@ impl Workspace {
                 .border_1()
                 .border_color(Theme::divider())
                 .map(crate::ui_kit::floating)
-                .text_size(px(13.))
+                .text_size(ui_px(13.))
                 .text_color(Theme::text())
                 .child(div().child(format!("The project lists its requirements in {}. Install them into the new environment?", o.req.label())))
                 .child(if o.installing {

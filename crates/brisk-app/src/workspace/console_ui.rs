@@ -2,6 +2,7 @@
 //! multi-line input (Enter runs a complete statement, Shift+Enter adds a line, ↑/↓ walk the
 //! history) and the namespace's variables on the right, refreshed after every command.
 
+use crate::theme::ui_px;
 use super::{BottomTool, Workspace};
 use crate::editor::Editor;
 use crate::py_console::{Console, Event, Var};
@@ -454,7 +455,7 @@ impl Workspace {
             div()
                 .id(id)
                 .w(px(26.))
-                .h(px(24.))
+                .h(ui_px(24.))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -486,14 +487,14 @@ impl Workspace {
             .items_center()
             .gap(px(2.))
             .px(px(6.))
-            .h(px(30.))
+            .h(ui_px(30.))
             .flex_shrink_0()
             .border_b_1()
             .border_color(Theme::divider())
             .child(tool("pyc-rerun", "↻", "Rerun (restart the console)", true, green, Action::RerunPythonConsole, cx))
             .child(tool("pyc-stop", "■", "Stop the console", running, Theme::error(), Action::StopPythonConsole, cx))
             .child(tool("pyc-clear", "⌫", "Clear All", !p.lines.is_empty(), Theme::text_muted(), Action::ClearPythonConsole, cx))
-            .child(div().pl(px(10.)).text_size(px(12.)).text_color(Theme::text_muted()).child(state));
+            .child(div().pl(px(10.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(state));
         let lines = div()
             .id("pyc-output")
             .flex_1()
@@ -503,7 +504,7 @@ impl Workspace {
             .px(px(8.))
             .py(px(4.))
             .font_family(mono_font())
-            .text_size(px(12.5))
+            .text_size(ui_px(12.5))
             .children(p.lines.iter().map(|(t, k)| {
                 let text = t.trim_end_matches('\n').to_string();
                 let color = match k {
@@ -536,7 +537,7 @@ impl Workspace {
             .border_t_1()
             .border_color(Theme::divider())
             .font_family(mono_font())
-            .text_size(px(12.5))
+            .text_size(ui_px(12.5))
             .child(div().pt(px(1.)).text_color(Theme::accent()).child(prompt))
             .child(
                 div()
@@ -559,7 +560,7 @@ impl Workspace {
             .border_l_1()
             .border_color(Theme::divider())
             .font_family(mono_font())
-            .text_size(px(12.5))
+            .text_size(ui_px(12.5))
             .when(p.vars.is_empty(), |x| x.child(div().p(px(8.)).text_color(Theme::text_dim()).font_family(crate::theme::ui_font()).child("Variables appear after a command defines them")))
             .children(p.vars.iter().enumerate().map(|(i, v)| {
                 let ty = match v.size {
@@ -569,7 +570,7 @@ impl Workspace {
                 div()
                     .id(("pyc-var", i))
                     .w_full()
-                    .h(px(21.))
+                    .h(ui_px(21.))
                     .px(px(8.))
                     .flex()
                     .items_center()
@@ -589,7 +590,7 @@ impl Workspace {
             .size_full()
             .flex()
             .flex_col()
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .child(toolbar)
             .child(div().flex_1().min_h_0().flex().child(left).child(vars))
             .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, w, cx| {

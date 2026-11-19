@@ -2,6 +2,7 @@
 //! notifications. All git calls run on the background executor; the UI never blocks on git
 //! except for reading one file revision when a diff is opened.
 
+use crate::theme::ui_px;
 use super::*;
 use brisk_git::{Branch, Commit, FileChange, FileStatus, GraphRow, Repo, Status};
 use gpui::{canvas, fill, point, size, Bounds, Hsla, PathBuilder};
@@ -228,7 +229,7 @@ fn checkbox(on: Option<bool>) -> gpui::Div {
     let filled = on != Some(false);
     div()
         .w(px(14.))
-        .h(px(14.))
+        .h(ui_px(14.))
         .flex_shrink_0()
         .rounded(px(3.))
         .border_1()
@@ -237,11 +238,11 @@ fn checkbox(on: Option<bool>) -> gpui::Div {
         .flex()
         .items_center()
         .justify_center()
-        .text_size(px(10.))
+        .text_size(ui_px(10.))
         .text_color(Theme::text())
         .child(match on {
-            Some(true) => crate::icons::icon("check-bold", 10., gpui::white()).into_any_element(),
-            None => crate::icons::icon("minus", 10., gpui::white()).into_any_element(),
+            Some(true) => crate::icons::ui_icon("check-bold", 10., gpui::white()).into_any_element(),
+            None => crate::icons::ui_icon("minus", 10., gpui::white()).into_any_element(),
             Some(false) => div().into_any_element(),
         })
 }
@@ -893,9 +894,9 @@ impl Workspace {
                 .border_1()
                 .border_color(if *err { Theme::error() } else { Theme::divider() })
                 .map(crate::ui_kit::floating)
-                .text_size(px(13.))
+                .text_size(ui_px(13.))
                 .text_color(Theme::text())
-                .child(crate::icons::icon(if *err { "triangle-alert" } else { "circle-check" }, 16., if *err { Theme::error() } else { Theme::file_added() }))
+                .child(crate::icons::ui_icon(if *err { "triangle-alert" } else { "circle-check" }, 16., if *err { Theme::error() } else { Theme::file_added() }))
                 .child(msg.clone()),
         )
     }
@@ -907,12 +908,12 @@ impl Workspace {
         div()
             .id(("chg", i))
             .w_full()
-            .h(px(24.))
+            .h(ui_px(24.))
             .flex()
             .items_center()
             .gap(px(6.))
             .pl(px(28.))
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .when(selected, |d| d.bg(Theme::selection_row()))
             .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
@@ -934,19 +935,19 @@ impl Workspace {
             })))
             .child(div().w(px(14.)).flex().items_center().child(crate::icons::glyph(icon, 14., icon_color)))
             .child(div().text_color(status_color(c.status)).whitespace_nowrap().child(file_name(&c.path).to_string()))
-            .child(div().text_color(Theme::text_dim()).text_size(px(12.)).whitespace_nowrap().child(dir_name(&c.path).to_string()))
+            .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).whitespace_nowrap().child(dir_name(&c.path).to_string()))
     }
 
     fn commit_group_row(id: &'static str, title: &'static str, state: Option<bool>, n: usize, untracked: bool, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         div()
             .id(id)
             .w_full()
-            .h(px(24.))
+            .h(ui_px(24.))
             .flex()
             .items_center()
             .gap(px(6.))
             .pl(px(10.))
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .child(crate::icons::tree_arrow(true, true, Theme::text_muted()))
             .child(div().id((id, 1usize)).child(checkbox(state)).on_click(cx.listener(move |this, _, _, cx| {
                 if let Some(g) = this.git.as_mut() {
@@ -960,7 +961,7 @@ impl Workspace {
                 cx.notify();
             })))
             .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(title))
-            .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(format!("{n} file{}", if n == 1 { "" } else { "s" })))
+            .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(format!("{n} file{}", if n == 1 { "" } else { "s" })))
     }
 
     pub(super) fn render_commit(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -970,7 +971,7 @@ impl Workspace {
                 .flex_col()
                 .size_full()
                 .child(Self::panel_header("Commit"))
-                .child(div().px(px(12.)).text_size(px(13.)).text_color(Theme::text_muted()).child("Version control is not enabled for this project."))
+                .child(div().px(px(12.)).text_size(ui_px(13.)).text_color(Theme::text_muted()).child("Version control is not enabled for this project."))
                 .child(
                     div()
                         .id("git-init")
@@ -979,7 +980,7 @@ impl Workspace {
                         .py(px(6.))
                         .rounded(px(5.))
                         .bg(Theme::accent())
-                        .text_size(px(13.))
+                        .text_size(ui_px(13.))
                         .cursor_pointer()
                         .child("Create Git Repository…")
                         .on_click(cx.listener(|this, _, _, cx| this.create_git_repo(cx))),
@@ -1006,7 +1007,7 @@ impl Workspace {
             .flex_1()
             .min_h_0();
         if n_rows == 0 {
-            list = list.child(div().px(px(12.)).py(px(8.)).text_size(px(13.)).text_color(Theme::text_muted()).child(if g.loaded { "No changes" } else { "Loading…" }));
+            list = list.child(div().px(px(12.)).py(px(8.)).text_size(ui_px(13.)).text_color(Theme::text_muted()).child(if g.loaded { "No changes" } else { "Loading…" }));
         } else {
             // Only the visible rows are built: 50k unversioned files cost the same as 50.
             list = list.child(
@@ -1058,9 +1059,9 @@ impl Workspace {
             .items_center()
             .px(px(12.))
             .gap(px(4.))
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .child(div().font_weight(gpui::FontWeight::SEMIBOLD).text_color(Theme::text()).child("Commit"))
-            .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(format!("  {}", self.branch_label())))
+            .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(format!("  {}", self.branch_label())))
             .child(div().flex_1())
             .child(tool("cm-refresh", "⟳", "Refresh").on_click(cx.listener(|this, _, _, cx| this.refresh_git(cx))))
             .child(tool("cm-rollback", "↶", "Rollback  Ctrl+Alt+Z").on_click(cx.listener(|this, _, window, cx| {
@@ -1079,7 +1080,7 @@ impl Workspace {
                 .px(px(12.))
                 .py(px(5.))
                 .rounded(px(5.))
-                .text_size(px(13.))
+                .text_size(ui_px(13.))
                 .cursor_pointer()
                 .when(primary, |d| d.bg(Theme::accent()))
                 .when(!primary, |d| d.border_1().border_color(Theme::divider()))
@@ -1109,7 +1110,7 @@ impl Workspace {
                             .flex()
                             .items_center()
                             .gap(px(6.))
-                            .text_size(px(13.))
+                            .text_size(ui_px(13.))
                             .cursor_pointer()
                             .child(checkbox(Some(amend)))
                             .child("Amend")
@@ -1122,7 +1123,7 @@ impl Workspace {
                     )
                     .child(
                         div()
-                            .h(px(110.))
+                            .h(ui_px(110.))
                             .rounded(px(5.))
                             .border_1()
                             .border_color(Theme::divider())
@@ -1139,7 +1140,7 @@ impl Workspace {
                             .child(commit_btn("btn-commit", if included_n > 0 { format!("Commit ({included_n})") } else { "Commit".into() }, true, false, cx))
                             .child(commit_btn("btn-commit-push", "Commit and Push…".into(), false, true, cx))
                             .child(div().flex_1())
-                            .child(div().text_size(px(11.)).text_color(Theme::text_dim()).child(match busy {
+                            .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).child(match busy {
                                 Some(b) => format!("{b}…"),
                                 None => format!("Ctrl+Enter · {}", shortcut(Action::Commit)),
                             })),
@@ -1160,12 +1161,12 @@ impl Workspace {
             let b2 = b.clone();
             div()
                 .id(SharedString::from(format!("br-{}-{}", b.remote, b.name)))
-                .h(px(22.))
+                .h(ui_px(22.))
                 .flex()
                 .items_center()
                 .gap(px(6.))
                 .pl(px(22.))
-                .text_size(px(13.))
+                .text_size(ui_px(13.))
                 .hover(|s| s.bg(Theme::hover_row()))
                 .cursor_pointer()
                 .on_mouse_down(gpui::MouseButton::Right, {
@@ -1184,15 +1185,15 @@ impl Workspace {
                         this.select_log(i, cx);
                     }
                 }))
-                .child(crate::icons::icon(if b.current { "star" } else { "git-branch" }, 14., if b.current { gpui::rgb(0xe0a85a).into() } else { Theme::text_muted() }))
+                .child(crate::icons::ui_icon(if b.current { "star" } else { "git-branch" }, 14., if b.current { gpui::rgb(0xe0a85a).into() } else { Theme::text_muted() }))
                 .child(div().whitespace_nowrap().child(b.name.clone()))
         };
         let mut branches = div().id("git-branches").w(px(200.)).flex_shrink_0().h_full().flex().flex_col().overflow_y_scroll().border_r_1().border_color(Theme::divider()).py(px(4.));
-        let head = div().h(px(22.)).flex().items_center().pl(px(10.)).text_size(px(13.)).text_color(Theme::text()).child(format!("HEAD ({})", self.branch_label()));
+        let head = div().h(ui_px(22.)).flex().items_center().pl(px(10.)).text_size(ui_px(13.)).text_color(Theme::text()).child(format!("HEAD ({})", self.branch_label()));
         branches = branches.child(head);
         let local: Vec<Branch> = g.branches.iter().filter(|b| !b.remote).cloned().collect();
         let remote: Vec<Branch> = g.branches.iter().filter(|b| b.remote).cloned().collect();
-        let section = |t: &'static str| div().h(px(22.)).flex().items_center().gap(px(4.)).pl(px(10.)).text_size(px(12.)).text_color(Theme::text_muted()).child(crate::icons::tree_arrow(true, true, Theme::text_muted())).child(t);
+        let section = |t: &'static str| div().h(ui_px(22.)).flex().items_center().gap(px(4.)).pl(px(10.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(crate::icons::tree_arrow(true, true, Theme::text_muted())).child(t);
         if !local.is_empty() {
             branches = branches.child(section("Local"));
             for b in &local {
@@ -1248,7 +1249,7 @@ impl Workspace {
                             },
                         )
                         .w(px(graph_w))
-                        .h(px(LOG_ROW_H))
+                        .h(ui_px(LOG_ROW_H))
                         .flex_shrink_0();
                         let refs = c.refs.iter().map(|r| {
                             let (label, color) = if let Some(b) = r.strip_prefix("HEAD -> ") {
@@ -1260,14 +1261,14 @@ impl Workspace {
                             } else {
                                 (r.clone(), gpui::rgb(0x6c9be8))
                             };
-                            div().px(px(5.)).rounded(px(3.)).border_1().border_color(color).text_color(color).text_size(px(11.)).whitespace_nowrap().child(label)
+                            div().px(px(5.)).rounded(px(3.)).border_1().border_color(color).text_color(color).text_size(ui_px(11.)).whitespace_nowrap().child(label)
                         });
                         div()
                             .id(("commit", i))
-                            .h(px(LOG_ROW_H))
+                            .h(ui_px(LOG_ROW_H))
                             .flex()
                             .items_center()
-                            .text_size(px(13.))
+                            .text_size(ui_px(13.))
                             .w_full()
                             .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
                             .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
@@ -1281,7 +1282,7 @@ impl Workspace {
                             .child(div().flex().gap(px(4.)).children(refs))
                             .child(div().pl(px(6.)).flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(c.subject.clone()))
                             .child(div().w(px(130.)).flex_shrink_0().overflow_hidden().whitespace_nowrap().text_color(Theme::text_muted()).child(c.author.clone()))
-                            .child(div().w(px(130.)).flex_shrink_0().whitespace_nowrap().text_color(Theme::text_muted()).text_size(px(12.)).child(fmt_time(c.time)))
+                            .child(div().w(px(130.)).flex_shrink_0().whitespace_nowrap().text_color(Theme::text_muted()).text_size(ui_px(12.)).child(fmt_time(c.time)))
                     })
                     .collect()
             }),
@@ -1298,7 +1299,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .when(n == 0, |d| {
-                d.child(div().p(px(12.)).text_size(px(13.)).text_color(Theme::text_muted()).child(if !g.loaded {
+                d.child(div().p(px(12.)).text_size(ui_px(13.)).text_color(Theme::text_muted()).child(if !g.loaded {
                     "Loading…"
                 } else if g.filter.query.is_empty() {
                     "No commits yet"
@@ -1309,13 +1310,13 @@ impl Workspace {
             .child(commits);
 
         // Details pane.
-        let mut details = div().id("git-details").w(px(340.)).flex_shrink_0().h_full().flex().flex_col().overflow_y_scroll().border_l_1().border_color(Theme::divider()).p(px(10.)).gap(px(6.)).text_size(px(13.));
+        let mut details = div().id("git-details").w(px(340.)).flex_shrink_0().h_full().flex().flex_col().overflow_y_scroll().border_l_1().border_color(Theme::divider()).p(px(10.)).gap(px(6.)).text_size(ui_px(13.));
         if let (Some(d), Some(c)) = (&g.details, g.log_selected.and_then(|i| g.log.get(i))) {
             let hash = d.hash.clone();
             details = details
                 .child(div().text_color(Theme::text()).child(d.message.clone()))
-                .child(div().text_color(Theme::text_muted()).text_size(px(12.)).child(format!("{} · {} <{}> · {}", &c.hash[..8.min(c.hash.len())], c.author, c.email, fmt_time(c.time))))
-                .child(div().pt(px(6.)).text_color(Theme::text_muted()).text_size(px(12.)).child(format!("{} file{} changed", d.files.len(), if d.files.len() == 1 { "" } else { "s" })));
+                .child(div().text_color(Theme::text_muted()).text_size(ui_px(12.)).child(format!("{} · {} <{}> · {}", &c.hash[..8.min(c.hash.len())], c.author, c.email, fmt_time(c.time))))
+                .child(div().pt(px(6.)).text_color(Theme::text_muted()).text_size(ui_px(12.)).child(format!("{} file{} changed", d.files.len(), if d.files.len() == 1 { "" } else { "s" })));
             let dsel = g.details_sel;
             for (fi, f) in d.files.iter().enumerate() {
                 let f2 = f.clone();
@@ -1324,7 +1325,7 @@ impl Workspace {
                 details = details.child(
                     div()
                         .id(("dfile", fi))
-                        .h(px(22.))
+                        .h(ui_px(22.))
                         .flex()
                         .items_center()
                         .gap(px(6.))
@@ -1353,7 +1354,7 @@ impl Workspace {
                         }))
                         .child(div().w(px(14.)).flex().items_center().child(crate::icons::glyph(icon, 14., icolor)))
                         .child(div().text_color(status_color(f.status)).whitespace_nowrap().child(file_name(&f.path).to_string()))
-                        .child(div().text_color(Theme::text_dim()).text_size(px(12.)).whitespace_nowrap().child(dir_name(&f.path).to_string())),
+                        .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).whitespace_nowrap().child(dir_name(&f.path).to_string())),
                 );
             }
         }
@@ -1364,21 +1365,21 @@ impl Workspace {
             .flex_col()
             .child(
                 div()
-                    .h(px(30.))
+                    .h(ui_px(30.))
                     .flex()
                     .items_center()
                     .px(px(12.))
                     .gap(px(12.))
-                    .text_size(px(13.))
+                    .text_size(ui_px(13.))
                     .border_b_1()
                     .border_color(Theme::divider())
                     .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("Git"))
                     .child(div().text_color(Theme::text()).child("Log"))
                     .child(self.render_log_filters(cx))
                     .child(div().flex_1())
-                    .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(format!("{n} commits")))
+                    .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(format!("{n} commits")))
                     .child(
-                        div().id("log-refresh").px(px(5.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(crate::icons::icon("rotate-cw", 14., Theme::text_muted()))
+                        div().id("log-refresh").px(px(5.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(crate::icons::ui_icon("rotate-cw", 14., Theme::text_muted()))
                             .on_click(cx.listener(|this, _, _, cx| this.refresh_git(cx))),
                     ),
             )

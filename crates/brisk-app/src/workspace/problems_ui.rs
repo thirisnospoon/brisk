@@ -1,6 +1,7 @@
 //! Inspections: ruff checks of open Python files as you type, the Problems tool window
 //! (Alt+6, "File" and "Project" tabs), F2 / Shift+F2 and Alt+Enter quick fixes.
 
+use crate::theme::ui_px;
 use super::{BottomTool, PopupItem, PopupKind, Target, Workspace};
 use crate::editor::{DiagSource, Editor, EditorEvent};
 use crate::theme::{Theme, mono_font};
@@ -359,7 +360,7 @@ impl Workspace {
             .items_center()
             .gap(px(2.))
             .px(px(8.))
-            .text_size(px(13.))
+            .text_size(ui_px(13.))
             .child(div().pr(px(8.)).font_weight(gpui::FontWeight::SEMIBOLD).child("Problems"))
             .child(tab_button("pr-file", file_label, ProblemsTab::File, cx))
             .child(tab_button("pr-project", project_label, ProblemsTab::Project, cx))
@@ -407,11 +408,11 @@ impl Workspace {
                             let selected = this.problems.selected == i;
                             let base = div()
                                 .id(("problem", i))
-                                .h(px(22.))
+                                .h(ui_px(22.))
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                .text_size(px(13.))
+                                .text_size(ui_px(13.))
                                 .w_full()
                                 .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
                                 .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
@@ -431,8 +432,8 @@ impl Workspace {
                                         }))
                                         .child(crate::icons::tree_arrow(true, true, Theme::text_muted()))
                                         .child(name)
-                                        .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(dir))
-                                        .child(div().text_color(Theme::text_muted()).text_size(px(12.)).child(format!("{count} problem{}", if *count == 1 { "" } else { "s" })))
+                                        .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(dir))
+                                        .child(div().text_color(Theme::text_muted()).text_size(ui_px(12.)).child(format!("{count} problem{}", if *count == 1 { "" } else { "s" })))
                                 }
                                 Row::Problem(d) => {
                                     let (g, c) = icon(d.severity);
@@ -448,7 +449,7 @@ impl Workspace {
                                         }))
                                         .child(div().w(px(14.)).flex().items_center().child(crate::icons::glyph(g, 14., c)))
                                         .child(div().text_color(Theme::text()).overflow_hidden().whitespace_nowrap().child(d.title()))
-                                        .child(div().text_color(Theme::text_dim()).font_family(mono_font()).text_size(px(12.)).child(format!(":{}", d.start.line + 1)))
+                                        .child(div().text_color(Theme::text_dim()).font_family(mono_font()).text_size(ui_px(12.)).child(format!(":{}", d.start.line + 1)))
                                 }
                             }
                         })

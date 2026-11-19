@@ -1,6 +1,7 @@
 //! Merge conflicts: the Conflicts dialog (Accept Yours / Accept Theirs / Merge…) and the
 //! three-pane Merge Revisions dialog (yours | result | theirs) with per-chunk >> and <<.
 
+use crate::theme::ui_px;
 use super::Workspace;
 use crate::theme::Theme;
 use brisk_git::Chunk;
@@ -315,7 +316,7 @@ impl Workspace {
             div()
                 .id(("conflict-row", i))
                 .w_full()
-                .h(px(26.))
+                .h(ui_px(26.))
                 .px(px(8.))
                 .flex()
                 .items_center()
@@ -325,7 +326,7 @@ impl Workspace {
                 .when(on, |x| x.bg(Theme::selection_row()))
                 .when(!on, |x| x.hover(|s| s.bg(Theme::hover_row())))
                 .child(div().text_color(Theme::error()).child(name))
-                .child(div().text_color(Theme::text_dim()).text_size(px(12.)).child(dir))
+                .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(dir))
                 .on_mouse_down(
                     gpui::MouseButton::Left,
                     cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
@@ -349,13 +350,13 @@ impl Workspace {
             .child(button("cf-merge", "Merge…", true).on_click(cx.listener(|this, _, _, cx| this.conflicts_merge(cx))));
         dialog_frame("conflicts-dialog", 640., "Conflicts")
             .child(div().pb(px(8.)).text_color(Theme::text_muted()).child(format!("{} file(s) with merge conflicts", d.files.len())))
-            .child(div().flex().gap(px(12.)).child(div().id("conflict-list").flex_1().max_h(px(320.)).overflow_y_scroll().children(rows)).child(side))
+            .child(div().flex().gap(px(12.)).child(div().id("conflict-list").flex_1().max_h(ui_px(320.)).overflow_y_scroll().children(rows)).child(side))
             .child(
                 div()
                     .pt(px(12.))
                     .flex()
                     .items_center()
-                    .child(div().flex_1().text_size(px(11.)).text_color(Theme::text_dim()).child("↑↓ select · Enter or double click: Merge… · Esc close"))
+                    .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("↑↓ select · Enter or double click: Merge… · Esc close"))
                     .child(button("cf-close", "Close", false).on_click(cx.listener(|this, _, w, cx| this.close_git_dialog(w, cx)))),
             )
             .into_any_element()
@@ -465,7 +466,7 @@ impl Workspace {
         let changes = d.chunks.iter().filter(|c| matches!(c, Chunk::Change { .. })).count();
         let header = |t: &'static str| div().flex_1().px(px(6.)).text_color(Theme::text_muted()).child(t);
         dialog_frame("merge-dialog", 1100., &format!("Merge Revisions for {}", d.rel))
-            .h(px(620.))
+            .h(ui_px(620.))
             .child(
                 div()
                     .flex()
@@ -486,7 +487,7 @@ impl Workspace {
                     .border_color(Theme::divider())
                     .bg(Theme::editor_bg())
                     .font_family(mono)
-                    .text_size(px(13.))
+                    .text_size(ui_px(13.))
                     .children(body),
             )
             .child(
@@ -500,7 +501,7 @@ impl Workspace {
                     } else {
                         format!("{changes} change(s), all resolved")
                     }))
-                    .child(div().flex_1().text_size(px(11.)).text_color(Theme::text_dim()).child("» / « take a side (again: append the other) · × keep base · ↑↓ / F7 changes · Alt+→ / Alt+← · Ctrl+Enter Apply"))
+                    .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("» / « take a side (again: append the other) · × keep base · ↑↓ / F7 changes · Alt+→ / Alt+← · Ctrl+Enter Apply"))
                     .child(button("mg-left", "Accept Left", false).on_click(cx.listener(|this, _, _, cx| {
                         if let Some(GitDialog::Merge(d)) = this.git_dialog() {
                             d.accept_all(true);
@@ -525,7 +526,7 @@ pub(super) fn button(id: &'static str, label: &'static str, primary: bool) -> gp
     div()
         .id(id)
         .px(px(14.))
-        .h(px(28.))
+        .h(ui_px(28.))
         .flex()
         .items_center()
         .justify_center()
@@ -551,7 +552,7 @@ pub(super) fn dialog_frame(id: &'static str, w: f32, title: &str) -> gpui::State
         .border_color(Theme::divider())
         .rounded(px(10.))
         .map(crate::ui_kit::floating)
-        .text_size(px(13.))
+        .text_size(ui_px(13.))
         .text_color(Theme::text())
         .child(div().font_weight(gpui::FontWeight::SEMIBOLD).pb(px(10.)).child(title.to_string()))
 }
