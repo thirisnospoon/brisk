@@ -35,6 +35,7 @@ use std::path::PathBuf;
 use workspace::Workspace;
 
 fn main() {
+    workspace::budget_probe::mark("main");
     crash::install();
     // Without an argument, reopen the last project like PyCharm; the current directory otherwise.
     let root = std::env::args()
@@ -48,12 +49,14 @@ fn main() {
 
     workspace::project_ui::remember_project(&root);
     settings::load();
+    workspace::budget_probe::mark("settings");
     // Local History: old revisions and the over-budget oldest go, once per start, off the UI.
     std::thread::Builder::new().name("local-history-cleanup".into()).spawn(|| {
         local_history::cleanup();
     }).ok();
 
     Application::new().with_assets(icons::Assets).run(move |cx: &mut App| {
+        workspace::budget_probe::mark("app_run");
         // Fonts shipped next to the exe (or in BRISK_FONT_DIR): .ttf / .otf files are added to
         // the text system, so the UI does not depend on what Windows has installed.
         for dir in fonts_dirs() {
@@ -70,6 +73,7 @@ fn main() {
                 let _ = cx.text_system().add_fonts(fonts);
             }
         }
+        workspace::budget_probe::mark("fonts");
         let bounds = Bounds::centered(None, size(px(1400.), px(900.)), cx);
         let title = format!("{} – Brisk", root.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
         cx.open_window(
@@ -81,6 +85,7 @@ fn main() {
             |window, cx| cx.new(|cx| Workspace::new(root.clone(), window, cx)),
         )
         .expect("failed to open window");
+        workspace::budget_probe::mark("window_opened");
         cx.activate(true);
         stall::start(cx);
     });
