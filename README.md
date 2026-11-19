@@ -68,12 +68,12 @@ is in [docs/features.md](docs/features.md).
 Every merge is checked against fixed limits with `scripts\budget.ps1` and a set
 of UI smoke tests that drive the real window:
 
-| Metric | Limit | 0.2.6 |
+| Metric | Limit | 0.2.7 |
 |---|---|---|
-| `brisk.exe` size | 26 MB | 25.6 MB |
-| Portable zip (with ty, ruff, debugpy) | 39 MB | 38.4 MB |
-| Idle working set, demo project | 110 MB | 63 MB |
-| Working set after a heavy session (200k lines of output, 50 tabs, find in files) | 200 MB | 149 MB |
+| `brisk.exe` size | 26 MB | 25.7 MB |
+| Portable zip (with ty, ruff, debugpy) | 39 MB | 38.5 MB |
+| Idle working set, demo project | 110 MB | 62 MB |
+| Working set after a heavy session (200k lines of output, 50 tabs, find in files) | 200 MB | 148 MB |
 | Frame time while scrolling any large list (20k files, 10k variables, 2k commits) | p95 16 ms | under 10 ms |
 
 ## Building from source
