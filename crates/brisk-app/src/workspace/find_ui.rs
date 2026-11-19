@@ -27,6 +27,7 @@ pub struct FindWindow {
     rows: Vec<WRow>,
     selected: usize,
     scroll: UniformListScrollHandle,
+    bar: crate::scrollbar::BarState,
     pub focus: FocusHandle,
     /// Find Usages: each match's index in `tree::USAGE_GROUPS`; empty for a text search.
     group_of: Vec<u8>,
@@ -61,6 +62,7 @@ pub struct Find {
     gen: u64,
     cancel: Arc<AtomicBool>,
     scroll: UniformListScrollHandle,
+    bar: crate::scrollbar::BarState,
     preview: Option<(usize, Arc<Vec<String>>)>,
     confirm_replace: bool,
     pub window: Option<FindWindow>,
@@ -91,6 +93,7 @@ impl Find {
             gen: 0,
             cancel: Arc::new(AtomicBool::new(false)),
             scroll: UniformListScrollHandle::new(),
+            bar: Default::default(),
             preview: None,
             confirm_replace: false,
             window: None,
@@ -293,7 +296,7 @@ impl Workspace {
         let results = f.results.clone();
         let title = format!("“{}” in Project", f.opts.query);
         let focus = cx.focus_handle();
-        let mut w = FindWindow { title, files, results, rows: Vec::new(), selected: 0, scroll: UniformListScrollHandle::new(), focus: focus.clone(), group_of: Vec::new(), collapsed: Default::default() };
+        let mut w = FindWindow { title, files, results, rows: Vec::new(), selected: 0, scroll: UniformListScrollHandle::new(), bar: Default::default(), focus: focus.clone(), group_of: Vec::new(), collapsed: Default::default() };
         w.rebuild_rows();
         w.selected = w.rows.iter().position(|r| matches!(r, WRow::Match(_))).unwrap_or(0);
         self.find.window = Some(w);
@@ -729,6 +732,7 @@ impl Workspace {
         )
         .track_scroll(f.scroll.clone())
         .flex_1();
+        let list = div().relative().flex_1().min_h_0().flex().flex_col().child(list).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&f.scroll), f.bar.clone()));
 
         // Preview of the selected match with a few lines of context.
         let preview = f.results.matches.get(f.selected).and_then(|m| {
@@ -944,6 +948,7 @@ impl Workspace {
         )
         .track_scroll(w.scroll.clone())
         .flex_1();
+        let list = div().relative().flex_1().min_h_0().flex().flex_col().child(list).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&w.scroll), w.bar.clone()));
         div()
             .id("find-window-root")
             .track_focus(&focus)

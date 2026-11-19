@@ -22,6 +22,7 @@ pub(super) struct TestsView {
     pub selected: usize,
     pub collapsed: HashSet<usize>,
     pub scroll: UniformListScrollHandle,
+    pub bar: crate::scrollbar::BarState,
     pub details_scroll: ScrollHandle,
     pub finished: bool,
     /// Show Passed / Show Ignored / Sort by Duration.
@@ -83,7 +84,7 @@ impl TestsView {
                 }
             });
         }
-        TestsView { feed, stop, selected: 0, collapsed: HashSet::new(), scroll: UniformListScrollHandle::new(), details_scroll: ScrollHandle::new(), finished: false, view: TreeView::default() }
+        TestsView { feed, stop, selected: 0, collapsed: HashSet::new(), scroll: UniformListScrollHandle::new(), bar: Default::default(), details_scroll: ScrollHandle::new(), finished: false, view: TreeView::default() }
     }
 
     /// A finished run from the Test History.
@@ -94,6 +95,7 @@ impl TestsView {
             selected: 0,
             collapsed: HashSet::new(),
             scroll: UniformListScrollHandle::new(),
+            bar: Default::default(),
             details_scroll: ScrollHandle::new(),
             finished: true,
             view: TreeView::default(),
@@ -483,7 +485,7 @@ impl TerminalPanel {
                     .child(root_icon)
                     .child(div().text_color(Theme::text_muted()).overflow_hidden().whitespace_nowrap().child(summary)),
             )
-            .child(
+            .child(div().relative().flex_1().min_h_0().flex().flex_col().child(
                 uniform_list(
                     "test-tree",
                     n_rows,
@@ -568,7 +570,7 @@ impl TerminalPanel {
                 )
                 .flex_1()
                 .track_scroll(t.scroll.clone()),
-            )
+            ).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&t.scroll), t.bar.clone())))
             .when(self.history_open, |d| {
                 d.child(
                     div()
