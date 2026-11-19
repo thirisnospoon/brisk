@@ -307,11 +307,10 @@ impl Editor {
 
     /// Ctrl+Shift+/: wrap the selection in a block comment or unwrap it; with no selection,
     /// insert an empty one at the caret. Languages without block comments (Python, TOML,
-    /// YAML) comment the lines instead.
+    /// YAML) have nothing to do, as in PyCharm, where the action is unavailable there.
     pub fn toggle_block_comment(&mut self, cx: &mut Context<Self>) {
         let Some((open, close)) = block_markers(self.path.as_deref()) else {
-            self.buffer.toggle_line_comment();
-            cx.notify();
+            let _ = cx;
             return;
         };
         let r = self.buffer.primary().range();

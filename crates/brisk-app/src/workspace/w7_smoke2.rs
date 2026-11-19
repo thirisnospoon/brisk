@@ -93,6 +93,17 @@ impl Workspace {
         ed.update(cx, |e, _| e.buffer.selections = vec![Selection::caret(e.buffer.line_start(1)), Selection::caret(e.buffer.line_start(3))]);
         self.smoke_press("ctrl-shift-j", window, cx);
         eprintln!("smoke-w7: join lines {:?}", show(&ed, cx));
+
+        // --- E14 comments ---------------------------------------------------------------------
+        ed.update(cx, |e, _| {
+            e.buffer.set_text("def f():\n\n    pass\n");
+            e.buffer.selections = vec![Selection::caret(9)];
+        });
+        self.smoke_press("ctrl-/", window, cx);
+        eprintln!("smoke-w7: ctrl-/ on an empty line {:?}", show(&ed, cx));
+        ed.update(cx, |e, _| e.buffer.selections = vec![Selection { anchor: 0, head: 8, goal_col: None }]);
+        self.smoke_press("ctrl-shift-/", window, cx);
+        eprintln!("smoke-w7: ctrl-shift-/ in python {:?}", show(&ed, cx));
         let margin = ed.read(cx).right_margin;
         eprintln!("smoke-w7: right margin {margin:?}");
 

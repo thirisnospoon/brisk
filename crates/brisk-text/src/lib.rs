@@ -781,6 +781,17 @@ impl Buffer {
     /// Ctrl+/: toggle line comment on selected lines, PyCharm style (comment at column 0).
     pub fn toggle_line_comment(&mut self) {
         let Some(prefix) = self.line_comment.clone() else { return };
+        // One caret on a blank line: the mark there and the caret after it, ready to type.
+        if self.selections.len() == 1 && self.primary().is_empty() {
+            let (line, _) = self.pos_to_line_col(self.primary().head);
+            if self.line(line).trim().is_empty() {
+                let at = self.line_end(line);
+                let mark = if self.comment_space { format!("{prefix} ") } else { prefix };
+                let end = at + mark.chars().count();
+                self.apply(vec![(at..at, mark)], EditKind::Other, |_, _| vec![Selection::caret(end)]);
+                return;
+            }
+        }
         let mut all_lines: Vec<usize> = Vec::new();
         for s in &self.selections {
             all_lines.extend(self.selected_lines(s));

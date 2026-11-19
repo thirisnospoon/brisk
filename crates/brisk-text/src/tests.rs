@@ -152,6 +152,22 @@ fn mouse_carets_and_unit_drags() {
 }
 
 #[test]
+fn comment_on_a_blank_line() {
+    // Ctrl+/ on an empty line: "# " and the caret after it, on the same line.
+    let mut b = buf("def f():\n\n    pass");
+    b.selections = vec![Selection::caret(9)];
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "def f():\n# \n    pass");
+    assert_eq!(b.primary().head, 11);
+    // An indented blank line keeps its indent before the mark.
+    let mut b = buf("def f():\n    \n");
+    b.selections = vec![Selection::caret(13)];
+    b.toggle_line_comment();
+    assert_eq!(b.text(), "def f():\n    # \n");
+    assert_eq!(b.primary().head, 15);
+}
+
+#[test]
 fn comment_style_options() {
     // "Line comment at first column" off: at the block's indent; no space when asked.
     let mut b = buf("    x = 1\n        y = 2");
