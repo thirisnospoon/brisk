@@ -878,21 +878,58 @@ impl Buffer {
     }
 
     /// Ctrl+Shift+J.
+    /// Ctrl+Shift+J, as in PyCharm: the caret's line with the next one, or all the lines a
+    /// selection covers, for every caret. The next line's indent goes; a line continuation
+    /// (`\`) goes; two string literals with the same quotes merge (`'a' 'b'` → `'ab'`); two
+    /// comment lines become one comment; no space after an opening bracket or before a closing
+    /// one, a comma or a dot; otherwise one space (`if x:` + `y` → `if x: y`).
     pub fn join_lines(&mut self) {
-        let s = self.primary();
-        let (line, _) = self.pos_to_line_col(s.head);
-        if line + 1 >= self.len_lines() {
+        let n = self.len_lines();
+        let mut blocks: Vec<(usize, usize)> = Vec::new();
+        for s in &self.selections {
+            let r = s.range();
+            let (l1, _) = self.pos_to_line_col(r.start);
+            let (mut l2, c2) = self.pos_to_line_col(r.end);
+            if l2 > l1 && c2 == 0 {
+                l2 -= 1;
+            }
+            let last = if l2 > l1 { l2 } else { l1 + 1 };
+            if last < n {
+                blocks.push((l1, last));
+            }
+        }
+        blocks.sort();
+        // Overlapping or touching blocks join as one.
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (a, z) in blocks {
+            match merged.last_mut() {
+                Some(m) if a <= m.1 => m.1 = m.1.max(z),
+                _ => merged.push((a, z)),
+            }
+        }
+        if merged.is_empty() {
             return;
         }
-        let end = self.line_end(line);
-        let next_ws = self.leading_ws(line + 1).chars().count();
-        let next_start = self.line_start(line + 1);
-        let cur_trailing = self.line(line).chars().rev().take_while(|c| c.is_whitespace()).count();
-        let r = end - cur_trailing..next_start + next_ws;
-        let next_empty = self.line(line + 1).trim().is_empty();
-        let sep = if next_empty { "" } else { " " };
-        let at = r.start;
-        self.apply(vec![(r, sep.into())], EditKind::Other, |_, _| vec![Selection::caret(at)]);
+        let comment = self.line_comment.clone();
+        let python = self.python;
+        let mut edits = Vec::new();
+        let mut carets = Vec::new();
+        // Carets in the text after the edits: earlier blocks shift the later ones.
+        let mut delta: isize = 0;
+        for (a, z) in merged {
+            let mut text = self.line(a);
+            let mut at = 0;
+            for l in a + 1..=z {
+                let (t, c) = smart::join_pair(&text, &self.line(l), python, comment.as_deref());
+                text = t;
+                at = c;
+            }
+            let (start, end) = (self.line_start(a), self.line_end(z));
+            carets.push((start as isize + delta) as usize + at);
+            delta += text.chars().count() as isize - (end - start) as isize;
+            edits.push((start..end, text));
+        }
+        self.apply(edits, EditKind::Other, |_, _| carets.iter().map(|&c| Selection::caret(c)).collect());
     }
 
     /// Ctrl+Shift+U.

@@ -84,6 +84,15 @@ impl Workspace {
         cx.write_to_clipboard(gpui::ClipboardItem::new_string("def m(self):\n        return 1".into()));
         self.smoke_press("ctrl-v", window, cx);
         eprintln!("smoke-w7: paste into class {:?}", show(&ed, cx));
+        // --- E13 Join Lines ---------------------------------------------------------------
+        ed.update(cx, |e, _| {
+            e.buffer.set_text("if x:\n    y = 1\ns = ('abc'\n     'def')\nt = a + \\\n    b\n");
+            e.buffer.selections = vec![Selection::caret(0)];
+        });
+        self.smoke_press("ctrl-shift-j", window, cx);
+        ed.update(cx, |e, _| e.buffer.selections = vec![Selection::caret(e.buffer.line_start(1)), Selection::caret(e.buffer.line_start(3))]);
+        self.smoke_press("ctrl-shift-j", window, cx);
+        eprintln!("smoke-w7: join lines {:?}", show(&ed, cx));
         let margin = ed.read(cx).right_margin;
         eprintln!("smoke-w7: right margin {margin:?}");
 

@@ -17,6 +17,62 @@ pub(crate) struct Scan {
     pub open: Vec<usize>,
 }
 
+/// Join Lines: `left` with `right` (its indent dropped), and the column of the joint.
+pub(crate) fn join_pair(left: &str, right: &str, python: bool, comment: Option<&str>) -> (String, usize) {
+    let mut l = left.trim_end().to_string();
+    let mut r = right.trim_start();
+    if r.is_empty() {
+        let at = l.chars().count();
+        return (l, at);
+    }
+    if python && l.ends_with('\\') && !scan(&l).string.is_some() {
+        l.pop();
+        l.truncate(l.trim_end().len());
+    }
+    // Two comment lines: one comment.
+    if let Some(c) = comment {
+        if r.starts_with(c) && scan_comment(&l, python, c) {
+            r = r[c.len()..].trim_start();
+            if r.is_empty() {
+                let at = l.chars().count();
+                return (l, at);
+            }
+        }
+    }
+    // 'a' 'b' -> 'ab': the left line ends with a one-line literal that the right one continues.
+    if python {
+        if let Some(q) = l.chars().last().filter(|c| *c == '\'' || *c == '"') {
+            let before = &l[..l.len() - 1];
+            let s = scan(before);
+            let closes = s.string.as_ref().is_some_and(|(sq, _, prefix)| *sq == q && !prefix.to_lowercase().contains('f') && !s.triple);
+            let triple_right = r.starts_with(&q.to_string().repeat(3));
+            if closes && r.starts_with(q) && !triple_right && !before.ends_with(&q.to_string().repeat(2)) {
+                l.pop();
+                let at = l.chars().count();
+                l.push_str(&r[1..]);
+                return (l, at);
+            }
+        }
+    }
+    let tight = l.ends_with(['(', '[', '{']) || r.starts_with([')', ']', '}', ',', '.', ':', ';']);
+    // The caret goes to the joint, before the space.
+    let at = l.chars().count();
+    if !tight {
+        l.push(' ');
+    }
+    l.push_str(r);
+    (l, at)
+}
+
+/// Whether `line` is a comment line (only a comment) for Join Lines.
+fn scan_comment(line: &str, python: bool, mark: &str) -> bool {
+    let t = line.trim_start();
+    if python {
+        return t.starts_with(mark) || scan(line).comment.is_some_and(|c| c == line.len() - t.len());
+    }
+    t.starts_with(mark)
+}
+
 pub(crate) fn scan(before: &str) -> Scan {
     let cs: Vec<char> = before.chars().collect();
     let mut s = Scan::default();

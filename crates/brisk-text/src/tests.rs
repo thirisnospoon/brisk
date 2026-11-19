@@ -235,10 +235,63 @@ fn indent_unindent_selection() {
 }
 
 #[test]
+fn join_lines_python() {
+    let py = |t: &str| {
+        let mut b = buf(t);
+        b.python = true;
+        b.line_comment = Some("#".into());
+        b
+    };
+    let caret_mark = |b: &Buffer| {
+        let mut t = b.text();
+        let at = t.char_indices().nth(b.primary().head).map_or(t.len(), |(i, _)| i);
+        t.insert(at, '|');
+        t
+    };
+    // `if x:` + `y` -> `if x: y`, the caret at the joint.
+    let mut b = py("if x:\n    y = 1\n");
+    b.join_lines();
+    assert_eq!(caret_mark(&b), "if x:| y = 1\n");
+    // A backslash continuation goes.
+    let mut b = py("total = a + \\\n    b\n");
+    b.join_lines();
+    assert_eq!(b.text(), "total = a + b\n");
+    // String literals merge, with or without a backslash between them.
+    let mut b = py("s = ('abc'\n     'def')\n");
+    b.join_lines();
+    assert_eq!(caret_mark(&b), "s = ('abc|def')\n");
+    let mut b = py("s = \"ab\" \\\n    \"cd\"\n");
+    b.join_lines();
+    assert_eq!(b.text(), "s = \"abcd\"\n");
+    // Different quotes or an f-string stay apart.
+    let mut b = py("s = ('a'\n     \"b\")\n");
+    b.join_lines();
+    assert_eq!(b.text(), "s = ('a' \"b\")\n");
+    let mut b = py("s = (f'{a}'\n     '{b}')\n");
+    b.join_lines();
+    assert_eq!(b.text(), "s = (f'{a}' '{b}')\n");
+    // Comment lines: one comment.
+    let mut b = py("# first\n# second\nx = 1");
+    b.join_lines();
+    assert_eq!(b.text(), "# first second\nx = 1");
+    // Several lines at once: the selection's lines.
+    let mut b = py("f(\n    a,\n    b,\n)\nz");
+    b.selections = vec![Selection { anchor: 0, head: 15, goal_col: None }];
+    b.join_lines();
+    assert_eq!(b.text(), "f(a, b,\n)\nz");
+    // Two carets: each joins its line.
+    let mut b = py("a\nb\nc\nd");
+    b.selections = vec![Selection::caret(0), Selection::caret(4)];
+    b.join_lines();
+    assert_eq!(b.text(), "a b\nc d");
+    assert_eq!(b.selections.len(), 2);
+}
+
+#[test]
 fn join_and_case() {
     let mut b = buf("x = (\n    1)");
     b.join_lines();
-    assert_eq!(b.text(), "x = ( 1)");
+    assert_eq!(b.text(), "x = (1)");
     let mut b = buf("abc");
     b.select_all();
     b.toggle_case();
