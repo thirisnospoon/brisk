@@ -50,6 +50,7 @@ mod lsp_ui;
 mod main_menu;
 mod menu_ui;
 mod problems_ui;
+mod generate_ui;
 pub(crate) mod project_ui;
 mod run_config_ui;
 mod run_marks_ui;
@@ -858,6 +859,7 @@ impl Workspace {
     }
 
     fn save_all(&mut self, cx: &mut Context<Self>) {
+        self.actions_on_save(cx);
         let mut saved = 0;
         let mut saved_paths = Vec::new();
         let mut problem = None;
@@ -1366,6 +1368,9 @@ impl Workspace {
             A::NextError | A::PreviousError => self.goto_problem(action == A::NextError, window, cx),
             A::ShowIntentionActions => self.show_intentions(window, cx),
             A::SurroundWith | A::InsertLiveTemplate => self.template_action(action, window, cx),
+            A::Unwrap => self.unwrap_action(window, cx),
+            A::Generate => self.generate_action(window, cx),
+            A::OverrideMethods | A::ImplementMethods => self.override_methods(action == A::ImplementMethods, window, cx),
             A::ToggleGitWindow => {
                 self.toggle_bottom(BottomTool::Git, window, cx);
                 if self.bottom == Some(BottomTool::Git) {
@@ -1417,7 +1422,7 @@ impl Workspace {
             | A::SplitHorizontally | A::Unsplit | A::MoveToOppositeGroup | A::NextSplitter => {
                 self.tab_action(action, window, cx);
             }
-            A::ReformatCode | A::OptimizeImports => self.format_action(action, window, cx),
+            A::ReformatCode | A::OptimizeImports | A::CodeCleanup => self.format_action(action, window, cx),
             A::FindInFiles => self.open_find(false, window, cx),
             A::ReplaceInFiles => self.open_find(true, window, cx),
             A::HideAllToolWindows => {

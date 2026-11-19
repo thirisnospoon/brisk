@@ -3,8 +3,12 @@
 //! Highlighting is computed only for the visible byte range, so cost does not grow with file size.
 
 mod scope;
+mod generate;
 mod sql;
+mod structure;
 pub use scope::{name_refs_of, occurrences_of, NameRefs};
+pub use structure::{statement_move, unwrap_options, Unwrap};
+pub use generate::{class_at, class_named, data_fields, gen_eq, gen_init, gen_override, gen_property, gen_repr, object_methods, property_candidates, ClassInfo, Field, Method};
 pub use sql::highlight_sql;
 pub use tree_sitter::Tree;
 
@@ -471,13 +475,23 @@ impl SyntaxTree {
         None
     }
 
-    /// Extend Selection: the smallest node that strictly contains `bytes` (byte range).
+    /// Extend Selection: the smallest node that strictly contains `bytes` (byte range); as in
+    /// PyCharm, the inside of brackets comes before the brackets (`a, b` then `(a, b)`).
     pub fn enclosing_range(&self, bytes: Range<usize>) -> Option<Range<usize>> {
         let tree = self.tree.as_ref()?;
         let mut node = tree.root_node().descendant_for_byte_range(bytes.start, bytes.end)?;
+        let within = |r: &Range<usize>| r.start <= bytes.start && bytes.end <= r.end && *r != bytes;
         loop {
             let r = node.byte_range();
-            if r.start <= bytes.start && bytes.end <= r.end && r != bytes {
+            if within(&r) {
+                let n = node.child_count();
+                let (open, close) = (node.child(0), n.checked_sub(1).and_then(|i| node.child(i as _)));
+                if let (Some(o), Some(c), true) = (open, close, n >= 3) {
+                    let inner = node.child(1).map(|f| f.start_byte()).unwrap_or(o.end_byte())..node.child((n - 2) as _).map(|l| l.end_byte()).unwrap_or(c.start_byte());
+                    if matches!(o.kind(), "(" | "[" | "{") && matches!(c.kind(), ")" | "]" | "}") && within(&inner) {
+                        return Some(inner);
+                    }
+                }
                 return Some(r);
             }
             node = node.parent()?;
@@ -762,7 +776,7 @@ foo(1);", "'a'", Highlight::String),
             r = n;
         }
         assert_eq!(seen[0], "a + b");
-        assert!(seen.contains(&"(a + b, 2)".to_string()), "{seen:?}");
+        assert_eq!(seen[1..3], ["a + b, 2", "(a + b, 2)"], "{seen:?}");
         assert!(seen.contains(&"f(a + b, 2)".to_string()), "{seen:?}");
     }
 

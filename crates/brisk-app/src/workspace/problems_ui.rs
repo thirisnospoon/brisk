@@ -32,6 +32,12 @@ pub(super) enum Intent {
     Template(&'static str),
     /// Ctrl+Alt+T: surround with `SURROUNDERS[i]`.
     Surround(usize),
+    /// Generate / Override: insert this member into the class at the caret.
+    Member(String),
+    /// Generate: open Override Methods (`false`) or Implement Methods (`true`).
+    Overrides(bool),
+    /// Ctrl+Shift+Delete: unwrap or remove the enclosing statement.
+    Unwrap(brisk_syntax::Unwrap),
     /// Ctrl+Alt+V: extract the selection into a variable; `true`: every occurrence.
     ExtractVariable(bool),
     /// A language server quick fix (ty: import a name, qualify it): title and edits.
@@ -631,6 +637,9 @@ impl Workspace {
             Intent::Suppress(d) => ed.update(cx, |e, cx| e.suppress(&d, cx)),
             Intent::Template(key) => ed.update(cx, |e, cx| e.insert_template(key, cx)),
             Intent::Surround(i) => ed.update(cx, |e, cx| e.surround_with(i, cx)),
+            Intent::Unwrap(u) => ed.update(cx, |e, cx| e.apply_unwrap(&u, cx)),
+            Intent::Member(code) => ed.update(cx, |e, cx| e.insert_member(&code, cx)),
+            Intent::Overrides(implement) => self.override_methods(implement, window, cx),
             Intent::ExtractVariable(all) => {
                 ed.update(cx, |e, cx| e.extract_variable(all, cx));
             }
@@ -735,7 +744,44 @@ impl Workspace {
 }
 
 impl Workspace {
-    /// Ctrl+Alt+L (the selected lines, else the file) and Ctrl+Alt+O, with ruff.
+    /// Settings › Tools › Actions on Save, as in PyCharm: Optimize imports, then Reformat code,
+    /// on the modified Python files about to be saved (Ctrl+S and the autosave on leaving the
+    /// window). A file ruff cannot parse is saved as it is.
+    pub(super) fn actions_on_save(&mut self, cx: &mut Context<Self>) {
+        let s = crate::settings::current();
+        if !s.reformat_on_save && !s.optimize_imports_on_save {
+            return;
+        }
+        let eds: Vec<_> = self
+            .editors()
+            .filter(|e| {
+                let e = e.read(cx);
+                e.buffer.is_dirty() && e.is_python() && e.path.is_some() && e.read_error.is_none() && e.disk_conflict.is_none()
+            })
+            .cloned()
+            .collect();
+        if eds.is_empty() {
+            return;
+        }
+        let Some(ruff) = self.ruff() else { return };
+        for ed in eds {
+            let (Some(path), text) = ({ let e = ed.read(cx); (e.path.clone(), e.text_string()) }) else { continue };
+            let mut out = text.clone();
+            let keep = |r: Result<String, String>, cur: &str| r.ok().filter(|t| !t.is_empty() || cur.is_empty());
+            if s.optimize_imports_on_save {
+                out = keep(brisk_lint::optimize_imports(&ruff, &self.root, &path, &out), &out).unwrap_or(out);
+            }
+            if s.reformat_on_save {
+                out = keep(brisk_lint::format_text(&ruff, &self.root, &path, &out, None), &out).unwrap_or(out);
+            }
+            if out.replace("\r\n", "\n") != text.replace("\r\n", "\n") {
+                ed.update(cx, |e, cx| e.replace_all_text(&out, cx));
+            }
+        }
+    }
+
+    /// Ctrl+Alt+L (the selected lines, else the file), Ctrl+Alt+O and Code Cleanup (every safe
+    /// ruff fix in the file, PyCharm's "fix all problems"), with ruff.
     pub(super) fn format_action(&mut self, action: brisk_keymap::Action, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ed) = self.focused_editor(window, cx).or_else(|| self.active_editor().cloned()) else { return };
         let (path, python) = {
@@ -743,7 +789,7 @@ impl Workspace {
             (e.path.clone(), e.is_python())
         };
         let Some(path) = path.filter(|_| python) else {
-            self.status = "Reformat Code and Optimize Imports work on Python files (ruff)".into();
+            self.status = "Reformat Code, Optimize Imports and Code Cleanup work on Python files (ruff)".into();
             cx.notify();
             return;
         };
@@ -763,8 +809,11 @@ impl Workspace {
             (e.text_string(), lines)
         };
         let reformat = action == brisk_keymap::Action::ReformatCode;
+        let cleanup = action == brisk_keymap::Action::CodeCleanup;
         let result = if reformat {
             brisk_lint::format_text(&ruff, &self.root, &path, &text, lines)
+        } else if cleanup {
+            brisk_lint::fix_all(&ruff, &self.root, &path, &text, None)
         } else {
             brisk_lint::optimize_imports(&ruff, &self.root, &path, &text)
         };
@@ -774,12 +823,12 @@ impl Workspace {
             Ok(out) => {
                 let changed = out.replace("\r\n", "\n") != text.replace("\r\n", "\n");
                 if changed {
-                    crate::local_history::record(&path, &text.replace("
-", "
-"), crate::local_history::Label::BeforeReformat);
+                    crate::local_history::record(&path, &text.replace("\r\n", "\n"), crate::local_history::Label::BeforeReformat);
                     ed.update(cx, |e, cx| e.replace_all_text(&out, cx));
                 }
-                if reformat {
+                if cleanup {
+                    self.status = if changed { "Code Cleanup: applied ruff's fixes".into() } else { "Code Cleanup: nothing to fix".into() };
+                } else if reformat {
                     self.status = if changed { format!("{what} (ruff)") } else { "No changes: the code is already formatted".into() };
                 } else {
                     // PyCharm reports what Optimize Imports did in a balloon.

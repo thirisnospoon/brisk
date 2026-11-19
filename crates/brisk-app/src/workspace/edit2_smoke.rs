@@ -110,10 +110,59 @@ impl Workspace {
             }
             let _ = this.update_in(cx, |this, window, cx| {
                 this.format_smoke(window, cx);
-                this.edit2_rest(window, cx);
+                this.structure_smoke(window, cx);
+                this.generate_smoke(window, cx);
             });
+            // Override (Ctrl+O) and Implement (Ctrl+I) answer asynchronously (ty, other files).
+            for (key, title) in [("ctrl-o", "Select Methods to Override"), ("ctrl-i", "Select Methods to Implement")] {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.problems.intents_title = None;
+                    this.smoke_press(key, window, cx);
+                });
+                for _ in 0..100 {
+                    if this.read_with(cx, |this, _| this.problems.intents_title == Some(title)).unwrap_or(true) {
+                        break;
+                    }
+                    bg.timer(std::time::Duration::from_millis(100)).await;
+                }
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let labels: Vec<String> = this.problems.intents.iter().map(|i| format!("{} [{}]", i.label, i.detail)).collect();
+                    eprintln!("smoke-edit2: {key} -> {:?} {labels:?}", this.problems.intents_title);
+                    // Ctrl+O: override `describe`; Ctrl+I: implement the abstract `area`.
+                    let pick = this.problems.intents.iter().find(|i| key == "ctrl-i" || i.label.starts_with("describe")).map(|i| i.target.clone());
+                    if let Some(super::Target::Intention(i)) = pick {
+                        this.popup = None;
+                        this.apply_intent(*i, window, cx);
+                    }
+                    let t = this.active_editor().map(|e| e.read(cx).text_string()).unwrap_or_default();
+                    eprintln!("smoke-edit2: {key} inserted -> {:?}", t.lines().skip(13).collect::<Vec<_>>());
+                });
+            }
+            let _ = this.update_in(cx, |this, window, cx| this.edit2_rest(window, cx));
         })
         .detach();
+    }
+
+    /// Generate (Alt+Insert) in a class; `base.py` holds the base classes for Ctrl+O / Ctrl+I.
+    fn generate_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let _ = std::fs::write(self.root.join("base.py"), "from abc import ABC, abstractmethod\n\n\nclass Shape(ABC):\n    @abstractmethod\n    def area(self) -> float: ...\n\n    def describe(self, prefix: str, *, loud=False) -> str:\n        return prefix\n");
+        let file = self.root.join("gen.py");
+        let _ = std::fs::write(&file, "from base import Shape\n\n\nclass Circle(Shape):\n    r: float\n    name: str = \"c\"\n");
+        self.open_file(&file, window, cx);
+        let Some(ed) = self.active_editor().cloned() else { return };
+        ed.update(cx, |e, _| e.buffer.set_caret(e.buffer.line_col_to_pos(4, 4), false));
+        self.smoke_press("alt-insert", window, cx);
+        let labels: Vec<_> = self.problems.intents.iter().map(|i| i.label.clone()).collect();
+        eprintln!("smoke-edit2: generate -> {:?} {labels:?}", self.problems.intents_title);
+        for name in ["__init__", "__repr__"] {
+            self.dispatch(Action::Generate, window, cx);
+            if let Some(super::Target::Intention(i)) = self.problems.intents.iter().find(|i| i.label == name).map(|i| i.target.clone()) {
+                self.popup = None;
+                self.apply_intent(*i, window, cx);
+            }
+        }
+        let caret = ed.read(cx).caret_line_col();
+        eprintln!("smoke-edit2: generated -> {:?} caret {caret:?}", ed.read(cx).text_string().lines().skip(3).collect::<Vec<_>>());
     }
 
     fn format_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -137,6 +186,72 @@ impl Workspace {
         eprintln!("smoke-edit2: reformat file -> {:?} | status {:?}", ed.read(cx).text_string(), self.status);
         self.dispatch(Action::Undo, window, cx);
         eprintln!("smoke-edit2: undo -> back to the selection format: {}", ed.read(cx).text_string().contains("x=f(1,2)"));
+        // Actions on Save: Optimize imports + Reformat code on Ctrl+S.
+        let mut s = crate::settings::current();
+        (s.reformat_on_save, s.optimize_imports_on_save) = (true, true);
+        crate::settings::apply(&s);
+        ed.update(cx, |e, cx| e.replace_all_text("import sys\nimport os\nx=os.sep\n", cx));
+        self.dispatch(Action::SaveAll, window, cx);
+        let disk = std::fs::read_to_string(&file).unwrap_or_default();
+        eprintln!("smoke-edit2: actions on save -> disk {disk:?}, dirty {}", ed.read(cx).buffer.is_dirty());
+        (s.reformat_on_save, s.optimize_imports_on_save) = (false, false);
+        crate::settings::apply(&s);
+        // Code Cleanup: every safe ruff fix (the unused import goes).
+        ed.update(cx, |e, cx| e.replace_all_text("import sys\nx = 1\n", cx));
+        self.dispatch(Action::CodeCleanup, window, cx);
+        eprintln!("smoke-edit2: code cleanup -> {:?} | status {:?}", ed.read(cx).text_string(), self.status);
+    }
+
+    /// Move Statement, Unwrap/Remove, Surround With order, Ctrl+W inside brackets.
+    fn structure_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let file = self.root.join("moves.py");
+        let _ = std::fs::write(&file, "def a():\n    pass\n\n\ndef b(x):\n    if x:\n        one()\n    else:\n        two()\n    print(f(x, 2))\n");
+        self.open_file(&file, window, cx);
+        let Some(ed) = self.active_editor().cloned() else { return };
+        let text = |cx: &mut Context<Self>| ed.read(cx).text_string();
+        // On `def b`: the whole function goes above `def a`, the caret stays on its header.
+        ed.update(cx, |e, _| e.buffer.set_caret(e.buffer.line_col_to_pos(4, 4), false));
+        self.dispatch(Action::MoveStatementUp, window, cx);
+        let caret = ed.read(cx).caret_line_col();
+        eprintln!("smoke-edit2: move statement up -> {:?} caret {caret:?}", text(cx).lines().next());
+        self.dispatch(Action::MoveStatementDown, window, cx);
+        // `print(...)` swaps with the whole if/else, then stops at the block's start.
+        ed.update(cx, |e, _| e.buffer.set_caret(e.buffer.line_col_to_pos(9, 6), false));
+        self.dispatch(Action::MoveStatementUp, window, cx);
+        self.dispatch(Action::MoveStatementUp, window, cx);
+        eprintln!("smoke-edit2: move print up x2 -> {:?}", text(cx).lines().skip(4).take(3).collect::<Vec<_>>());
+        self.dispatch(Action::Undo, window, cx);
+        // Ctrl+W in `f(x, 2)`: x, then the arguments, then with the brackets.
+        let l = text(cx).lines().position(|l| l.contains("f(x")).unwrap_or(0);
+        let col = text(cx).lines().nth(l).and_then(|s| s.find("f(x")).unwrap_or(0) + 2;
+        ed.update(cx, |e, _| e.buffer.set_caret(e.buffer.line_col_to_pos(l, col), false));
+        let mut grown = Vec::new();
+        for _ in 0..3 {
+            self.dispatch(Action::ExtendSelection, window, cx);
+            grown.push(ed.read(cx).buffer.selected_text());
+        }
+        eprintln!("smoke-edit2: ctrl-w in call -> {grown:?}");
+        // Unwrap/Remove on `two()`.
+        let l = text(cx).lines().position(|l| l.contains("two()")).unwrap_or(0);
+        ed.update(cx, |e, _| e.buffer.set_caret(e.buffer.line_col_to_pos(l, 9), false));
+        self.smoke_press("ctrl-shift-delete", window, cx);
+        let labels: Vec<_> = self.problems.intents.iter().map(|i| i.label.clone()).collect();
+        eprintln!("smoke-edit2: unwrap/remove -> {:?} {labels:?}", self.problems.intents_title);
+        if let Some(super::Target::Intention(i)) = self.problems.intents.iter().find(|i| i.label == "Remove 'else...'").map(|i| i.target.clone()) {
+            self.popup = None;
+            self.apply_intent(*i, window, cx);
+        }
+        eprintln!("smoke-edit2: remove else -> {:?}", text(cx).lines().skip(4).collect::<Vec<_>>());
+        let l = text(cx).lines().position(|l| l.contains("one()")).unwrap_or(0);
+        ed.update(cx, |e, _| e.buffer.set_caret(e.buffer.line_col_to_pos(l, 9), false));
+        self.dispatch(Action::Unwrap, window, cx);
+        if let Some(super::Target::Intention(i)) = self.problems.intents.first().map(|i| i.target.clone()) {
+            self.popup = None;
+            self.apply_intent(*i, window, cx);
+        }
+        eprintln!("smoke-edit2: unwrap if -> {:?}", text(cx).lines().skip(4).collect::<Vec<_>>());
+        let names: Vec<_> = crate::editor::templates::SURROUNDERS.iter().map(|s| s.0).collect();
+        eprintln!("smoke-edit2: surround with list -> {names:?}");
     }
 
     fn edit2_rest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
