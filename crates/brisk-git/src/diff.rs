@@ -81,7 +81,14 @@ pub fn align(left: &str, right: &str) -> Vec<AlignedRow> {
 
 /// Word tokens for an inline diff: identifier runs, whitespace runs, and single other chars
 /// (PyCharm highlights `foo(bar)` → `foo(baz)` as just `bar`→`baz`, not the whole word).
-fn tokens(s: &str) -> Vec<&str> {
+/// The line-level edit from `old` to `new`, stretch by stretch: (old lines, new lines,
+/// unchanged). The merge window follows its ranges through the user's edits with it.
+pub fn line_ops(old: &str, new: &str) -> Vec<(Range<usize>, Range<usize>, bool)> {
+    let diff = TextDiff::configure().timeout(std::time::Duration::from_millis(200)).diff_lines(old, new);
+    diff.ops().iter().map(|op| (op.old_range(), op.new_range(), op.tag() == DiffTag::Equal)).collect()
+}
+
+pub(crate) fn tokens(s: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0;
     let class = |c: char| if c.is_alphanumeric() || c == '_' { 0 } else if c.is_whitespace() { 1 } else { 2 };

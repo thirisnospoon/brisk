@@ -1,7 +1,8 @@
 //! `BRISK_SMOKE_VCS=1` on an empty scratch folder: makes it a Git repository and checks the
-//! VCS work of w5 phase by phase (V1: the diff viewer). Never run it on a real project: it
-//! commits there. `BRISK_SMOKE_VCS_HOLD=<phase>` stops at that phase with the window open
-//! (`diff`: the live side-by-side diff; `unified`: the unified one).
+//! VCS work of w5 phase by phase (V1: the diff viewer, V2: the merge window). Never run it on
+//! a real project: it commits there. `BRISK_SMOKE_VCS_HOLD=<phase>` stops at that phase with
+//! the window open (`diff`: the live side-by-side diff; `unified`: the unified one; `merge`:
+//! the merge window as it opens; `merged`: after resolving, before Apply).
 
 use super::git_smoke::{commit_as, sh};
 use super::{Tab, Workspace};
@@ -59,6 +60,9 @@ impl Workspace {
         let bg = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             Self::smoke_vcs_diff(&this, cx, &bg, &root).await;
+            if std::env::var_os("BRISK_SMOKE_VCS_HOLD").is_none() || hold("merge") || hold("merged") {
+                Self::smoke_vcs_merge(&this, cx, &bg, &root).await;
+            }
             let _ = this.update(cx, |_, cx| {
                 eprintln!("smoke-vcs: done");
                 if std::env::var_os("BRISK_SMOKE_VCS_HOLD").is_none() {
@@ -74,6 +78,111 @@ impl Workspace {
             Some(Tab::Diff(d)) => Some(d.clone()),
             _ => None,
         }
+    }
+
+    fn active_merge_view(&self) -> Option<gpui::Entity<crate::merge_view::MergeView>> {
+        match self.active.and_then(|i| self.tabs.get(i)) {
+            Some(Tab::Merge(m)) => Some(m.clone()),
+            _ => None,
+        }
+    }
+
+    /// V2: a merge with a simple conflict (different words of one line), a real one and a
+    /// change on one side; typing in the result, then Apply.
+    async fn smoke_vcs_merge(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
+        let _ = this.update_in(cx, |this, window, cx| this.dispatch(brisk_keymap::Action::SaveAll, window, cx));
+        sh(root, &["add", "-A"]);
+        commit_as(root, "Alice", "2024-01-11T10:00:00", "Diff phase");
+        let base = "def f(a, b):
+    return a + b
+x = f(1, 2)
+sep = 0
+name = \"base\"
+tail = 0
+";
+        let _ = std::fs::write(root.join("merge2.py"), base);
+        commit_as(root, "Alice", "2024-01-12T10:00:00", "Add merge2.py");
+        sh(root, &["switch", "-q", "-c", "feature"]);
+        let _ = std::fs::write(root.join("merge2.py"), base.replace("f(1, 2)", "f(1, 20)").replace("\"base\"", "\"theirs\"") + "extra = 1
+");
+        commit_as(root, "Bob", "2024-01-13T10:00:00", "Feature");
+        sh(root, &["switch", "-q", "main"]);
+        let _ = std::fs::write(root.join("merge2.py"), base.replace("f(1, 2)", "f(10, 2)").replace("\"base\"", "\"ours\""));
+        commit_as(root, "Alice", "2024-01-14T10:00:00", "Main");
+        sh(root, &["merge", "--no-edit", "feature"]);
+        let _ = this.update(cx, |this, cx| this.refresh_git(cx));
+        pause(bg, 1500).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!("smoke-vcs: merge stopped -> conflicts dialog {}", this.git_dialog_open());
+            // Show Diff on the conflicted file in the Commit window opens the merge window.
+            let c = brisk_git::FileChange { path: "merge2.py".into(), old_path: None, status: brisk_git::FileStatus::Conflict };
+            this.show_change_diff(&c, window, cx);
+        });
+        pause(bg, 1200).await;
+        let _ = this.update_in(cx, |this, _, cx| {
+            let Some(m) = this.active_merge_view() else {
+                eprintln!("smoke-vcs: FAIL no merge tab");
+                return;
+            };
+            let v = m.read(cx);
+            eprintln!("smoke-vcs: merge window '{}' | '{}' -> {} changes, {} conflicts, current {:?}", v.title, v.theirs_label, v.model.changes(), v.model.unresolved_conflicts(), v.current);
+        });
+        if hold("merge") {
+            return;
+        }
+        let _ = this.update_in(cx, |this, _, cx| {
+            let Some(m) = this.active_merge_view() else { return };
+            let n = m.update(cx, |v, cx| v.resolve_simple(cx));
+            eprintln!("smoke-vcs: resolve simple conflicts -> {n}, conflicts left {}", m.read(cx).model.unresolved_conflicts());
+            // Typing: a header line on top (the changes below move down), and the last conflict by hand.
+            let ed = m.read(cx).editor();
+            ed.update(cx, |e, cx| {
+                let t = format!("# header
+{}", e.text_string());
+                e.replace_all_text(&t, cx);
+            });
+        });
+        pause(bg, 200).await;
+        let _ = this.update_in(cx, |this, _, cx| {
+            let Some(m) = this.active_merge_view() else { return };
+            let ed = m.read(cx).editor();
+            ed.update(cx, |e, cx| {
+                let t = e.text_string().replace("name = \"base\"", "name = \"mine\"");
+                e.replace_all_text(&t, cx);
+            });
+        });
+        pause(bg, 200).await;
+        let _ = this.update_in(cx, |this, _, cx| {
+            let Some(m) = this.active_merge_view() else { return };
+            eprintln!("smoke-vcs: typed in the conflict -> unresolved {}, conflicts {}", m.read(cx).model.unresolved(), m.read(cx).model.unresolved_conflicts());
+            m.update(cx, |v, cx| v.apply_non_conflicting(None, cx));
+            eprintln!("smoke-vcs: non-conflicting applied -> unresolved {}, result {:?}", m.read(cx).model.unresolved(), m.read(cx).text());
+        });
+        if hold("merged") {
+            return;
+        }
+        let _ = this.update_in(cx, |this, _, cx| {
+            if let Some(m) = this.active_merge_view() {
+                m.update(cx, |v, cx| v.press_apply(cx));
+            }
+        });
+        pause(bg, 800).await;
+        let _ = this.update_in(cx, |this, _, _| {
+            let disk = std::fs::read_to_string(root.join("merge2.py")).unwrap_or_default();
+            let want = "# header
+def f(a, b):
+    return a + b
+x = f(10, 20)
+sep = 0
+name = \"mine\"
+tail = 0
+extra = 1
+";
+            eprintln!("smoke-vcs: applied -> disk as expected {}, merge tab open {}, conflicts {:?}", disk == want, this.active_merge_view().is_some(), sh(root, &["diff", "--name-only", "--diff-filter=U"]));
+            if disk != want {
+                eprintln!("smoke-vcs: FAIL disk {disk:?}");
+            }
+        });
     }
 
     /// V1: word highlights, unified and collapsed views, the live (editable) right side.

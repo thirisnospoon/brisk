@@ -9,7 +9,7 @@
 
 use crate::editor::Editor;
 use crate::settings::{font_size, line_height};
-use crate::theme::{mono_font, Theme};
+use crate::theme::{mono_font, ui_font, Theme};
 use brisk_git::{AlignedRow, RowKind, UnifiedRow};
 use gpui::prelude::*;
 use gpui::{canvas, div, point, px, uniform_list, App, Context, Entity, FocusHandle, Focusable, Hsla, SharedString, StyledText, Subscription, TextRun, UniformListScrollHandle, Window};
@@ -60,8 +60,8 @@ impl DiffPrefs {
 }
 
 /// One side's text, split into lines (tabs expanded), with syntax colors per line.
-struct Side {
-    lines: Vec<SharedString>,
+pub(crate) struct Side {
+    pub(crate) lines: Vec<SharedString>,
     colors: Vec<Vec<(Range<usize>, Hsla)>>,
 }
 
@@ -84,7 +84,7 @@ fn expand_tabs(line: &str) -> (String, Vec<usize>) {
 }
 
 impl Side {
-    fn new(text: &str, lang: Option<brisk_syntax::Lang>) -> Self {
+    pub(crate) fn new(text: &str, lang: Option<brisk_syntax::Lang>) -> Self {
         // Line starts in `text` ("\r\n" and "\n" both end a line, as in the line diff).
         let mut starts = Vec::new();
         let mut raw: Vec<&str> = Vec::new();
@@ -128,7 +128,7 @@ impl Side {
         Self { lines, colors }
     }
 
-    fn line(&self, i: Option<usize>) -> (SharedString, &[(Range<usize>, Hsla)]) {
+    pub(crate) fn line(&self, i: Option<usize>) -> (SharedString, &[(Range<usize>, Hsla)]) {
         match i.and_then(|i| self.lines.get(i).map(|l| (l.clone(), self.colors[i].as_slice()))) {
             Some(x) => x,
             None => (SharedString::default(), &[]),
@@ -159,7 +159,7 @@ fn runs(len: usize, colors: &[(Range<usize>, Hsla)], words: &[Range<usize>], wor
         .collect()
 }
 
-fn line_text(text: SharedString, colors: &[(Range<usize>, Hsla)], words: &[Range<usize>], word_bg: Hsla) -> gpui::AnyElement {
+pub(crate) fn line_text(text: SharedString, colors: &[(Range<usize>, Hsla)], words: &[Range<usize>], word_bg: Hsla) -> gpui::AnyElement {
     if text.is_empty() {
         return div().into_any_element();
     }
@@ -715,7 +715,7 @@ impl Focusable for DiffView {
 }
 
 /// One side of a row. `edges`: the row starts / ends its change block (rounded corners there).
-fn side(num: Option<usize>, text: gpui::AnyElement, bg: Hsla, edges: (bool, bool)) -> gpui::Div {
+pub(crate) fn side(num: Option<usize>, text: gpui::AnyElement, bg: Hsla, edges: (bool, bool)) -> gpui::Div {
     div()
         .flex_1()
         .min_w_0()
@@ -739,7 +739,7 @@ fn side(num: Option<usize>, text: gpui::AnyElement, bg: Hsla, edges: (bool, bool
 }
 
 /// A toolbar toggle: icon, tooltip, pressed state.
-fn tool(id: &'static str, icon: &'static str, tip: &'static str, on: bool) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn tool(id: &'static str, icon: &'static str, tip: &'static str, on: bool) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .size(px(24.))
@@ -789,6 +789,7 @@ impl Render for DiffView {
                     .bg(Theme::panel())
                     .border_b_1()
                     .border_color(Theme::divider())
+                    .font_family(ui_font())
                     .text_size(px(12.))
                     .text_color(Theme::text_muted())
                     .child(tool("diff-prev", "arrow-up", "Previous Difference (Shift+F7)", false).on_click(cx.listener(|this, _, _, cx| this.jump(false, cx))))
@@ -808,6 +809,7 @@ impl Render for DiffView {
                     .flex()
                     .h(px(24.))
                     .items_center()
+                    .font_family(ui_font())
                     .text_size(px(12.))
                     .text_color(Theme::text_muted())
                     .border_b_1()

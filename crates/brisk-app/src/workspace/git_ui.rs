@@ -587,6 +587,10 @@ impl Workspace {
 
     /// HEAD ↔ working copy (unsaved editor text included).
     pub(super) fn show_change_diff(&mut self, c: &FileChange, window: &mut Window, cx: &mut Context<Self>) {
+        // A conflicted file opens the merge window, as in PyCharm.
+        if c.status == FileStatus::Conflict {
+            return self.merge_file(c.path.clone(), window, cx);
+        }
         let Some(g) = &self.git else { return };
         let abs = g.repo.abs(&c.path);
         let base_path = c.old_path.clone().unwrap_or_else(|| c.path.clone());
@@ -817,6 +821,30 @@ impl Workspace {
                     cx.notify();
                     return true;
                 }
+            }
+        }
+        // The merge window: F7 / Shift+F7, Alt+Shift+→ / ← accept a side, Ctrl+Enter applies.
+        if let Some(mv) = self.merge_in_focus(window, cx) {
+            match k.key.as_str() {
+                "f7" if !m.control && !m.alt => {
+                    mv.update(cx, |v, cx| v.jump(!m.shift, cx));
+                    return true;
+                }
+                "right" | "left" if m.alt && m.shift && !m.control => {
+                    let ours = k.key == "right";
+                    mv.update(cx, |v, cx| v.accept_current(ours, cx));
+                    return true;
+                }
+                "enter" if m.control && !m.alt && !m.shift => {
+                    mv.update(cx, |v, cx| v.press_apply(cx));
+                    return true;
+                }
+                "f4" => {
+                    let p = mv.read(cx).path.clone();
+                    self.open_file(&p, window, cx);
+                    return true;
+                }
+                _ => {}
             }
         }
         if let Some(d) = self.diff_in_focus(window, cx) {

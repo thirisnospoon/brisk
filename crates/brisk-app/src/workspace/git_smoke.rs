@@ -183,23 +183,46 @@ impl Workspace {
                 _ => Vec::new(),
             };
             eprintln!("smoke-gitx: conflicts dialog opened by itself -> {files:?}");
-            // Enter: Merge… on merge.py.
+            // Enter: Merge… on merge.py (the merge window opens in a tab).
             this.smoke_press("enter", window, cx);
-            if let Some(super::git_merge_ui::GitDialog::Merge(d)) = this.git.as_ref().and_then(|g| g.dialog.as_ref()) {
-                eprintln!("smoke-gitx: merge dialog {} -> {} chunk(s), {} unresolved, result now {:?}", d.rel, d.chunks.len(), d.unresolved(), d.result_text());
+        });
+        pause(bg, 1200).await;
+        let merge_tab = |this: &Self| match this.active.and_then(|i| this.tabs.get(i)) {
+            Some(super::Tab::Merge(m)) => Some(m.clone()),
+            _ => None,
+        };
+        let _ = this.update_in(cx, |this, window, cx| {
+            let Some(m) = merge_tab(this) else {
+                eprintln!("smoke-gitx: FAIL no merge tab");
+                return;
+            };
+            {
+                let v = m.read(cx);
+                eprintln!(
+                    "smoke-gitx: merge window '{}' {} -> {} change(s), {} unresolved, {} conflict(s), result now {:?}",
+                    v.title,
+                    v.theirs_label,
+                    v.model.changes(),
+                    v.model.unresolved(),
+                    v.model.unresolved_conflicts(),
+                    v.text()
+                );
             }
             if hold("merge") {
                 return;
             }
-            // Ctrl+Enter refuses while a conflict is left; Alt+→ takes ours, Alt+← appends theirs.
+            // Ctrl+Enter with changes left asks first; apply the non-conflicting ones, then
+            // Alt+Shift+→ takes ours for the conflict at the caret and Alt+Shift+← appends theirs.
             this.smoke_press("ctrl-enter", window, cx);
-            eprintln!("smoke-gitx: apply with a conflict left -> toast {:?}", this.toast.as_ref().map(|t| t.0.clone()));
-            this.smoke_press("alt-right alt-left", window, cx);
-            if let Some(super::git_merge_ui::GitDialog::Merge(d)) = this.git.as_ref().and_then(|g| g.dialog.as_ref()) {
-                eprintln!("smoke-gitx: >> then << -> {:?}", d.result_text());
-            }
+            eprintln!("smoke-gitx: apply with changes left -> merge.py untouched {}", std::fs::read_to_string(this.root.join("merge.py")).unwrap_or_default().contains("<<<<<<<"));
+            m.update(cx, |v, cx| v.apply_non_conflicting(None, cx));
+            this.smoke_press("alt-shift-right alt-shift-left", window, cx);
+            eprintln!("smoke-gitx: non-conflicting, >> then << -> {:?}, unresolved {}", m.read(cx).text(), m.read(cx).model.unresolved());
             this.smoke_press("ctrl-enter", window, cx);
-            eprintln!("smoke-gitx: merge.py on disk -> {:?}", std::fs::read_to_string(this.root.join("merge.py")).unwrap_or_default());
+        });
+        pause(bg, 600).await;
+        let _ = this.update_in(cx, |this, _, cx| {
+            eprintln!("smoke-gitx: merge.py on disk -> {:?}, merge tab open {}", std::fs::read_to_string(this.root.join("merge.py")).unwrap_or_default(), merge_tab(this).is_some());
             let left = match this.git.as_ref().and_then(|g| g.dialog.as_ref()) {
                 Some(super::git_merge_ui::GitDialog::Conflicts(d)) => d.files.clone(),
                 _ => Vec::new(),

@@ -119,6 +119,9 @@ pub struct Editor {
     pub diff_bg: bool,
     /// Set with `diff_bg`: changed words to highlight, as (line, byte range in the line).
     pub diff_words: Vec<(usize, Range<usize>)>,
+    /// Set with `diff_bg`: change blocks to paint instead of the changes against HEAD (the
+    /// merge window's result), as (lines, color); an empty range is a 2 px line.
+    pub diff_blocks: Vec<(Range<usize>, gpui::Hsla)>,
     /// Run with Coverage marks.
     coverage: Option<coverage::CoverageMarks>,
     vcs_version: u64,
@@ -317,6 +320,7 @@ impl Editor {
             vcs_changes: Vec::new(),
             diff_bg: false,
             diff_words: Vec::new(),
+            diff_blocks: Vec::new(),
             coverage: None,
             vcs_version: u64::MAX,
             show_gutter: true,
@@ -392,6 +396,7 @@ impl Editor {
             vcs_changes: Vec::new(),
             diff_bg: false,
             diff_words: Vec::new(),
+            diff_blocks: Vec::new(),
             coverage: None,
             vcs_version: u64::MAX,
             show_gutter: false,
@@ -1384,7 +1389,7 @@ impl Render for Editor {
                     }
                 }
             }))
-            .child(EditorElement { editor: cx.entity(), diff_bg: std::mem::take(&mut self.diff_bg), diff_words: std::mem::take(&mut self.diff_words) })
+            .child(EditorElement { editor: cx.entity(), diff_bg: std::mem::take(&mut self.diff_bg), diff_words: std::mem::take(&mut self.diff_words), diff_blocks: std::mem::take(&mut self.diff_blocks) })
             .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))
             .when_some(self.render_tooltip(), |d, t| d.child(t))
             .when_some(self.render_breakpoint_tip(), |d, t| d.child(t))
@@ -1513,6 +1518,7 @@ struct EditorElement {
     editor: Entity<Editor>,
     diff_bg: bool,
     diff_words: Vec<(usize, Range<usize>)>,
+    diff_blocks: Vec<(Range<usize>, gpui::Hsla)>,
 }
 
 struct Prepaint {
@@ -1794,7 +1800,20 @@ impl Element for EditorElement {
             under.push(fill(Bounds::new(point(bounds.left(), y_of(l)), size(bounds.size.width, lh)), Theme::exec_line()));
         }
         // In a diff viewer: the changed lines' backgrounds, as in PyCharm's diff.
-        if self.diff_bg {
+        if self.diff_bg && !self.diff_blocks.is_empty() {
+            let x0 = bounds.left() + pp.gutter_w - px(4.);
+            let x1 = bounds.right() - px(14.);
+            for (r, color) in &self.diff_blocks {
+                if r.start > last || r.end < first {
+                    continue;
+                }
+                if r.is_empty() {
+                    under.push(fill(Bounds::from_corners(point(x0, y_of(r.start) - px(1.)), point(x1, y_of(r.start) + px(1.))), color.opacity(1.)));
+                } else {
+                    under.push(fill(Bounds::from_corners(point(x0, y_of(r.start)), point(x1, y_of(r.end))), *color).corner_radii(px(4.)));
+                }
+            }
+        } else if self.diff_bg {
             for ch in &ed.vcs_changes {
                 use brisk_git::LineChangeKind as K;
                 match ch.kind {

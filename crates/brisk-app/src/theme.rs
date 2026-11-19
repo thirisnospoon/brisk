@@ -87,6 +87,9 @@ impl Theme {
     pub fn diff_modified_word_bg() -> Hsla { pick(0x35588c, 0xb5cdf5) }
     /// The folded "N unchanged lines" row of a diff.
     pub fn diff_fold_bg() -> Hsla { pick(0x26282c, 0xeef0f3) }
+    /// A merge conflict (both sides changed the same lines), and its changed words.
+    pub fn diff_conflict_bg() -> Hsla { pick(0x4a3131, 0xfbd8d2) }
+    pub fn diff_conflict_word_bg() -> Hsla { pick(0x7a4444, 0xf3b0a4) }
     /// Search match highlight.
     pub fn search_hit() -> Hsla { ui("search_hit", 0x32593d, 0xfbe8a8) }
     pub fn search_current() -> Hsla { ui("search_current", 0x2e7d4a, 0xf3c85a) }
