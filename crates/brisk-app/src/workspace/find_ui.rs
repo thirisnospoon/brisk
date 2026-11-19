@@ -958,20 +958,15 @@ impl Workspace {
             .flex()
             .flex_col()
             .child(
-                div()
-                    .h(ui_px(30.))
-                    .flex()
-                    .items_center()
-                    .px(px(12.))
+                crate::ui_kit::tool_header()
                     .gap(px(12.))
-                    .text_size(ui_px(13.))
                     .border_b_1()
                     .border_color(Theme::divider())
-                    .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("Find"))
+                    .child(crate::ui_kit::tool_title("Find").pr(px(0.)))
                     .child(div().text_color(Theme::text_muted()).child(header))
                     .child(div().flex_1())
                     .child(
-                        div().id("fw-rerun").px(px(5.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(crate::icons::ui_icon("rotate-cw", 14., Theme::text_muted()))
+                        crate::ui_kit::header_action("fw-rerun").child(crate::icons::ui_icon("rotate-cw", 14., Theme::text_muted()))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.find.open = true;
                                 this.find.seed_selected = false;

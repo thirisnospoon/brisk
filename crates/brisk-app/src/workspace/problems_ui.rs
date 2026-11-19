@@ -353,15 +353,9 @@ impl Workspace {
             Some(c) => format!("Project  {c}"),
             None => "Project".into(),
         };
-        let header = div()
-            .h(px(crate::ui_kit::header_h()))
-            .flex_none()
-            .flex()
-            .items_center()
+        let header = crate::ui_kit::tool_header()
             .gap(px(2.))
-            .px(px(8.))
-            .text_size(ui_px(13.))
-            .child(div().pr(px(8.)).font_weight(gpui::FontWeight::SEMIBOLD).child("Problems"))
+            .child(crate::ui_kit::tool_title("Problems"))
             .child(tab_button("pr-file", file_label, ProblemsTab::File, cx))
             .child(tab_button("pr-project", project_label, ProblemsTab::Project, cx))
             .when(tab == ProblemsTab::Project, |d| {

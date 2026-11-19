@@ -919,27 +919,16 @@ impl Workspace {
     pub(super) fn render_database(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let n = self.db.rows.len();
         let tool = |id: &'static str, glyph: &'static str, action: Action, cx: &mut Context<Self>| {
-            div()
-                .id(id)
-                .px(px(6.))
-                .py(px(2.))
-                .rounded(px(4.))
-                .text_color(Theme::text_muted())
-                .hover(|s| s.bg(Theme::hover_row()).text_color(Theme::text()))
-                .cursor_pointer()
+            crate::ui_kit::header_action(id)
                 .on_click(cx.listener(move |this, _, w, cx| {
                     window_focus_db(this, w);
                     this.dispatch(action, w, cx)
                 }))
                 .child(crate::icons::glyph(glyph, 14., Theme::text_muted()))
         };
-        let header = div()
-            .h(px(crate::ui_kit::header_h()))
-            .flex()
-            .items_center()
-            .px(px(12.))
+        let header = crate::ui_kit::tool_header()
             .gap(px(2.))
-            .child(div().text_size(ui_px(13.)).font_weight(gpui::FontWeight::SEMIBOLD).text_color(Theme::text()).child("Database"))
+            .child(crate::ui_kit::tool_title("Database"))
             .child(div().flex_1())
             .child(tool("db-new", "+", Action::NewDataSource, cx))
             .child(tool("db-refresh", "⟳", Action::RefreshDatabase, cx))

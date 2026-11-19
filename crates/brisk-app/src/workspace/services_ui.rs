@@ -239,16 +239,9 @@ impl Workspace {
         };
         // The shared tool window header: the title, then how many runs are live.
         let running = runs.iter().filter(|r| r.running).count();
-        let header = div()
-            .h(px(crate::ui_kit::header_h()))
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .px(px(12.))
-            .text_size(ui_px(13.))
+        let header = crate::ui_kit::tool_header()
             .when(!crate::theme::islands(), |d| d.border_b_1().border_color(Theme::divider()))
-            .child(div().font_weight(gpui::FontWeight::SEMIBOLD).text_color(Theme::text()).child("Services"))
+            .child(crate::ui_kit::tool_title("Services"))
             .when(running > 0, |d| d.child(div().text_size(ui_px(12.)).text_color(Theme::text_muted()).child(format!("{running} running"))));
         div()
             .id("services-window")
