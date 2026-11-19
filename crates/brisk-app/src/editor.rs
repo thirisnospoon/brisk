@@ -1040,6 +1040,9 @@ impl Editor {
         if self.selecting || self.drag.is_some() {
             return;
         }
+        if self.hover_inlay(e.position) {
+            cx.notify();
+        }
         // Problem tooltip on hover, only over the text itself.
         let hit = self.pos_for_point(e.position).filter(|_| !self.diagnostics.is_empty()).and_then(|pos| {
             let l = self.layout.as_ref()?;
@@ -1313,11 +1316,15 @@ impl Render for Editor {
                 }
                 if !*hovered {
                     this.hover_scrollbar(None, cx);
+                    if this.inlays.tip.take().is_some() {
+                        cx.notify();
+                    }
                 }
             }))
             .child(EditorElement { editor: cx.entity() })
             .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))
             .when_some(self.render_tooltip(), |d, t| d.child(t))
+            .when_some(self.render_inlay_tip(), |d, t| d.child(t))
             .when_some(self.render_middle_anchor(), |d, a| d.child(a))
             .when_some(self.render_annotation_tip(), |d, t| d.child(t))
             .children(self.render_insight(cx));
@@ -1463,6 +1470,8 @@ struct Prepaint {
     annotations: Vec<(usize, ShapedLine, f32)>,
     /// Debugger values after line ends: (row index, "name: value, …").
     inline_vals: Vec<(usize, ShapedLine)>,
+    /// Inlay hint chips: (row index, byte range in the drawn line).
+    chips: Vec<(usize, std::ops::Range<usize>)>,
     gutter_w: Pixels,
     char_w: Pixels,
     marks: marks::CaretMarks,
@@ -1566,6 +1575,7 @@ impl Element for EditorElement {
         let mut numbers = Vec::with_capacity(rows.len());
         let mut fold_marks = Vec::new();
         let mut inline_vals = Vec::new();
+        let mut chips = Vec::new();
         let mut si = 0;
         for (ri, &l) in rows.iter().enumerate() {
             let folded = ed.is_folded_header(l);
@@ -1605,7 +1615,9 @@ impl Element for EditorElement {
                     runs = recolor(runs, b0..b1, severity_color(Severity::Unused));
                 }
             }
-            let (text, runs) = ed.line_with_inlays(l, text, runs, |len| TextRun { background_color: Some(Theme::hover_row()), ..run(len, Theme::text_dim()) });
+            // Hints in the UI font, so they do not read as code; their chips are painted under the text.
+            let (text, runs, hint_chips) = ed.line_with_inlays(l, text, runs, |len| TextRun { font: font(crate::theme::ui_font()), ..run(len, Theme::inlay_fg()) });
+            chips.extend(hint_chips.into_iter().map(|r| (ri, r)));
             lines.push(window.text_system().shape_line(SharedString::from(text), font_size, &runs, None));
             if let Some(v) = ed.inline_value(l) {
                 let r = TextRun { font: gpui::Font { style: gpui::FontStyle::Italic, ..run(0, Theme::text_dim()).font }, ..run(v.len(), Theme::text_dim()) };
@@ -1663,7 +1675,7 @@ impl Element for EditorElement {
                 }
             }
         }
-        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, run_icons, run_slot, annotations, inline_vals, gutter_w, char_w, marks }
+        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, run_icons, run_slot, annotations, inline_vals, chips, gutter_w, char_w, marks }
     }
 
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), pp: &mut Prepaint, window: &mut Window, cx: &mut App) {
@@ -1902,6 +1914,17 @@ impl Element for EditorElement {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for q in under {
                 window.paint_quad(q);
+            }
+            // Inlay hint chips: rounded, snapped to device pixels, a little inside the hint's
+            // padding so they keep a gap from the code.
+            let scale = window.scale_factor();
+            let snap = |v: Pixels| px((f32::from(v) * scale).round() / scale);
+            for (i, r) in &pp.chips {
+                if let (Some(line), Some(y)) = (pp.lines.get(*i), line_ys.get(*i)) {
+                    let (x0, x1) = (snap(text_x + line.x_for_index(r.start) + px(1.5)), snap(text_x + line.x_for_index(r.end) - px(1.5)));
+                    let (top, h) = (snap(*y + px(2.)), snap(lh - px(4.)));
+                    window.paint_quad(fill(Bounds::new(point(x0, top), size(x1 - x0, h)), Theme::inlay_bg()).corner_radii(px(4.)));
+                }
             }
             for (line, y) in pp.lines.iter().zip(&line_ys) {
                 let _ = line.paint(point(text_x, *y), lh, window, cx);

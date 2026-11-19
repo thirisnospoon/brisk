@@ -31,6 +31,9 @@ impl Theme {
     pub fn accent() -> Hsla { ui("accent", 0x3574f0, 0x3574f0) }
     pub fn selection_row() -> Hsla { ui("selection_row", 0x2e436e, 0xd5e1ff) }
     pub fn hover_row() -> Hsla { ui("hover_row", 0x35373b, 0xe6e8ed) }
+    /// Inlay hint chip (a little lighter than the editor) and its text (cool grey).
+    pub fn inlay_bg() -> Hsla { ui("inlay_bg", 0x393b40, 0xebecf0) }
+    pub fn inlay_fg() -> Hsla { ui("inlay_fg", 0x8c8f99, 0x6c707e) }
     /// A button while the mouse is pressed on it.
     pub fn press() -> Hsla { ui("press", 0x43454a, 0xd3d5db) }
     pub fn excluded() -> Hsla { pick(0xc77c32, 0xb35f00) }
