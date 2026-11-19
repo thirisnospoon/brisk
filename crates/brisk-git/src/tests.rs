@@ -261,3 +261,46 @@ fn partial_commit_by_hunks() {
     assert_eq!(got, vec![("p.py".into(), FileStatus::Modified), ("staged.py".into(), FileStatus::Added)]);
     assert!(!d.join(".git").join("brisk-partial-index").exists());
 }
+
+#[test]
+fn log_actions() {
+    let (d, repo) = temp_repo("logops");
+    fs::write(d.join("f.py"), "a\n").unwrap();
+    let f = vec!["f.py".to_string()];
+    repo.commit("a", &f, false, &f).unwrap();
+    sh(&d, &["checkout", "-q", "-b", "side"]);
+    fs::write(d.join("g.py"), "g\n").unwrap();
+    let g = vec!["g.py".to_string()];
+    repo.commit("add g", &g, false, &g).unwrap();
+    let side = repo.git(&["rev-parse", "HEAD"]).unwrap().trim().to_string();
+    sh(&d, &["checkout", "-q", "main"]);
+    // Cherry-Pick and Revert.
+    assert!(repo.cherry_pick(&side).unwrap().starts_with("Cherry-picked"));
+    assert!(d.join("g.py").exists());
+    let head = repo.git(&["rev-parse", "HEAD"]).unwrap().trim().to_string();
+    repo.revert_commit(&head).unwrap();
+    assert!(!d.join("g.py").exists());
+    // Undo Commit: only the last one; its changes come back as local changes.
+    assert!(repo.undo_commit(&head).is_err());
+    let head2 = repo.git(&["rev-parse", "HEAD"]).unwrap().trim().to_string();
+    repo.undo_commit(&head2).unwrap();
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]).unwrap().trim(), head);
+    sh(&d, &["reset", "-q", "--hard"]);
+    // Reset Current Branch to Here (hard) and Checkout Revision.
+    let first = repo.git(&["rev-list", "--max-parents=0", "HEAD"]).unwrap().trim().to_string();
+    repo.reset_to(&first, ResetMode::Hard).unwrap();
+    assert!(!d.join("g.py").exists());
+    repo.checkout_revision(&side).unwrap();
+    assert!(repo.git(&["branch", "--show-current"]).unwrap().trim().is_empty());
+    sh(&d, &["checkout", "-q", "main"]);
+    // A conflicting cherry-pick stops; the Commit window's commit finishes it.
+    fs::write(d.join("g.py"), "main\n").unwrap();
+    repo.commit("g on main", &g, false, &g).unwrap();
+    let err = repo.cherry_pick(&side).unwrap_err().to_string();
+    assert!(err.contains("conflicts in 1 file"), "{err}");
+    assert_eq!(repo.pending_operation(), Some("cherry-pick"));
+    fs::write(d.join("g.py"), "resolved\n").unwrap();
+    repo.commit("add g (picked)", &g, false, &[]).unwrap();
+    assert_eq!(repo.pending_operation(), None);
+    assert_eq!(repo.file_at("HEAD", "g.py").unwrap().as_deref(), Some("resolved\n"));
+}

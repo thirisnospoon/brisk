@@ -20,6 +20,8 @@ pub enum Pending {
     Rollback(Vec<FileChange>),
     CreateBranch(String),
     Branch(super::git_branch_ui::BranchOp),
+    /// Reset Current Branch to Here: (commit, mode).
+    Reset(String, brisk_git::ResetMode),
 }
 
 pub struct Details {
@@ -499,6 +501,7 @@ impl Workspace {
                 let _ = name;
             }
             Pending::Branch(op) => self.run_branch_op(op, cx),
+            Pending::Reset(hash, mode) => self.run_reset(hash, mode, cx),
         }
     }
 
@@ -715,7 +718,7 @@ impl Workspace {
         .detach();
     }
 
-    fn select_log(&mut self, i: usize, cx: &mut Context<Self>) {
+    pub(super) fn select_log(&mut self, i: usize, cx: &mut Context<Self>) {
         let Some(g) = self.git.as_mut() else { return };
         let Some(c) = g.log.get(i) else { return };
         g.log_selected = Some(i);
@@ -965,6 +968,13 @@ impl Workspace {
         let Some(g) = self.git.as_ref() else { return false };
         let n = g.log.len();
         let cur = g.log_selected.unwrap_or(0);
+        // Copy Revision Number.
+        if k.modifiers.control && k.modifiers.alt && k.modifiers.shift && k.key == "c" {
+            if let Some(h) = g.log.get(cur).map(|c| c.hash.clone()) {
+                self.copy_revision(&h, cx);
+            }
+            return true;
+        }
         let next = match k.key.as_str() {
             "up" => cur.saturating_sub(1),
             "down" => (cur + 1).min(n.saturating_sub(1)),
@@ -1371,6 +1381,13 @@ impl Workspace {
                                     window.focus(&g.log_focus.clone());
                                 }
                                 this.select_log(i, cx);
+                            }))
+                            .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                                let Some(g) = this.git.as_ref() else { return };
+                                window.focus(&g.log_focus.clone());
+                                let Some(c) = g.log.get(i).cloned() else { return };
+                                this.select_log(i, cx);
+                                this.log_commit_menu(c, e.position, cx);
                             }))
                             .child(graph)
                             .child(div().flex().gap(px(4.)).children(refs))
