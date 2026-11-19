@@ -9,10 +9,11 @@
 
 use crate::editor::Editor;
 use crate::settings::{font_size, line_height};
-use crate::theme::{mono_font, Theme};
+use crate::theme::{mono_font, ui_font, Theme};
 use brisk_git::{AlignedRow, RowKind, UnifiedRow};
 use gpui::prelude::*;
 use gpui::{canvas, div, point, px, uniform_list, App, Context, Entity, FocusHandle, Focusable, Hsla, SharedString, StyledText, Subscription, TextRun, UniformListScrollHandle, Window};
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -60,8 +61,8 @@ impl DiffPrefs {
 }
 
 /// One side's text, split into lines (tabs expanded), with syntax colors per line.
-struct Side {
-    lines: Vec<SharedString>,
+pub(crate) struct Side {
+    pub(crate) lines: Vec<SharedString>,
     colors: Vec<Vec<(Range<usize>, Hsla)>>,
 }
 
@@ -84,7 +85,7 @@ fn expand_tabs(line: &str) -> (String, Vec<usize>) {
 }
 
 impl Side {
-    fn new(text: &str, lang: Option<brisk_syntax::Lang>) -> Self {
+    pub(crate) fn new(text: &str, lang: Option<brisk_syntax::Lang>) -> Self {
         // Line starts in `text` ("\r\n" and "\n" both end a line, as in the line diff).
         let mut starts = Vec::new();
         let mut raw: Vec<&str> = Vec::new();
@@ -128,7 +129,7 @@ impl Side {
         Self { lines, colors }
     }
 
-    fn line(&self, i: Option<usize>) -> (SharedString, &[(Range<usize>, Hsla)]) {
+    pub(crate) fn line(&self, i: Option<usize>) -> (SharedString, &[(Range<usize>, Hsla)]) {
         match i.and_then(|i| self.lines.get(i).map(|l| (l.clone(), self.colors[i].as_slice()))) {
             Some(x) => x,
             None => (SharedString::default(), &[]),
@@ -159,7 +160,7 @@ fn runs(len: usize, colors: &[(Range<usize>, Hsla)], words: &[Range<usize>], wor
         .collect()
 }
 
-fn line_text(text: SharedString, colors: &[(Range<usize>, Hsla)], words: &[Range<usize>], word_bg: Hsla) -> gpui::AnyElement {
+pub(crate) fn line_text(text: SharedString, colors: &[(Range<usize>, Hsla)], words: &[Range<usize>], word_bg: Hsla) -> gpui::AnyElement {
     if text.is_empty() {
         return div().into_any_element();
     }
@@ -247,6 +248,25 @@ struct Live {
     _sub: Subscription,
 }
 
+/// The "include into commit" checkbox of a change block (the Commit window's look).
+fn hunk_checkbox(on: bool) -> gpui::Div {
+    div()
+        .size(px(14.))
+        .rounded(px(3.))
+        .border_1()
+        .border_color(if on { Theme::accent() } else { Theme::text_dim() })
+        .bg(if on { Theme::accent() } else { Theme::editor_bg() })
+        .flex()
+        .items_center()
+        .justify_center()
+        .when(on, |d| d.child(crate::icons::icon("check-bold", 10., gpui::white())))
+}
+
+/// A change block's "include into commit" checkbox was clicked.
+pub struct HunksChanged;
+
+impl gpui::EventEmitter<HunksChanged> for DiffView {}
+
 pub struct DiffView {
     pub title: String,
     /// The working-tree file, for F4 / "open source".
@@ -262,6 +282,9 @@ pub struct DiffView {
     prefs: DiffPrefs,
     lang: Option<brisk_syntax::Lang>,
     live: Option<Live>,
+    /// Hunks left out of the commit (shared with the Commit window): a live diff of a
+    /// modified file has a checkbox on each change block.
+    hunks: Option<Rc<RefCell<HashSet<String>>>>,
     /// Folds the user opened (their first base row).
     expanded: HashSet<usize>,
     disp: Vec<Disp>,
@@ -311,6 +334,7 @@ impl DiffView {
             prefs: DiffPrefs::load(),
             lang,
             live: None,
+            hunks: None,
             expanded: HashSet::new(),
             disp: Vec::new(),
             blocks: Vec::new(),
@@ -340,6 +364,30 @@ impl DiffView {
         v.live = Some(Live { editor, owned, base, version, left_row: Vec::new(), right_row: Vec::new(), blocks: Vec::new(), left_scroll: UniformListScrollHandle::new(), _sub: sub });
         v.index_live();
         v
+    }
+
+    pub fn set_hunks(&mut self, hunks: Rc<RefCell<HashSet<String>>>) {
+        self.hunks = Some(hunks);
+    }
+
+    /// The commit key of each change block of a live diff (`brisk_git::hunk_key`).
+    pub fn hunk_keys(&self, cx: &App) -> Vec<String> {
+        let Some(live) = self.live.as_ref() else { return Vec::new() };
+        let e = live.editor.read(cx);
+        live.blocks.iter().map(|b| brisk_git::hunk_key(&(b.l0..b.l1), (b.r0..b.r1).map(|r| e.buffer.line(r)).collect::<Vec<_>>().iter().map(String::as_str))).collect()
+    }
+
+    /// Include block `i` into the commit, or leave it out.
+    pub fn toggle_hunk(&mut self, i: usize, cx: &mut Context<Self>) {
+        let (Some(h), Some(key)) = (self.hunks.clone(), self.hunk_keys(cx).into_iter().nth(i)) else { return };
+        {
+            let mut h = h.borrow_mut();
+            if !h.remove(&key) {
+                h.insert(key);
+            }
+        }
+        cx.emit(HunksChanged);
+        cx.notify();
     }
 
     /// The right side's editor in a live diff (keyboard actions go to it).
@@ -595,6 +643,36 @@ impl DiffView {
         live.left_scroll.0.borrow().base_handle.set_offset(point(px(0.), px(-left_y)));
         let blocks = live.blocks.clone();
         let left_scroll = live.left_scroll.clone();
+        // Per block: left out of the commit (None: the diff has no checkboxes).
+        let keys = if self.hunks.is_some() { self.hunk_keys(cx) } else { Vec::new() };
+        let out: Vec<Option<bool>> = match &self.hunks {
+            Some(h) => keys.iter().map(|k| Some(h.borrow().contains(k))).collect(),
+            None => vec![None; blocks.len()],
+        };
+        // Only the blocks near the screen get an element (a long file can have thousands).
+        let strip_h = 4000.;
+        let checks: Vec<gpui::AnyElement> = blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| {
+                let excluded = out.get(i).copied().flatten()?;
+                let y = b.r0 as f32 * lh - right_y + if b.r0 == b.r1 { -lh / 2. } else { 0. };
+                (y > -lh && y < strip_h).then(|| {
+                    div()
+                        .id(("hunk-chk", i))
+                        .absolute()
+                        .left(px(7.))
+                        .top(px(y + (lh - 14.) / 2.))
+                        .cursor_pointer()
+                        .child(hunk_checkbox(!excluded))
+                        .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.toggle_hunk(i, cx);
+                        }))
+                        .into_any_element()
+                })
+            })
+            .collect();
         // The changed words of the right lines on screen (and a screen's worth around them).
         let top = (right_y / lh) as usize;
         let rows: Vec<usize> = live.right_row.iter().copied().skip(top.saturating_sub(50)).take(250).collect();
@@ -639,6 +717,7 @@ impl DiffView {
                     ),
             )
             .child(
+                div().relative().w(px(28.)).h_full().flex_shrink_0().overflow_hidden().child(
                 canvas(
                     |_, _, _| (),
                     move |bounds, _, window, _| {
@@ -646,7 +725,7 @@ impl DiffView {
                         let (x0, x1) = (bounds.left(), bounds.right());
                         let h = f32::from(bounds.size.height);
                         let mid = (x0 + x1) / 2.;
-                        for b in &blocks {
+                        for (n, b) in blocks.iter().enumerate() {
                             let ly0 = top + b.l0 as f32 * lh - left_y;
                             let ly1 = top + b.l1 as f32 * lh - left_y;
                             let ry0 = top + b.r0 as f32 * lh - right_y;
@@ -661,6 +740,8 @@ impl DiffView {
                             } else {
                                 Theme::diff_modified_bg()
                             };
+                            // A block left out of the commit: a paler connector.
+                            let color = if out.get(n).copied().flatten() == Some(true) { color.opacity(0.4) } else { color };
                             // An empty side gets a 2 px band, so a pure insertion still shows.
                             let (ly1, ry1) = (ly1.max(ly0 + 2.), ry1.max(ry0 + 2.));
                             let mut pb = gpui::PathBuilder::fill();
@@ -675,9 +756,9 @@ impl DiffView {
                         }
                     },
                 )
-                .w(px(28.))
-                .h_full()
-                .flex_shrink_0(),
+                .size_full(),
+                )
+                .children(checks),
             )
             .child(div().flex_1().min_w_0().h_full().child(editor))
             .into_any_element()
@@ -715,7 +796,7 @@ impl Focusable for DiffView {
 }
 
 /// One side of a row. `edges`: the row starts / ends its change block (rounded corners there).
-fn side(num: Option<usize>, text: gpui::AnyElement, bg: Hsla, edges: (bool, bool)) -> gpui::Div {
+pub(crate) fn side(num: Option<usize>, text: gpui::AnyElement, bg: Hsla, edges: (bool, bool)) -> gpui::Div {
     div()
         .flex_1()
         .min_w_0()
@@ -739,7 +820,7 @@ fn side(num: Option<usize>, text: gpui::AnyElement, bg: Hsla, edges: (bool, bool
 }
 
 /// A toolbar toggle: icon, tooltip, pressed state.
-fn tool(id: &'static str, icon: &'static str, tip: &'static str, on: bool) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn tool(id: &'static str, icon: &'static str, tip: &'static str, on: bool) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .size(px(24.))
@@ -789,6 +870,7 @@ impl Render for DiffView {
                     .bg(Theme::panel())
                     .border_b_1()
                     .border_color(Theme::divider())
+                    .font_family(ui_font())
                     .text_size(px(12.))
                     .text_color(Theme::text_muted())
                     .child(tool("diff-prev", "arrow-up", "Previous Difference (Shift+F7)", false).on_click(cx.listener(|this, _, _, cx| this.jump(false, cx))))
@@ -808,6 +890,7 @@ impl Render for DiffView {
                     .flex()
                     .h(px(24.))
                     .items_center()
+                    .font_family(ui_font())
                     .text_size(px(12.))
                     .text_color(Theme::text_muted())
                     .border_b_1()

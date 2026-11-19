@@ -272,6 +272,7 @@ impl Workspace {
             Some(Tab::Diff(d)) => d.clone().into_any_element(),
             Some(Tab::Grid(g)) => g.clone().into_any_element(),
             Some(Tab::Data(v)) => v.clone().into_any_element(),
+            Some(Tab::Merge(m)) => m.clone().into_any_element(),
             None => self.render_welcome().into_any_element(),
         }
     }
@@ -399,6 +400,7 @@ impl Workspace {
                 Tab::Editor(e) => (e.read(cx).title(), e.read(cx).path.clone()),
                 Tab::Diff(d) => (d.read(cx).title.clone(), None),
                 Tab::Grid(g) => (g.read(cx).title.clone(), None),
+                Tab::Merge(m) => (m.read(cx).title.clone(), Some(m.read(cx).path.clone())),
                 Tab::Data(v) => (v.read(cx).title.clone().into(), None),
             };
             let hidden = scroll.bounds_for_item(i).is_some_and(|b| b.left() + x < vb.left() - px(1.) || b.right() + x > vb.right() + px(1.));
@@ -594,6 +596,7 @@ fn same_tab(a: &Tab, b: &Tab) -> bool {
         (Tab::Diff(x), Tab::Diff(y)) => x == y,
         (Tab::Grid(x), Tab::Grid(y)) => x == y,
         (Tab::Data(x), Tab::Data(y)) => x == y,
+        (Tab::Merge(x), Tab::Merge(y)) => x == y,
         _ => false,
     }
 }

@@ -100,9 +100,35 @@ impl Repo {
         Ok(crate::parse_log(&out))
     }
 
+    /// Blame of `rel` as of revision `rev` (Annotate Previous Revision).
+    pub fn blame_at(&self, rev: &str, rel: &str) -> Result<Vec<BlameLine>> {
+        Ok(parse_blame(&self.git(&["blame", "--porcelain", rev, "--", rel])?))
+    }
+
+    /// The revision before `hash` for a file: (parent commit, the file's path there). `rel`
+    /// is the file's path at `from` (HEAD when None). None when `hash` added the file.
+    pub fn previous_revision(&self, hash: &str, rel: &str, from: Option<&str>) -> Option<(String, String)> {
+        let path = self.path_at(from, hash, rel);
+        let change = self.commit_files(hash).ok()?.into_iter().find(|c| c.path == path);
+        if change.as_ref().is_some_and(|c| c.status == crate::FileStatus::Added) {
+            return None;
+        }
+        let prev = change.and_then(|c| c.old_path).unwrap_or(path);
+        let parent = self.git(&["rev-parse", "--verify", "-q", &format!("{hash}^")]).ok()?.trim().to_string();
+        (!parent.is_empty()).then_some((parent, prev))
+    }
+
     /// The path `rel` had in `hash` (it may have been renamed since), for Show History.
     pub fn path_in_commit(&self, hash: &str, rel: &str) -> String {
-        let out = self.git(&["log", "--follow", "--format=%H", "--name-only", "--", rel]).unwrap_or_default();
+        self.path_at(None, hash, rel)
+    }
+
+    /// The same for `rel` as named at revision `from`.
+    pub fn path_at(&self, from: Option<&str>, hash: &str, rel: &str) -> String {
+        let mut args = vec!["log", "--follow", "--format=%H", "--name-only"];
+        args.extend(from);
+        args.extend(["--", rel]);
+        let out = self.git(&args).unwrap_or_default();
         let mut lines = out.lines().filter(|l| !l.trim().is_empty());
         while let Some(h) = lines.next() {
             let path = lines.next().unwrap_or(rel);

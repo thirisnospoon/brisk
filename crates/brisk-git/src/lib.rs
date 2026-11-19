@@ -9,15 +9,17 @@ mod diff;
 mod graph;
 mod log_query;
 mod merge;
+mod partial;
 mod remote;
 mod stash;
 
 pub use blame::{parse_blame, BlameLine};
-pub use diff::{align, foldable, inline_diff, line_changes, unified, AlignedRow, LineChange, LineChangeKind, RowKind, UnifiedRow};
+pub use diff::{align, foldable, inline_diff, line_changes, line_ops, unified, AlignedRow, LineChange, LineChangeKind, RowKind, UnifiedRow};
 pub use stash::StashEntry;
+pub use partial::{compose, hunk_key, hunks};
 pub use remote::Outgoing;
 pub use log_query::LogQuery;
-pub use merge::{lines_of, merge3, Chunk, ConflictVersions};
+pub use merge::{lines_of, merge3, resolve_simple, Chunk, ConflictVersions};
 pub use graph::{layout, GraphRow, Segment};
 
 use std::collections::HashMap;

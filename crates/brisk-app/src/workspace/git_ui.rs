@@ -6,7 +6,9 @@ use crate::theme::ui_px;
 use super::*;
 use brisk_git::{Branch, Commit, FileChange, FileStatus, GraphRow, Repo, Status};
 use gpui::{canvas, fill, point, size, Bounds, Hsla, PathBuilder};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::time::Duration;
 
 const LOG_LIMIT: usize = 3000;
@@ -45,6 +47,9 @@ pub struct Git {
     /// PyCharm: tracked changes are included by default, unversioned files are not.
     excluded: HashSet<String>,
     included_untracked: HashSet<String>,
+    /// Hunks left out of the commit, per file (keys of `brisk_git::hunk_key`), shared with
+    /// the file's live diff, where each change block has its checkbox.
+    pub(super) hunks: HashMap<String, Rc<RefCell<HashSet<String>>>>,
     commit_sel: Option<usize>,
     /// Indices into `status.changes`: tracked changes first, then unversioned files (the
     /// Commit window order), and how many are tracked. Built once per status, not per frame.
@@ -82,6 +87,7 @@ impl Git {
             refreshing: false,
             excluded: HashSet::new(),
             included_untracked: HashSet::new(),
+            hunks: HashMap::new(),
             commit_sel: None,
             order: Vec::new(),
             n_tracked: 0,
@@ -159,12 +165,31 @@ impl Git {
         }
     }
 
+    /// Some hunks of an included file are left out (the checkbox shows "−").
+    pub(super) fn partial(&self, c: &FileChange) -> bool {
+        self.hunks.get(&c.path).is_some_and(|s| !s.borrow().is_empty())
+    }
+
+    /// The row checkbox: checked, unchecked, or partial.
+    fn check_state(&self, c: &FileChange) -> Option<bool> {
+        let on = self.included(c);
+        if on && self.partial(c) {
+            None
+        } else {
+            Some(on)
+        }
+    }
+
+    /// A click on a row checkbox; a partial file becomes whole again, as in PyCharm.
     fn toggle(&mut self, c: &FileChange) {
-        let on = !self.included(c);
+        let on = !self.included(c) || self.partial(c);
         self.set_included(c, on);
     }
 
     fn set_included(&mut self, c: &FileChange, on: bool) {
+        if let Some(s) = self.hunks.get(&c.path) {
+            s.borrow_mut().clear();
+        }
         if c.status == FileStatus::Untracked {
             if on {
                 self.included_untracked.insert(c.path.clone());
@@ -334,6 +359,7 @@ impl Workspace {
                 // Forget inclusion flags of files that are no longer changed.
                 g.excluded.retain(|p| g.by_path.contains_key(p));
                 g.included_untracked.retain(|p| g.by_path.get(p) == Some(&FileStatus::Untracked));
+                g.hunks.retain(|p, _| g.by_path.get(p) == Some(&FileStatus::Modified));
                 g.set_status(st);
                 g.loaded = true;
                 let n = g.order.len();
@@ -536,6 +562,16 @@ impl Workspace {
                 Some(ed) => self.toggle_annotate(ed, cx),
                 None => self.status = "Annotate: open a file first".into(),
             },
+            // Ctrl+Alt+Z with the caret in a changed block of the editor: Rollback Lines.
+            A::RollbackChanges if !self.commit_focus.is_focused(window) && self.focused_editor(window, cx).is_some_and(|e| e.read(cx).vcs_change_at_caret().is_some()) => {
+                if let Some(e) = self.focused_editor(window, cx) {
+                    e.update(cx, |e, cx| {
+                        if let Some(i) = e.vcs_change_at_caret() {
+                            e.rollback_change(i, cx);
+                        }
+                    });
+                }
+            }
             A::RollbackChanges => {
                 let files: Vec<FileChange> = if self.commit_focus.is_focused(window) {
                     let checked: Vec<FileChange> = self.git.as_ref().map(|g| g.rows().into_iter().filter(|c| c.status != FileStatus::Untracked && g.included(c)).collect()).unwrap_or_default();
@@ -565,8 +601,13 @@ impl Workspace {
 
     /// The active editor's file as a change (Modified if git reports nothing: diff shows "identical").
     fn active_file_change(&self, cx: &App) -> Option<FileChange> {
+        self.editor_file_change(self.active_editor()?, cx)
+    }
+
+    /// An editor's file as a change.
+    pub(super) fn editor_file_change(&self, ed: &Entity<Editor>, cx: &App) -> Option<FileChange> {
         let g = self.git.as_ref()?;
-        let path = self.active_editor()?.read(cx).path.clone()?;
+        let path = ed.read(cx).path.clone()?;
         let rel = g.repo.rel(&path)?;
         let st = g.by_path.get(&rel).copied().unwrap_or(FileStatus::Modified);
         let old = g.status.changes.iter().find(|c| c.path == rel).and_then(|c| c.old_path.clone());
@@ -587,6 +628,12 @@ impl Workspace {
 
     /// HEAD ↔ working copy (unsaved editor text included).
     pub(super) fn show_change_diff(&mut self, c: &FileChange, window: &mut Window, cx: &mut Context<Self>) {
+        // A conflicted file opens the merge window, as in PyCharm.
+        if c.status == FileStatus::Conflict {
+            return self.merge_file(c.path.clone(), window, cx);
+        }
+        // A modified file's change blocks get "include into commit" checkboxes.
+        let hunks = self.git.as_mut().filter(|_| c.status == FileStatus::Modified).map(|g| g.hunks.entry(c.path.clone()).or_default().clone());
         let Some(g) = &self.git else { return };
         let abs = g.repo.abs(&c.path);
         let base_path = c.old_path.clone().unwrap_or_else(|| c.path.clone());
@@ -620,7 +667,15 @@ impl Workspace {
                     }
                 };
                 let view = match editor {
-                    Some((e, owned)) => cx.new(|cx| DiffView::new_live(title, Some(abs), left_label, left, "Your version".into(), e, owned, cx)),
+                    Some((e, owned)) => {
+                        let v = cx.new(|cx| DiffView::new_live(title, Some(abs), left_label, left, "Your version".into(), e, owned, cx));
+                        if let Some(h) = hunks {
+                            v.update(cx, |v, _| v.set_hunks(h));
+                            // A checkbox click: the Commit window shows the file as partial.
+                            cx.subscribe(&v, |_, _, _: &crate::diff_view::HunksChanged, cx| cx.notify()).detach();
+                        }
+                        v
+                    }
                     None => cx.new(|cx| DiffView::new(title, Some(abs), left_label, &left, "Your version".into(), &right, cx)),
                 };
                 this.open_diff(view, window, cx);
@@ -685,11 +740,13 @@ impl Workspace {
         cx.notify();
     }
 
-    fn do_commit(&mut self, push: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn do_commit(&mut self, push: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(g) = &self.git else { return };
         let msg = g.message.read(cx).text_string();
         let files: Vec<FileChange> = g.rows().into_iter().filter(|c| g.included(c)).collect();
         let amend = g.amend;
+        // Files with hunks left out: committed as HEAD plus their included hunks.
+        let partial: Vec<(String, HashSet<String>)> = files.iter().filter(|c| c.status == FileStatus::Modified && g.partial(c)).map(|c| (c.path.clone(), g.hunks[&c.path].borrow().clone())).collect();
         if files.is_empty() && !amend {
             return self.show_toast("No changes selected for commit".into(), true, cx);
         }
@@ -701,12 +758,13 @@ impl Workspace {
         self.save_all(cx);
         let paths: Vec<String> = files.iter().flat_map(|c| std::iter::once(c.path.clone()).chain(c.old_path.clone())).collect();
         let untracked: Vec<String> = files.iter().filter(|c| c.status == FileStatus::Untracked).map(|c| c.path.clone()).collect();
+        let whole: Vec<String> = paths.iter().filter(|p| !partial.iter().any(|x| &x.0 == *p)).cloned().collect();
         let n = files.len();
         let subject = msg.lines().next().unwrap_or("").to_string();
         self.git_op(
             if push { "Commit and Push" } else { "Commit" },
             move |r| {
-                let short = r.commit(&msg, &paths, amend, &untracked)?;
+                let short = if partial.is_empty() { r.commit(&msg, &paths, amend, &untracked)? } else { r.commit_partial(&msg, &whole, &partial, amend)? };
                 let s = if n == 1 { "" } else { "s" };
                 Ok(format!("{n} file{s} committed: {subject} ({short})"))
             },
@@ -716,6 +774,10 @@ impl Workspace {
                     this.open_push_dialog(cx);
                 }
                 if let Some(g) = this.git.as_mut() {
+                    // What is left of a partial file is a new change: included again.
+                    for s in g.hunks.values() {
+                        s.borrow_mut().clear();
+                    }
                     g.amend = false;
                     g.message.update(cx, |e, cx| {
                         e.buffer.set_text("");
@@ -819,6 +881,30 @@ impl Workspace {
                 }
             }
         }
+        // The merge window: F7 / Shift+F7, Alt+Shift+→ / ← accept a side, Ctrl+Enter applies.
+        if let Some(mv) = self.merge_in_focus(window, cx) {
+            match k.key.as_str() {
+                "f7" if !m.control && !m.alt => {
+                    mv.update(cx, |v, cx| v.jump(!m.shift, cx));
+                    return true;
+                }
+                "right" | "left" if m.alt && m.shift && !m.control => {
+                    let ours = k.key == "right";
+                    mv.update(cx, |v, cx| v.accept_current(ours, cx));
+                    return true;
+                }
+                "enter" if m.control && !m.alt && !m.shift => {
+                    mv.update(cx, |v, cx| v.press_apply(cx));
+                    return true;
+                }
+                "f4" => {
+                    let p = mv.read(cx).path.clone();
+                    self.open_file(&p, window, cx);
+                    return true;
+                }
+                _ => {}
+            }
+        }
         if let Some(d) = self.diff_in_focus(window, cx) {
             match k.key.as_str() {
                 "f7" if !m.control && !m.alt => {
@@ -917,7 +1003,7 @@ impl Workspace {
         )
     }
 
-    fn commit_file_row(i: usize, c: &FileChange, included: bool, selected: bool, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    fn commit_file_row(i: usize, c: &FileChange, included: Option<bool>, selected: bool, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let c2 = c.clone();
         let c3 = c.clone();
         let (icon, icon_color) = file_icon(file_name(&c.path), false);
@@ -942,7 +1028,7 @@ impl Workspace {
                 }
                 cx.notify();
             }))
-            .child(div().id(("chk", i)).child(checkbox(Some(included))).on_click(cx.listener(move |this, _, _, cx| {
+            .child(div().id(("chk", i)).child(checkbox(included)).on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
                 if let Some(g) = this.git.as_mut() {
                     g.toggle(&c3);
@@ -1035,15 +1121,15 @@ impl Workspace {
                         let (inc_t, inc_u) = g.included_counts();
                         let state = |on: usize, n: usize| if on == 0 { Some(false) } else if on >= n { Some(true) } else { None };
                         let sel = g.commit_sel;
-                        let rows: Vec<Result<(usize, FileChange, bool), bool>> = range
+                        let rows: Vec<Result<(usize, FileChange, Option<bool>), bool>> = range
                             .map(|r| match g.list_item(r) {
-                                Ok(i) => g.row(i).map(|c| (i, c.clone(), g.included(c))).ok_or(true),
+                                Ok(i) => g.row(i).map(|c| (i, c.clone(), g.check_state(c))).ok_or(true),
                                 Err(u) => Err(u),
                             })
                             .collect();
                         rows.into_iter()
                             .map(|r| match r {
-                                Ok((i, c, inc)) => Self::commit_file_row(i, &c, inc, sel == Some(i), cx).into_any_element(),
+                                Ok((i, c, state)) => Self::commit_file_row(i, &c, state, sel == Some(i), cx).into_any_element(),
                                 Err(false) => Self::commit_group_row("grp-changes", "Changes", state(inc_t, n_t), n_t, false, cx).into_any_element(),
                                 Err(true) => Self::commit_group_row("grp-unversioned", "Unversioned Files", state(inc_u, n_u), n_u, true, cx).into_any_element(),
                             })

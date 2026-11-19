@@ -3,16 +3,16 @@
 
 use crate::{GitError, Repo, Result};
 
-/// A stretch of the merged file.
+/// A stretch of the merged file (of lines; of words in [`resolve_simple`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Chunk {
+pub enum Chunk<T = String> {
     /// The same on all three sides.
-    Same(Vec<String>),
+    Same(Vec<T>),
     /// Changed on at least one side, relative to the common base.
-    Change { base: Vec<String>, ours: Vec<String>, theirs: Vec<String> },
+    Change { base: Vec<T>, ours: Vec<T>, theirs: Vec<T> },
 }
 
-impl Chunk {
+impl<T: PartialEq> Chunk<T> {
     /// Changed on both sides, differently: needs a decision.
     pub fn is_conflict(&self) -> bool {
         match self {
@@ -33,7 +33,7 @@ pub fn lines_of(s: &str) -> Vec<String> {
 }
 
 /// For each line of `a`, the index of the matching line of `b` (longest common subsequence).
-fn lcs_match(a: &[String], b: &[String]) -> Vec<Option<usize>> {
+fn lcs_match<T: PartialEq>(a: &[T], b: &[T]) -> Vec<Option<usize>> {
     let (n, m) = (a.len(), b.len());
     // Trim the common prefix and suffix: conflicts are usually small.
     let mut pre = 0;
@@ -78,12 +78,41 @@ fn lcs_match(a: &[String], b: &[String]) -> Vec<Option<usize>> {
 
 /// Three-way merge of whole lines (diff3): unchanged stretches and changed chunks.
 pub fn merge3(base: &str, ours: &str, theirs: &str) -> Vec<Chunk> {
-    let (b, o, t) = (lines_of(base), lines_of(ours), lines_of(theirs));
-    let mo = lcs_match(&b, &o);
-    let mt = lcs_match(&b, &t);
-    let mut out: Vec<Chunk> = Vec::new();
+    merge_seq(&lines_of(base), &lines_of(ours), &lines_of(theirs))
+}
+
+/// PyCharm's "Resolve Simple Conflicts": a conflict whose sides change different words of
+/// it merges word by word. `None` when the changes touch the same words (a real conflict).
+pub fn resolve_simple(base: &[String], ours: &[String], theirs: &[String]) -> Option<Vec<String>> {
+    let join = |v: &[String]| v.iter().map(|l| format!("{l}\n")).collect::<String>();
+    let (b, o, t) = (join(base), join(ours), join(theirs));
+    let (tb, to, tt) = (crate::diff::tokens(&b), crate::diff::tokens(&o), crate::diff::tokens(&t));
+    // The word match is quadratic: big conflicts stay manual.
+    if tb.len().max(to.len()).max(tt.len()) > 4000 {
+        return None;
+    }
+    let mut out = String::new();
+    for c in merge_seq(&tb, &to, &tt) {
+        match c {
+            Chunk::Same(v) => out.extend(v),
+            Chunk::Change { base, ours, theirs } => {
+                if ours != base && theirs != base && ours != theirs {
+                    return None;
+                }
+                out.extend(if ours == base { theirs } else { ours });
+            }
+        }
+    }
+    Some(lines_of(&out))
+}
+
+/// Three-way merge of any sequence (diff3): unchanged stretches and changed chunks.
+fn merge_seq<T: PartialEq + Clone>(b: &[T], o: &[T], t: &[T]) -> Vec<Chunk<T>> {
+    let mo = lcs_match(b, o);
+    let mt = lcs_match(b, t);
+    let mut out: Vec<Chunk<T>> = Vec::new();
     let (mut bi, mut oi, mut ti) = (0usize, 0usize, 0usize);
-    let push_same = |out: &mut Vec<Chunk>, line: String| match out.last_mut() {
+    let push_same = |out: &mut Vec<Chunk<T>>, line: T| match out.last_mut() {
         Some(Chunk::Same(v)) => v.push(line),
         _ => out.push(Chunk::Same(vec![line])),
     };
@@ -169,6 +198,13 @@ impl Repo {
         Ok(())
     }
 
+    /// The branch being merged in, for the merge window's "Changes from <branch>".
+    pub fn merge_source(&self) -> Option<String> {
+        let out = self.git(&["name-rev", "--name-only", "--exclude=tags/*", "MERGE_HEAD"]).ok()?;
+        let n = out.trim();
+        (!n.is_empty() && n != "undefined").then(|| n.to_string())
+    }
+
     /// Merge…'s Apply: write the merged text and mark the file resolved.
     pub fn resolve_with(&self, rel: &str, text: &str) -> Result<()> {
         std::fs::write(self.abs(rel), text).map_err(|e| GitError(format!("{rel}: {e}")))?;
@@ -210,5 +246,17 @@ mod tests {
         // Identical changes are not a conflict.
         let m = merge3("x\n", "y\n", "y\n");
         assert!(!m[0].is_conflict());
+    }
+
+    #[test]
+    fn simple_conflicts() {
+        // Different words of the same line: merges.
+        let r = resolve_simple(&s(&["x = foo(bar, 1)"]), &s(&["x = foo(baz, 1)"]), &s(&["x = foo(bar, 2)"]));
+        assert_eq!(r, Some(s(&["x = foo(baz, 2)"])));
+        // The same word, changed differently: stays a conflict.
+        assert_eq!(resolve_simple(&s(&["a = 1"]), &s(&["a = 2"]), &s(&["a = 3"])), None);
+        // A line added on each side around an unchanged one.
+        let r = resolve_simple(&s(&["mid"]), &s(&["top", "mid"]), &s(&["mid", "end"]));
+        assert_eq!(r, Some(s(&["top", "mid", "end"])));
     }
 }

@@ -78,6 +78,7 @@ mod win_input;
 
 use crate::theme::ui_px;
 use crate::diff_view::DiffView;
+use crate::merge_view::MergeView;
 use crate::editor::Editor;
 use crate::grid_view::GridView;
 use crate::keys;
@@ -211,6 +212,7 @@ pub enum Tab {
     Grid(Entity<GridView>),
     /// View as DataFrame / Array of the paused program.
     Data(Entity<crate::data_view::DataView>),
+    Merge(Entity<MergeView>),
 }
 
 impl Tab {
@@ -220,6 +222,7 @@ impl Tab {
             Tab::Diff(d) => d.entity_id(),
             Tab::Grid(g) => g.entity_id(),
             Tab::Data(v) => v.entity_id(),
+            Tab::Merge(m) => m.entity_id(),
         }
     }
 
@@ -233,6 +236,8 @@ impl Tab {
             },
             Tab::Grid(g) => g.read(cx).focus_handle(cx),
             Tab::Data(v) => v.read(cx).focus_handle(cx),
+            // The merge window types into its result.
+            Tab::Merge(m) => m.read(cx).editor().read(cx).focus_handle(cx),
         }
     }
 }
@@ -861,9 +866,14 @@ impl Workspace {
                 return Some(f);
             }
         }
-        // The editable side of a live diff.
-        if let Some(Tab::Diff(d)) = self.active.and_then(|i| self.tabs.get(i)) {
-            if let Some(e) = d.read(cx).live_editor() {
+        // The editable side of a live diff, the result of a merge.
+        let tab_editor = match self.active.and_then(|i| self.tabs.get(i)) {
+            Some(Tab::Diff(d)) => d.read(cx).live_editor(),
+            Some(Tab::Merge(m)) => Some(m.read(cx).editor()),
+            _ => None,
+        };
+        {
+            if let Some(e) = tab_editor {
                 if e.read(cx).focus_handle(cx).is_focused(window) {
                     return Some(e);
                 }
@@ -1122,6 +1132,14 @@ impl Workspace {
     fn active_diff(&self, window: &Window, cx: &App) -> Option<Entity<DiffView>> {
         match self.active.and_then(|i| self.tabs.get(i)) {
             Some(Tab::Diff(d)) if d.read(cx).focus_handle(cx).is_focused(window) => Some(d.clone()),
+            _ => None,
+        }
+    }
+
+    /// The active merge tab while focus is anywhere in it (its result editor too).
+    pub(super) fn merge_in_focus(&self, window: &Window, cx: &App) -> Option<Entity<MergeView>> {
+        match self.active.and_then(|i| self.tabs.get(i)) {
+            Some(Tab::Merge(m)) if m.read(cx).focus_handle(cx).contains_focused(window, cx) => Some(m.clone()),
             _ => None,
         }
     }
@@ -2323,7 +2341,9 @@ impl Workspace {
                     Tab::Editor(e) => {
                         let ed = e.read(cx);
                         let title = ed.title();
-                        let (icon, color) = file_icon(&title, false);
+                        // A file at a revision: the icon of its name ("x.py (1a2b3c4d)").
+                        let name = ed.revision.as_ref().map(|r| r.0.rsplit('/').next().unwrap_or(&r.0).to_string());
+                        let (icon, color) = file_icon(name.as_deref().unwrap_or(&title), false);
                         let vcs = ed.path.as_deref().and_then(|p| self.file_status(p)).map(git_ui::status_color);
                         let vcs = if ed.disk_conflict.is_some() { Some(gpui::rgb(0xe0b84a).into()) } else { vcs };
                         (title, icon, color, vcs, ed.buffer.is_dirty())
@@ -2331,6 +2351,7 @@ impl Workspace {
                     Tab::Diff(d) => (d.read(cx).title.clone(), "⇆", Theme::file_modified(), None, false),
                     Tab::Grid(g) => (g.read(cx).title.clone(), "▦", gpui::rgb(0x6c9be8).into(), None, false),
                     Tab::Data(v) => (v.read(cx).title.clone(), "▦", gpui::rgb(0xd0a35c).into(), None, false),
+                    Tab::Merge(m) => (m.read(cx).title.clone(), "⇆", Theme::error(), None, false),
                 };
                 let name_color = name_color.unwrap_or(if active { Theme::text() } else { Theme::text_muted() });
                 let pinned = self.pinned.contains(&t.entity_id());

@@ -7,6 +7,7 @@
 mod crash;
 mod stall;
 mod diff_view;
+mod merge_view;
 mod grid_view;
 mod data_view;
 mod icons;

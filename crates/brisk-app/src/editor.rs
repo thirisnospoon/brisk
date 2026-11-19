@@ -16,6 +16,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 pub mod annotate;
+mod vcs_popup;
 mod bookmarks;
 pub mod breakpoints;
 pub mod run_marks;
@@ -119,6 +120,12 @@ pub struct Editor {
     pub diff_bg: bool,
     /// Set with `diff_bg`: changed words to highlight, as (line, byte range in the line).
     pub diff_words: Vec<(usize, Range<usize>)>,
+    /// Set with `diff_bg`: change blocks to paint instead of the changes against HEAD (the
+    /// merge window's result), as (lines, color); an empty range is a 2 px line.
+    pub diff_blocks: Vec<(Range<usize>, gpui::Hsla)>,
+    /// A file at a revision (Annotate Previous Revision): (path in the repository, commit).
+    /// Read-only, no path (the tab shows `title_override`).
+    pub revision: Option<(String, String)>,
     /// Run with Coverage marks.
     coverage: Option<coverage::CoverageMarks>,
     vcs_version: u64,
@@ -159,6 +166,8 @@ pub struct Editor {
     /// Annotate with Git Blame: the column, and the hovered line.
     pub annotation: Option<annotate::Annotation>,
     ann_hover: Option<(usize, Point<Pixels>)>,
+    /// The change marker popup: (change index, buffer version it was opened at).
+    vcs_popup: Option<(usize, u64)>,
     sel_stack: select::SelStack,
     /// Ctrl+wheel distance not yet turned into a font size step.
     zoom_acc: f32,
@@ -211,6 +220,8 @@ pub enum EditorEvent {
     GutterMenu(Point<Pixels>),
     /// A click on a blame annotation: show this commit's diff of the file.
     ShowCommit(String),
+    /// Show Diff in the change marker popup: the file's diff against HEAD.
+    ShowVcsDiff,
     /// A click on the run icon of this line (window position for the menu).
     RunMark(usize, Point<Pixels>),
     /// The execution arrow was dragged to this line.
@@ -317,6 +328,8 @@ impl Editor {
             vcs_changes: Vec::new(),
             diff_bg: false,
             diff_words: Vec::new(),
+            diff_blocks: Vec::new(),
+            revision: None,
             coverage: None,
             vcs_version: u64::MAX,
             show_gutter: true,
@@ -340,6 +353,7 @@ impl Editor {
             exec_line: None,
             annotation: None,
             ann_hover: None,
+            vcs_popup: None,
             sel_stack: Default::default(),
             zoom_acc: 0.0,
             editorconfig,
@@ -392,6 +406,8 @@ impl Editor {
             vcs_changes: Vec::new(),
             diff_bg: false,
             diff_words: Vec::new(),
+            diff_blocks: Vec::new(),
+            revision: None,
             coverage: None,
             vcs_version: u64::MAX,
             show_gutter: false,
@@ -415,6 +431,7 @@ impl Editor {
             exec_line: None,
             annotation: None,
             ann_hover: None,
+            vcs_popup: None,
             sel_stack: Default::default(),
             zoom_acc: 0.0,
             editorconfig: Default::default(),
@@ -817,6 +834,10 @@ impl Editor {
         }
         self.caret_tip = None;
         self.insight.doc = None;
+        if action == A::EditorEscape && self.vcs_popup.take().is_some() {
+            cx.notify();
+            return true;
+        }
         if action == A::EditorEscape && self.close_insight() {
             cx.notify();
             return true;
@@ -1048,6 +1069,9 @@ impl Editor {
             return;
         }
         if e.button == MouseButton::Left && self.annotation_click(e.position, cx) {
+            return;
+        }
+        if e.button == MouseButton::Left && self.vcs_marker_click(e.position, cx) {
             return;
         }
         if e.button == MouseButton::Left && self.exec_arrow_down(e.position) {
@@ -1384,13 +1408,14 @@ impl Render for Editor {
                     }
                 }
             }))
-            .child(EditorElement { editor: cx.entity(), diff_bg: std::mem::take(&mut self.diff_bg), diff_words: std::mem::take(&mut self.diff_words) })
+            .child(EditorElement { editor: cx.entity(), diff_bg: std::mem::take(&mut self.diff_bg), diff_words: std::mem::take(&mut self.diff_words), diff_blocks: std::mem::take(&mut self.diff_blocks) })
             .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))
             .when_some(self.render_tooltip(), |d, t| d.child(t))
             .when_some(self.render_breakpoint_tip(), |d, t| d.child(t))
             .when_some(self.render_inlay_tip(), |d, t| d.child(t))
             .when_some(self.render_middle_anchor(), |d, a| d.child(a))
             .when_some(self.render_annotation_tip(), |d, t| d.child(t))
+            .when_some(self.render_vcs_popup(cx), |d, t| d.child(t))
             .children(self.render_insight(cx));
         gpui::div()
             .id("editor")
@@ -1513,6 +1538,7 @@ struct EditorElement {
     editor: Entity<Editor>,
     diff_bg: bool,
     diff_words: Vec<(usize, Range<usize>)>,
+    diff_blocks: Vec<(Range<usize>, gpui::Hsla)>,
 }
 
 struct Prepaint {
@@ -1794,7 +1820,20 @@ impl Element for EditorElement {
             under.push(fill(Bounds::new(point(bounds.left(), y_of(l)), size(bounds.size.width, lh)), Theme::exec_line()));
         }
         // In a diff viewer: the changed lines' backgrounds, as in PyCharm's diff.
-        if self.diff_bg {
+        if self.diff_bg && !self.diff_blocks.is_empty() {
+            let x0 = bounds.left() + pp.gutter_w - px(4.);
+            let x1 = bounds.right() - px(14.);
+            for (r, color) in &self.diff_blocks {
+                if r.start > last || r.end < first {
+                    continue;
+                }
+                if r.is_empty() {
+                    under.push(fill(Bounds::from_corners(point(x0, y_of(r.start) - px(1.)), point(x1, y_of(r.start) + px(1.))), color.opacity(1.)));
+                } else {
+                    under.push(fill(Bounds::from_corners(point(x0, y_of(r.start)), point(x1, y_of(r.end))), *color).corner_radii(px(4.)));
+                }
+            }
+        } else if self.diff_bg {
             for ch in &ed.vcs_changes {
                 use brisk_git::LineChangeKind as K;
                 match ch.kind {
