@@ -30,6 +30,11 @@ pub struct Breakpoints {
     muted: bool,
     /// The execution arrow is being dragged: the line it would move to.
     exec_drag: Option<usize>,
+    /// The line numbers' line under the pointer, where the pointer entered it, and whether
+    /// it had a breakpoint then (its tooltip; a click that just set one shows none).
+    hover: Option<(usize, gpui::Point<gpui::Pixels>, bool)>,
+    /// What is under the pointer in the gutter takes a click: the hand cursor.
+    hand: bool,
 }
 
 impl Editor {
@@ -165,24 +170,146 @@ impl Editor {
         }
     }
 
-    /// Click on the line numbers: toggle a breakpoint there.
-    pub(super) fn breakpoint_click(&mut self, p: gpui::Point<gpui::Pixels>, cx: &mut gpui::Context<Self>) -> bool {
-        let Some(l) = self.layout.as_ref() else { return false };
+    /// The line under `p` in the line numbers, where a click sets a breakpoint.
+    pub(super) fn breakpoint_zone_line(&self, p: gpui::Point<gpui::Pixels>) -> Option<usize> {
+        let l = self.layout.as_ref()?;
         if !self.show_gutter || self.is_field || !self.can_debug() {
-            return false;
+            return None;
         }
         let numbers_right = l.text_left - gpui::px(8. + 25.) - self.run_slot();
         let numbers_left = l.bounds.left() + gpui::px(18.) + self.annotation_width(l.char_w);
         if p.x < numbers_left || p.x > numbers_right {
-            return false;
+            return None;
         }
         let y = f32::from(p.y - l.bounds.top()) + self.scroll_y;
         let line = self.line_of_row((y / super::line_height()).floor().max(0.0) as usize);
-        if line >= self.buffer.len_lines() {
-            return false;
-        }
+        (line < self.buffer.len_lines()).then_some(line)
+    }
+
+    /// Click on the line numbers: toggle a breakpoint there.
+    pub(super) fn breakpoint_click(&mut self, p: gpui::Point<gpui::Pixels>, cx: &mut gpui::Context<Self>) -> bool {
+        let Some(line) = self.breakpoint_zone_line(p) else { return false };
         self.toggle_breakpoint(line, cx);
         true
+    }
+
+    /// The pointer moved (`in_gutter`: over the gutter). Over the line numbers: a faint
+    /// breakpoint where a click would set one, or the tooltip of the one there, as in PyCharm;
+    /// the hand cursor over whatever takes a click (line numbers, ▶, fold markers). True when
+    /// something to draw changed.
+    pub(super) fn gutter_pointer_move(&mut self, p: gpui::Point<gpui::Pixels>, in_gutter: bool) -> bool {
+        let zone = if in_gutter { self.breakpoint_zone_line(p) } else { None };
+        let hand = zone.is_some() || in_gutter && (self.run_mark_at(p).is_some() || self.fold_marker_at(p));
+        let mut changed = hand != self.breakpoints.hand;
+        self.breakpoints.hand = hand;
+        if zone != self.breakpoints.hover.map(|h| h.0) {
+            self.breakpoints.hover = zone.map(|l| (l, p, self.breakpoint_list().iter().any(|(b, _)| *b == l)));
+            changed = true;
+        }
+        changed
+    }
+
+    /// The pointer left the editor. True when something to draw changed.
+    pub(super) fn gutter_pointer_leave(&mut self) -> bool {
+        let had = self.breakpoints.hover.is_some() || self.breakpoints.hand;
+        self.breakpoints.hover = None;
+        self.breakpoints.hand = false;
+        had
+    }
+
+    /// The editor's cursor: the hand over what takes a click in the gutter, an arrow over the
+    /// rest of it and the scrollbars, the I-beam over the text.
+    pub fn pointer_style(&self) -> gpui::CursorStyle {
+        if self.middle_active() {
+            gpui::CursorStyle::ResizeUpDown
+        } else if self.bar_hover.is_some() || self.drag.is_some() {
+            gpui::CursorStyle::Arrow
+        } else if self.breakpoints.hand {
+            gpui::CursorStyle::PointingHand
+        } else if self.gutter_hover {
+            gpui::CursorStyle::Arrow
+        } else {
+            gpui::CursorStyle::IBeam
+        }
+    }
+
+    /// The line that shows a faint breakpoint under the pointer: one without a breakpoint.
+    pub(super) fn breakpoint_preview_line(&self) -> Option<usize> {
+        let (line, _, _) = self.breakpoints.hover?;
+        (!self.breakpoint_list().iter().any(|(b, _)| *b == line)).then_some(line)
+    }
+
+    /// The tooltip of the breakpoint under the pointer: where it is, its condition, its state.
+    fn breakpoint_tip_lines(&self) -> Option<Vec<String>> {
+        let (line, _, tip) = self.breakpoints.hover?;
+        if !tip {
+            return None;
+        }
+        let bp = self.breakpoint_list().into_iter().find(|(b, _)| *b == line)?.1;
+        let file = self.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let mut v = vec![format!("Line {} in {file}", line + 1)];
+        if let Some(c) = bp.condition.as_ref().filter(|c| !c.trim().is_empty()) {
+            v.push(format!("Condition: {c}"));
+        }
+        if self.breakpoints_muted() {
+            v.push("Breakpoints are muted".into());
+        } else if !bp.enabled {
+            v.push("Disabled".into());
+        } else if bp.verified == Some(false) {
+            v.push("The debugger cannot stop on this line".into());
+        }
+        Some(v)
+    }
+
+    pub(super) fn render_breakpoint_tip(&self) -> Option<gpui::AnyElement> {
+        use crate::theme::Theme;
+        use gpui::prelude::FluentBuilder as _;
+        use gpui::{px, IntoElement, ParentElement, Styled};
+        let lines = self.breakpoint_tip_lines()?;
+        let (_, at, _) = self.breakpoints.hover?;
+        let rel = at - self.layout.as_ref()?.bounds.origin;
+        Some(
+            gpui::div()
+                .absolute()
+                .left(rel.x + px(12.))
+                .top(rel.y + px(18.))
+                .max_w(px(420.))
+                .px(px(8.))
+                .py(px(5.))
+                .rounded(px(6.))
+                .border_1()
+                .border_color(Theme::divider())
+                .bg(Theme::panel())
+                .shadow_md()
+                .font_family(crate::theme::ui_font())
+                .text_size(px(12.5))
+                .text_color(Theme::text())
+                .children(lines.into_iter().enumerate().map(|(i, s)| gpui::div().when(i > 0, |d| d.text_color(Theme::text_muted())).child(s)))
+                .into_any_element(),
+        )
+    }
+
+    /// Smoke checks: the breakpoint zone line under the pointer, the line with a faint
+    /// breakpoint, the hand cursor, the tooltip.
+    pub fn gutter_state_for_smoke(&self) -> (Option<usize>, Option<usize>, bool, Option<String>) {
+        (self.breakpoints.hover.map(|h| h.0), self.breakpoint_preview_line(), self.breakpoints.hand, self.breakpoint_tip_lines().map(|v| v.join(" | ")))
+    }
+
+    /// Smoke screenshots: the pointer over the gutter at `p` (window, logical pixels), held
+    /// although the real pointer is outside the window and Windows reports it left.
+    pub fn hold_gutter_hover_for_smoke(&mut self, p: (f32, f32)) {
+        self.gutter_hover = true;
+        self.breakpoints.hover = None;
+        self.gutter_pointer_move(gpui::point(gpui::px(p.0), gpui::px(p.1)), true);
+    }
+
+    /// Smoke checks: window position (logical pixels) of `line`'s breakpoint circle.
+    pub fn breakpoint_point(&self, line: usize) -> Option<(f32, f32)> {
+        let l = self.layout.as_ref()?;
+        let lh = super::line_height();
+        let y = l.bounds.top() + gpui::px(self.row_of(line) as f32 * lh - self.scroll_y + lh / 2.);
+        let x = l.text_left - gpui::px(36.5) - self.run_slot();
+        Some((f32::from(x), f32::from(y)))
     }
 
     /// A press on the execution arrow starts dragging it (Set Next Statement).

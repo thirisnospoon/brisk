@@ -949,7 +949,7 @@ impl Workspace {
                 }
                 cx.notify();
             })))
-            .child(div().w(px(14.)).flex().items_center().child(crate::icons::glyph(icon, 14., icon_color)))
+            .child(div().w(ui_px(16.)).flex().items_center().child(crate::icons::glyph(icon, 14., icon_color)))
             .child(div().text_color(status_color(c.status)).whitespace_nowrap().child(file_name(&c.path).to_string()))
             .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).whitespace_nowrap().child(dir_name(&c.path).to_string()))
     }
@@ -1368,7 +1368,7 @@ impl Workspace {
                             }
                             cx.notify();
                         }))
-                        .child(div().w(px(14.)).flex().items_center().child(crate::icons::glyph(icon, 14., icolor)))
+                        .child(div().w(ui_px(16.)).flex().items_center().child(crate::icons::glyph(icon, 14., icolor)))
                         .child(div().text_color(status_color(f.status)).whitespace_nowrap().child(file_name(&f.path).to_string()))
                         .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).whitespace_nowrap().child(dir_name(&f.path).to_string())),
                 );
