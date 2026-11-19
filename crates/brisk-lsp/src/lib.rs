@@ -239,6 +239,9 @@ pub struct Signature {
     pub params: Vec<std::ops::Range<usize>>,
     pub active: Option<usize>,
     pub doc: String,
+    /// Every overload's label in order (empty with one signature); `label` is `overloads[current]`.
+    pub overloads: Vec<String>,
+    pub current: usize,
 }
 
 /// A file's edits from a rename.
@@ -413,7 +416,9 @@ pub fn parse_completion(v: &Value) -> Vec<CompletionItem> {
 
 pub fn parse_signature(v: &Value) -> Option<Signature> {
     let sigs = v.get("signatures")?.as_array()?;
-    let s = sigs.get(v["activeSignature"].as_u64().unwrap_or(0) as usize).or(sigs.first())?;
+    let current = (v["activeSignature"].as_u64().unwrap_or(0) as usize).min(sigs.len().saturating_sub(1));
+    let s = sigs.get(current)?;
+    let overloads: Vec<String> = if sigs.len() > 1 { sigs.iter().filter_map(|s| s["label"].as_str().map(String::from)).collect() } else { Vec::new() };
     let label = s["label"].as_str()?.to_string();
     let params = s["parameters"]
         .as_array()
@@ -434,7 +439,7 @@ pub fn parse_signature(v: &Value) -> Option<Signature> {
         })
         .unwrap_or_default();
     let active = s.get("activeParameter").or(v.get("activeParameter")).and_then(Value::as_u64).map(|a| a as usize);
-    Some(Signature { label, params, active, doc: doc_text(&s["documentation"]) })
+    Some(Signature { label, params, active, doc: doc_text(&s["documentation"]), overloads, current })
 }
 
 fn edits(v: &Value) -> Vec<Edit> {

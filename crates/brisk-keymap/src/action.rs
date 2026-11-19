@@ -60,6 +60,7 @@ actions! {
     QuickDefinition => "Quick Definition", "Navigate";
     QuickDocumentation => "Quick Documentation", "Navigate";
     ParameterInfo => "Parameter Info", "Navigate";
+    TypeInfo => "Type Info", "View";
     FindUsages => "Find Usages", "Navigate";
     ShowUsages => "Show Usages", "Navigate";
     ToggleBookmark => "Toggle Bookmark", "Navigate";

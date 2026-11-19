@@ -1,11 +1,12 @@
 //! The Find tool window's results as a tree, as in PyCharm: for Find Usages first the usage
-//! groups ("Import statements", "Value write", "Usages in code"), then files, then lines.
+//! groups ("Import statements", "Value write", "Usages in code", and for a rename preview
+//! "Usages in comments and strings"), then files, then lines.
 //! Groups and files fold with a click on the arrow, a double click, Enter, or Left / Right.
 
 use super::{FindWindow, WRow};
 
 /// Find Usages groups in the order the tree shows them.
-pub(super) const USAGE_GROUPS: [&str; 3] = ["Import statements", "Value write", "Usages in code"];
+pub(super) const USAGE_GROUPS: [&str; 4] = ["Import statements", "Value write", "Usages in code", "Usages in comments and strings"];
 
 /// Which of `USAGE_GROUPS` a usage on `line` at char columns `col` belongs to.
 pub(super) fn usage_group(line: &str, col: std::ops::Range<usize>) -> u8 {
@@ -13,11 +14,18 @@ pub(super) fn usage_group(line: &str, col: std::ops::Range<usize>) -> u8 {
     if t.starts_with("import ") || t.starts_with("from ") {
         return 0;
     }
+    // Rename's "Search in comments and strings": after a `#`, or inside quotes.
+    let before: String = line.chars().take(col.start).collect();
+    let code = before.split('#').next().unwrap_or("");
+    let odd = |s: &str, q: char| s.matches(q).count() % 2 == 1;
+    let in_comment = code.len() < before.len() && !odd(code, '"') && !odd(code, '\'');
+    if in_comment || odd(&before, '"') || odd(&before, '\'') {
+        return 3;
+    }
     let after: String = line.chars().skip(col.end).collect();
     let a = after.trim_start();
     let augmented = ["+=", "-=", "*=", "/=", "//=", "%=", "**=", "|=", "&=", "^=", ">>=", "<<=", "@="];
     // `x = …`, `x += …`, `for x in`, `with … as x`: the name is written.
-    let before: String = line.chars().take(col.start).collect();
     let b = before.trim_end();
     if (a.starts_with('=') && !a.starts_with("==")) || augmented.iter().any(|o| a.starts_with(o)) || b.ends_with(" as") || (b.trim_start() == "for" && a.starts_with("in ")) {
         return 1;
@@ -151,5 +159,8 @@ mod tests {
         assert_eq!(usage_group("with open(p) as f:", 16..17), 1);
         assert_eq!(usage_group("if x == 1:", 3..4), 2);
         assert_eq!(usage_group("print(add(1, 2))", 6..9), 2);
+        assert_eq!(usage_group("    # greet the user", 6..11), 3);
+        assert_eq!(usage_group("G = \"greet\"", 5..10), 3);
+        assert_eq!(usage_group("print('#', greet)", 11..16), 2);
     }
 }

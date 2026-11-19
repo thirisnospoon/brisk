@@ -33,6 +33,7 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("ctrl-shift-i", A::QuickDefinition, ED);
     k.bind("ctrl-q", A::QuickDocumentation, None);
     k.bind("ctrl-p", A::ParameterInfo, ED);
+    k.bind("ctrl-shift-p", A::TypeInfo, ED);
     k.bind("alt-f7", A::FindUsages, None);
     k.bind("ctrl-alt-f7", A::ShowUsages, ED);
     k.bind("f11", A::ToggleBookmark, None);

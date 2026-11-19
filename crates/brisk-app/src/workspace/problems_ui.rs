@@ -38,6 +38,16 @@ pub(super) enum Intent {
     Overrides(bool),
     /// Ctrl+Shift+Delete: unwrap or remove the enclosing statement.
     Unwrap(brisk_syntax::Unwrap),
+    /// Ctrl+Alt+C: extract the selection into a module constant; `true`: every occurrence.
+    ExtractConstant(bool),
+    /// Extract Variable / Constant: this expression (chars), then extract (`true`: constant).
+    PickExpression(std::ops::Range<usize>, bool),
+    /// Byte-range edits of the active editor's text (Inline), one undo step.
+    Edits(Vec<(std::ops::Range<usize>, String)>),
+    /// The Rename popup's Preview with this new name.
+    RenamePreview(String),
+    /// The Rename popup's "Search in comments and strings" (the name typed so far).
+    RenameText(String),
     /// Ctrl+Alt+V: extract the selection into a variable; `true`: every occurrence.
     ExtractVariable(bool),
     /// A language server quick fix (ty: import a name, qualify it): title and edits.
@@ -55,6 +65,47 @@ fn lsp_title(t: &str) -> String {
     }
     let mut c = t.chars();
     c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
+/// The return type in ty's hover of a function: `def f(a) -> list[int]` → `list[int]`.
+fn return_type(hover: &str) -> Option<String> {
+    let code = hover.split("```").find(|b| b.contains("def "))?;
+    let sig = &code[code.find("def ")?..];
+    let t = sig[sig.rfind("->")? + 2..].trim().trim_end_matches(':').trim();
+    (!t.is_empty() && !t.contains('\n')).then(|| t.to_string())
+}
+
+/// Type Info: the type in ty's hover of a name: `def f(a: int) -> str` → `(a: int) -> str`,
+/// `class C` → `type[C]`, a variable → its type.
+pub(super) fn type_of_hover(hover: &str) -> Option<String> {
+    let code = hover.split("```").nth(1)?.trim_start_matches("python").trim();
+    let one = code.split_whitespace().collect::<Vec<_>>().join(" ").replace("( ", "(").replace(", )", ")").replace(" )", ")");
+    if let Some(rest) = one.strip_prefix("def ").or_else(|| one.strip_prefix("async def ")) {
+        return Some(rest[rest.find('(')?..].to_string());
+    }
+    if let Some(rest) = one.strip_prefix("class ") {
+        let name = rest.split(['(', ':']).next()?.trim();
+        return Some(format!("type[{name}]"));
+    }
+    let t = match one.split_once(": ") {
+        Some((name, t)) if name.chars().all(|c| c.is_alphanumeric() || c == '_') => t,
+        _ => &one,
+    };
+    (!t.is_empty()).then(|| t.to_string())
+}
+
+/// The type in ty's hover of a value: a variable's type, or a called function's return type.
+fn value_type(hover: &str) -> Option<String> {
+    let code = hover.split("```").nth(1)?.trim_start_matches("python").trim();
+    if code.contains("def ") {
+        return return_type(hover);
+    }
+    let line = code.lines().next()?.trim();
+    let t = match line.split_once(": ") {
+        Some((name, t)) if name.chars().all(|c| c.is_alphanumeric() || c == '_') => t,
+        _ => line,
+    };
+    (!t.is_empty() && !t.contains("Unknown")).then(|| t.to_string())
 }
 
 pub(super) struct Problems {
@@ -518,7 +569,9 @@ impl Workspace {
             p.extend(same);
             p
         };
-        if probs.is_empty() {
+        let (front, back, hint) = self.syntax_intentions(&ed, &probs, cx);
+        let hint = hint.and_then(|h| self.ty_at_caret(&ed, cx).map(|(ty, path, _)| (h, ty, path)));
+        if probs.is_empty() && front.is_empty() && back.is_empty() && hint.is_none() {
             self.status = "No context actions available here".into();
             return;
         }
@@ -542,7 +595,52 @@ impl Workspace {
                 (ty, path, start, end)
             }),
         };
-        let Some((ty, path, start, end)) = request else { return self.open_intentions(&probs, Vec::new()) };
+        // The type a hint would write: ty's inlay hint after a variable, or the return type in
+        // its hover of a function.
+        let hint_fut = hint.map(|(h, ty, path)| {
+            use futures::FutureExt;
+            let e = ed.read(cx);
+            let fut: futures::future::BoxFuture<'static, Option<String>> = match &h {
+                brisk_syntax::HintTarget::Variable { insert, .. } => {
+                    let p = e.byte_pos(*insert);
+                    ty.inlay_hints(&path, p.line..p.line + 1).map(move |r| r.ok()?.into_iter().find(|i| !i.parameter && i.pos == p).map(|i| i.label.trim_start_matches(':').trim().to_string())).boxed()
+                }
+                brisk_syntax::HintTarget::Return { at, returns, .. } => {
+                    use brisk_syntax::Returned;
+                    // ty's inferred return type, else the union of what the `return`s give.
+                    let sig = ty.hover(&path, e.byte_pos(*at));
+                    let asks: Vec<_> = returns.iter().map(|r| match r {
+                        Returned::Ask(_, b) => Some(ty.hover(&path, e.byte_pos(*b))),
+                        _ => None,
+                    }).collect();
+                    let returns = returns.clone();
+                    async move {
+                        if let Some(t) = sig.await.ok().flatten().and_then(|h| return_type(&h)).filter(|t| !t.contains("Unknown")) {
+                            return Some(t);
+                        }
+                        let mut types: Vec<String> = Vec::new();
+                        for (r, ask) in returns.iter().zip(asks) {
+                            let t = match r {
+                                Returned::Known(t) => t.clone(),
+                                Returned::Ask(..) => value_type(&ask?.await.ok()??)?,
+                                Returned::Unknown => return None,
+                            };
+                            if !types.contains(&t) {
+                                types.push(t);
+                            }
+                        }
+                        // `X | None`, as PyCharm writes optional types.
+                        types.sort_by_key(|t| t == "None");
+                        Some(types.join(" | "))
+                    }
+                    .boxed()
+                }
+            };
+            (h, fut)
+        });
+        if request.is_none() && hint_fut.is_none() {
+            return self.open_intentions(&probs, Vec::new(), front, back);
+        }
         let unresolved = ty_diags.iter().any(|d| d.code == "unresolved-reference");
         if unresolved {
             self.status = "Looking for imports…".into();
@@ -551,6 +649,26 @@ impl Workspace {
         let bg = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             use futures::FutureExt;
+            let mut back = back;
+            if let Some((h, fut)) = hint_fut {
+                let timeout = bg.timer(Duration::from_secs(3));
+                if let futures::future::Either::Left((Some(t), _)) = futures::future::select(fut, timeout.boxed()).await {
+                    if !t.is_empty() && !t.contains("Unknown") && !t.contains("@Todo") {
+                        let (label, edit) = match h {
+                            brisk_syntax::HintTarget::Variable { name, insert, .. } => (format!("Add type hint for variable '{name}'"), (insert..insert, format!(": {t}"))),
+                            brisk_syntax::HintTarget::Return { insert, .. } => ("Specify return type using annotation".to_string(), (insert..insert, format!(" -> {t}"))),
+                        };
+                        back.insert(0, PopupItem { label, detail: t, hint: String::new(), target: Target::Intention(Box::new(Intent::Edits(vec![edit]))) });
+                    }
+                }
+            }
+            let Some((ty, path, start, end)) = request else {
+                let _ = this.update(cx, |this, cx| {
+                    this.open_intentions(&probs, Vec::new(), front, back);
+                    cx.notify();
+                });
+                return;
+            };
             let mut actions: Vec<brisk_lsp::CodeAction> = Vec::new();
             let mut retry_until: Option<std::time::Instant> = None;
             loop {
@@ -575,15 +693,55 @@ impl Workspace {
                 };
             }
             let _ = this.update(cx, |this, cx| {
-                this.open_intentions(&probs, actions);
+                this.open_intentions(&probs, actions, front, back);
                 cx.notify();
             });
         })
         .detach();
     }
 
-    /// The Alt+Enter list: ty's fixes (auto-import first), then ruff's, then suppressions.
-    fn open_intentions(&mut self, probs: &[Diagnostic], mut actions: Vec<brisk_lsp::CodeAction>) {
+    /// Alt+Enter items from the syntax tree and the project index: fixes for an unknown name
+    /// (import from the index, Create function) and intentions; plus where a type hint can go.
+    fn syntax_intentions(&mut self, ed: &Entity<Editor>, probs: &[Diagnostic], cx: &mut Context<Self>) -> (Vec<PopupItem>, Vec<PopupItem>, Option<brisk_syntax::HintTarget>) {
+        let item = |label: String, detail: String, edits: Vec<(std::ops::Range<usize>, String)>| PopupItem { label, detail, hint: String::new(), target: Target::Intention(Box::new(Intent::Edits(edits))) };
+        let (intents, create, hint) = ed.update(cx, |e, _| e.intentions_at_caret());
+        let unknown: Option<String> = probs.iter().find(|d| d.code == "F821" || d.code == "unresolved-reference").map(|d| {
+            let e = ed.read(cx);
+            let line = e.buffer.line(d.start.line);
+            line.chars().skip(d.start.col).take(d.end.col.saturating_sub(d.start.col)).collect()
+        });
+        let mut front = Vec::new();
+        if let Some(name) = unknown.filter(|n| !n.is_empty()) {
+            // Imports of the name from the project's own modules (ty may not offer them yet).
+            self.ensure_symbols(cx);
+            if let (Some(list), Some(files)) = (self.symbols.list.clone(), self.symbols.files.clone()) {
+                let this_file = ed.read(cx).path.clone();
+                let mut mods: Vec<String> = list
+                    .iter()
+                    .filter(|s| &*s.name == name && s.container.is_empty())
+                    .filter(|s| this_file.as_deref() != Some(files.abs(s.file).as_path()))
+                    .filter_map(|s| brisk_lsp::module_name(&self.root, &files.abs(s.file)))
+                    .collect();
+                mods.sort();
+                mods.dedup();
+                for m in mods.into_iter().take(5) {
+                    if let Some(edit) = ed.update(cx, |e, _| e.import_edit(&format!("from {m} import {name}"))) {
+                        front.push(item(format!("Import '{m}.{name}'"), "project".into(), vec![edit]));
+                    }
+                }
+            }
+            if let Some((n, edit)) = create.filter(|(n, _)| *n == name) {
+                front.push(item(format!("Create function '{n}'"), String::new(), vec![edit]));
+            }
+        }
+        let back = intents.into_iter().map(|i| item(i.label, String::new(), i.edits)).collect();
+        (front, back, hint)
+    }
+
+    /// The Alt+Enter list as in PyCharm: the quick fixes for the problem (ty's, imports from
+    /// the project index and Create function in `front`), ruff's, then the intentions (`back`),
+    /// then suppressions.
+    fn open_intentions(&mut self, probs: &[Diagnostic], mut actions: Vec<brisk_lsp::CodeAction>, front: Vec<PopupItem>, back: Vec<PopupItem>) {
         let mut items = Vec::new();
         let item = |label: String, detail: String, intent: Intent| PopupItem { label, detail, hint: String::new(), target: Target::Intention(Box::new(intent)) };
         // Brisk adds its own "Suppress for line"; ty's "Ignore ... for this line" is the same.
@@ -591,6 +749,11 @@ impl Workspace {
         actions.sort_by_key(|a| !a.preferred);
         for a in actions {
             items.push(item(lsp_title(&a.title), "ty".into(), Intent::Lsp(a.title.clone(), a.edits)));
+        }
+        for f in front {
+            if !items.iter().any(|i| i.label == f.label) {
+                items.push(f);
+            }
         }
         for d in probs {
             if let Some(f) = &d.fix {
@@ -605,6 +768,7 @@ impl Workspace {
         if probs.iter().any(|d| d.fix.is_some()) {
             items.push(item("Ruff: fix all auto-fixable problems in file".into(), String::new(), Intent::FixAll));
         }
+        items.extend(back);
         for d in probs.iter().filter(|d| d.noqa_line.is_some()) {
             if items.iter().any(|i| i.label == format!("Suppress '{}' for line", d.code)) {
                 continue;
@@ -643,6 +807,17 @@ impl Workspace {
             Intent::ExtractVariable(all) => {
                 ed.update(cx, |e, cx| e.extract_variable(all, cx));
             }
+            Intent::ExtractConstant(all) => {
+                ed.update(cx, |e, cx| e.extract_constant(all, cx));
+            }
+            Intent::PickExpression(r, constant) => {
+                ed.update(cx, |e, _| e.buffer.selections = vec![brisk_text::Selection { anchor: r.start, head: r.end, goal_col: None }]);
+                let a = if constant { brisk_keymap::Action::ExtractConstant } else { brisk_keymap::Action::ExtractVariable };
+                self.extract_action(a, window, cx);
+            }
+            Intent::Edits(edits) => ed.update(cx, |e, cx| e.apply_byte_edits(edits, cx)),
+            Intent::RenamePreview(q) => self.rename_with(q, true, window, cx),
+            Intent::RenameText(q) => self.toggle_rename_text(q),
             Intent::Lsp(title, edits) => {
                 let (_, failed) = self.apply_file_edits(edits, cx);
                 self.status = lsp_title(&title);
@@ -782,7 +957,101 @@ impl Workspace {
 
     /// Ctrl+Alt+L (the selected lines, else the file), Ctrl+Alt+O and Code Cleanup (every safe
     /// ruff fix in the file, PyCharm's "fix all problems"), with ruff.
+    /// Reformat Code / Optimize Imports with a folder or file selected in the Project tree, as
+    /// in PyCharm: every Python file under it, open ones in their editors (one undo step each),
+    /// the rest on disk; ruff runs off the UI thread. False when the tree is not focused.
+    fn format_tree_action(&mut self, action: brisk_keymap::Action, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        use brisk_keymap::Action as A;
+        if !matches!(action, A::ReformatCode | A::OptimizeImports) || !self.tree_focus.is_focused(window) {
+            return false;
+        }
+        let Some((_, path, _)) = self.selected_path() else { return false };
+        let reformat = action == A::ReformatCode;
+        let title = if reformat { "Reformat Code" } else { "Optimize Imports" };
+        let files: Vec<PathBuf> = if path.is_dir() {
+            super::lsp_ui::python_files_under(&path)
+        } else if matches!(path.extension().and_then(|e| e.to_str()), Some("py" | "pyi")) {
+            vec![path.clone()]
+        } else {
+            Vec::new()
+        };
+        if files.is_empty() {
+            self.status = format!("{title}: no Python files in {}", path.display());
+            cx.notify();
+            return true;
+        }
+        let Some(ruff) = self.ruff() else {
+            self.show_toast("ruff not found: install it in the project interpreter (pip install ruff)".into(), true, cx);
+            return true;
+        };
+        let open: HashMap<PathBuf, String> = self.editors().filter_map(|e| Some((e.read(cx).path.clone()?, e.read(cx).text_string()))).collect();
+        let inputs: Vec<(PathBuf, String, bool)> = files
+            .into_iter()
+            .filter_map(|f| match open.get(&f) {
+                Some(t) => Some((f, t.clone(), true)),
+                None => std::fs::read_to_string(&f).ok().map(|t| (f, t, false)),
+            })
+            .collect();
+        let total = inputs.len();
+        let root = self.root.clone();
+        let task = cx.background_executor().spawn(async move {
+            inputs
+                .into_iter()
+                .filter_map(|(f, text, open)| {
+                    let out = if reformat { brisk_lint::format_text(&ruff, &root, &f, &text, None) } else { brisk_lint::optimize_imports(&ruff, &root, &f, &text) }.ok()?;
+                    (!out.is_empty() && out != text).then_some((f, text, out, open))
+                })
+                .collect::<Vec<_>>()
+        });
+        self.status = format!("{title}: {total} file(s)…");
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let changed = task.await;
+            let _ = this.update(cx, |this, cx| {
+                let mut on_disk = Vec::new();
+                let mut n = 0;
+                for (f, before, out, open) in changed {
+                    let ed = this.editors().find(|e| e.read(cx).path.as_deref() == Some(f.as_path())).cloned();
+                    // Skip a file that changed meanwhile.
+                    let now = match &ed {
+                        Some(e) if open => e.read(cx).text_string(),
+                        None if !open => std::fs::read_to_string(&f).unwrap_or_default(),
+                        _ => continue,
+                    };
+                    if now != before {
+                        continue;
+                    }
+                    crate::local_history::record(&f, &before.replace("\r\n", "\n"), crate::local_history::Label::BeforeReformat);
+                    match ed {
+                        Some(e) => e.update(cx, |e, cx| e.replace_all_text(&out, cx)),
+                        None if std::fs::write(&f, &out).is_ok() => on_disk.push(f),
+                        None => continue,
+                    }
+                    n += 1;
+                }
+                if let (Some(ty), false) = (&this.lsp.ty, on_disk.is_empty()) {
+                    ty.files_changed(&on_disk);
+                }
+                let msg = match (reformat, n) {
+                    (_, 0) if reformat => format!("No changes: {total} file(s) already formatted"),
+                    (_, 0) => format!("Imports are already optimized in {total} file(s)"),
+                    (true, _) => format!("Reformatted {n} of {total} file(s) (ruff)"),
+                    (false, _) => format!("Optimized imports in {n} of {total} file(s)"),
+                };
+                this.status = msg.clone();
+                this.show_toast(msg, false, cx);
+                this.refresh_git(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        true
+    }
+
     pub(super) fn format_action(&mut self, action: brisk_keymap::Action, window: &mut Window, cx: &mut Context<Self>) {
+        if self.format_tree_action(action, window, cx) {
+            return;
+        }
         let Some(ed) = self.focused_editor(window, cx).or_else(|| self.active_editor().cloned()) else { return };
         let (path, python) = {
             let e = ed.read(cx);

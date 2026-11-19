@@ -6,7 +6,7 @@ use brisk_syntax::{ClassInfo, Lang, Unwrap};
 use brisk_text::Selection;
 
 impl Editor {
-    fn python_tree(&mut self) -> Option<&brisk_syntax::Tree> {
+    pub(super) fn python_tree(&mut self) -> Option<&brisk_syntax::Tree> {
         self.reparse();
         let s = self.syntax.as_ref().filter(|s| s.lang() == Lang::Python && !s.is_stale())?;
         s.tree()

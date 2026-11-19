@@ -4,7 +4,11 @@
 //! With `BRISK_SMOKE_INTEL_HOLD=1` it stops with Quick Documentation (Ctrl+Q) open on
 //! `defaultdict`; with `BRISK_SMOKE_INTEL_HOLD=list`, with the completion list and its preview;
 //! with `BRISK_SMOKE_INTEL_HOLD=dumps`, with Quick Documentation on `json.dumps` (prose
-//! with inline code); with `=usages` or `=inlay`, with the Find Usages tree or inlay hints.
+//! with inline code); with `=usages`, `=inlay` or `=preview`, with the Find Usages tree, inlay
+//! hints or the rename's Refactoring Preview.
+//! At the end: Rename (Shift+F6) of a local, of a function (comments and strings, Preview, Do
+//! Refactor, one undo in both files) and of a module (its file too); Alt+Enter intentions on
+//! `intents.py` (import from the project, Create function, type hints, f-string, 'if' ones).
 
 use super::{Target, Workspace};
 use gpui::{AsyncWindowContext, Context, WeakEntity, Window};
@@ -326,6 +330,189 @@ y = [i * 2 for i in x]
             if hold.as_deref() == Some("inlay") {
                 eprintln!("smoke-intel: holding");
                 return;
+            }
+            // Rename (Shift+F6): a local in place; a function through the popup with "Search in
+            // comments and strings", Preview and Do Refactor, then one Ctrl+Z in either file;
+            // a module name renames its file.
+            const GREETER: &str = "def greet(name):\n    # greet the user\n    msg = \"hello \" + name\n    return msg\n\n\nGREETING = \"greet\"\n";
+            const USES: &str = "import greeter\nfrom greeter import greet\n\nprint(greet(\"a\"), greeter.GREETING)\n";
+            let _ = this.update_in(cx, |this, window, cx| {
+                let _ = std::fs::write(this.root.join("greeter.py"), GREETER);
+                let _ = std::fs::write(this.root.join("use_greet.py"), USES);
+                this.reindex_files(cx);
+                let f = this.root.join("greeter.py");
+                this.open_file(&f, window, cx);
+            });
+            wait(&this, cx, &|this, _| this.files.as_ref().is_some_and(|f| f.files.iter().any(|f| f == "use_greet.py"))).await;
+            pause(1000).await;
+            let rename_popup = |this: &Self| this.popup.as_ref().is_some_and(|p| p.kind == super::PopupKind::Rename);
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(ed) = this.active_editor().cloned() else { return };
+                ed.update(cx, |e, cx| e.select_on_line(2, 5..5, cx));
+                this.dispatch(brisk_keymap::Action::Rename, window, cx);
+                eprintln!("smoke-intel: rename local -> {} carets, popup {}, {:?}", ed.read(cx).buffer.selections.len(), rename_popup(this), this.status);
+                ed.update(cx, |e, cx| e.select_on_line(0, 5..5, cx));
+                this.dispatch(brisk_keymap::Action::Rename, window, cx);
+            });
+            wait(&this, cx, &|this, _| rename_popup(this)).await;
+            let labels = |this: &Self, q: &str| this.rename_items(q).iter().map(|i| format!("{} [{}]", i.label, i.detail)).collect::<Vec<_>>();
+            let pick = |this: &mut Self, q: &str, prefix: &str, window: &mut Window, cx: &mut Context<Self>| {
+                let t = this.rename_items(q).into_iter().find(|i| i.label.starts_with(prefix)).map(|i| i.target);
+                this.popup = None;
+                match t {
+                    Some(Target::Intention(i)) => this.apply_intent(*i, window, cx),
+                    Some(Target::Rename(n)) => this.apply_rename(n, window, cx),
+                    _ => eprintln!("smoke-intel: rename FAIL: no item {prefix:?}"),
+                }
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                eprintln!("smoke-intel: rename popup query {:?} -> {:?}", this.popup.as_ref().map(|p| p.query.clone()), labels(this, "welcome"));
+                pick(this, "welcome", "☐ Search", window, cx);
+                eprintln!("smoke-intel: rename checkbox -> popup {} {:?}", rename_popup(this), labels(this, "welcome"));
+                pick(this, "welcome", "Preview", window, cx);
+            });
+            wait(&this, cx, &|this, _| this.nav.pending.is_some()).await;
+            if hold.as_deref() == Some("preview") {
+                eprintln!("smoke-intel: holding");
+                return;
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                for r in this.find_window_rows() {
+                    eprintln!("smoke-intel: rename preview | {r}");
+                }
+                this.do_pending_refactor(window, cx);
+                let t = text(this, cx);
+                let u = std::fs::read_to_string(this.root.join("use_greet.py")).unwrap_or_default();
+                eprintln!("smoke-intel: rename done -> {:?}", this.status);
+                eprintln!("smoke-intel: rename greeter.py {:?}", t.lines().collect::<Vec<_>>());
+                eprintln!("smoke-intel: rename use_greet.py {:?}", u.lines().collect::<Vec<_>>());
+                this.dispatch(brisk_keymap::Action::Undo, window, cx);
+                let u = std::fs::read_to_string(this.root.join("use_greet.py")).unwrap_or_default();
+                eprintln!("smoke-intel: rename one undo {}: {:?}", pass(text(this, cx) == GREETER && u == USES), this.status);
+                let f = this.root.join("use_greet.py");
+                this.open_file(&f, window, cx);
+            });
+            pause(1500).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if let Some(ed) = this.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.select_on_line(0, 9..9, cx));
+                }
+                this.dispatch(brisk_keymap::Action::Rename, window, cx);
+            });
+            wait(&this, cx, &|this, _| rename_popup(this)).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                eprintln!("smoke-intel: rename module -> {:?}", labels(this, "welcomer"));
+                pick(this, "welcomer", "Rename module", window, cx);
+            });
+            wait(&this, cx, &|this, _| this.lsp.moved.is_none() && this.root.join("welcomer.py").exists()).await;
+            pause(300).await;
+            let _ = this.update(cx, |this, cx| {
+                let u = text(this, cx);
+                let ok = this.root.join("welcomer.py").exists() && !this.root.join("greeter.py").exists() && u.starts_with("import welcomer\nfrom welcomer import greet\n");
+                eprintln!("smoke-intel: rename module file {}: {:?} {:?}", pass(ok), this.status, u.lines().collect::<Vec<_>>());
+            });
+            // Alt+Enter intentions: import from the project, Create function, type hints from
+            // ty, f-string, split and merge 'if'.
+            let _ = this.update_in(cx, |this, window, cx| {
+                let _ = std::fs::write(this.root.join("shapes.py"), "class Square:\n    pass\n");
+                let _ = std::fs::write(this.root.join("intents.py"), "def area(n: int):\n    if n < 0:\n        return None\n    squares = [n * n]\n    return squares\n\n\ns = Square()\nv = area(3)\ntotal = compute(v, 2)\nmsg = \"{} has {}\".format(s, v)\nif v and s:\n    print(msg, total)\n");
+                this.reindex_files(cx);
+                let f = this.root.join("intents.py");
+                this.open_file(&f, window, cx);
+            });
+            wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| e.read(cx).diagnostics.iter().filter(|d| d.code == "F821" || d.code == "unresolved-reference").count() >= 2)).await;
+            pause(500).await;
+            let steps: [(&str, usize, &str, &str); 7] = [
+                ("Square()", 1, "Import '", "from "),
+                ("compute(v", 2, "Create function 'compute'", "def compute"),
+                ("def area", 5, "Specify return type", "def area"),
+                ("v = area", 0, "Add type hint for variable 'v'", "v"),
+                ("has {}", 2, "Convert to f-string literal", "msg ="),
+                ("if v and", 1, "Split into 2 'if' statements", "if "),
+                ("if v:", 1, "Merge nested 'if's", "if "),
+            ];
+            for (needle, off, label, show) in steps {
+                // Let ruff and ty check the edited text first.
+                pause(1500).await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let Some(ed) = this.active_editor().cloned() else { return };
+                    ed.update(cx, |e, _| {
+                        let t = e.text_string();
+                        let p = t.find(needle).map(|b| t[..b + off].chars().count()).unwrap_or(0);
+                        e.buffer.set_caret(p, false);
+                    });
+                    this.problems.intents.clear();
+                    this.status.clear();
+                    this.show_intentions(window, cx);
+                });
+                wait(&this, cx, &|this, _| !this.problems.intents.is_empty() || this.status.starts_with("No context")).await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let labels: Vec<String> = this.problems.intents.iter().map(|i| format!("{} [{}]", i.label, i.detail)).collect();
+                    let pick = this.problems.intents.iter().find(|i| i.label.starts_with(label)).map(|i| i.target.clone());
+                    this.popup = None;
+                    let ok = pick.is_some();
+                    if let Some(Target::Intention(i)) = pick {
+                        this.apply_intent(*i, window, cx);
+                    }
+                    let t = text(this, cx);
+                    let lines: Vec<&str> = t.lines().filter(|l| l.trim_start().starts_with(show)).collect();
+                    eprintln!("smoke-intel: alt-enter {} {needle:?} -> {labels:?} => {lines:?}", pass(ok));
+                });
+            }
+            let _ = this.update(cx, |this, cx| eprintln!("smoke-intel: intentions result {:?}", text(this, cx).lines().collect::<Vec<_>>()));
+            // Parameter Info (current parameter in bold, overloads), Quick Documentation's
+            // definition link, Type Info.
+            let _ = this.update_in(cx, |this, window, cx| {
+                let src = "from shapes import Square\n\n\ndef area(n: int, scale: float = 1.0) -> float:\n    \"\"\"Area of a square.\"\"\"\n    return n * n * scale\n\n\na = area(3, 2.0)\nb = max(1, 2)\nsq = Square()\nprint(a, b, sq)\n";
+                let f = this.root.join("info.py");
+                let _ = std::fs::write(&f, src);
+                this.reindex_files(cx);
+                this.open_file(&f, window, cx);
+            });
+            pause(2000).await;
+            let caret = |this: &mut Self, needle: &str, off: usize, cx: &mut Context<Self>| {
+                if let Some(ed) = this.active_editor().cloned() {
+                    ed.update(cx, |e, _| {
+                        e.close_insight();
+                        let t = e.text_string();
+                        let p = t.find(needle).map(|b| t[..b + off].chars().count()).unwrap_or(0);
+                        e.buffer.set_caret(p, false);
+                    });
+                }
+            };
+            let insight = |this: &Self, cx: &gpui::App| this.active_editor().map(|e| e.read(cx).insight_for_smoke()).unwrap_or_default();
+            for (needle, off) in [("area(3, 2", 8), ("max(1", 4)] {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    caret(this, needle, off, cx);
+                    this.dispatch(brisk_keymap::Action::ParameterInfo, window, cx);
+                });
+                wait(&this, cx, &|this, cx| !insight(this, cx).1.is_empty()).await;
+                // The file's own `def` or the builtin shows at once; ty's answer replaces it.
+                pause(1500).await;
+                let _ = this.update(cx, |this, cx| eprintln!("smoke-intel: ctrl-p {needle:?} -> {:?}", insight(this, cx).1));
+            }
+            if hold.as_deref() == Some("sig") {
+                eprintln!("smoke-intel: holding");
+                return;
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                caret(this, "area(3", 1, cx);
+                this.dispatch(brisk_keymap::Action::QuickDocumentation, window, cx);
+            });
+            wait(&this, cx, &|this, cx| insight(this, cx).0.is_some()).await;
+            let _ = this.update(cx, |this, cx| {
+                let (src, _) = insight(this, cx);
+                let doc = this.active_editor().map(|e| e.read(cx).doc_shown_text().0.unwrap_or_default()).unwrap_or_default();
+                eprintln!("smoke-intel: ctrl-q link {} {src:?}, doc {:?}", pass(src.as_deref() == Some("info:4")), doc.lines().collect::<Vec<_>>());
+            });
+            for (needle, off) in [("area(3", 1), ("Square()", 1), ("a = area", 0), ("b = max", 0)] {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    caret(this, needle, off, cx);
+                    this.status.clear();
+                    this.dispatch(brisk_keymap::Action::TypeInfo, window, cx);
+                });
+                wait(&this, cx, &|this, _| !this.status.is_empty()).await;
+                let _ = this.update(cx, |this, _| eprintln!("smoke-intel: ctrl-shift-p {needle:?} -> {:?}", this.status));
             }
             let _ = this.update(cx, |this, cx| {
                 if let Some(ed) = this.active_editor().cloned() {

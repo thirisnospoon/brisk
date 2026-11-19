@@ -138,6 +138,53 @@ impl Workspace {
                     eprintln!("smoke-edit2: {key} inserted -> {:?}", t.lines().skip(13).collect::<Vec<_>>());
                 });
             }
+            // Optimize Imports (Ctrl+Alt+O) on a folder in the Project tree: isort groups,
+            // `__future__` first, `# noqa` kept; an open file changes in its editor, a closed
+            // one on disk.
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.refactor_smoke(window, cx);
+                let (oi, pkg) = (this.root.join("oi"), this.root.join("mypkg"));
+                let _ = std::fs::create_dir_all(oi.join("sub"));
+                let _ = std::fs::create_dir_all(&pkg);
+                let _ = std::fs::write(pkg.join("__init__.py"), "helper = 1\n");
+                let _ = std::fs::write(oi.join("a.py"), "\"\"\"Doc.\"\"\"\nfrom __future__ import annotations\nimport sys\nimport requests\nimport os, json\nfrom mypkg import helper\nfrom . import sibling\nimport re  # noqa\nfrom typing import List\nfrom typing import Dict\nx: Dict = {}\nprint(os.sep, requests, helper, sibling)\n");
+                let _ = std::fs::write(oi.join("sub").join("b.py"), "import sys\nimport os\nprint(os.sep)\n");
+                let _ = std::fs::write(oi.join("notes.txt"), "import sys\n");
+                this.open_file(&oi.join("a.py"), window, cx);
+                this.reindex_files(cx);
+            });
+            for _ in 0..50 {
+                if this.read_with(cx, |this, _| this.files.as_ref().is_some_and(|f| f.files.iter().any(|f| f == "oi/sub/b.py"))).unwrap_or(true) {
+                    break;
+                }
+                bg.timer(std::time::Duration::from_millis(100)).await;
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.left = Some(super::LeftTool::Project);
+                this.tree.reload(0);
+                this.tree_selected = this.tree.reveal(&this.root.join("oi"));
+                window.focus(&this.tree_focus);
+                cx.notify();
+            });
+            bg.timer(std::time::Duration::from_millis(300)).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                eprintln!("smoke-edit2: tree focused {}", this.tree_focus.is_focused(window));
+                this.status.clear();
+                this.smoke_press("ctrl-alt-o", window, cx);
+            });
+            for _ in 0..100 {
+                if this.read_with(cx, |this, _| this.status.starts_with("Optimized imports in") || this.status.starts_with("Imports are")).unwrap_or(true) {
+                    break;
+                }
+                bg.timer(std::time::Duration::from_millis(100)).await;
+            }
+            let _ = this.update_in(cx, |this, _, cx| {
+                let a = this.active_editor().map(|e| e.read(cx).text_string()).unwrap_or_default();
+                let b = std::fs::read_to_string(this.root.join("oi").join("sub").join("b.py")).unwrap_or_default();
+                eprintln!("smoke-edit2: tree optimize imports -> {:?}", this.status);
+                eprintln!("smoke-edit2: tree optimize a.py (editor, dirty {}) {:?}", this.active_editor().is_some_and(|e| e.read(cx).buffer.is_dirty()), a.lines().collect::<Vec<_>>());
+                eprintln!("smoke-edit2: tree optimize sub/b.py (disk) {:?}", b.lines().collect::<Vec<_>>());
+            });
             let _ = this.update_in(cx, |this, window, cx| this.edit2_rest(window, cx));
         })
         .detach();
@@ -252,6 +299,59 @@ impl Workspace {
         eprintln!("smoke-edit2: unwrap if -> {:?}", text(cx).lines().skip(4).collect::<Vec<_>>());
         let names: Vec<_> = crate::editor::templates::SURROUNDERS.iter().map(|s| s.0).collect();
         eprintln!("smoke-edit2: surround with list -> {names:?}");
+    }
+
+    /// Extract Variable / Constant (Expressions popup), Extract Method, Inline.
+    fn refactor_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let file = self.root.join("refactor.py");
+        let src = "import os\n\n\ndef total(items, tax):\n    subtotal = sum(items)\n    extra = subtotal * tax\n    print(extra)\n    return subtotal + extra\n\n\ndef sq(x, k=2):\n    return x ** k\n\n\nprint(sq(3), sq(4, k=3))\nrate = 0.2 + 0.1\nprint(rate * 2)\n";
+        let _ = std::fs::write(&file, src);
+        self.open_file(&file, window, cx);
+        let Some(ed) = self.active_editor().cloned() else { return };
+        let lines = |this: &Self, cx: &mut Context<Self>, r: std::ops::Range<usize>| this.active_editor().map(|e| e.read(cx).text_string().lines().skip(r.start).take(r.len()).map(String::from).collect::<Vec<_>>()).unwrap_or_default();
+        let pick = |this: &mut Self, prefix: &str, window: &mut Window, cx: &mut Context<Self>| {
+            let t = this.problems.intents.iter().find(|i| i.label.starts_with(prefix)).map(|i| i.target.clone());
+            this.popup = None;
+            if let Some(super::Target::Intention(i)) = t {
+                this.apply_intent(*i, window, cx);
+            }
+        };
+        let at = |e: &crate::editor::Editor, needle: &str, off: usize| e.text_string().find(needle).map(|b| e.text_string()[..b + off].chars().count()).unwrap_or(0);
+        // Ctrl+Alt+V on `items` without a selection: the Expressions choice.
+        ed.update(cx, |e, _| { let p = at(e, "sum(items)", 5); e.buffer.set_caret(p, false) });
+        self.smoke_press("ctrl-alt-v", window, cx);
+        let labels: Vec<_> = self.problems.intents.iter().map(|i| i.label.clone()).collect();
+        eprintln!("smoke-edit2: extract variable -> {:?} {labels:?}", self.problems.intents_title);
+        pick(self, "sum(items)", window, cx);
+        eprintln!("smoke-edit2: extracted variable -> {:?}", lines(self, cx, 3..6));
+        self.dispatch(Action::Undo, window, cx);
+        // Ctrl+Alt+C on `0.1`: pick `0.2 + 0.1`.
+        ed.update(cx, |e, _| { let p = at(e, "0.1", 1); e.buffer.set_caret(p, false) });
+        self.smoke_press("ctrl-alt-c", window, cx);
+        pick(self, "0.2 + 0.1", window, cx);
+        eprintln!("smoke-edit2: extracted constant -> {:?} / {:?}", lines(self, cx, 0..3), lines(self, cx, 17..18));
+        self.dispatch(Action::Undo, window, cx);
+        // Ctrl+Alt+M on the two assignments.
+        ed.update(cx, |e, _| {
+            let (a, z) = (at(e, "    subtotal =", 0), at(e, "    print(extra)", 0));
+            e.buffer.selections = vec![brisk_text::Selection { anchor: a, head: z, goal_col: None }];
+        });
+        self.smoke_press("ctrl-alt-m", window, cx);
+        let sel = ed.read(cx).buffer.selections.len();
+        eprintln!("smoke-edit2: extract method -> {:?} {:?} renaming carets {sel}", self.status, lines(self, cx, 3..14));
+        self.dispatch(Action::Undo, window, cx);
+        eprintln!("smoke-edit2: extract method undo -> {}", ed.read(cx).text_string() == src);
+        // Ctrl+Alt+N on `rate`, then on `def sq`.
+        ed.update(cx, |e, _| { let p = at(e, "rate =", 1); e.buffer.set_caret(p, false) });
+        self.smoke_press("ctrl-alt-n", window, cx);
+        eprintln!("smoke-edit2: inline variable -> {:?} {:?}", self.status, lines(self, cx, 14..17));
+        self.dispatch(Action::Undo, window, cx);
+        ed.update(cx, |e, _| { let p = at(e, "def sq", 5); e.buffer.set_caret(p, false) });
+        self.smoke_press("ctrl-alt-n", window, cx);
+        let labels: Vec<_> = self.problems.intents.iter().map(|i| i.label.clone()).collect();
+        eprintln!("smoke-edit2: inline function -> {:?} {labels:?}", self.problems.intents_title);
+        pick(self, "Inline all", window, cx);
+        eprintln!("smoke-edit2: inlined function -> {:?}", lines(self, cx, 8..12));
     }
 
     fn edit2_rest(&mut self, window: &mut Window, cx: &mut Context<Self>) {

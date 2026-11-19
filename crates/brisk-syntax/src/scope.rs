@@ -19,7 +19,7 @@ pub struct NameRefs {
     pub local: bool,
 }
 
-fn is_scope(k: &str) -> bool {
+pub(crate) fn is_scope(k: &str) -> bool {
     matches!(k, "function_definition" | "lambda" | "class_definition")
 }
 
@@ -28,7 +28,7 @@ fn same(a: Option<Node>, b: Node) -> bool {
 }
 
 /// The identifier is the attribute part of `x.attr` or the name in `f(name=...)`: not a variable.
-fn is_member(n: Node) -> bool {
+pub(crate) fn is_member(n: Node) -> bool {
     let Some(p) = n.parent() else { return false };
     match p.kind() {
         "attribute" => same(p.child_by_field_name("attribute"), n),
@@ -38,7 +38,7 @@ fn is_member(n: Node) -> bool {
 }
 
 /// The identifier is assigned (bound) here rather than read.
-fn is_binding(n: Node) -> bool {
+pub(crate) fn is_binding(n: Node) -> bool {
     let mut cur = n;
     while let Some(p) = cur.parent() {
         match p.kind() {

@@ -216,7 +216,7 @@ pub fn local_signature(text: &str, before: &str) -> Option<Signature> {
             }
         }
     };
-    Some(Signature { label, params: ranges, active, doc: String::new() })
+    Some(Signature { label, params: ranges, active, doc: String::new(), overloads: Vec::new(), current: 0 })
 }
 
 impl Editor {
