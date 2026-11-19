@@ -258,7 +258,8 @@ impl Workspace {
         let exists = |p: &str| root.join(p).exists();
         self.smoke_select(&root.join("models.py"), window);
         self.smoke_press("alt-insert", window, cx);
-        self.smoke_press("down down enter", window, cx);
+        // File, Scratch File, Directory, Python Package, Python File.
+        self.smoke_press("down down down down down enter", window, cx);
         self.smoke_query("pkg/helper");
         eprintln!("smoke-edit: new python file popup -> {}", self.smoke_popup());
         self.smoke_press("enter", window, cx);

@@ -45,6 +45,9 @@ mod mouse_smoke;
 mod bars_smoke;
 mod scope_smoke;
 mod w7_smoke;
+mod w7_smoke2;
+mod scratch_ui;
+mod places_ui;
 mod lsp_ui;
 mod main_menu;
 mod menu_ui;
@@ -183,6 +186,10 @@ enum PopupKind {
     LocalHistory,
     /// Local History → Put Label: the label's name.
     PutLabel,
+    /// File › New › Scratch File: the language.
+    NewScratch,
+    /// Ctrl+Shift+E.
+    RecentLocations,
     /// A breakpoint's condition.
     BreakpointCondition,
     /// A directory breadcrumb: the folder's contents (`Workspace::crumb_dir`).
@@ -257,6 +264,8 @@ enum Target {
     Dir(PathBuf),
     Action(Action),
     Line(usize),
+    /// Go to Line:Column: line (None: the caret's), column, 0-based.
+    LineCol(Option<usize>, usize),
     Branch(brisk_git::Branch),
     NewBranch,
     Confirm(git_ui::Pending),
@@ -295,6 +304,10 @@ enum Target {
     History(PathBuf, u64),
     /// Put a Local History label with this name.
     PutLabel(String),
+    /// Create a scratch file with this extension.
+    NewScratch(&'static str),
+    /// A place in a file: line, column (Recent Locations, Go to Line:Column).
+    Place(PathBuf, usize, usize),
     /// Set the edited breakpoint's condition (empty: none).
     BpCondition(String),
     BpRemove,
@@ -332,6 +345,7 @@ pub struct Workspace {
     problems: problems_ui::Problems,
     lsp: lsp_ui::Lsp,
     nav: lsp_ui::Nav,
+    places: places_ui::Places,
     symbols: project_ui::Symbols,
     /// The open context menu.
     menu: Option<menu_ui::ContextMenu>,
@@ -632,7 +646,8 @@ impl Workspace {
             let f = PathBuf::from(f);
             cx.defer_in(window, move |this: &mut Self, window, cx| this.run_smoke(f, window, cx));
         }
-        let tree = ProjectTree::new(&root);
+        let mut tree = ProjectTree::new(&root);
+        tree.add_root(scratch_ui::ROOT_NAME, &scratch_ui::scratch_dir());
         let focus = cx.focus_handle();
         let tree_focus = cx.focus_handle();
 
@@ -734,6 +749,7 @@ impl Workspace {
             problems: problems_ui::Problems::new(cx),
             lsp: lsp_ui::Lsp::new(),
             nav: lsp_ui::Nav::default(),
+            places: places_ui::Places::default(),
             symbols: project_ui::Symbols::default(),
             menu: None,
             file_op: None,
@@ -1393,6 +1409,9 @@ impl Workspace {
             A::PasteFromHistory if self.focused_editor(window, cx).is_some() => self.open_popup(PopupKind::PasteHistory),
             A::ShowLocalHistory => self.show_local_history(cx),
             A::PutLabel => self.start_put_label(),
+            A::NewScratchFile => self.start_new_scratch(cx),
+            A::RecentLocations => self.recent_locations(cx),
+            A::LastEditLocation => self.last_edit_location(window, cx),
             A::ToggleBreakpoint | A::ViewBreakpoints | A::Debug | A::DebugContext | A::Resume | A::StepOver | A::StepInto | A::StepOut | A::RunToCursor | A::EvaluateExpression
             | A::PauseProgram | A::RerunDebug | A::AddToWatches | A::MuteBreakpoints | A::SmartStepInto | A::AttachToProcess | A::SetNextStatement => {
                 self.debug_action(action, window, cx);
@@ -1661,9 +1680,20 @@ impl Workspace {
                     .collect()
             }
             PopupKind::GotoLine => {
-                let line = q.split(':').next().and_then(|s| s.trim().parse::<usize>().ok());
-                line.map(|l| vec![PopupItem { label: format!("Go to line {l}"), detail: String::new(), hint: String::new(), target: Target::Line(l.saturating_sub(1)) }])
-                    .unwrap_or_default()
+                // `line`, `line:column` or `:column` (PyCharm's Go to Line:Column).
+                let mut parts = q.splitn(2, ':').map(|s| s.trim().parse::<usize>().ok());
+                let (line, col) = (parts.next().flatten(), parts.next().flatten());
+                match (line, col) {
+                    (l, Some(c)) => {
+                        let label = match l {
+                            Some(l) => format!("Go to line {l}, column {c}"),
+                            None => format!("Go to column {c}"),
+                        };
+                        vec![PopupItem { label, detail: String::new(), hint: String::new(), target: Target::LineCol(l.map(|l| l.saturating_sub(1)), c.saturating_sub(1)) }]
+                    }
+                    (Some(l), None) => vec![PopupItem { label: format!("Go to line {l}"), detail: String::new(), hint: String::new(), target: Target::Line(l.saturating_sub(1)) }],
+                    _ => Vec::new(),
+                }
             }
             k @ (PopupKind::Branches | PopupKind::NewBranch | PopupKind::VcsOperations | PopupKind::Confirm) => self.git_popup_items(k, &q),
             k @ (PopupKind::RunConfigs(_) | PopupKind::Interpreters) => self.run_popup_items(k, &q),
@@ -1673,6 +1703,7 @@ impl Workspace {
             PopupKind::Rename => self.rename_items(&q),
             PopupKind::FolderCrumb => self.folder_items(&q),
             PopupKind::PutLabel => self.put_label_items(&q),
+            PopupKind::NewScratch | PopupKind::RecentLocations => self.structure_items(&q),
             PopupKind::BackgroundTasks => self.bg_task_items(&q),
             PopupKind::TabList => self.structure_items(&q),
         };
@@ -1733,6 +1764,16 @@ impl Workspace {
                         self.focus_editor(window, cx);
                         self.dispatch(a, window, cx);
                     }
+                    Some(Target::LineCol(l, c)) => {
+                        let here = self.active_editor().and_then(|e| {
+                            let e = e.read(cx);
+                            Some((e.path.clone()?, e.caret_line_col().0))
+                        });
+                        if let Some((path, cur)) = here {
+                            self.navigate_to(lsp_ui::NavPos { path, line: l.unwrap_or(cur), col: c }, window, cx);
+                        }
+                        self.focus_editor(window, cx);
+                    }
                     Some(Target::Line(l)) => {
                         if let Some(ed) = self.active_editor().cloned() {
                             ed.update(cx, |e, cx| e.go_to_line(l, cx));
@@ -1777,6 +1818,11 @@ impl Workspace {
                     Some(Target::History(path, at)) => self.history_diff(path, at, window, cx),
                     Some(Target::PutLabel(name)) => {
                         self.put_label(name, cx);
+                        self.focus_editor(window, cx);
+                    }
+                    Some(Target::NewScratch(ext)) => self.create_scratch(ext, window, cx),
+                    Some(Target::Place(path, line, col)) => {
+                        self.navigate_to(lsp_ui::NavPos { path, line, col }, window, cx);
                         self.focus_editor(window, cx);
                     }
                     Some(t @ (Target::BpCondition(_) | Target::BpRemove)) => self.pick_condition(t, window, cx),
@@ -2075,7 +2121,7 @@ impl Workspace {
                                 };
                                 let id = r.id;
                                 let mut label = node.name.clone();
-                                if r.depth == 0 {
+                                if r.id == 0 {
                                     label = format!("{}  {}", node.name, node.path.display());
                                 }
                                 div()
@@ -2537,6 +2583,8 @@ impl Workspace {
             PopupKind::PasteHistory => ("Paste from History", "Type to filter"),
             PopupKind::LocalHistory => ("Local History", "Enter: show diff · Ctrl+Enter: revert or restore"),
             PopupKind::PutLabel => ("Put Label", "Label name"),
+            PopupKind::NewScratch => ("New Scratch File", "Type to filter languages"),
+            PopupKind::RecentLocations => (if self.places.changed_only { "Recent Locations (changed only)" } else { "Recent Locations" }, "Type to filter · Ctrl+Shift+E: changed only"),
             PopupKind::BreakpointCondition => ("Breakpoint Condition", "Python expression, e.g. i == 3"),
             PopupKind::FileName | PopupKind::FileDelete => match &self.file_op {
                 Some(op) => (op.title(), op.placeholder()),
@@ -2673,7 +2721,7 @@ impl Workspace {
             Target::File(_) => file_icon(&it.label, false),
             Target::Dir(_) => file_icon(&it.label, true),
             Target::Action(_) => ("⚡", gpui::rgb(0xb3ae60).into()),
-            Target::Line(_) => ("↧", Theme::text_muted()),
+            Target::Line(_) | Target::LineCol(..) => ("↧", Theme::text_muted()),
             Target::Branch(b) if b.current => ("★", gpui::rgb(0xe0a85a).into()),
             Target::Branch(b) if b.remote => ("☁", Theme::text_muted()),
             Target::Branch(_) => ("⎇", Theme::text_muted()),
@@ -2703,6 +2751,8 @@ impl Workspace {
             Target::Clip(_) => ("¶", Theme::text_muted()),
             Target::History(..) => ("◷", Theme::text_muted()),
             Target::PutLabel(_) => ("▮", Theme::bookmark()),
+            Target::NewScratch(_) => ("✎", Theme::text_muted()),
+            Target::Place(..) => ("◷", Theme::text_muted()),
             Target::BpCondition(_) | Target::BpRemove => ("●", Theme::breakpoint()),
         };
         let branch = matches!(it.target, Target::Branch(_));

@@ -43,6 +43,7 @@ actions! {
     GotoSymbol => "Go to Symbol", "Navigate";
     RecentFiles => "Recent Files", "Navigate";
     RecentLocations => "Recent Locations", "Navigate";
+    LastEditLocation => "Last Edit Location", "Navigate";
     GotoLine => "Go to Line:Column", "Navigate";
     GotoDeclaration => "Go to Declaration or Usages", "Navigate";
     GotoImplementation => "Go to Implementation(s)", "Navigate";
@@ -242,6 +243,7 @@ actions! {
     Fetch => "Fetch", "Git";
     ShowLocalHistory => "Show Local History", "Git";
     PutLabel => "Local History: Put Label…", "Git";
+    NewScratchFile => "Scratch File", "File";
 
     // Database
     ExecuteQuery => "Execute", "Database";

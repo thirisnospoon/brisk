@@ -125,6 +125,7 @@ impl Workspace {
                 this.schedule_lint(ed.clone(), LINT_DELAY, cx);
             }
             this.structure_follow_caret(&ed, cx);
+            this.track_place(&ed, cx);
         })
         .detach();
         cx.subscribe_in(ed, window, |this: &mut Self, ed, ev: &EditorEvent, window, cx| match ev {

@@ -16,6 +16,7 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("ctrl-alt-shift-n", A::GotoSymbol, None);
     k.bind("ctrl-e", A::RecentFiles, None);
     k.bind("ctrl-shift-e", A::RecentLocations, None);
+    k.bind("ctrl-shift-backspace", A::LastEditLocation, None);
     k.bind("ctrl-g", A::GotoLine, ED);
     k.bind("ctrl-b", A::GotoDeclaration, ED);
     k.bind("ctrl-alt-b", A::GotoImplementation, ED);
@@ -98,6 +99,7 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("alt-shift-j", A::UnselectOccurrence, ED);
     k.bind("ctrl-alt-shift-j", A::SelectAllOccurrences, ED);
     k.bind("alt-shift-insert", A::ToggleColumnSelectionMode, ED);
+    k.bind("ctrl-alt-shift-insert", A::NewScratchFile, None);
     // CloneCaretAbove/Below: "Ctrl, Ctrl+Up/Down" (double Ctrl, held) is detected by the workspace.
     k.bind("shift-enter", A::StartNewLine, ED);
     k.bind("ctrl-alt-enter", A::StartNewLineBefore, ED);

@@ -46,6 +46,9 @@ pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
 pub use quick_def::definition_source;
 
+/// PyCharm's default "Hard wrap at" for Python.
+const RIGHT_MARGIN: usize = 120;
+
 pub fn line_height() -> f32 {
     crate::settings::line_height()
 }
@@ -100,6 +103,8 @@ pub struct Editor {
     column_anchor: Option<(usize, usize)>,
     /// Column selection mode (Shift+Alt+Insert) and its block: anchor and head (line, column).
     column_mode: bool,
+    /// The right margin's column (PyCharm: 120, `.editorconfig` max_line_length); None: not drawn.
+    pub right_margin: Option<usize>,
     column_block: Option<((usize, usize), (usize, usize))>,
     layout: Option<LayoutCache>,
     selecting: bool,
@@ -258,6 +263,7 @@ impl Editor {
         let lang = Lang::from_path(path).filter(|_| text.len() <= 3 * 1024 * 1024);
         if let Some(l) = lang {
             buffer.line_comment = l.line_comment().map(Into::into);
+            buffer.python = l == Lang::Python;
         } else {
             // Line comment prefix for common non-Python files.
             buffer.line_comment = match path.extension().and_then(|e| e.to_str()) {
@@ -276,6 +282,7 @@ impl Editor {
         if let Some(crlf) = editorconfig.crlf {
             buffer.line_ending = if crlf { brisk_text::LineEnding::CrLf } else { brisk_text::LineEnding::Lf };
         }
+        let right_margin = editorconfig.max_line_length.unwrap_or(Some(RIGHT_MARGIN));
         let mut ed = Self {
             path: Some(path.to_path_buf()),
             buffer,
@@ -297,6 +304,7 @@ impl Editor {
             autoscrolling: false,
             column_anchor: None,
             column_mode: false,
+            right_margin,
             column_block: None,
             layout: None,
             selecting: false,
@@ -370,6 +378,7 @@ impl Editor {
             autoscrolling: false,
             column_anchor: None,
             column_mode: false,
+            right_margin: None,
             column_block: None,
             layout: None,
             selecting: false,
@@ -970,7 +979,8 @@ impl Editor {
                         b.selections = carets.iter().map(|&p| { let (l, _) = b.pos_to_line_col(p); Selection::caret(b.line_start(l)) }).collect();
                         b.insert(&t);
                     } else {
-                        b.insert(&t);
+                        // Python: a pasted block takes the indent of where it goes.
+                        b.paste_python(&t);
                     }
                 }
             }
@@ -1815,6 +1825,13 @@ impl Element for EditorElement {
             for c in (0..ws).step_by(unit) {
                 let x = text_x + pp.char_w * c as f32;
                 under.push(fill(Bounds::new(point(x, y_of(l)), size(px(1.), lh)), Theme::indent_guide()));
+            }
+        }
+        // The right margin (PyCharm's "Hard wrap at" column), a thin line across the text area.
+        if let Some(m) = ed.right_margin.filter(|_| !ed.is_field) {
+            let x = text_x + pp.char_w * m as f32;
+            if x > text_left && x < bounds.right() {
+                under.push(fill(Bounds::new(point(x, bounds.top()), size(px(1.), bounds.size.height)), Theme::right_margin()));
             }
         }
         // Search matches: all of them, the current one brighter.

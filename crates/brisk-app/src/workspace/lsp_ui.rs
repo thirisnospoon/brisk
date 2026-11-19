@@ -275,6 +275,7 @@ impl Workspace {
             }
         }
         if target.path.is_file() {
+            self.places.jumping = true;
             self.jump(&target, window, cx);
         }
     }

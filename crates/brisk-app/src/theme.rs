@@ -62,6 +62,7 @@ impl Theme {
     pub fn caret() -> Hsla { ui("caret", 0xced0d6, 0x000000) }
     pub fn selection() -> Hsla { ui("selection", 0x214283, 0xa6d2ff) }
     pub fn indent_guide() -> Hsla { ui("indent_guide", 0x313438, 0xebecf0) }
+    pub fn right_margin() -> Hsla { ui("right_margin", 0x393b40, 0xdfe1e5) }
 
     // VCS
     pub fn vcs_added() -> Hsla { pick(0x549159, 0x9fd09c) }

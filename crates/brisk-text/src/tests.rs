@@ -275,3 +275,86 @@ fn multi_caret_copy_is_in_text_order() {
     b.selections = vec![Selection::caret(9), Selection::caret(0)];
     assert_eq!(b.caret_lines(), vec![0]);
 }
+
+fn py(t: &str, caret: usize) -> Buffer {
+    let mut b = Buffer::new(t);
+    b.python = true;
+    b.set_caret(caret, false);
+    b
+}
+
+fn caret_marked(b: &Buffer) -> String {
+    let mut t = b.text();
+    t.insert(t.char_indices().nth(b.primary().head).map_or(t.len(), |(i, _)| i), '|');
+    t
+}
+
+#[test]
+fn python_enter_rules() {
+    // Docstring: the third quote closes it, Enter opens its own line.
+    let mut b = py("def f():\n    ", 13);
+    for c in "\"\"\"".chars() {
+        b.type_char(c);
+    }
+    assert_eq!(caret_marked(&b), "def f():\n    \"\"\"|\"\"\"");
+    b.newline();
+    assert_eq!(caret_marked(&b), "def f():\n    \"\"\"\n    |\n    \"\"\"");
+    // An unclosed docstring gets its closing quotes.
+    let mut b = py("def f():\n    \"\"\"\nx = 1", 16);
+    b.newline();
+    assert_eq!(caret_marked(&b), "def f():\n    \"\"\"\n    |\n    \"\"\"\nx = 1");
+    // Inside a string: two literals, a backslash outside brackets.
+    let mut b = py("s = 'abcdef'", 8);
+    b.newline();
+    assert_eq!(caret_marked(&b), "s = 'abc' \\\n    '|def'");
+    let mut b = py("f(f\"abcdef\")", 7);
+    b.newline();
+    assert_eq!(caret_marked(&b), "f(f\"abc\"\n  f\"|def\")");
+    // A comment split in the middle stays a comment.
+    let mut b = py("    # one two", 9);
+    b.newline();
+    assert_eq!(caret_marked(&b), "    # one\n    # | two");
+    // Open bracket with arguments: aligned with them.
+    let mut b = py("x = foo(a,", 10);
+    b.newline();
+    assert_eq!(caret_marked(&b), "x = foo(a,\n        |");
+    // After return: one level back.
+    let mut b = py("def f():\n    return 1", 21);
+    b.newline();
+    assert_eq!(caret_marked(&b), "def f():\n    return 1\n|");
+    // Non-Python buffers keep the plain rules.
+    let mut b = buf("    return 1");
+    b.set_caret(12, false);
+    b.newline();
+    assert_eq!(caret_marked(&b), "    return 1\n    |");
+}
+
+#[test]
+fn python_colon_dedents_else() {
+    let mut b = py("if a:\n    x = 1\n    else", 24);
+    b.type_char(':');
+    assert_eq!(caret_marked(&b), "if a:\n    x = 1\nelse:|");
+    let mut b = py("try:\n    for i in y:\n        pass\n        except", 48);
+    b.type_char(':');
+    assert_eq!(caret_marked(&b), "try:\n    for i in y:\n        pass\nexcept:|");
+    // Already at the right place: just the colon.
+    let mut b = py("if a:\n    x\nelse", 16);
+    b.type_char(':');
+    assert_eq!(caret_marked(&b), "if a:\n    x\nelse:|");
+}
+
+#[test]
+fn python_paste_takes_the_caret_indent() {
+    // Copied from `def` (without its indent) into a deeper block.
+    let mut b = py("class A:\n    ", 13);
+    b.paste_python("def f(self):\n        return 1\n");
+    assert_eq!(b.text(), "class A:\n    def f(self):\n        return 1\n");
+    // Whole lines with their indent, pasted at the top level.
+    let mut b = py("", 0);
+    b.paste_python("        x = 1\n        if x:\n            y = 2");
+    assert_eq!(b.text(), "x = 1\nif x:\n    y = 2");
+    // After other text on the line: as is.
+    let mut b = py("z = ", 4);
+    b.paste_python("[1,\n    2]");
+    assert_eq!(b.text(), "z = [1,\n    2]");
+}
