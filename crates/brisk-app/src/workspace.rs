@@ -2341,7 +2341,9 @@ impl Workspace {
                     Tab::Editor(e) => {
                         let ed = e.read(cx);
                         let title = ed.title();
-                        let (icon, color) = file_icon(&title, false);
+                        // A file at a revision: the icon of its name ("x.py (1a2b3c4d)").
+                        let name = ed.revision.as_ref().map(|r| r.0.rsplit('/').next().unwrap_or(&r.0).to_string());
+                        let (icon, color) = file_icon(name.as_deref().unwrap_or(&title), false);
                         let vcs = ed.path.as_deref().and_then(|p| self.file_status(p)).map(git_ui::status_color);
                         let vcs = if ed.disk_conflict.is_some() { Some(gpui::rgb(0xe0b84a).into()) } else { vcs };
                         (title, icon, color, vcs, ed.buffer.is_dirty())

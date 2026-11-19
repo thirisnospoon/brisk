@@ -99,6 +99,8 @@ pub struct Buffer {
     pub auto_pairs: bool,
     /// Python file: Enter and typing follow PyCharm's Python rules (`smart.rs`).
     pub python: bool,
+    /// No edits at all (a file at a revision): every change and undo is ignored.
+    pub read_only: bool,
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
     version: u64,
@@ -137,6 +139,7 @@ impl Buffer {
             line_comment: Some("#".into()),
             auto_pairs: true,
             python: false,
+            read_only: false,
             undo: Vec::new(),
             redo: Vec::new(),
             version: 0,
@@ -247,6 +250,9 @@ impl Buffer {
         kind: EditKind,
         after: impl FnOnce(&dyn Fn(usize, bool) -> usize, &Self) -> Vec<Selection>,
     ) {
+        if self.read_only {
+            return;
+        }
         // Clamp to the text and merge overlaps: carets close together (Ctrl+Delete with carets
         // at 1 and 3 in `abcd`, Backspace in `()` with carets on both sides) produce
         // overlapping ranges, and removing those from the rope one by one panics.
@@ -354,6 +360,9 @@ impl Buffer {
     }
 
     pub fn undo(&mut self) -> bool {
+        if self.read_only {
+            return false;
+        }
         let Some(t) = self.undo.pop() else { return false };
         for e in t.edits.iter().rev() {
             let end = e.start + e.inserted.chars().count();
@@ -368,6 +377,9 @@ impl Buffer {
     }
 
     pub fn redo(&mut self) -> bool {
+        if self.read_only {
+            return false;
+        }
         let Some(mut t) = self.redo.pop() else { return false };
         for e in t.edits.iter() {
             let end = e.start + e.removed.chars().count();

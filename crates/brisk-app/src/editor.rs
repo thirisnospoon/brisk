@@ -122,6 +122,9 @@ pub struct Editor {
     /// Set with `diff_bg`: change blocks to paint instead of the changes against HEAD (the
     /// merge window's result), as (lines, color); an empty range is a 2 px line.
     pub diff_blocks: Vec<(Range<usize>, gpui::Hsla)>,
+    /// A file at a revision (Annotate Previous Revision): (path in the repository, commit).
+    /// Read-only, no path (the tab shows `title_override`).
+    pub revision: Option<(String, String)>,
     /// Run with Coverage marks.
     coverage: Option<coverage::CoverageMarks>,
     vcs_version: u64,
@@ -321,6 +324,7 @@ impl Editor {
             diff_bg: false,
             diff_words: Vec::new(),
             diff_blocks: Vec::new(),
+            revision: None,
             coverage: None,
             vcs_version: u64::MAX,
             show_gutter: true,
@@ -397,6 +401,7 @@ impl Editor {
             diff_bg: false,
             diff_words: Vec::new(),
             diff_blocks: Vec::new(),
+            revision: None,
             coverage: None,
             vcs_version: u64::MAX,
             show_gutter: false,

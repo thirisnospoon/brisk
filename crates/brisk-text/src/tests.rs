@@ -358,3 +358,15 @@ fn python_paste_takes_the_caret_indent() {
     b.paste_python("[1,\n    2]");
     assert_eq!(b.text(), "z = [1,\n    2]");
 }
+
+#[test]
+fn read_only_ignores_edits() {
+    let mut b = Buffer::new("abc\n");
+    b.read_only = true;
+    b.insert("x");
+    b.replace_ranges(vec![(0..1, "Z".into())]);
+    b.delete_forward();
+    assert_eq!(b.text(), "abc\n");
+    assert!(!b.undo());
+    assert_eq!(b.version(), 0);
+}

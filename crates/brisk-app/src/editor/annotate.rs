@@ -101,7 +101,7 @@ impl Editor {
     }
 
     /// The annotated line under a point in the column, if any.
-    pub(super) fn annotation_at(&self, p: Point<Pixels>) -> Option<usize> {
+    pub(crate) fn annotation_at(&self, p: Point<Pixels>) -> Option<usize> {
         let l = self.layout.as_ref()?;
         let a = self.annotation.as_ref()?;
         let x0 = l.bounds.left() + self.annotation_left();
@@ -155,6 +155,18 @@ impl Editor {
                 .child(gpui::div().pt(px(4.)).text_size(px(11.)).text_color(Theme::text_dim()).child("Click to show the diff of this commit"))
                 .into_any_element(),
         )
+    }
+
+    /// The commit of an annotated line.
+    pub fn annotation_hash(&self, line: usize) -> Option<String> {
+        Some(self.annotation.as_ref()?.lines.get(line)?.as_ref()?.hash.clone())
+    }
+
+    /// A window point on the annotation of `line` (smokes: the right-click menu there).
+    pub fn annotation_point(&self, line: usize) -> Option<Point<Pixels>> {
+        let l = self.layout.as_ref()?;
+        let y = l.bounds.top() + px((self.row_of(line) as f32 + 0.5) * line_height() - self.scroll_y);
+        Some(point(l.bounds.left() + self.annotation_left() + px(10.), y))
     }
 
     /// Annotation of a buffer line (smoke tests): (short hash, label).

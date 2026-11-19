@@ -2,7 +2,8 @@
 //! VCS work of w5 phase by phase (V1: the diff viewer, V2: the merge window). Never run it on
 //! a real project: it commits there. `BRISK_SMOKE_VCS_HOLD=<phase>` stops at that phase with
 //! the window open (`diff`: the live side-by-side diff; `unified`: the unified one; `merge`:
-//! the merge window as it opens; `merged`: after resolving, before Apply).
+//! the merge window as it opens; `merged`: after resolving, before Apply; `annotate`: a file
+//! annotated; `previous`: Annotate Previous Revision's tab).
 
 use super::git_smoke::{commit_as, sh};
 use super::{Tab, Workspace};
@@ -60,8 +61,12 @@ impl Workspace {
         let bg = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             Self::smoke_vcs_diff(&this, cx, &bg, &root).await;
-            if std::env::var_os("BRISK_SMOKE_VCS_HOLD").is_none() || hold("merge") || hold("merged") {
+            let held = |p: &[&str]| std::env::var_os("BRISK_SMOKE_VCS_HOLD").is_none() || p.iter().any(|p| hold(p));
+            if held(&["merge", "merged"]) {
                 Self::smoke_vcs_merge(&this, cx, &bg, &root).await;
+            }
+            if held(&["annotate", "previous"]) {
+                Self::smoke_vcs_annotate(&this, cx, &bg, &root).await;
             }
             let _ = this.update(cx, |_, cx| {
                 eprintln!("smoke-vcs: done");
@@ -85,6 +90,97 @@ impl Workspace {
             Some(Tab::Merge(m)) => Some(m.clone()),
             _ => None,
         }
+    }
+
+    /// V5: Annotate with Git Blame through a rename; the annotation menu; Annotate Previous
+    /// Revision (twice, following the rename) in read-only tabs.
+    async fn smoke_vcs_annotate(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
+        let _ = std::fs::write(root.join("old_name.py"), "a = 1
+b = 1
+c = 1
+d = 1
+e = 1
+f = 1
+");
+        commit_as(root, "Alice", "2024-02-01T10:00:00", "Add old_name.py");
+        sh(root, &["mv", "old_name.py", "ann.py"]);
+        let _ = std::fs::write(root.join("ann.py"), "a = 1
+b = 2
+c = 1
+d = 1
+e = 1
+f = 1
+");
+        commit_as(root, "Bob", "2024-02-02T10:00:00", "Rename to ann.py, b = 2");
+        let _ = std::fs::write(root.join("ann.py"), "a = 1
+b = 2
+c = 3
+d = 1
+e = 1
+f = 1
+");
+        commit_as(root, "Carol", "2024-02-03T10:00:00", "c = 3");
+        let _ = this.update_in(cx, |this, window, cx| {
+            this.refresh_git(cx);
+            this.open_file(&root.join("ann.py"), window, cx);
+            if let Some(ed) = this.active_editor().cloned() {
+                this.toggle_annotate(ed, cx);
+            }
+        });
+        pause(bg, 1500).await;
+        let labels = |ed: &gpui::Entity<crate::editor::Editor>, cx: &gpui::App| -> Vec<String> {
+            (0..3).filter_map(|l| ed.read(cx).annotation_line(l)).map(|(_, label)| label).collect()
+        };
+        let _ = this.update_in(cx, |this, _, cx| {
+            let Some(ed) = this.active_editor().cloned() else { return };
+            eprintln!("smoke-vcs: annotate ann.py -> {:?}", labels(&ed, cx));
+            // Right click on line 3's annotation (Carol): PyCharm's annotation menu.
+            if let Some(p) = ed.read(cx).annotation_point(2) {
+                this.open_gutter_menu(ed.clone(), p, cx);
+                eprintln!("smoke-vcs: annotation menu -> {:?}", this.menu_labels());
+                this.menu = None;
+            }
+        });
+        if hold("annotate") {
+            return;
+        }
+        // Previous revision of Carol's line: the file before her commit (Bob's), annotated.
+        let _ = this.update_in(cx, |this, window, cx| {
+            let Some(ed) = this.active_editor().cloned() else { return };
+            if let Some(h) = ed.read(cx).annotation_hash(2) {
+                this.annotate_previous(ed, h, window, cx);
+            }
+        });
+        pause(bg, 1500).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            let Some(ed) = this.active_editor().cloned() else { return };
+            let e = ed.read(cx);
+            eprintln!("smoke-vcs: previous revision tab '{}' {:?} -> line 3 {:?}, {:?}", e.title(), e.revision.as_ref().map(|r| r.0.clone()), e.buffer.line(2), labels(&ed, cx));
+            // Read-only: typing does nothing.
+            ed.update(cx, |e, cx| e.replace_all_text("changed
+", cx));
+            eprintln!("smoke-vcs: typing in it -> unchanged {}", ed.read(cx).buffer.line(2) == "c = 1");
+            // Again on Bob's line 2: before the rename, as old_name.py.
+            if let Some(h) = ed.read(cx).annotation_hash(1) {
+                this.annotate_previous(ed, h, window, cx);
+            }
+        });
+        pause(bg, 1500).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            let Some(ed) = this.active_editor().cloned() else { return };
+            eprintln!("smoke-vcs: and its previous revision '{}' {:?} -> {:?}", ed.read(cx).title(), ed.read(cx).revision.as_ref().map(|r| r.0.clone()), labels(&ed, cx));
+            if hold("previous") {
+                return;
+            }
+            // Alice added the file: no previous revision.
+            if let Some(h) = ed.read(cx).annotation_hash(0) {
+                this.annotate_previous(ed, h, window, cx);
+            }
+        });
+        pause(bg, 1000).await;
+        let _ = this.update_in(cx, |this, _, _| {
+            eprintln!("smoke-vcs: previous of the first commit -> toast {:?}", this.toast.as_ref().map(|t| t.0.clone()));
+        });
     }
 
     /// V2: a merge with a simple conflict (different words of one line), a real one and a
