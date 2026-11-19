@@ -15,6 +15,8 @@ pub struct EditorConfig {
     pub trim_trailing_whitespace: Option<bool>,
     pub insert_final_newline: Option<bool>,
     pub charset: Option<String>,
+    /// `max_line_length`: where the right margin is drawn (`off`: none).
+    pub max_line_length: Option<Option<usize>>,
 }
 
 impl EditorConfig {
@@ -100,6 +102,7 @@ fn apply(c: &mut EditorConfig, k: &str, v: &str) {
         "end_of_line" => c.crlf = if unset { None } else { match v { "crlf" => Some(true), "lf" => Some(false), _ => c.crlf } },
         "trim_trailing_whitespace" => c.trim_trailing_whitespace = if unset { None } else { flag.or(c.trim_trailing_whitespace) },
         "insert_final_newline" => c.insert_final_newline = if unset { None } else { flag.or(c.insert_final_newline) },
+        "max_line_length" => c.max_line_length = if unset { None } else if v == "off" { Some(None) } else { num.map(Some).or(c.max_line_length) },
         "charset" => c.charset = if unset { None } else { Some(v.to_string()) },
         _ => {}
     }

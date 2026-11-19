@@ -3,6 +3,7 @@
 //! Positions are **char indices** into the rope. The UI converts to (line, column) for display.
 
 pub mod encoding;
+mod smart;
 
 use ropey::Rope;
 pub use ropey::Rope as TextRope;
@@ -96,6 +97,8 @@ pub struct Buffer {
     pub line_comment: Option<String>,
     /// Typing `(` inserts `()` and so on. Off in search fields.
     pub auto_pairs: bool,
+    /// Python file: Enter and typing follow PyCharm's Python rules (`smart.rs`).
+    pub python: bool,
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
     version: u64,
@@ -133,6 +136,7 @@ impl Buffer {
             indent_unit: "    ".into(),
             line_comment: Some("#".into()),
             auto_pairs: true,
+            python: false,
             undo: Vec::new(),
             redo: Vec::new(),
             version: 0,
@@ -429,6 +433,9 @@ impl Buffer {
 
     /// Type a char with PyCharm-like auto-pairing for brackets and quotes.
     pub fn type_char(&mut self, c: char) {
+        if self.python && self.py_type(c) {
+            return;
+        }
         let closing = match c {
             '(' => Some(')'),
             '[' => Some(']'),
@@ -500,6 +507,13 @@ impl Buffer {
         let mut carets = Vec::new();
         for s in &self.selections {
             let r = s.range();
+            if self.python {
+                if let Some((ins, off)) = self.py_enter(r.start, r.end) {
+                    edits.push((r.clone(), ins));
+                    carets.push((r.start, off));
+                    continue;
+                }
+            }
             let (line, col) = self.pos_to_line_col(r.start);
             let text = self.line(line);
             let before: String = text.chars().take(col).collect();

@@ -43,6 +43,8 @@ pub struct Row {
 /// Tree that only reads a directory when it is expanded.
 pub struct ProjectTree {
     pub nodes: Vec<Node>,
+    /// Top-level nodes: the project (0), then extra roots such as "Scratches and Consoles".
+    roots: Vec<NodeId>,
     rows: Vec<Row>,
     rows_dirty: bool,
 }
@@ -85,6 +87,7 @@ impl ProjectTree {
                 children: None,
                 expanded: false,
             }],
+            roots: vec![0],
             rows: Vec::new(),
             rows_dirty: true,
         };
@@ -94,6 +97,27 @@ impl ProjectTree {
 
     pub fn root(&self) -> &Path {
         &self.nodes[0].path
+    }
+
+    /// A top-level folder shown after the project (collapsed), named `name`, listing `dir`.
+    pub fn add_root(&mut self, name: &str, dir: &Path) -> NodeId {
+        if let Some(&id) = self.roots.iter().find(|&&r| self.nodes[r].path == dir) {
+            return id;
+        }
+        let id = self.nodes.len();
+        self.nodes.push(Node { name: name.into(), path: dir.to_path_buf(), is_dir: true, excluded: false, depth: 0, parent: None, children: None, expanded: false });
+        self.roots.push(id);
+        self.rows_dirty = true;
+        id
+    }
+
+    pub fn is_root(&self, id: NodeId) -> bool {
+        self.roots.contains(&id)
+    }
+
+    /// The top-level node whose folder holds `path` (the deepest one), and `path` relative to it.
+    fn root_of<'a>(&self, path: &'a Path) -> Option<(NodeId, &'a Path)> {
+        self.roots.iter().filter_map(|&r| path.strip_prefix(&self.nodes[r].path).ok().map(|rel| (r, rel))).min_by_key(|(_, rel)| rel.components().count())
     }
 
     fn load_children(&mut self, id: NodeId) {
@@ -155,8 +179,7 @@ impl ProjectTree {
 
     /// The loaded node for a path, if its folder has been read.
     pub fn find(&self, path: &Path) -> Option<NodeId> {
-        let rel = path.strip_prefix(self.root()).ok()?;
-        let mut cur = 0;
+        let (mut cur, rel) = self.root_of(path)?;
         for comp in rel.components() {
             let name = comp.as_os_str().to_string_lossy();
             cur = *self.nodes[cur].children.as_ref()?.iter().find(|&&c| self.nodes[c].name == name)?;
@@ -219,7 +242,7 @@ impl ProjectTree {
     /// Expanded, loaded folders reachable from the root (the ones to watch for changes).
     pub fn expanded_dirs(&self) -> Vec<NodeId> {
         let mut out = Vec::new();
-        let mut stack = vec![0usize];
+        let mut stack = self.roots.clone();
         while let Some(id) = stack.pop() {
             let n = &self.nodes[id];
             if let (true, true, Some(ch)) = (n.is_dir, n.expanded, &n.children) {
@@ -234,7 +257,7 @@ impl ProjectTree {
     pub fn rows(&mut self) -> &[Row] {
         if self.rows_dirty {
             let mut rows = Vec::new();
-            let mut stack = vec![0usize];
+            let mut stack: Vec<NodeId> = self.roots.iter().rev().copied().collect();
             while let Some(id) = stack.pop() {
                 let n = &self.nodes[id];
                 rows.push(Row { id, depth: n.depth });
@@ -252,8 +275,8 @@ impl ProjectTree {
 
     /// Expand parents and return the node for a path (Alt+F1 "Select in Project View").
     pub fn reveal(&mut self, path: &Path) -> Option<NodeId> {
-        let rel = path.strip_prefix(self.root()).ok()?.to_path_buf();
-        let mut cur = 0;
+        let (mut cur, rel) = self.root_of(path)?;
+        let rel = rel.to_path_buf();
         for comp in rel.components() {
             self.expand(cur);
             let name = comp.as_os_str().to_string_lossy();

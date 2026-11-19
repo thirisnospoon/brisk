@@ -14,6 +14,8 @@ use std::sync::Arc;
 pub(super) enum NewKind {
     File,
     Python,
+    /// A folder with an empty `__init__.py`.
+    Package,
     Dir,
 }
 
@@ -32,6 +34,7 @@ impl FileOp {
         match self {
             FileOp::New(_, NewKind::File) => "New File",
             FileOp::New(_, NewKind::Python) => "New Python File",
+            FileOp::New(_, NewKind::Package) => "New Python Package",
             FileOp::New(_, NewKind::Dir) => "New Directory",
             FileOp::Rename(p) if p.is_dir() => "Rename Directory",
             FileOp::Rename(_) => "Rename File",
@@ -44,6 +47,7 @@ impl FileOp {
     pub(super) fn placeholder(&self) -> &'static str {
         match self {
             FileOp::New(_, NewKind::Dir) => "Name (a/b creates nested directories)",
+            FileOp::New(_, NewKind::Package) => "Name (a.b or a/b creates nested packages)",
             FileOp::New(..) => "Name (dir/name.ext creates folders too)",
             FileOp::Rename(_) => "New name",
             FileOp::Copy(_) | FileOp::Move(_) => "Target path, relative to the project",
@@ -175,6 +179,7 @@ impl Workspace {
             return Err("A name cannot contain < > : \" | ? *".into());
         }
         let t = match op {
+            FileOp::New(dir, NewKind::Package) => dir.join(q.replace('.', "/")),
             FileOp::New(dir, kind) => {
                 let mut t = dir.join(q);
                 if *kind == NewKind::Python && t.extension().is_none() {
@@ -229,6 +234,7 @@ impl Workspace {
             Ok(t) => {
                 let verb = match op {
                     FileOp::New(_, NewKind::Dir) => "Create directory",
+                    FileOp::New(_, NewKind::Package) => "Create package",
                     FileOp::New(..) => "Create",
                     FileOp::Rename(_) => "Rename to",
                     FileOp::Copy(_) => "Copy to",
@@ -254,11 +260,28 @@ impl Workspace {
         let result: std::io::Result<()> = (|| {
             match &op {
                 FileOp::New(_, NewKind::Dir) => std::fs::create_dir_all(&target),
-                FileOp::New(..) => {
+                FileOp::New(base, NewKind::Package) => {
+                    // Every new folder on the way is a package too (a.b → a/__init__.py, a/b/__init__.py).
+                    std::fs::create_dir_all(&target)?;
+                    let mut d = target.as_path();
+                    while d != base.as_path() && d.starts_with(base) {
+                        let init = d.join("__init__.py");
+                        if !init.exists() {
+                            std::fs::write(&init, "")?;
+                        }
+                        let Some(up) = d.parent() else { break };
+                        d = up;
+                    }
+                    Ok(())
+                }
+                FileOp::New(_, kind) => {
                     if let Some(d) = target.parent() {
                         std::fs::create_dir_all(d)?;
                     }
-                    std::fs::OpenOptions::new().write(true).create_new(true).open(&target).map(|_| ())
+                    use std::io::Write;
+                    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&target)?;
+                    let text = if *kind == NewKind::Python { self.python_template(&target) } else { String::new() };
+                    f.write_all(text.as_bytes())
                 }
                 FileOp::Rename(src) | FileOp::Move(src) => {
                     if let Some(d) = target.parent() {
@@ -402,7 +425,7 @@ impl Workspace {
     pub(super) fn tree_file_key(&mut self, k: &Keystroke, cx: &mut Context<Self>) -> bool {
         let m = &k.modifiers;
         let Some((id, path, _)) = self.selected_path() else { return false };
-        let root = id == 0;
+        let root = self.tree.is_root(id);
         let op = match (k.key.as_str(), m.control, m.shift, m.alt) {
             ("insert", false, false, true) => {
                 self.tree_new_menu(cx);
@@ -436,7 +459,20 @@ impl Workspace {
                 run: Rc::new(move |this: &mut Workspace, _, cx| this.start_file_op(FileOp::New(dir.clone(), kind), cx)),
             }
         };
-        vec![item("New File…", NewKind::File, "Alt+Insert".into()), item("New Python File…", NewKind::Python, String::new()), item("New Directory…", NewKind::Dir, String::new())]
+        // PyCharm's New menu order: File, Scratch File, Directory, Python Package, Python File.
+        let scratch = Entry::Item {
+            label: "Scratch File".into(),
+            shortcut: "Ctrl+Alt+Shift+Insert".into(),
+            enabled: true,
+            run: Rc::new(|this: &mut Workspace, _, cx| this.start_new_scratch(cx)),
+        };
+        vec![
+            item("New File…", NewKind::File, "Alt+Insert".into()),
+            scratch,
+            item("New Directory…", NewKind::Dir, String::new()),
+            item("New Python Package…", NewKind::Package, String::new()),
+            item("New Python File…", NewKind::Python, String::new()),
+        ]
     }
 
     /// Right click on a row of the Project view.
@@ -444,7 +480,7 @@ impl Workspace {
         self.tree_selected = Some(id);
         window.focus(&self.tree_focus);
         let Some((_, path, is_dir)) = self.selected_path() else { return };
-        let root = id == 0;
+        let root = self.tree.is_root(id);
         let op = |label: &str, shortcut: &str, enabled: bool, op: FileOp| Entry::Item {
             label: label.into(),
             shortcut: shortcut.into(),

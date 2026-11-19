@@ -110,9 +110,6 @@ impl Workspace {
         eprintln!("smoke-w7: regex replace -> {:?}", ed.read(cx).buffer.text());
         self.smoke_press("escape", window, cx);
         ed.update(cx, |e, _| e.buffer.mark_saved());
-        eprintln!("smoke-w7: done");
-        if std::env::var_os("BRISK_SMOKE_W7_HOLD").is_none() {
-            cx.quit();
-        }
+        self.w7_smoke2(window, cx);
     }
 }

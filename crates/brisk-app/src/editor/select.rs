@@ -110,7 +110,7 @@ impl Editor {
     /// Paste from History: insert this text at every caret.
     pub fn paste_text(&mut self, text: &str, cx: &mut gpui::Context<Self>) {
         remember_clip(text);
-        self.buffer.insert(&text.replace("\r\n", "\n"));
+        self.buffer.paste_python(&text.replace("\r\n", "\n"));
         self.ensure_caret_visible();
         cx.notify();
     }
