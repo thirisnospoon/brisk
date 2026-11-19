@@ -855,33 +855,31 @@ impl TerminalPanel {
         let button = |id: &'static str, glyph: &'static str, color: Hsla| {
             div()
                 .id(id)
-                .w(px(26.))
-                .h(px(26.))
+                .size(crate::theme::ui_px(24.))
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(5.))
+                .rounded(px(4.))
                 .hover(|s| s.bg(Theme::hover_row()))
                 .active(|s| s.bg(Theme::press()))
                 .cursor_pointer()
-                .child(crate::icons::icon(glyph, 16., color))
+                .child(crate::icons::tool_icon(glyph, 16., color))
         };
         let tip = |t: &'static str| move |_: &mut Window, cx: &mut App| cx.new(|_| crate::workspace::Tip(t.into())).into();
         let toggle = |id: &'static str, glyph: &'static str, on: bool| {
             div()
                 .id(id)
                 .relative()
-                .w(px(26.))
-                .h(px(26.))
+                .size(crate::theme::ui_px(24.))
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(5.))
+                .rounded(px(4.))
                 .when(on, |d| d.bg(Theme::selection_row()))
                 .when(!on, |d| d.hover(|s| s.bg(Theme::hover_row())))
                 .active(|s| s.bg(Theme::press()))
                 .cursor_pointer()
-                .child(crate::icons::icon(glyph, 16., if on { Theme::text() } else { Theme::text_muted() }))
+                .child(crate::icons::tool_icon(glyph, 16., if on { Theme::text() } else { Theme::text_muted() }))
         };
         div()
             .w(px(34.))
@@ -892,7 +890,7 @@ impl TerminalPanel {
             .gap(px(2.))
             .border_r_1()
             .border_color(Theme::border())
-            .child(button("run-rerun", "rotate-cw", Theme::run_icon()).tooltip(tip("Rerun  Ctrl+F5")).on_click(cx.listener(|_, _, _, cx| cx.emit(RunEvent::RerunRequested))))
+            .child(button("run-rerun", "rerun", Theme::run_icon()).tooltip(tip("Rerun  Ctrl+F5")).on_click(cx.listener(|_, _, _, cx| cx.emit(RunEvent::RerunRequested))))
             .when(self.tests().is_some(), |d| {
                 let any_failed = self.tests().is_some_and(|t| t.finished && t.tree().tree.counts().failed > 0);
                 d.child(
@@ -901,27 +899,27 @@ impl TerminalPanel {
                 )
             })
             .child(
-                button("run-stop", "stop-solid", if running { Theme::error() } else { Theme::text_dim().opacity(0.5) }).tooltip(tip("Stop  Ctrl+F2")).on_click(cx.listener(|this, _, _, cx| {
+                button("run-stop", "stop", if running { Theme::error() } else { Theme::text_dim().opacity(0.5) }).tooltip(tip("Stop  Ctrl+F2")).on_click(cx.listener(|this, _, _, cx| {
                     this.stop();
                     cx.notify();
                 })),
             )
             .child(div().w(px(18.)).h(px(1.)).my(px(3.)).bg(Theme::divider()))
             .child(button("run-copy-cmd", "copy", Theme::text_muted()).tooltip(tip("Copy command line")).on_click(cx.listener(|this, _, _, cx| this.copy_command_line(cx))))
-            .child(button("run-open-term", "square-terminal", Theme::text_muted()).tooltip(tip("Open in Terminal")).on_click(cx.listener(|this, _, _, cx| this.open_in_terminal(cx))))
+            .child(button("run-open-term", "terminal", Theme::text_muted()).tooltip(tip("Open in Terminal")).on_click(cx.listener(|this, _, _, cx| this.open_in_terminal(cx))))
             .child(toggle("run-pin", "pin", self.active_pinned()).tooltip(tip("Pin Tab: the next run opens a new tab")).child(pin_track()).on_click(cx.listener(|this, _, _, cx| {
                 this.toggle_pin();
                 cx.notify();
             })))
-            .child(toggle("run-wrap", "wrap-text", self.soft_wrap).tooltip(tip("Soft-Wrap")).on_click(cx.listener(|this, _, _, cx| {
+            .child(toggle("run-wrap", "soft-wrap", self.soft_wrap).tooltip(tip("Soft-Wrap")).on_click(cx.listener(|this, _, _, cx| {
                 this.toggle_soft_wrap();
                 cx.notify();
             })))
-            .child(toggle("run-follow", "arrow-down-to-line", self.scroll_to_end).tooltip(tip("Scroll to End")).on_click(cx.listener(|this, _, _, cx| {
+            .child(toggle("run-follow", "scroll-end", self.scroll_to_end).tooltip(tip("Scroll to End")).on_click(cx.listener(|this, _, _, cx| {
                 this.toggle_scroll_to_end();
                 cx.notify();
             })))
-            .child(button("run-clear", "trash", Theme::text_muted()).tooltip(tip("Clear All")).on_click(cx.listener(|this, _, _, cx| {
+            .child(button("run-clear", "clear", Theme::text_muted()).tooltip(tip("Clear All")).on_click(cx.listener(|this, _, _, cx| {
                 this.clear();
                 cx.notify();
             })))
