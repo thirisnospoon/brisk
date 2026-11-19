@@ -26,9 +26,17 @@ pub(super) struct Runs {
     stamp: Option<(std::time::SystemTime, u64)>,
 }
 
+/// run.json and the project files (`.run/*.xml`): the newest change and the total size.
 fn run_file_stamp(root: &Path) -> Option<(std::time::SystemTime, u64)> {
     let m = std::fs::metadata(root.join(brisk_run::CONFIG_FILE)).ok()?;
-    Some((m.modified().ok()?, m.len()))
+    let mut stamp = (m.modified().ok()?, m.len());
+    for e in std::fs::read_dir(root.join(brisk_run::project_files::DIR)).into_iter().flatten().flatten() {
+        if let Ok(m) = e.metadata() {
+            stamp.0 = stamp.0.max(m.modified().unwrap_or(stamp.0));
+            stamp.1 += m.len() + 1;
+        }
+    }
+    Some(stamp)
 }
 
 impl Runs {
@@ -100,7 +108,8 @@ impl Workspace {
         }
         if let Ok(s) = std::fs::read_to_string(self.root.join(brisk_run::CONFIG_FILE)) {
             match serde_json::from_str::<RunFile>(&s) {
-                Ok(f) => {
+                Ok(mut f) => {
+                    brisk_run::project_files::merge(&self.root, &mut f);
                     self.runs.file = f;
                     self.runs.stamp = stamp;
                 }

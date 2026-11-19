@@ -8,6 +8,7 @@ pub mod pytest;
 pub mod envfile;
 pub mod web;
 pub mod django;
+pub mod project_files;
 
 pub use config::{compound_names, idea_test_runner, import_idea, load, save, BeforeStep, OnStart, RunConfig, RunFile, RunKind, TestRunner, CONFIG_FILE, MAX_TEMPORARY, TEMPLATE_KINDS};
 pub use pytest::{is_test_file, split_nodeid, TestFeed, TestStatus, TestTree, TreeView};

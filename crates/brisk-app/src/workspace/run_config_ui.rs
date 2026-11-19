@@ -27,12 +27,14 @@ pub enum Field {
     AllowMultiple,
     PythonConsole,
     EmulateTerminal,
+    /// "Store as project file" (`.run/<name>.run.xml`).
+    ProjectFile,
     Temporary,
 }
 
 impl Field {
     fn is_text(self) -> bool {
-        !matches!(self, Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal)
+        !matches!(self, Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal | Field::ProjectFile)
     }
 }
 
@@ -215,6 +217,7 @@ fn flag(c: &mut RunConfig, f: Field) -> Option<&mut bool> {
         Field::AllowMultiple => Some(&mut c.allow_multiple),
         Field::PythonConsole => Some(&mut c.python_console),
         Field::EmulateTerminal => Some(&mut c.emulate_terminal),
+        Field::ProjectFile => Some(&mut c.project_file),
         _ => None,
     }
 }
@@ -235,6 +238,9 @@ fn fields(kind: Kind, temporary: bool) -> Vec<Field> {
     let mut v = vec![F::Name, F::Kind, F::Target];
     if kind == Kind::Compound {
         // Only the member list: each member runs with its own settings.
+        if !temporary {
+            v.push(F::ProjectFile);
+        }
         return v;
     }
     if matches!(kind, Kind::Pytest | Kind::Unittest) {
@@ -246,6 +252,8 @@ fn fields(kind: Kind, temporary: bool) -> Vec<Field> {
     }
     if temporary {
         v.push(F::Temporary);
+    } else {
+        v.push(F::ProjectFile);
     }
     v
 }
@@ -275,6 +283,7 @@ fn label(f: Field, kind: Kind) -> &'static str {
         Field::AllowMultiple => "Multiple instances:",
         Field::PythonConsole => "Python Console:",
         Field::EmulateTerminal => "Terminal:",
+        Field::ProjectFile => "Project file:",
         Field::Temporary => "Temporary:",
     }
 }
@@ -341,7 +350,7 @@ impl RunDialog {
             Field::BeforeRun => &mut d.cfg.before_run,
             Field::BeforeCommand => &mut d.cfg.before_command,
             Field::Interpreter => d.cfg.interpreter.get_or_insert_with(String::new),
-            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal => return None,
+            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal | Field::ProjectFile => return None,
         })
     }
 
@@ -359,7 +368,7 @@ impl RunDialog {
             Field::BeforeRun => &d.cfg.before_run,
             Field::BeforeCommand => &d.cfg.before_command,
             Field::Interpreter => return d.cfg.interpreter.as_deref().map_or(0, |s| s.chars().count()),
-            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal => return 0,
+            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal | Field::ProjectFile => return 0,
         };
         s.chars().count()
     }
@@ -430,7 +439,7 @@ impl RunDialog {
                 self.set_kind(k);
             }
             Field::Temporary => d.cfg.temporary = !d.cfg.temporary,
-            Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal => {
+            Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal | Field::ProjectFile => {
                 if let Some(b) = flag(&mut d.cfg, f) {
                     *b = !*b;
                 }
@@ -979,13 +988,14 @@ impl Workspace {
                                 }))
                         }))
                         .into_any_element(),
-                    Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal => {
+                    Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal | Field::ProjectFile => {
                         let mut c = dr.cfg.clone();
                         let on = flag(&mut c, f).is_some_and(|b| *b);
                         let text = match (f, on) {
                             (Field::AllowMultiple, true) => "allowed: a new run starts next to a running one",
                             (Field::AllowMultiple, false) => "a new run asks to stop the running one",
                             (Field::PythonConsole, _) => "Run with Python Console (python -i: a prompt after the script, with its variables)",
+                            (Field::ProjectFile, _) => "Store as project file (.run/<name>.run.xml, shared through VCS, PyCharm reads it too)",
                             _ => "Emulate terminal in output console (colors, progress bars, getpass)",
                         };
                         div()
@@ -1376,6 +1386,23 @@ impl Workspace {
             let cmd = brisk_run::build(&self.root, &c, &python);
             eprintln!("smoke-runcfg: command -> {} cwd {} env A={:?} B={:?}", cmd.display(), cmd.cwd.display(), cmd.env.get("A"), cmd.env.get("B"));
         }
+        // Store as project file: the last field (Shift+Tab from the name), Space ticks it.
+        self.dispatch(brisk_keymap::Action::EditRunConfigurations, window, cx);
+        let at = self.runs.dialog.as_ref().and_then(|d| d.drafts.iter().position(|x| x.cfg.name == "demo")).unwrap_or(0);
+        if let Some(d) = self.runs.dialog.as_mut() {
+            d.current = at;
+            d.field = Field::Name;
+        }
+        self.smoke_press("shift-tab", window, cx);
+        let field = self.runs.dialog.as_ref().map(|d| d.field);
+        self.smoke_press("space enter", window, cx);
+        let file = self.root.join(".run/demo.run.xml");
+        let xml = std::fs::read_to_string(&file).unwrap_or_default();
+        eprintln!("smoke-runcfg: project file (field {field:?}) -> {} bytes, module mode {}", xml.len(), xml.contains(r#"<option name="MODULE_NAME" value="http.server" />"#));
+        // A teammate edits it (git pull): the next look at the configurations takes it.
+        let _ = std::fs::write(&file, xml.replace("8000 --bind 127.0.0.1", "9000"));
+        self.reload_runs();
+        eprintln!("smoke-runcfg: after the file changed -> demo parameters {:?}", self.runs.file.get("demo").map(|c| c.parameters.clone()));
         // Escape discards edits.
         self.dispatch(brisk_keymap::Action::EditRunConfigurations, window, cx);
         self.smoke_press("ctrl-a", window, cx);

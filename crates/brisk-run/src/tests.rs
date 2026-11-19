@@ -745,3 +745,83 @@ fn imports_templates_and_applies_them() {
     assert!(f.get(&t).unwrap().env.is_empty());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// "Store as project file": every kind written as PyCharm's `.run/*.run.xml` reads back the
+/// same; unsharing or renaming deletes the old file; a teammate's change or removal of a
+/// file (a `git pull`) wins on load; files of other configuration types are left alone.
+#[test]
+fn project_files_round_trip_and_sync() {
+    let root = tmp("projfiles");
+    std::fs::create_dir_all(root.join("pkg")).unwrap();
+    std::fs::create_dir_all(root.join("tests")).unwrap();
+    std::fs::write(root.join("main.py"), "").unwrap();
+    std::fs::write(root.join("pkg/api.py"), "from fastapi import FastAPI\napp = FastAPI()\n").unwrap();
+    std::fs::write(root.join("manage.py"), "").unwrap();
+    let env = |k: &str, v: &str| std::iter::once((k.to_string(), v.to_string())).collect();
+    let shared = |c: RunConfig| RunConfig { project_file: true, ..c };
+    let cfgs = vec![
+        shared(RunConfig {
+            name: "main".into(),
+            target: "main.py".into(),
+            parameters: "--x \"a b\"".into(),
+            working_directory: "pkg".into(),
+            env: env("A", "1&2<3>"),
+            env_files: ".env".into(),
+            interpreter_options: "-X dev".into(),
+            python_console: true,
+            allow_multiple: true,
+            on_start: OnStart::Focus,
+            before_run: "tests".into(),
+            ..Default::default()
+        }),
+        shared(RunConfig { name: "mod: run".into(), module: true, target: "pkg.api".into(), emulate_terminal: true, interpreter: Some("C:/py/python.exe".into()), on_start: OnStart::Nothing, working_directory: "$PROJECT_DIR$".into(), ..Default::default() }),
+        shared(RunConfig { name: "tests".into(), kind: RunKind::Pytest, target: "tests".into(), keywords: "not slow".into(), parameters: "-x".into(), ..Default::default() }),
+        shared(RunConfig { name: "unit".into(), kind: RunKind::Unittest, target: "tests/test_a.py::TestA".into(), ..Default::default() }),
+        shared(RunConfig { name: "doc".into(), kind: RunKind::Doctest, target: "main.py".into(), ..Default::default() }),
+        shared(RunConfig { name: "api".into(), kind: RunKind::FastApi, target: "pkg.api:app".into(), parameters: "--reload".into(), ..Default::default() }),
+        shared(RunConfig { name: "flask".into(), kind: RunKind::Flask, target: "pkg.api:app".into(), ..Default::default() }),
+        shared(RunConfig { name: "site".into(), kind: RunKind::Django, target: "manage.py".into(), parameters: "127.0.0.1:8001 --noreload".into(), ..Default::default() }),
+        shared(RunConfig { name: "dt".into(), kind: RunKind::DjangoTests, target: "manage.py".into(), parameters: "app.tests".into(), ..Default::default() }),
+        shared(RunConfig { name: "all".into(), kind: RunKind::Compound, target: "main;api".into(), ..Default::default() }),
+        RunConfig { name: "local".into(), target: "main.py".into(), ..Default::default() },
+    ];
+    let listing = || {
+        let mut v: Vec<String> = std::fs::read_dir(root.join(".run")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        v.sort();
+        v
+    };
+    save(&root, &RunFile { configurations: cfgs.clone(), ..Default::default() }).unwrap();
+    let files = listing();
+    assert_eq!(files.len(), 10, "{files:?}");
+    assert!(files.contains(&"mod_ run.run.xml".to_string()) && !files.contains(&"local.run.xml".to_string()), "{files:?}");
+    let main_xml = std::fs::read_to_string(root.join(".run/main.run.xml")).unwrap();
+    assert!(main_xml.contains(r#"<option name="SCRIPT_NAME" value="$PROJECT_DIR$/main.py" />"#) && main_xml.contains(r#"value="1&amp;2&lt;3&gt;""#), "{main_xml}");
+
+    // As after a clone (no .brisk): the shared configurations come back unchanged.
+    std::fs::remove_file(root.join(CONFIG_FILE)).unwrap();
+    let (g, _) = load(&root);
+    for c in cfgs.iter().filter(|c| c.project_file) {
+        assert_eq!(g.get(&c.name), Some(c), "{}", std::fs::read_to_string(root.join(".run").join(project_files::file_name(&c.name))).unwrap());
+    }
+    assert!(g.get("local").is_none());
+
+    // Unshare one, rename another: their files go; the unshared one stays in run.json.
+    let mut h = g.clone();
+    h.configurations.iter_mut().find(|c| c.name == "doc").unwrap().project_file = false;
+    h.configurations.iter_mut().find(|c| c.name == "unit").unwrap().name = "unit tests".into();
+    std::fs::write(root.join(".run/jest.run.xml"), r#"<component name="ProjectRunConfigurationManager"><configuration name="jest" type="JavaScriptTestRunnerJest" /></component>"#).unwrap();
+    save(&root, &h).unwrap();
+    let files = listing();
+    assert!(!files.contains(&"doc.run.xml".to_string()) && !files.contains(&"unit.run.xml".to_string()), "{files:?}");
+    assert!(files.contains(&"unit tests.run.xml".to_string()) && files.contains(&"jest.run.xml".to_string()), "{files:?}");
+    assert_eq!(load(&root).0.get("doc").map(|c| c.project_file), Some(false));
+
+    // A teammate changes one file and deletes another: the files win.
+    let p = root.join(".run/tests.run.xml");
+    std::fs::write(&p, std::fs::read_to_string(&p).unwrap().replace("&quot;-x&quot;", "&quot;-q&quot;")).unwrap();
+    std::fs::remove_file(root.join(".run/api.run.xml")).unwrap();
+    let (k, _) = load(&root);
+    assert_eq!(k.get("tests").map(|c| c.parameters.as_str()), Some("-q"));
+    assert!(k.get("api").is_none());
+    let _ = std::fs::remove_dir_all(&root);
+}
