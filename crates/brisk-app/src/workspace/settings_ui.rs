@@ -1,5 +1,5 @@
-//! Settings dialog (Ctrl+Alt+S): theme, smooth scrolling, the caret, editor font, font size, line
-//! spacing, inlay hints, editor tabs, actions on save; font zoom
+//! Settings dialog (Ctrl+Alt+S): theme, smooth scrolling, the caret, sticky lines, editor font, font
+//! size, line spacing, inlay hints, editor tabs, actions on save; font zoom
 //! (Alt+Shift+. / Alt+Shift+, / Ctrl+wheel) and the quick theme switch.
 
 use crate::theme::ui_px;
@@ -234,6 +234,7 @@ impl Workspace {
             .child(checkbox("set-blink", s.caret_blinking, "Caret blinking", "", |s| s.caret_blinking = !s.caret_blinking, cx))
             .child(checkbox("set-slide", s.smooth_caret, "Smooth caret movement", "(the caret slides to its new place)", |s| s.smooth_caret = !s.smooth_caret, cx))
             .into_any_element();
+        let sticky = checkbox("set-sticky", s.sticky_lines, "Show sticky lines", "(enclosing class and def headers stay on top)", |s| s.sticky_lines = !s.sticky_lines, cx);
         let preview = div()
             .mt(px(6.))
             .p(px(10.))
@@ -293,6 +294,7 @@ impl Workspace {
                         .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › GENERAL"))
                         .child(row("Scrolling", smooth))
                         .child(row("Caret", caret))
+                        .child(row("Sticky lines", sticky))
                         .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › FONT"))
                         .child(row("Font", fonts))
                         .child(row("Size", size))

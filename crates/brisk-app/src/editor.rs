@@ -44,6 +44,7 @@ mod word_complete;
 mod doc_view;
 mod scroll;
 mod motion;
+mod sticky;
 pub mod templates;
 pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
@@ -88,6 +89,8 @@ pub struct Editor {
     scroll_x: f32,
     /// Smooth scrolling and the caret's blink and slide (editor/motion.rs).
     motion: motion::Motion,
+    /// Headers of the enclosing blocks pinned at the top (editor/sticky.rs).
+    sticky: sticky::Sticky,
     /// (buffer version, longest line in chars): the horizontal scroll range.
     max_line: (u64, usize),
     big: big::BigFile,
@@ -307,6 +310,7 @@ impl Editor {
             scroll_y: 0.0,
             scroll_x: 0.0,
             motion: Default::default(),
+            sticky: Default::default(),
             max_line: (u64::MAX, 0),
             big: Default::default(),
             occ: Default::default(),
@@ -384,6 +388,7 @@ impl Editor {
             scroll_y: 0.0,
             scroll_x: 0.0,
             motion: Default::default(),
+            sticky: Default::default(),
             max_line: (u64::MAX, 0),
             big: Default::default(),
             occ: Default::default(),
@@ -1069,6 +1074,9 @@ impl Editor {
             cx.notify();
             return;
         }
+        if e.button == MouseButton::Left && self.sticky_click(e.position, cx) {
+            return;
+        }
         if self.fold_click(e.position) {
             cx.notify();
             return;
@@ -1127,6 +1135,7 @@ impl Editor {
             self.middle_move(e.position);
         }
         self.hover_scrollbar(Some(e.position), cx);
+        self.sticky_hover(Some(e.position), cx);
         if in_gutter != self.gutter_hover {
             self.gutter_hover = in_gutter;
             cx.notify();
@@ -1365,6 +1374,7 @@ impl Render for Editor {
                 }
                 if !*hovered {
                     this.hover_scrollbar(None, cx);
+                    this.sticky_hover(None, cx);
                     if this.inlays.tip.take().is_some() {
                         cx.notify();
                     }
@@ -1531,6 +1541,8 @@ struct Prepaint {
     gutter_w: Pixels,
     char_w: Pixels,
     marks: marks::CaretMarks,
+    /// Sticky lines: (text, line number, top offset, under the mouse).
+    sticky: Vec<(ShapedLine, ShapedLine, f32, bool)>,
 }
 
 impl IntoElement for EditorElement {
@@ -1578,6 +1590,7 @@ impl Element for EditorElement {
             ed.sync_folds();
             ed.sync_bookmarks();
             ed.refresh_run_marks(cx);
+            ed.update_sticky();
             let h = if ed.show_gutter {
                 ed.fold_headers()
             } else {
@@ -1735,7 +1748,19 @@ impl Element for EditorElement {
                 }
             }
         }
-        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, breakpoint_preview, run_icons, run_slot, annotations, inline_vals, chips, gutter_w, char_w, marks }
+        let sticky = ed
+            .sticky
+            .shown
+            .iter()
+            .enumerate()
+            .map(|(k, &(l, y))| {
+                let (text, runs) = ed.sticky_runs(l, &run);
+                let num = (l + 1).to_string();
+                let n = window.text_system().shape_line(SharedString::from(num.clone()), font_size, &[run(num.len(), Theme::gutter_fg())], None);
+                (window.text_system().shape_line(SharedString::from(text), font_size, &runs, None), n, y, ed.sticky.hover == Some(k))
+            })
+            .collect();
+        Prepaint { lines, numbers, rows, fold_marks, placeholder, bookmark_marks, breakpoint_marks, breakpoint_preview, run_icons, run_slot, annotations, inline_vals, chips, gutter_w, char_w, marks, sticky }
     }
 
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), pp: &mut Prepaint, window: &mut Window, cx: &mut App) {
@@ -2035,6 +2060,7 @@ impl Element for EditorElement {
             }
         }
         let dragging = ed.selecting || ed.drag.is_some() || ed.exec_dragging();
+        let ed_sticky_h = ed.sticky_height();
         let caret_xy = {
             let (l, c) = b.pos_to_line_col(b.primary().head);
             idx_of(l).is_some().then(|| point(x_of(l, c), y_of(l)))
@@ -2164,6 +2190,26 @@ impl Element for EditorElement {
             }
             for q in carets {
                 window.paint_quad(q);
+            }
+            if !pp.sticky.is_empty() {
+                let right = bounds.right() - px(scroll::BAR);
+                for (text, num, y, hover) in &pp.sticky {
+                    let top = bounds.top() + px(*y);
+                    let row = Bounds::new(point(bounds.left(), top), size(right - bounds.left(), lh));
+                    window.paint_quad(fill(row, Theme::editor_bg()));
+                    if *hover {
+                        window.paint_quad(fill(row, Theme::hover_row()));
+                    }
+                    let _ = num.paint(point(bounds.left() + pp.gutter_w - px(30.) - pp.run_slot - num.width, top), lh, window, cx);
+                    window.with_content_mask(Some(ContentMask { bounds: Bounds::from_corners(point(text_left, top), point(right, top + lh)) }), |window| {
+                        let _ = text.paint(point(text_x, top), lh, window, cx);
+                    });
+                }
+                // A soft shadow under the panel.
+                let bottom = bounds.top() + px(ed_sticky_h);
+                for (i, a) in [0.22f32, 0.12, 0.06, 0.02].iter().enumerate() {
+                    window.paint_quad(fill(Bounds::new(point(bounds.left(), bottom + px(i as f32)), size(right - bounds.left(), px(1.))), gpui::black().opacity(*a)));
+                }
             }
             for mut q in thumbs {
                 q.bounds = crate::icons::snap_bounds(q.bounds, window.scale_factor());

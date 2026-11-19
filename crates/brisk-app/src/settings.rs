@@ -1,5 +1,5 @@
 //! User settings (Settings dialog, Ctrl+Alt+S): theme, editor font, size, line spacing and
-//! inlay hints, smooth scrolling and the caret.
+//! inlay hints, smooth scrolling, the caret and sticky lines.
 //! Stored in `<config dir>/settings.json`; read by painting code through cheap globals.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -39,11 +39,13 @@ pub struct Settings {
     pub caret_blinking: bool,
     /// The caret slides to its new place instead of jumping (off: PyCharm's caret jumps).
     pub smooth_caret: bool,
+    /// Editor › General › Sticky Lines: "Show sticky lines".
+    pub sticky_lines: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false, ui_font_size: DEFAULT_UI_FONT_SIZE, ui_zoom: 1.0, reformat_on_save: false, optimize_imports_on_save: false, smooth_scrolling: true, caret_blinking: true, smooth_caret: false }
+        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false, ui_font_size: DEFAULT_UI_FONT_SIZE, ui_zoom: 1.0, reformat_on_save: false, optimize_imports_on_save: false, smooth_scrolling: true, caret_blinking: true, smooth_caret: false, sticky_lines: true }
     }
 }
 
@@ -63,6 +65,7 @@ pub const MAX_UI_ZOOM: f32 = 2.0;
 static SMOOTH_SCROLLING: AtomicBool = AtomicBool::new(true);
 static CARET_BLINKING: AtomicBool = AtomicBool::new(true);
 static SMOOTH_CARET: AtomicBool = AtomicBool::new(false);
+static STICKY_LINES: AtomicBool = AtomicBool::new(true);
 /// The font size in use (the setting, or a zoomed size: Alt+Shift+. / Ctrl+wheel).
 static FONT_SIZE: AtomicU32 = AtomicU32::new(0);
 static SPACING: AtomicU32 = AtomicU32::new(0);
@@ -121,6 +124,7 @@ pub fn load() -> Settings {
             s.smooth_scrolling = flag("smooth_scrolling").unwrap_or(s.smooth_scrolling);
             s.caret_blinking = flag("caret_blinking").unwrap_or(s.caret_blinking);
             s.smooth_caret = flag("smooth_caret").unwrap_or(s.smooth_caret);
+            s.sticky_lines = flag("sticky_lines").unwrap_or(s.sticky_lines);
         }
     }
     apply(&s);
@@ -139,6 +143,7 @@ pub fn apply(s: &Settings) {
     SMOOTH_SCROLLING.store(s.smooth_scrolling, Ordering::Relaxed);
     CARET_BLINKING.store(s.caret_blinking, Ordering::Relaxed);
     SMOOTH_CARET.store(s.smooth_caret, Ordering::Relaxed);
+    STICKY_LINES.store(s.sticky_lines, Ordering::Relaxed);
     FONT_SIZE.store(s.font_size.to_bits(), Ordering::Relaxed);
     SPACING.store(s.line_spacing.to_bits(), Ordering::Relaxed);
     if let Ok(mut c) = CURRENT.write() {
@@ -163,6 +168,7 @@ pub fn save(s: &Settings) -> std::io::Result<()> {
         "smooth_scrolling": s.smooth_scrolling,
         "caret_blinking": s.caret_blinking,
         "smooth_caret": s.smooth_caret,
+        "sticky_lines": s.sticky_lines,
     });
     let p = path();
     if let Some(d) = p.parent() {
@@ -221,6 +227,10 @@ pub fn caret_blinking() -> bool {
 
 pub fn smooth_caret() -> bool {
     SMOOTH_CARET.load(Ordering::Relaxed)
+}
+
+pub fn sticky_lines() -> bool {
+    STICKY_LINES.load(Ordering::Relaxed)
 }
 
 pub fn inlay_hints() -> bool {

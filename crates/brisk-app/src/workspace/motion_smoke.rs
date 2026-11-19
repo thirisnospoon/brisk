@@ -190,3 +190,63 @@ impl Workspace {
         .detach();
     }
 }
+
+impl Workspace {
+    /// BRISK_SMOKE_STICKY=1 on an empty folder: sticky lines inside a method (class and def),
+    /// on the def line itself (class only), pushed up at the end of the method, a click on the
+    /// class line (it lands where it was shown) and the setting off. `=hold` stays with two
+    /// sticky lines and the mouse over the second (for a screenshot).
+    pub(super) fn sticky_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let file = self.root.join("sticky.py");
+        let text = long_python();
+        let _ = std::fs::write(&file, &text);
+        self.open_file(&file, window, cx);
+        let lines: Vec<&str> = text.lines().collect();
+        let class3 = lines.iter().position(|l| l.starts_with("class Service3")).unwrap_or(0);
+        let def2 = class3 + lines[class3..].iter().position(|l| l.starts_with("    def method_2")).unwrap_or(0);
+        let ret2 = def2 + lines[def2..].iter().position(|l| l.trim_start().starts_with("return")).unwrap_or(0);
+        let hold = std::env::var("BRISK_SMOKE_STICKY").as_deref() == Ok("hold");
+        cx.spawn_in(window, async move |this, cx| {
+            let bg = cx.background_executor().clone();
+            let pause = |ms| bg.timer(Duration::from_millis(ms));
+            pause(800).await;
+            let Ok(Some(ed)) = this.update(cx, |t, _| t.active_editor().cloned()) else { return };
+            let lh = ed.read_with(cx, |e, _| e.motion_probe().line_height).unwrap_or(20.0);
+            let at = async |cx: &mut gpui::AsyncWindowContext, ed: &Entity<Editor>, top_line: f32| {
+                let _ = ed.update(cx, |e, cx| e.set_scroll_for_smoke(top_line * lh, cx));
+                bg.timer(Duration::from_millis(120)).await;
+                ed.read_with(cx, |e, _| e.sticky_shown().iter().map(|&(l, y)| (l + 1, (y / lh * 100.0).round() / 100.0)).collect::<Vec<_>>()).unwrap_or_default()
+            };
+            eprintln!("smoke-sticky: class Service3 at line {}, def method_2 at {}, its return at {}", class3 + 1, def2 + 1, ret2 + 1);
+            let s = at(cx, &ed, (def2 + 3) as f32).await;
+            eprintln!("smoke-sticky: top inside method_2 -> {s:?} (line, row)");
+            let s = at(cx, &ed, def2 as f32).await;
+            eprintln!("smoke-sticky: def line at the top -> {s:?}");
+            let s = at(cx, &ed, ret2 as f32 - 0.5).await;
+            eprintln!("smoke-sticky: method's last line under the panel -> {s:?} (the def pushed up)");
+            let s = at(cx, &ed, 0.0).await;
+            eprintln!("smoke-sticky: at the top of the file -> {s:?}");
+            let s = at(cx, &ed, (def2 + 5) as f32).await;
+            if hold {
+                // Hover the def line for the screenshot.
+                let _ = ed.update(cx, |e, cx| e.hover_sticky_for_smoke(1, cx));
+                eprintln!("smoke-sticky: holding with {s:?}");
+                return;
+            }
+            let _ = ed.update(cx, |e, cx| e.click_sticky_for_smoke(0, cx));
+            let (gliding, caret) = ed.read_with(cx, |e, _| (e.motion_probe().target.is_some(), e.caret_line_col())).unwrap_or_default();
+            pause(300).await;
+            let top = ed.read_with(cx, |e, _| e.line_top_for_smoke(class3) / lh).unwrap_or(-1.0);
+            eprintln!("smoke-sticky: click on the class line -> caret {:?}, glide {gliding}, class line drawn at row {top:.2}", (caret.0 + 1, caret.1));
+            let mut st = crate::settings::current();
+            st.sticky_lines = false;
+            crate::settings::apply(&st);
+            let s = at(cx, &ed, (def2 + 3) as f32).await;
+            eprintln!("smoke-sticky: setting off -> {s:?}");
+            crate::settings::apply(&crate::settings::Settings::default());
+            eprintln!("smoke-sticky: done");
+            let _ = this.update(cx, |_, cx| cx.quit());
+        })
+        .detach();
+    }
+}
