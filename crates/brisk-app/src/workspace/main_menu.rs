@@ -49,9 +49,11 @@ impl Workspace {
             sub("File", file),
             sub("Edit", group(&["Edit", "Find"], true)),
             sub("View", {
-                let mut v = group(&["View", "Tool Windows"], false);
-                v.push(Entry::Separator);
+                // View › Active Editor, as in PyCharm (Show Whitespaces, Soft-Wrap).
+                let mut v = group(&["View"], false);
                 v.push(sub("Active Editor", group(&["Active Editor"], true)));
+                v.push(Entry::Separator);
+                v.extend(group(&["Tool Windows"], false));
                 v
             }),
             sub("Navigate", group(&["Navigate"], false)),
