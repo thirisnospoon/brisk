@@ -157,7 +157,8 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 ### Formatting
 
 - `Ctrl+Alt+L` Reformat Code (`ruff format`; with a selection, only the selected lines).
-- `Ctrl+Alt+O` Optimize Imports (ruff `F401` and `I001`). Reports what it did, e.g. "Removed 2 unused imports; imports sorted" or "Imports are already optimized".
+- `Ctrl+Alt+O` Optimize Imports (ruff `F401` and `I001`): removes unused imports and sorts them with the isort profile PyCharm uses. `from __future__` comes first, then standard library, third-party, project and relative imports as separate groups; `from x import a` and `from x import b` are merged. Lines with `# noqa` and imports inside `try` are left alone. Reports what it did, e.g. "Removed 2 unused imports; imports sorted" or "Imports are already optimized".
+- With focus in the Project tree, `Ctrl+Alt+O` and `Ctrl+Alt+L` work on the selected file or folder (recursively). Open files change in their editors, closed ones on disk; ruff runs in the background and the status bar reports e.g. "Optimized imports in 2 of 2 file(s)".
 - Code → Code Cleanup applies all safe ruff fixes in the file.
 - Actions on Save (Settings → Tools → Actions on Save): Reformat code and Optimize imports run on changed `.py` files when saving (`Ctrl+S` and autosave), imports first. A file ruff cannot parse is saved as is. Both are off by default.
 - Each of these is one undo step.
@@ -167,7 +168,8 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 - Brisk runs ty (Astral's language server, `ty server`) in the background after interpreters are detected, and restarts it when the interpreter changes. ty is looked up the same way as ruff, including the bundled `lib\ty.exe`. If it is not found anywhere, a notification "Code insight is off: ty not found" suggests `pip install ty`, once.
 - ty's type errors are shown together with ruff's problems (underlines, the widget, `F2`, Problems → File). Findings that duplicate ruff's are dropped. `Alt+Enter` → Suppress for line writes `# ty: ignore[rule]`.
 - `Ctrl+B`, `Ctrl+Click` or a middle click: Go to Declaration (in another file or a library). On a declaration it shows usages, like Go to Declaration or Usages. `Ctrl+Shift+B` Go to Type Declaration.
-- `Ctrl+Q` Quick Documentation, also shown when the mouse rests on a name for 0.5 s. ty's Markdown is rendered as in PyCharm: signatures and examples highlighted as Python, inline code, bold, italics and clickable links.
+- `Ctrl+Q` Quick Documentation, also shown when the mouse rests on a name for 0.5 s. ty's Markdown is rendered as in PyCharm: signatures and examples highlighted as Python, inline code, bold, italics and clickable links. The top line links to the definition (`pkg.util:3`); clicking it opens the file there.
+- `Ctrl+Shift+P` Type Info (View → Type Info): the type of the name at the caret from ty, such as the variable's type, `(a: int) -> str` for a function or `type[C]` for a class, in a popup and in the status bar.
 - `Ctrl+Shift+I` Quick Definition: the source of the definition (a function or class with decorators and body, up to 40 lines; for a variable, its assignment) in a popup with file and line.
 - `Alt+F7` Find Usages, as a tree in the Find tool window: groups Import statements, Value write and Usages in code, then files, then lines. The definition itself is not listed.
 - Inlay hints from ty: the inferred type after a name (`x: list[int] = f(1)`) and the parameter name before an argument (`f(a=1)`). Hints that add nothing are hidden: `Any`, `Unknown`, types already visible on the right (literals, list / dict / tuple displays, constructor calls, `= int`), type aliases. Types over 40 characters are shortened, with the full type in a tooltip. Hints are not part of the text: the caret, selection and clicks skip them. Turn them off with Settings → Editor → Show inlay hints.
@@ -179,9 +181,21 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 - Filters by prefix and by camel humps (`gcw` → `getcwd`). Functions get `()` with the caret inside. Names already available in the file rank above auto-imports of equal match quality.
 - Auto-import: names from modules not yet imported are offered with the module on the right (`OrderedDict  collections`). `Enter` inserts the name and the import, one `Ctrl+Z` removes both.
 - The selected item shows its documentation on the right. Kind markers: `c` class, `f` function, `m` method, `v` variable or value, `p` field or property, `▣` module, `k` keyword.
-- `Ctrl+P` Parameter Info opens after `(` and updates after `,`, with the active parameter highlighted (by position or by `key=`).
+- `Ctrl+P` Parameter Info opens after `(` and updates after `,`, with the active parameter highlighted (by position or by `key=`). Overloaded functions show one line per overload; the ones that match the call are not dimmed. A function without parameters shows `<no parameters>`.
 - Postfix completion after `expr.`: `if`, `not`, `for`, `print`, `return`, `par`. For example `x > 1.if` → `if x > 1:`, `items.for` → `for item in items:`, `f(x).par` → `(f(x))`. Works without ty.
 - `Alt+Enter` on an unknown name offers Import (`Import 'collections.defaultdict'`, best module first) and Qualify (`Qualify as 'pkg.util.add'`) from ty, next to ruff's fixes. The import is merged into an existing `from … import` or added as a new line, in one undo step. The first import search in a large environment can take a couple of seconds ("Looking for imports…" in the status bar).
+
+### Intentions (`Alt+Enter`)
+
+Next to ruff's fixes, `Alt+Enter` offers PyCharm's intentions. Without ty only the purely syntactic ones are available. Each is one undo step.
+
+- Import `'pkg.mod.name'` from the project's own symbol index, when ty did not already offer the same import.
+- Create function `'name'` on a call to an unknown name: `def name(arg, …): pass` before the current top-level statement, with PEP 8 blank lines.
+- Add type hint for variable `'x'` (the type from ty's inlay hint).
+- Specify return type using annotation: the type from ty, or, when ty cannot infer it, the union of the types of the `return` statements (`X | None`).
+- Convert to f-string literal for `'…'.format(…)` and `'…' % (…)`. Not offered when an argument cannot go inside the braces before Python 3.12.
+- Invert 'if' condition for an `if` with an `else` (`==` ↔ `!=`, `in` ↔ `not in`, `not x` → `x`).
+- Split into 2 'if' statements for `if a and b`, and Merge nested 'if's for an `if` directly inside another without an `else`.
 
 ### Without ty
 
@@ -194,13 +208,17 @@ Brisk stays usable while ty is missing or still starting (its first answers can 
 
 ## Refactoring
 
-- `Shift+F6` Rename across files: open files change in the editor (one undo step), closed files on disk. Without ty, a local variable or parameter is renamed in place: all its occurrences in the function are selected and change together as you type (`Esc` to finish). Module-level names need ty, and the status bar says so.
+- `Shift+F6` Rename. A local variable or parameter is renamed in place, with or without ty: all its occurrences in the function are selected and change together as you type (`Esc` to finish). Other names need ty and open a popup with the new name: `Enter` renames in all files, Preview... shows the changes in the Find tool window (Import statements, Usages in code, Usages in comments and strings) with Do Refactor and Cancel. The Search in comments and strings check box (remembered) adds whole-word matches in comments and string literals. Open files change in the editor, closed files on disk. `Ctrl+Z` in any of the changed files, while none of them has been edited since, undoes the rename in all of them.
+- `Shift+F6` on the name of a project module (`import greeter`) offers Rename module 'greeter' and its usages, which renames the file (or package folder) and updates imports. Unlike PyCharm, `Ctrl+Z` does not move the file back afterwards; rename it again to restore the old name.
 - Renaming or moving a module or package in Project (`Shift+F6`, `F6` on a `.py` file or folder) updates imports in other files through ty's `willRenameFiles`. The status bar shows how many references were updated. When ty offers no edits (ty 0.0.104 does this for any folder rename and for moving a module to another folder), Brisk updates `from …` / `import …` lines and `pkg.mod.attr` references itself.
 - Brisk notifies ty about new and deleted `.py` files (ty does not watch the disk), so imports of just-created modules resolve right away.
-- `Ctrl+Alt+V` Extract Variable: the selected expression (or the one at the caret) moves into a variable on the line above. The name is derived from the expression (`get_total(x)` → `total`, `order.price` → `price`) and is selected in all places for editing. If the same expression occurs again in the function, a "Multiple occurrences found" popup offers to replace this one or all.
+- `Ctrl+Alt+V` Extract Variable: the selected expression moves into a variable on the line above. Without a selection, an Expressions popup lets you pick one of the expressions around the caret, innermost first. The name is derived from the expression (`get_total(x)` → `total`, `order.price` → `price`) and is selected in all places for editing. If the same expression occurs again in the function, a "Multiple occurrences found" popup offers to replace this one or all.
+- `Ctrl+Alt+C` Extract Constant: the same, but into a module-level `UPPER_CASE` constant placed after the docstring and imports.
+- `Ctrl+Alt+M` Extract Method: the selected lines (or expression) become a function `extracted` after the current one, or a method when they use `self` / `cls`. Free variables become parameters, variables read after the block are returned, and `await` makes the function `async`. The name is selected in both places for editing; one undo step. A block with `yield`, a `break` / `continue` outside its loop, or a `return` in the middle is refused with a message in the status bar.
+- `Ctrl+Alt+N` Inline: a variable assigned once is substituted into all its uses (parenthesized where needed) and removed. A function whose body is a single `return` (plus an optional docstring) is inlined into calls with its arguments; the Inline Function popup offers all calls and removing the function, or, on a call, only this one.
 - `Ctrl+Shift+↑/↓` Move Statement: in Python a whole statement (a function with its decorators, an `if` with its `else`, a multi-line call) swaps with its neighbour in the same block. At the edge of a block nothing happens. In other files lines move.
 - `Ctrl+Shift+Delete` Unwrap/Remove: for the statements around the caret, innermost first: Unwrap `if`, Unwrap `else`, Remove `else` / `elif` / `except` (not the only `except` of a `try`), and the same for `for`, `while`, `with`, `try`. The body is dedented to the statement's level.
-- Limitations: Extract Method and Extract Constant are not implemented yet (the status bar says so).
+- Limitations: Extract Method does not handle blocks with several exits; Inline works only for single-assignment variables and single-`return` functions.
 
 ## Templates and code generation
 
