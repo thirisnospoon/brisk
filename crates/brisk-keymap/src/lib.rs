@@ -5,9 +5,13 @@
 
 mod action;
 mod pycharm;
+mod pycharm_import;
+mod user;
 
 pub use action::{Action, ActionInfo, ALL_ACTIONS};
 pub use pycharm::pycharm_keymap;
+pub use pycharm_import::{active_keymap, import_xml, pycharm_config_dirs, Imported};
+pub use user::{chord_id, parse_chord, UserKeymap};
 
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -55,6 +59,18 @@ impl Keystroke {
             return None;
         }
         Some(Self { mods, key: rest.to_string() })
+    }
+
+    /// The form [`Keystroke::parse`] reads: "ctrl-shift-a".
+    pub fn id(&self) -> String {
+        let m = &self.mods;
+        let mut s = String::new();
+        for (on, p) in [(m.ctrl, "ctrl-"), (m.alt, "alt-"), (m.shift, "shift-"), (m.meta, "meta-")] {
+            if on {
+                s.push_str(p);
+            }
+        }
+        s + &self.key
     }
 
     pub fn is_modifier_only(&self) -> bool {

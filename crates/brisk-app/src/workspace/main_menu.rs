@@ -24,6 +24,7 @@ impl Workspace {
             a("Reopen Closed Tab", A::ReopenClosedTab),
             Entry::Separator,
             a("Settings…", A::Settings),
+            a("Keymap…", A::Keymap),
             Entry::Separator,
             a("Save All", A::SaveAll),
             a("Reload All from Disk", A::ReloadFromDisk),

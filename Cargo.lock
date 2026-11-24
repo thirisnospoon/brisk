@@ -747,6 +747,11 @@ dependencies = [
 [[package]]
 name = "brisk-keymap"
 version = "0.2.7"
+dependencies = [
+ "roxmltree",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "brisk-lint"

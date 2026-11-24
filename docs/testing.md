@@ -307,6 +307,12 @@ Folder: empty. Needs fastapi, uvicorn and flask.
 
 Checks app detection in the dialog, runs `api/main.py` as FastAPI and `webapp.py` as Flask on ports 18765 and 18766, checks the HTTP response at the address printed in the output and opening the link. Then runs `site/manage.py` as Django server on port 18767 and Django tests with the label `polls`, against a stub `django` package the smoke writes next to it (Django itself is not needed). Stops the servers at the end. `=dialog` leaves the dialog open, `=dialog-add` the template list.
 
+### `BRISK_SMOKE_KEYMAP=1`
+
+Settings folder: a scratch `APPDATA` (the smoke writes `keymap.json` and a fake PyCharm settings folder there). Ty is not needed.
+
+Filters Keymap by `ctrl+d`, opens Add Keyboard Shortcut for Delete Line, presses `Ctrl+D` and `Enter` through `on_key_down`, and checks the conflict with Duplicate Line, the saved `keymap.json` and that `Ctrl+D` now deletes a line in the editor. Then imports a PyCharm keymap (one known action, one unknown) and checks `Ctrl+Alt+F`, and ends with Reset All. `=hold` stops with the shortcut box open, for a screenshot.
+
 ### `BRISK_SMOKE_MARKS=1`
 
 Folder: empty. Needs ty.

@@ -15,6 +15,7 @@ mod ui_kit;
 mod editor;
 mod editorconfig;
 mod keys;
+mod keymap_store;
 mod local_history;
 mod py_console;
 mod py_packages;

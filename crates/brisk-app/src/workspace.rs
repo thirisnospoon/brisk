@@ -10,8 +10,10 @@ mod todo_ui;
 mod webnav_smoke;
 mod ssh_smoke;
 mod marks_smoke;
+mod keymap_smoke;
 mod web_ui;
 mod ssh_ui;
+mod keymap_ui;
 mod db_ui;
 mod services_ui;
 mod pin_smoke;
@@ -98,7 +100,7 @@ use crate::grid_view::GridView;
 use crate::keys;
 use crate::terminal_view::TerminalPanel;
 use crate::theme::{Theme, mono_font, ui_font};
-use brisk_keymap::{pycharm_keymap, Action, KeyResolver, Resolution, ALL_ACTIONS};
+use brisk_keymap::{Action, KeyResolver, Resolution, ALL_ACTIONS};
 use brisk_project::{FileList, NodeId, ProjectTree};
 use gpui::prelude::*;
 use gpui::{
@@ -183,6 +185,10 @@ enum PopupKind {
     AddInterpreter,
     /// Add SSH Interpreter: the host.
     SshHosts,
+    /// Keymap: every action with its shortcuts.
+    Keymap,
+    /// Keymap: what to do with one action's shortcuts.
+    KeymapAction(Action),
     /// Add SSH Interpreter: one of the Pythons found on the host.
     SshPythons,
     /// Run Anything (double Ctrl).
@@ -318,6 +324,13 @@ enum Target {
     AddInterpreter,
     /// "Add SSH Interpreter".
     AddSsh,
+    KeymapPick(Action),
+    KeymapAdd(Action),
+    /// The action and the shortcut to remove (`chord_id` form).
+    KeymapRemove(Action, String),
+    KeymapReset(Action),
+    KeymapResetAll,
+    KeymapImport,
     /// A host to look for Pythons on.
     SshHost(String),
     /// Host, Python path, version: the new SSH interpreter.
@@ -425,6 +438,10 @@ pub struct Workspace {
     venv_busy: bool,
     /// Add SSH Interpreter: the host just probed and what it has.
     ssh_found: Option<(String, brisk_run::ssh::HostInfo)>,
+    /// The "press the keys" box of Keymap.
+    key_capture: Option<keymap_ui::KeyCapture>,
+    /// The keymap generation the resolver was built from.
+    keymap_gen: u64,
     /// The offer to install requirements into a new venv.
     venv_offer: Option<venv_ui::VenvOffer>,
     /// `pyproj::deps_fingerprint` of pyproject.toml when the project opened or was last synced.
@@ -697,6 +714,9 @@ impl Workspace {
         if std::env::var_os("BRISK_SMOKE_RUNANYTHING").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_anything_smoke(window, cx));
         }
+        if std::env::var_os("BRISK_SMOKE_KEYMAP").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.keymap_smoke(window, cx));
+        }
         if std::env::var_os("BRISK_SMOKE_MARKS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.marks_smoke(window, cx));
         }
@@ -887,6 +907,8 @@ impl Workspace {
             pyc: None,
             venv_busy: false,
             ssh_found: None,
+            key_capture: None,
+            keymap_gen: crate::keymap_store::generation(),
             venv_offer: None,
             pyproject_fp: None,
             ra_history: Vec::new(),
@@ -917,7 +939,7 @@ impl Workspace {
             bottom: None,
             popup: None,
             terminal: None,
-            resolver: KeyResolver::new(pycharm_keymap()),
+            resolver: KeyResolver::new(crate::keymap_store::effective()),
             focus,
             tree_focus,
             shift_alone: false,
@@ -1247,6 +1269,12 @@ impl Workspace {
     }
 
     fn on_key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_keymap();
+        if self.key_capture.is_some() {
+            self.key_capture_key(e, window, cx);
+            cx.stop_propagation();
+            return;
+        }
         self.shift_alone = false;
         self.ctrl_alone = false;
         self.ctrl_tap = None;
@@ -1475,6 +1503,7 @@ impl Workspace {
             }
             A::NewProject => self.project_cmd(project_ui::ProjectCmd::New, window, cx),
             A::RecentProjects => self.open_popup(PopupKind::Projects),
+            A::Keymap => self.open_popup(PopupKind::Keymap),
             A::FindAction => self.open_popup(PopupKind::FindAction),
             A::RecentFiles => self.open_popup(PopupKind::RecentFiles),
             A::GotoLine if self.active.is_some() => self.open_popup(PopupKind::GotoLine),
@@ -1853,6 +1882,8 @@ impl Workspace {
             k @ (PopupKind::RunConfigs(_) | PopupKind::Interpreters) => self.run_popup_items(k, &q),
             PopupKind::AddInterpreter => self.add_interpreter_items(&q),
             PopupKind::SshHosts => self.ssh_host_items(&q),
+            PopupKind::Keymap => self.keymap_items(&q),
+            PopupKind::KeymapAction(a) => self.keymap_action_items(a),
             PopupKind::SshPythons => self.ssh_python_items(&q),
             PopupKind::RunAnything => self.run_anything_items(&q),
             PopupKind::Intentions => self.intention_items(&q),
@@ -1959,6 +1990,7 @@ impl Workspace {
                     Some(Target::SshHost(h)) => self.ssh_pick_host(h, window, cx),
                     Some(Target::SshPython(h, p, v)) => self.ssh_pick_python(h, p, v, window, cx),
                     Some(Target::SshUse(uri)) => self.ssh_use(uri, window, cx),
+                    Some(t @ (Target::KeymapPick(_) | Target::KeymapAdd(_) | Target::KeymapRemove(..) | Target::KeymapReset(_) | Target::KeymapResetAll | Target::KeymapImport)) => self.keymap_pick(t, window, cx),
                     Some(Target::RunAnything(line)) => {
                         self.popup = None;
                         self.run_anything(line, window, cx);
@@ -2747,6 +2779,8 @@ impl Workspace {
             PopupKind::Interpreters => ("Python Interpreter", "Type to filter"),
             PopupKind::AddInterpreter => ("Add Interpreter", "A new virtual environment in the project from this Python"),
             PopupKind::SshHosts => ("Add SSH Interpreter", "Host from ~/.ssh/config, or user@host[:port]"),
+            PopupKind::Keymap => ("Keymap", "Filter by action or by shortcut (ctrl+d)"),
+            PopupKind::KeymapAction(_) => ("Keymap", "Shortcuts of this action"),
             PopupKind::SshPythons => ("Add SSH Interpreter", "Python on the host"),
             PopupKind::RunAnything => ("Run Anything", "python x.py, pytest …, pip install …, a configuration or any command"),
             PopupKind::Intentions => (self.problems.intents_title.unwrap_or("Context Actions"), "Type to filter"),
@@ -2916,6 +2950,7 @@ impl Workspace {
             Target::Interpreter(_) => ("◆", gpui::rgb(0x4b8bbe).into()),
             Target::AddInterpreter | Target::CreateVenv(_) | Target::SyncEnv(_) | Target::AddSsh => ("+", gpui::rgb(0x4b8bbe).into()),
             Target::SshUse(_) | Target::SshHost(_) | Target::SshPython(..) => ("◆", gpui::rgb(0x4b8bbe).into()),
+            Target::KeymapPick(_) | Target::KeymapAdd(_) | Target::KeymapRemove(..) | Target::KeymapReset(_) | Target::KeymapResetAll | Target::KeymapImport => ("⌨", Theme::text_muted()),
             Target::RunAnything(_) => ("▶", gpui::rgb(0x5fb865).into()),
             Target::Intention(_) => ("✦", gpui::rgb(0xe0b84a).into()),
             Target::Rename(_) => ("✎", gpui::rgb(0x4b8bbe).into()),
@@ -3157,6 +3192,7 @@ impl Render for Workspace {
             .children(self.render_find_popup(cx).map(|e| fade_in("find-in", e, 110)))
             .children(self.render_ds_dialog(cx).map(|e| fade_in("ds-in", e, 110)))
             .children(self.render_settings(cx).map(|e| fade_in("settings-in", e, 110)))
+            .children(self.render_key_capture())
             .children(self.render_bp_dialog(cx).map(|e| fade_in("bp-dialog-in", e, 110)))
             .children(self.render_chooser(cx))
             .children(self.render_run_dialog(cx).map(|e| fade_in("run-dialog-in", e, 110)))

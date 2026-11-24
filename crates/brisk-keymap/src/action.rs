@@ -193,6 +193,7 @@ actions! {
     MoveToOppositeGroup => "Move to Opposite Group", "Window";
     NextSplitter => "Go to Next Splitter", "Window";
     Settings => "Settings", "File";
+    Keymap => "Keymap", "File";
     IncreaseFontSize => "Increase Font Size in All Editors", "View";
     DecreaseFontSize => "Decrease Font Size in All Editors", "View";
     ResetFontSize => "Reset Font Size", "View";
