@@ -123,6 +123,22 @@ base image (Alpine Linux packages under their own licenses), Docker Engine and c
 | 5 | Python interpreter in a container or Compose service, debugging | 2 weeks |
 | 6 | Auto-stop, balloon, settings, `\\.\pipe\brisk-docker` for CLI tools | 1–2 weeks |
 
+## Where it stands
+
+Phase 0 is in the tree (`crates/brisk-vm`: `check()` and `enable()`), not yet wired into
+the UI. Phase 1 is paused; what has been checked so far:
+
+- QEMU for Windows 11.1.0 (the `qemu-w64-setup` build from qemu.weilnetz.de, linked from
+  qemu.org) unpacks with 7-Zip without running the installer, and `-accel help` lists
+  `whpx`. The full unpacked tree is 1.2 GB; the engine bundle needs only
+  `qemu-system-x86_64.exe` and its DLLs, to be trimmed.
+- Alpine 3.24 netboot `vmlinuz-virt` (12 MB) and `initramfs-virt` (9 MB) are the candidate
+  guest kernel and early userspace; `modloop-virt` (22 MB) carries the kernel modules.
+
+Next, when phase 1 resumes: boot that kernel under `-accel whpx -m 512 -nographic`, measure
+cold start and host memory, then build the guest image with Docker and brisk-agent (in CI,
+not on a developer machine).
+
 ## Risks
 
 - QEMU's WHPX accelerator is less tuned than KVM. Fallback: a Host Compute Service backend
