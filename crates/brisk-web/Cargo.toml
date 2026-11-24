@@ -1,0 +1,11 @@
+[package]
+name = "brisk-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Django, FastAPI and Flask awareness: URL routes, templates and the references between them"
+
+[dependencies]
+brisk-project.workspace = true
+tree-sitter.workspace = true
+tree-sitter-python.workspace = true

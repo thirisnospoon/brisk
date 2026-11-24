@@ -49,6 +49,7 @@ actions! {
     GotoImplementation => "Go to Implementation(s)", "Navigate";
     GotoTypeDeclaration => "Go to Type Declaration", "Navigate";
     GotoSuperMethod => "Go to Super Method", "Navigate";
+    GotoRelated => "Go to Related Symbol", "Navigate";
     NavigateBack => "Back", "Navigate";
     NavigateForward => "Forward", "Navigate";
     NextMethod => "Next Method", "Navigate";
@@ -286,6 +287,7 @@ actions! {
     ToggleCommitWindow => "Commit", "Tool Windows";
     ToggleTerminalWindow => "Terminal", "Tool Windows";
     ToggleTodoWindow => "TODO", "Tool Windows";
+    ToggleEndpointsWindow => "Endpoints", "Tool Windows";
     ToggleCoverageWindow => "Coverage", "Tool Windows";
     ToggleProfilerWindow => "Profiler", "Tool Windows";
     HideAllToolWindows => "Hide All Tool Windows", "Tool Windows";

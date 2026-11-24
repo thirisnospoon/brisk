@@ -307,6 +307,12 @@ Folder: empty. Needs fastapi, uvicorn and flask.
 
 Checks app detection in the dialog, runs `api/main.py` as FastAPI and `webapp.py` as Flask on ports 18765 and 18766, checks the HTTP response at the address printed in the output and opening the link. Then runs `site/manage.py` as Django server on port 18767 and Django tests with the label `polls`, against a stub `django` package the smoke writes next to it (Django itself is not needed). Stops the servers at the end. `=dialog` leaves the dialog open, `=dialog-add` the template list.
 
+### `BRISK_SMOKE_WEBNAV=1`
+
+Folder: empty. Writes a small Django project (`mysite`, app `polls` with templates).
+
+Checks `Ctrl+B` on a template name in a view (expected `detail.html`), `Ctrl+Click` on `{% extends 'base.html' %}` (`base.html`) and on `{% url 'polls:detail' %}` (`urls.py:8`), Go to Related from `detail.html` to its view (`views.py:9`) and back, the Endpoints list (`/polls/`, `/polls/<int:pk>/`) and `Enter` on an endpoint (`views.py:8`, `def detail`). `=hold` leaves the window open.
+
 ### `BRISK_SMOKE_COVERAGE=1`
 
 Folder: empty. Writes `calc.py` and `test_calc.py`.

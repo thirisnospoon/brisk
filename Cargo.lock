@@ -705,6 +705,7 @@ dependencies = [
  "brisk-terminal",
  "brisk-text",
  "brisk-vm",
+ "brisk-web",
  "embed-resource",
  "flate2",
  "futures",
@@ -840,6 +841,15 @@ name = "brisk-vm"
 version = "0.2.7"
 dependencies = [
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "brisk-web"
+version = "0.2.7"
+dependencies = [
+ "brisk-project",
+ "tree-sitter",
+ "tree-sitter-python",
 ]
 
 [[package]]

@@ -279,6 +279,16 @@ Brisk stays usable while ty is missing or still starting (its first answers can 
 - If uvicorn, flask or Django is not installed in the venv, Brisk shows a message instead of starting.
 - `http://…` addresses in Run output are links that open in the browser (`0.0.0.0` is opened as `127.0.0.1`).
 
+### Django, FastAPI and Flask code
+
+- `Ctrl+B` or `Ctrl+Click` on a template name opens the template: `render(request, "polls/detail.html")`, `template_name = "..."`, `TemplateResponse`, `render_template`, and in templates `{% extends %}`, `{% include %}`, `{% import %}`, `{% from %}`. Templates are looked up in every `templates` folder of the project and in folders given as `Jinja2Templates(directory=...)` or `template_folder=`. When two folders have the file, the Find window lists both.
+- On a URL name it opens the route: `reverse("polls:detail")`, `reverse_lazy`, `redirect("polls:index")`, `resolve_url`, `url_for("read_item")` and `{% url 'polls:detail' q.id %}`. Django namespaces come from `app_name` and `include(..., namespace=...)`; a name without the namespace also matches. Flask blueprint endpoints are `blueprint.function`.
+- On `include("polls.urls")` it opens the URLconf; on `{% static 'css/site.css' %}` or `url_for('static', filename=...)` the file in a `static` folder.
+- Go to Related Symbol (`Ctrl+Alt+Home`): in a template, the views that render it and the templates that extend or include it; in a view function or class, the templates it uses.
+- Endpoints tool window (its stripe button appears in projects with routes; also Find Action → Endpoints): every route with its methods (ANY for Django), full path and name. Django routes follow `ROOT_URLCONF` and `include()`, FastAPI routes `APIRouter(prefix=...)` and `include_router(..., prefix=...)`, Flask routes `Blueprint(url_prefix=...)` and `register_blueprint`. `Enter` or a click opens the view. The list is rebuilt after a Python file or template is saved, or with ↻.
+- Django and Jinja2 tags in `.html`, `.jinja` and `.j2` files are highlighted: `{% %}` and `{{ }}` with the tag name, strings, numbers and `|filters`, and `{# #}` comments.
+- Limitations: routes are read from the source, not by importing the project, so URL patterns built in loops or by third-party routers (Django REST Framework's `DefaultRouter`) are not listed. No completion of template, URL or static names yet, and no code insight for template variables.
+
 ### Run tool window
 
 - Run (`Alt+4`) has one tab per run. The first line is the command line, the last is "Process finished with exit code N". stderr is red. Input for `input()` is typed directly in the window (in green) and sent on `Enter`.

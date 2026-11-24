@@ -280,8 +280,10 @@ far less mature.
   latest release.
 - **On `main`, not released yet:** uv and Poetry projects (sync the environment from
   the lock file, Python Packages edits `pyproject.toml`).
-- **In progress:** Django and FastAPI support: URL and template navigation, an
-  endpoints list.
+- **On `main`, not released yet (continued):** Django, FastAPI and Flask navigation:
+  template and URL names, Go to Related between templates and views, an Endpoints
+  window, template tag highlighting.
+- **In progress:** completion of template and URL names.
 - **Planned:** remote interpreters (SSH, WSL, Docker); Docker containers without
   Docker Desktop or WSL ([design](docs/design/containers.md)).
 - **Not started:** macOS and Linux builds, plugins.

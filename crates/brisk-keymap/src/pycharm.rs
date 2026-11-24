@@ -22,6 +22,7 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("ctrl-alt-b", A::GotoImplementation, ED);
     k.bind("ctrl-shift-b", A::GotoTypeDeclaration, ED);
     k.bind("ctrl-u", A::GotoSuperMethod, ED);
+    k.bind("ctrl-alt-home", A::GotoRelated, ED);
     k.bind("ctrl-alt-left", A::NavigateBack, None);
     k.bind("ctrl-alt-right", A::NavigateForward, None);
     k.bind("alt-down", A::NextMethod, ED);

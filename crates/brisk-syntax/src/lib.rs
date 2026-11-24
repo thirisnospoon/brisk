@@ -8,6 +8,7 @@ mod intentions;
 mod refactor;
 mod sql;
 mod structure;
+mod template_tags;
 pub use scope::{name_refs_of, occurrences_of, NameRefs};
 pub use structure::{statement_move, unwrap_options, Unwrap};
 pub use intentions::{create_function, hint_target, import_edit, intentions_at, HintTarget, Intention, Returned};
@@ -421,7 +422,7 @@ impl SyntaxTree {
                 raw.push((r, m.pattern_index, kind));
             }
         }
-        if raw.is_empty() {
+        if raw.is_empty() && self.lang != Lang::Html {
             return Vec::new();
         }
         // Paint: larger nodes first, then smaller ones on top. Among equal ranges the earliest
@@ -460,6 +461,9 @@ impl SyntaxTree {
             for p in &mut paint[s.saturating_sub(lo)..e.saturating_sub(lo)] {
                 *p = Some(k);
             }
+        }
+        if self.lang == Lang::Html && text.contains('{') {
+            template_tags::paint(text, lo, &mut paint);
         }
         let mut out: Vec<Span> = Vec::new();
         let mut i = 0;
@@ -823,6 +827,14 @@ x
 ", "Title", Highlight::Keyword),
             ("index.html", "<div class=\"a\">hi</div>", "div", Highlight::Keyword),
             ("index.html", "<div class=\"a\">hi</div>", "class", Highlight::Property),
+            ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "{%", Highlight::Keyword),
+            ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "extends", Highlight::Keyword),
+            ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "base.html", Highlight::String),
+            ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "url", Highlight::Keyword),
+            ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "polls:detail", Highlight::String),
+            ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "upper", Highlight::Function),
+            ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "note", Highlight::Comment),
+            ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "}}", Highlight::Keyword),
             ("s.css", ".a { color: red; }", "color", Highlight::Property),
             ("app.js", "const x = 'a'; // c
 foo(1);", "const", Highlight::Keyword),
@@ -938,6 +950,22 @@ fn text_edit(old: &str, new: &str) -> InputEdit {
         start_position: point(n, prefix),
         old_end_position: point(o, o.len() - suffix),
         new_end_position: point(n, n.len() - suffix),
+    }
+}
+
+#[cfg(test)]
+mod template_tag_tests {
+    use super::*;
+
+    /// Plain names inside a tag lose the HTML string color of the attribute around it.
+    #[test]
+    fn names_in_tags_are_plain() {
+        let src = "<a href=\"{{ q.text }}\">x</a>";
+        let mut s = SyntaxTree::new(Lang::Html);
+        s.parse(src);
+        let spans = s.highlights(src, 0..src.len());
+        let at = src.find("text").unwrap();
+        assert_eq!(spans.iter().find(|sp| sp.range.contains(&at)).map(|sp| sp.kind), None, "{spans:?}");
     }
 }
 

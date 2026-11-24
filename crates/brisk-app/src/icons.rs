@@ -13,7 +13,7 @@ macro_rules! icons {
 }
 
 icons![
-    "tw-bookmarks", "tw-breakpoints", "tw-clear", "tw-commit", "tw-copy", "tw-coverage", "tw-database", "tw-evaluate", "tw-git", "tw-mute-breakpoints", "tw-packages", "tw-pause", "tw-pin", "tw-problems", "tw-profiler", "tw-project", "tw-python-console", "tw-rerun", "tw-rerun-failed", "tw-resume", "tw-run", "tw-run-to-cursor", "tw-scroll-end", "tw-services", "tw-soft-wrap", "tw-step-into", "tw-step-out", "tw-step-over", "tw-stop", "tw-structure", "tw-terminal", "tw-todo",
+    "tw-bookmarks", "tw-breakpoints", "tw-clear", "tw-commit", "tw-copy", "tw-coverage", "tw-database", "tw-evaluate", "tw-git", "tw-mute-breakpoints", "tw-packages", "tw-pause", "tw-pin", "tw-problems", "tw-profiler", "tw-project", "tw-python-console", "tw-rerun", "tw-rerun-failed", "tw-resume", "tw-run", "tw-run-to-cursor", "tw-scroll-end", "tw-services", "tw-soft-wrap", "tw-step-into", "tw-step-out", "tw-step-over", "tw-stop", "tw-structure", "tw-terminal", "tw-todo", "tw-endpoints",
     "ft-archive", "ft-config", "ft-css", "ft-csv", "ft-docker", "ft-file", "ft-folder", "ft-html", "ft-ignore", "ft-image", "ft-js", "ft-json", "ft-letter-t", "ft-letter-y", "ft-lock", "ft-md", "ft-nb-a", "ft-nb-b", "ft-py-a", "ft-py-b", "ft-req-mark", "ft-rs", "ft-shell", "ft-sql", "ft-text", "ft-ts", "ft-xml", "arrow-down", "arrow-down-to-line", "arrow-left-right", "arrow-right-to-line", "arrow-up", "bookmark", "bug", "check",
     "check-bold", "chevron-down", "chevron-right", "chevron-up", "circle", "circle-alert", "circle-check", "circle-slash", "circle-x", "clipboard",
     "cloud", "copy", "database", "diamond", "dot", "eraser", "external-link", "file", "file-text", "folder", "git-branch", "island-bl", "island-br", "island-tl", "island-tr",

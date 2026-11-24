@@ -7,6 +7,8 @@ mod packages_ui;
 mod packages_smoke;
 mod pyproj_smoke;
 mod todo_ui;
+mod webnav_smoke;
+mod web_ui;
 mod db_ui;
 mod services_ui;
 mod pin_smoke;
@@ -124,6 +126,7 @@ pub enum BottomTool {
     PythonConsole,
     Packages,
     Todo,
+    Endpoints,
     Coverage,
     Profiler,
 }
@@ -141,6 +144,7 @@ impl BottomTool {
             BottomTool::PythonConsole => "Python Console",
             BottomTool::Packages => "Python Packages",
             BottomTool::Todo => "TODO",
+            BottomTool::Endpoints => "Endpoints",
             BottomTool::Coverage => "Coverage",
             BottomTool::Profiler => "Profiler",
         }
@@ -154,7 +158,7 @@ impl BottomTool {
             BottomTool::Git => "",
             BottomTool::Services => "Stage 5: Docker and databases.",
             BottomTool::Find => "",
-            BottomTool::PythonConsole | BottomTool::Packages | BottomTool::Todo | BottomTool::Coverage | BottomTool::Profiler => "",
+            BottomTool::PythonConsole | BottomTool::Packages | BottomTool::Todo | BottomTool::Endpoints | BottomTool::Coverage | BottomTool::Profiler => "",
         }
     }
 }
@@ -432,6 +436,10 @@ pub struct Workspace {
     packages: Option<packages_ui::Packages>,
     /// Created on first open of the TODO window; then kept current on save.
     todo: Option<todo_ui::Todo>,
+    /// Routes and templates of a Django / FastAPI / Flask project (built on first use).
+    web: web_ui::WebState,
+    /// Created on first open of the Endpoints window.
+    endpoints: Option<web_ui::Endpoints>,
     /// The breakpoint whose condition the popup edits.
     debug_edit: Option<(Entity<Editor>, usize)>,
     settings_dialog: Option<settings_ui::SettingsDialog>,
@@ -501,6 +509,8 @@ impl Workspace {
         cx.defer_in(window, |this: &mut Self, _, cx| {
             this.remember_pyproject();
             this.start_interpreter_discovery(cx);
+            // The Endpoints stripe button shows only in a web project.
+            this.scan_web(None, cx);
         });
         if let Some(f) = std::env::var_os("BRISK_SMOKE_LINT") {
             let f = PathBuf::from(f);
@@ -669,6 +679,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNANYTHING").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_anything_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_WEBNAV").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.webnav_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_VENV").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.venv_smoke(window, cx));
@@ -864,6 +877,8 @@ impl Workspace {
             test_marks: Default::default(),
             packages: None,
             todo: None,
+            web: Default::default(),
+            endpoints: None,
             debug_edit: None,
             recent: Vec::new(),
             bookmarks: saved_bookmarks,
@@ -972,6 +987,7 @@ impl Workspace {
             self.show_toast(p, true, cx);
         }
         self.pyproject_saved(&saved_paths, cx);
+        self.web_files_saved(&saved_paths, cx);
         self.todo_files_saved(saved_paths, cx);
         if saved > 0 {
             self.persist_bookmarks(cx);
@@ -1302,7 +1318,7 @@ impl Workspace {
             cx.stop_propagation();
             return;
         }
-        if self.python_console_key(e, window, cx) || self.packages_key(e, window, cx) || self.todo_key(e, window, cx) {
+        if self.python_console_key(e, window, cx) || self.packages_key(e, window, cx) || self.todo_key(e, window, cx) || self.endpoints_key(e, window, cx) {
             cx.stop_propagation();
             return;
         }
@@ -1370,6 +1386,7 @@ impl Workspace {
             A::HideActiveToolWindow, A::FindAction, A::Settings, A::Run, A::Debug, A::RunContext,
             A::DebugContext, A::Stop, A::FindInFiles, A::SaveAll, A::ToggleDatabaseWindow, A::Rerun,
             A::SelectRunConfiguration, A::TogglePythonConsole, A::TogglePythonPackages, A::ToggleTodoWindow,
+            A::ToggleEndpointsWindow,
         ];
         let Some(term) = term else { return };
         let k = &e.keystroke;
@@ -1483,6 +1500,8 @@ impl Workspace {
                 }
             },
             A::ToggleTodoWindow => self.toggle_todo_window(window, cx),
+            A::ToggleEndpointsWindow => self.toggle_endpoints_window(window, cx),
+            A::GotoRelated => self.goto_related(window, cx),
             A::ToggleCoverageWindow => self.toggle_coverage_window(window, cx),
             A::RunWithCoverage => self.run_with_coverage(window, cx),
             A::Profile => self.profile_run(window, cx),
@@ -2158,6 +2177,7 @@ impl Workspace {
             .child(self.stripe_button("st-run", "run", "Run", self.bottom == Some(BottomTool::Run), Action::ToggleRunWindow, cx))
             .child(self.stripe_button("st-terminal", "terminal", "Terminal", self.bottom == Some(BottomTool::Terminal), Action::ToggleTerminalWindow, cx))
             .child(self.stripe_button("st-todo", "todo", "TODO", self.bottom == Some(BottomTool::Todo), Action::ToggleTodoWindow, cx))
+            .when(self.web.index.as_ref().is_some_and(|i| !i.routes.is_empty()), |d| d.child(self.stripe_button("st-endpoints", "endpoints", "Endpoints", self.bottom == Some(BottomTool::Endpoints), Action::ToggleEndpointsWindow, cx)))
             .when(self.coverage.is_some(), |d| d.child(self.stripe_button("st-coverage", "coverage", "Coverage", self.bottom == Some(BottomTool::Coverage), Action::ToggleCoverageWindow, cx)))
             .when(self.profile.is_some(), |d| d.child(self.stripe_button("st-profiler", "profiler", "Profiler", self.bottom == Some(BottomTool::Profiler), Action::ToggleProfilerWindow, cx)))
             .child(self.stripe_button("st-problems", "problems", "Problems", self.bottom == Some(BottomTool::Problems), Action::ToggleProblemsWindow, cx))
@@ -3026,6 +3046,7 @@ impl Render for Workspace {
             (BottomTool::PythonConsole, _) => self.render_python_console(window, cx),
             (BottomTool::Packages, _) => self.render_python_packages(window, cx),
             (BottomTool::Todo, _) => self.render_todo(cx),
+            (BottomTool::Endpoints, _) => self.render_endpoints(cx),
             (BottomTool::Coverage, _) => self.render_coverage(cx),
             (BottomTool::Profiler, _) => self.render_profiler(cx),
             _ => Self::render_placeholder(b.title(), b.stage()),
