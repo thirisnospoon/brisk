@@ -4,7 +4,7 @@
 
 use super::menu_ui::Entry;
 use super::{PopupItem, PopupKind, Tab, Target, Workspace};
-use brisk_project::{FileList, NodeId};
+use brisk_project::{FileList, Mark, NodeId};
 use gpui::{Context, Keystroke, Pixels, Point, Window};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -475,6 +475,48 @@ impl Workspace {
         ]
     }
 
+    /// Mark Directory as: Sources Root, Test Sources Root, Excluded, or Unmark. For folders
+    /// inside the project, not the project root.
+    pub(super) fn mark_entries(&self, path: &Path, is_dir: bool, root: bool) -> Option<Entry> {
+        let rel = brisk_project::rel_path(&self.root, path).filter(|r| is_dir && !root && !r.is_empty())?;
+        let current = self.tree.structure.mark_of(&rel);
+        let item = |label: &str, mark: Option<Mark>| {
+            let p = path.to_path_buf();
+            Entry::Item { label: label.into(), shortcut: String::new(), enabled: true, run: Rc::new(move |this: &mut Workspace, _, cx| this.mark_dir(&p, mark, cx)) }
+        };
+        let mut entries = Vec::new();
+        for (label, mark) in [("Sources Root", Mark::Sources), ("Test Sources Root", Mark::Tests), ("Excluded", Mark::Excluded)] {
+            if current == Some(mark) {
+                entries.push(item(&format!("Unmark as {label}"), None));
+            } else {
+                entries.push(item(label, Some(mark)));
+            }
+        }
+        Some(Entry::Submenu { label: "Mark Directory as".into(), entries })
+    }
+
+    /// Marks a folder (or unmarks it) and applies it: the tree, the file index, search, ty
+    /// and the next runs.
+    pub(super) fn mark_dir(&mut self, path: &Path, mark: Option<Mark>, cx: &mut Context<Self>) {
+        let Some(rel) = brisk_project::rel_path(&self.root, path).filter(|r| !r.is_empty()) else { return };
+        let mut s = self.tree.structure.clone();
+        s.set(&rel, mark);
+        if let Err(e) = s.save(&self.root) {
+            self.show_toast(format!("Cannot save folder marks: {e}"), true, cx);
+            return;
+        }
+        self.tree.set_structure(s);
+        self.reindex_files(cx);
+        self.restart_ty(cx);
+        self.status = match mark {
+            Some(Mark::Sources) => format!("{rel} is a sources root: on the import path of ty and runs"),
+            Some(Mark::Tests) => format!("{rel} is a test sources root: on the import path of ty and runs"),
+            Some(Mark::Excluded) => format!("{rel} is excluded from search, the file index and ty"),
+            None => format!("{rel} is no longer marked"),
+        };
+        cx.notify();
+    }
+
     /// Right click on a row of the Project view.
     pub(super) fn tree_menu(&mut self, id: NodeId, pos: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         self.tree_selected = Some(id);
@@ -504,6 +546,9 @@ impl Workspace {
             });
         }
         v.extend(self.git_menu_entries(&path, None, cx));
+        if let Some(m) = self.mark_entries(&path, is_dir, root) {
+            v.push(m);
+        }
         v.push(Entry::Submenu {
             label: "Local History".into(),
             entries: vec![

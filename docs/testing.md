@@ -307,6 +307,12 @@ Folder: empty. Needs fastapi, uvicorn and flask.
 
 Checks app detection in the dialog, runs `api/main.py` as FastAPI and `webapp.py` as Flask on ports 18765 and 18766, checks the HTTP response at the address printed in the output and opening the link. Then runs `site/manage.py` as Django server on port 18767 and Django tests with the label `polls`, against a stub `django` package the smoke writes next to it (Django itself is not needed). Stops the servers at the end. `=dialog` leaves the dialog open, `=dialog-add` the template list.
 
+### `BRISK_SMOKE_MARKS=1`
+
+Folder: empty. Needs ty.
+
+Writes `backend/app/__init__.py` and `main.py` with `import app`. Checks that ty reports the import as not found, marks `backend` as a sources root, checks that ty now resolves it (the type error in `main.py` is reported instead) and that running `main.py` prints `hello 42`. Then marks `data` excluded and checks the tree, the file index and `.brisk/structure.json`.
+
 ### `BRISK_SMOKE_SSH=<host>`
 
 Folder: empty. Needs a host reachable with `ssh <host>` without a password, with Python 3.

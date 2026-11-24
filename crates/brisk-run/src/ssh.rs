@@ -355,7 +355,9 @@ pub fn wrap(root: &Path, remote: &SshInterpreter, cfg: &RunConfig, cmd: &Command
         .filter(|(k, _)| !matches!(k.as_str(), "PATH" | "VIRTUAL_ENV" | "PYTHONPATH"))
         .map(|(k, v)| (k.clone(), map(v)))
         .collect();
-    env.push(("PYTHONPATH".into(), remote.remote_root.clone()));
+    let roots = brisk_project::Structure::load(root);
+    let pp: Vec<String> = std::iter::once(remote.remote_root.clone()).chain(roots.sources.iter().chain(&roots.tests).filter(|d| !d.is_empty()).map(|d| format!("{}/{d}", remote.remote_root))).collect();
+    env.push(("PYTHONPATH".into(), pp.join(":")));
     if let Some(bin) = remote.python.rsplit_once('/').map(|(d, _)| d).filter(|d| d.ends_with("/bin")) {
         let venv = bin.trim_end_matches("/bin");
         if remote.python.contains("venv") || remote.python.contains("conda") {

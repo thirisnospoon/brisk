@@ -267,10 +267,15 @@ fn finish(root: &Path, cfg: &RunConfig, python: &Path, args: Vec<String>, cwd: P
     let mut env = HashMap::new();
     env.insert("PYTHONUNBUFFERED".into(), "1".into());
     env.insert("PYTHONIOENCODING".into(), "UTF-8".into());
-    let pp = match std::env::var("PYTHONPATH") {
-        Ok(old) if !old.is_empty() => format!("{}{sep}{old}", root.display()),
-        _ => root.display().to_string(),
-    };
+    // The project root, then the folders marked as source and test roots (as PyCharm's
+    // "Add source roots to PYTHONPATH").
+    let mut pp: Vec<String> = std::iter::once(root.to_path_buf()).chain(brisk_project::Structure::load(root).import_roots(root)).map(|p| p.display().to_string()).collect();
+    if let Ok(old) = std::env::var("PYTHONPATH") {
+        if !old.is_empty() {
+            pp.push(old);
+        }
+    }
+    let pp = pp.join(sep);
     env.insert("PYTHONPATH".into(), pp);
     if let Some(venv) = Interpreter::venv_dir_of(python) {
         let bin = python.parent().unwrap_or(&venv);

@@ -293,7 +293,9 @@ far less mature.
 - **On `main`, not released yet (continued):** SSH interpreters: a Python on another
   machine through `ssh`; the project is uploaded before each run and tracebacks open the
   local files.
-- **Next, the basics:** marking folders as source roots or excluded; Git change hunks
+- **On `main`, not released yet (continued):** Mark Directory as Sources Root, Test
+  Sources Root or Excluded, used by ty, runs and search, and read from PyCharm's `.iml`.
+- **Next, the basics:** Git change hunks
   (show and roll back from the gutter, commit part of a file); a configurable keymap; a
   new-version notice in the app.
 - **In progress:** remote debugging and tests over SSH; completion of template and URL

@@ -781,6 +781,8 @@ version = "0.2.7"
 dependencies = [
  "ignore",
  "nucleo-matcher",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -23,6 +23,15 @@ pub(super) enum Entry {
 }
 
 impl Entry {
+    /// Labels of the items, a submenu's own items in brackets (smoke tests).
+    pub(super) fn labels(&self) -> Vec<String> {
+        match self {
+            Entry::Item { label, .. } => vec![label.clone()],
+            Entry::Separator => Vec::new(),
+            Entry::Submenu { label, entries } => std::iter::once(format!("{label}:")).chain(entries.iter().flat_map(Entry::labels)).collect(),
+        }
+    }
+
     fn selectable(&self) -> bool {
         matches!(self, Entry::Item { enabled: true, .. } | Entry::Submenu { .. })
     }

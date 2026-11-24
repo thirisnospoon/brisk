@@ -48,7 +48,7 @@ fn real_ty() {
     // Unsaved text: on disk the file is empty. Cyrillic before the call checks UTF-32 columns.
     std::fs::write(&main, "").unwrap();
     let text = "from pkg.util import add\n\nx: str = add(1, 2)\ns = 'привет'; print(add(3, 4))\n";
-    let t = Ty::start(&ty, &root, None).unwrap();
+    let t = Ty::start(&ty, &root, None, serde_json::Value::Null).unwrap();
     t.did_open(&main, 1, text);
 
 
@@ -142,4 +142,29 @@ fn markdown_inline() {
     let md = "Create a string  \nfrom an object.  \n  \n    indented  \n    lines";
     assert_eq!(parse_doc_text(md, true).text, "Create a string from an object.\n\n\u{a0}\u{a0}\u{a0}\u{a0}indented\n\u{a0}\u{a0}\u{a0}\u{a0}lines");
     assert_eq!(unescape_md("a &lt;b&gt; \\* &#39;c&#x27;"), "a <b> * 'c'");
+}
+
+/// A folder marked as a source root resolves imports through ty's `extra-paths`.
+#[test]
+fn real_ty_source_root() {
+    let ty = std::env::var_os("BRISK_TEST_TY").map(PathBuf::from).or_else(|| find_tool("ty", None));
+    let Some(ty) = ty else {
+        eprintln!("ty not found, skipping");
+        return;
+    };
+    let root = std::env::temp_dir().join(format!("brisk-lsp-roots-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("backend/app")).unwrap();
+    std::fs::write(root.join("backend/app/__init__.py"), "def hello() -> int:\n    return 1\n").unwrap();
+    let main = root.join("main.py");
+    let text = "import app\n\nx: str = app.hello()\n";
+    std::fs::write(&main, text).unwrap();
+    let check = |settings: serde_json::Value| {
+        let t = Ty::start(&ty, &root, None, settings).unwrap();
+        t.did_open(&main, 1, text);
+        futures::executor::block_on(t.diagnostics(&main)).unwrap().into_iter().map(|d| d.code).collect::<Vec<_>>()
+    };
+    assert_eq!(check(serde_json::Value::Null), ["import-not-found"]);
+    assert_eq!(check(ty_settings(&[root.join("backend")], &["data".into()])), ["invalid-assignment"]);
+    let _ = std::fs::remove_dir_all(&root);
 }

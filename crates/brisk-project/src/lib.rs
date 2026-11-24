@@ -5,6 +5,9 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::path::{Path, PathBuf};
 
+mod structure;
+pub use structure::{rel_path, Mark, Structure};
+
 /// Names hidden from the tree (PyCharm's default "Ignored files and folders").
 const HIDDEN: &[&str] = &[".git", ".hg", ".svn", "__pycache__", ".DS_Store", ".mypy_cache", ".ruff_cache", ".pytest_cache"];
 const HIDDEN_EXT: &[&str] = &["pyc", "pyo"];
@@ -47,6 +50,8 @@ pub struct ProjectTree {
     roots: Vec<NodeId>,
     rows: Vec<Row>,
     rows_dirty: bool,
+    /// The user's folder marks for the project root.
+    pub structure: Structure,
 }
 
 /// One folder entry: (name, path, is_dir).
@@ -90,6 +95,7 @@ impl ProjectTree {
             roots: vec![0],
             rows: Vec::new(),
             rows_dirty: true,
+            structure: Structure::load(root),
         };
         t.expand(0);
         t
@@ -111,6 +117,36 @@ impl ProjectTree {
         id
     }
 
+    /// A folder excluded by its name or by the user's mark.
+    fn excluded_dir(&self, name: &str, path: &Path) -> bool {
+        is_excluded_dir(name) || rel_path(self.root(), path).is_some_and(|r| self.structure.is_excluded(&r))
+    }
+
+    /// The folder's own mark, for its icon.
+    pub fn mark(&self, id: NodeId) -> Option<Mark> {
+        let n = self.nodes.get(id)?;
+        if !n.is_dir {
+            return None;
+        }
+        self.structure.mark_of(&rel_path(self.root(), &n.path)?)
+    }
+
+    /// New marks: the excluded flags of loaded folders follow them.
+    pub fn set_structure(&mut self, s: Structure) {
+        self.structure = s;
+        // Parents come before their children in `nodes`.
+        for id in 0..self.nodes.len() {
+            if self.roots.contains(&id) {
+                continue;
+            }
+            let parent_excluded = self.nodes[id].parent.is_some_and(|p| self.nodes[p].excluded);
+            let n = &self.nodes[id];
+            let excluded = parent_excluded || (n.is_dir && self.excluded_dir(&n.name.clone(), &n.path.clone()));
+            self.nodes[id].excluded = excluded;
+        }
+        self.rows_dirty = true;
+    }
+
     pub fn is_root(&self, id: NodeId) -> bool {
         self.roots.contains(&id)
     }
@@ -130,7 +166,7 @@ impl ProjectTree {
         let entries = read_entries(&dir);
         let mut ids = Vec::with_capacity(entries.len());
         for (name, path, is_dir) in entries {
-            let excluded = parent_excluded || (is_dir && is_excluded_dir(&name));
+            let excluded = parent_excluded || (is_dir && self.excluded_dir(&name, &path));
             ids.push(self.nodes.len());
             self.nodes.push(Node { name, path, is_dir, excluded, depth, parent: Some(id), children: None, expanded: false });
         }
@@ -224,7 +260,7 @@ impl ProjectTree {
                         self.nodes[c].expanded = false;
                         self.nodes[c].children = None;
                     }
-                    let excluded = parent_excluded || (is_dir && is_excluded_dir(&name));
+                    let excluded = parent_excluded || (is_dir && self.excluded_dir(&name, &path));
                     ids.push(self.nodes.len());
                     self.nodes.push(Node { name, path, is_dir, excluded, depth, parent: Some(id), children: None, expanded: false });
                 }
@@ -298,14 +334,17 @@ pub struct FileList {
 impl FileList {
     pub fn scan(root: &Path) -> Self {
         let mut files = Vec::new();
+        let structure = Structure::load(root);
+        let base = root.to_path_buf();
         let walker = ignore::WalkBuilder::new(root)
             .hidden(false)
             .git_ignore(true)
             .git_exclude(true)
             .parents(true)
-            .filter_entry(|e| {
+            .filter_entry(move |e| {
                 let name = e.file_name().to_string_lossy();
-                !(is_hidden(&name) || (e.file_type().is_some_and(|t| t.is_dir()) && is_excluded_dir(&name)))
+                let dir = e.file_type().is_some_and(|t| t.is_dir());
+                !(is_hidden(&name) || (dir && (is_excluded_dir(&name) || rel_path(&base, e.path()).is_some_and(|r| !r.is_empty() && structure.is_excluded(&r)))))
             })
             .build_parallel();
         let (tx, rx) = std::sync::mpsc::channel::<String>();

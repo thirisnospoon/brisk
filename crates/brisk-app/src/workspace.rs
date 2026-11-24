@@ -9,6 +9,7 @@ mod pyproj_smoke;
 mod todo_ui;
 mod webnav_smoke;
 mod ssh_smoke;
+mod marks_smoke;
 mod web_ui;
 mod ssh_ui;
 mod db_ui;
@@ -695,6 +696,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNANYTHING").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_anything_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_MARKS").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.marks_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_SSH").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.ssh_smoke(window, cx));
@@ -2253,7 +2257,12 @@ impl Workspace {
                                 let node = &this.tree.nodes[r.id];
                                 let selected = this.tree_selected == Some(r.id);
                                 let chevron = crate::icons::tree_arrow(node.is_dir, node.expanded, Theme::text_muted());
-                                let (icon, icon_color) = file_icon(&node.name, node.is_dir);
+                                let (icon, icon_color) = match this.tree.mark(r.id) {
+                                    Some(brisk_project::Mark::Sources) => ("ft:dir-src", Theme::text_muted()),
+                                    Some(brisk_project::Mark::Tests) => ("ft:dir-test", Theme::text_muted()),
+                                    Some(brisk_project::Mark::Excluded) => ("ft:dir-ex", Theme::text_muted()),
+                                    None => file_icon(&node.name, node.is_dir),
+                                };
                                 let open = this.active_editor().is_some_and(|e| e.read(cx).path.as_deref() == Some(node.path.as_path()));
                                 let vcs = if node.is_dir { None } else { this.file_status(&node.path).map(git_ui::status_color) };
                                 let name_color = if node.excluded {

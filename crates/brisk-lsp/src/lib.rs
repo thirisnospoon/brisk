@@ -23,6 +23,8 @@ pub struct Client {
     next: AtomicI64,
     child: Mutex<Child>,
     alive: Arc<AtomicBool>,
+    /// The answer to `workspace/configuration` for the server's own section.
+    config: Arc<Mutex<Value>>,
 }
 
 fn write_msg(w: &mut impl Write, v: &Value) -> std::io::Result<()> {
@@ -55,6 +57,11 @@ fn read_msg(r: &mut impl BufRead) -> Option<Value> {
 }
 
 impl Client {
+    /// What the server gets when it asks for its configuration.
+    pub fn set_config(&self, v: Value) {
+        *self.config.lock().unwrap_or_else(|e| e.into_inner()) = v;
+    }
+
     pub fn start(program: &Path, args: &[&str], cwd: &Path, env: &[(String, String)]) -> std::io::Result<Arc<Client>> {
         let mut c = Command::new(program);
         c.args(args).current_dir(cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
@@ -70,9 +77,9 @@ impl Client {
         brisk_proc::adopt(&child);
         let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("no stdout"))?;
         let stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("no stdin"))?;
-        let client = Arc::new(Client { stdin: Mutex::new(stdin), pending: Arc::default(), next: AtomicI64::new(1), child: Mutex::new(child), alive: Arc::new(AtomicBool::new(true)) });
+        let client = Arc::new(Client { stdin: Mutex::new(stdin), pending: Arc::default(), next: AtomicI64::new(1), child: Mutex::new(child), alive: Arc::new(AtomicBool::new(true)), config: Arc::new(Mutex::new(Value::Null)) });
         let weak = Arc::downgrade(&client);
-        let (pending, alive) = (client.pending.clone(), client.alive.clone());
+        let (pending, alive, config) = (client.pending.clone(), client.alive.clone(), client.config.clone());
         std::thread::spawn(move || {
             let mut r = BufReader::new(stdout);
             while let Some(msg) = read_msg(&mut r) {
@@ -94,8 +101,10 @@ impl Client {
                     (Some(method), Some(id)) => {
                         let result = match method {
                             "workspace/configuration" => {
-                                let n = msg.pointer("/params/items").and_then(Value::as_array).map_or(0, Vec::len);
-                                Value::Array(vec![Value::Null; n])
+                                let items = msg.pointer("/params/items").and_then(Value::as_array).cloned().unwrap_or_default();
+                                let own = config.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                                // Sections other than the server's own (`ty`) get nothing.
+                                Value::Array(items.iter().map(|i| if i.get("section").and_then(Value::as_str).is_some_and(|s| s.contains('.')) { Value::Null } else { own.clone() }).collect())
                             }
                             _ => Value::Null,
                         };
@@ -541,6 +550,22 @@ pub struct Ty {
     client: Arc<Client>,
 }
 
+/// ty's settings for the folders marked in the project: extra import roots (source and test
+/// roots) and excluded folders, relative to the project root.
+pub fn ty_settings(extra_paths: &[std::path::PathBuf], exclude: &[String]) -> Value {
+    if extra_paths.is_empty() && exclude.is_empty() {
+        return Value::Null;
+    }
+    let mut conf = serde_json::Map::new();
+    if !extra_paths.is_empty() {
+        conf.insert("environment".into(), json!({"extra-paths": extra_paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>()}));
+    }
+    if !exclude.is_empty() {
+        conf.insert("src".into(), json!({"exclude": exclude.iter().map(|d| format!("{d}/")).collect::<Vec<_>>()}));
+    }
+    json!({"configuration": conf})
+}
+
 fn exe(name: &str) -> String {
     if cfg!(windows) {
         format!("{name}.exe")
@@ -594,7 +619,8 @@ impl Ty {
     /// Start `ty server` for the project and initialize it (blocks for the handshake, about
     /// 0.1 s: call it off the UI thread). `python` selects the environment ty resolves
     /// imports from.
-    pub fn start(ty: &Path, root: &Path, python: Option<&Path>) -> Result<Ty, String> {
+    /// `settings` answers ty's `workspace/configuration` (see [`ty_settings`]).
+    pub fn start(ty: &Path, root: &Path, python: Option<&Path>, settings: Value) -> Result<Ty, String> {
         let mut env = Vec::new();
         if let Some(py) = python {
             if let Some(dir) = py.parent() {
@@ -606,6 +632,7 @@ impl Ty {
             }
         }
         let client = Client::start(ty, &["server"], root, &env).map_err(|e| format!("cannot start ty: {e}"))?;
+        client.set_config(settings);
         let caps = json!({
             "general": {"positionEncodings": ["utf-32"]},
             "textDocument": {
@@ -620,7 +647,7 @@ impl Ty {
                 "references": {},
                 "rename": {"prepareSupport": true}
             },
-            "workspace": {"workspaceEdit": {"documentChanges": true}, "fileOperations": {"willRename": true, "didRename": true}}
+            "workspace": {"configuration": true, "workspaceEdit": {"documentChanges": true}, "fileOperations": {"willRename": true, "didRename": true}}
         });
         let rx = client.request(
             "initialize",

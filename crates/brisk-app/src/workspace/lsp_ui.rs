@@ -75,7 +75,9 @@ impl Workspace {
         let root = self.root.clone();
         let python = self.runs.interpreter(&self.root).map(|i| i.path);
         let epoch = self.lsp.epoch;
-        let task = cx.background_executor().spawn(async move { Ty::start(&tool, &root, python.as_deref()) });
+        let marks = brisk_project::Structure::load(&root);
+        let settings = brisk_lsp::ty_settings(&marks.import_roots(&root), &marks.excluded);
+        let task = cx.background_executor().spawn(async move { Ty::start(&tool, &root, python.as_deref(), settings) });
         cx.spawn(async move |this, cx| {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
