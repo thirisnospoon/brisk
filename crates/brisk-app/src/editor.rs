@@ -1814,7 +1814,7 @@ impl Element for EditorElement {
                 }
             }
             // Hints in the UI font, so they do not read as code; their chips are painted under the text.
-            let (text, runs, hint_chips) = ed.line_with_inlays(l, text, runs, |len| TextRun { font: font(crate::theme::ui_font()), ..run(len, Theme::inlay_fg()) });
+            let (text, runs, hint_chips) = ed.line_with_inlays(l, text, runs, |len| TextRun { font: gpui::Font { style: gpui::FontStyle::Italic, ..font(crate::theme::ui_font()) }, ..run(len, Theme::inlay_fg()) });
             chips.extend(hint_chips.into_iter().map(|r| (ri, r)));
             lines.push(window.text_system().shape_line(SharedString::from(text), font_size, &runs, None));
             if let Some(v) = ed.inline_value(l) {

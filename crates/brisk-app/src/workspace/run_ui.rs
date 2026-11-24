@@ -568,7 +568,16 @@ impl Workspace {
                     .filter(|i| i.path.to_string_lossy().to_lowercase().contains(&ql) || i.label(&self.root).to_lowercase().contains(&ql))
                     .map(|i| PopupItem {
                         label: i.label(&self.root),
-                        detail: i.path.display().to_string(),
+                        // The kind, then the folder shortened (the full path is in the tooltip).
+                        detail: {
+                            let kind = match i.kind {
+                                brisk_run::InterpKind::System => "system",
+                                brisk_run::InterpKind::Conda => "conda",
+                                brisk_run::InterpKind::Venv if brisk_run::Interpreter::venv_dir_of(&i.path).is_some_and(|d| d.starts_with(&self.root)) => "project venv",
+                                brisk_run::InterpKind::Venv => "venv",
+                            };
+                            format!("{kind} · {}", super::short_dir(i.path.parent().unwrap_or(&i.path)))
+                        },
                         hint: if current.as_deref() == Some(i.path.as_path()) { "✓".into() } else { String::new() },
                         target: Target::Interpreter(i.path.clone()),
                     })

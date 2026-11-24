@@ -8,6 +8,8 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 
 - The window layout follows PyCharm's New UI: a toolbar with the project, the Git branch (read from `.git/HEAD`) and the run configuration; tool window stripes on the left and right; a status bar with `Ln:Col`, line separator (LF/CRLF), encoding, indent, language and interpreter.
 - Popups, menus and toasts fade in and rise the last few pixels (120 to 200 ms); modal dialogs also dim the window behind them. A tool window slides the last 14 px in from its edge while the editor takes its new size at once. Nothing waits for an animation: keys go to the new window from the first frame. Settings → Appearance → Animations turns them off.
+- Status bar messages fade out after about 6 s. A click on the message area opens Recent Messages, the last messages with how long ago they came. The language is not repeated when it is just "Python".
+- The project root in Project shows its folder next to the name, shortened (`~\…\work`); the full path is in the tooltip.
 - Tool windows resize by dragging their edge. In Islands the gap between a tool window and the editor is the splitter, in Classic it is a line. The width of the left and right tool windows and the height of each bottom one are saved per project.
 - All tool window headers have the same height, with the title on the left and 24 px buttons on the right.
 - The active editor tab is underlined. The close button on inactive tabs shows on hover.
@@ -112,13 +114,14 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 ## Navigation and search
 
 - Project (`Alt+1`): lazy tree with folders first. `__pycache__` and `.git` are hidden, `.venv` and `node_modules` are marked excluded. Arrow keys navigate, `Enter` or `F4` opens.
-- File operations in Project: `Alt+Insert` New File, Python File, Python Package, Directory (a path like `pkg/mod` creates the folders; Python Package `pkg.sub` creates two `__init__.py`), `Shift+F6` Rename, `F5` Copy, `F6` Move, `Delete` moves to the Recycle Bin after confirmation. The right-click menu has the same items plus Copy Path and Show in Explorer. Open tabs follow renames and moves.
+- File operations in Project: `Alt+Insert` New File, Python File, Python Package, Directory (a path like `pkg/mod` creates the folders; Python Package `pkg.sub` creates two `__init__.py`), `Shift+F6` Rename, `F5` Copy, `F6` Move, `Delete` moves to the Recycle Bin after confirmation. The right-click menu has the same items plus Copy Path and Open In → Explorer / Terminal (a terminal tab started in that folder). On a folder it also has Find in Directory… (Find in Files limited to the folder; the In Project chip widens it again) and, for a test folder (marked as Test Sources Root or named `test…`), Run Tests in '<folder>'. Open tabs follow renames and moves.
 - Mark Directory as (right click on a folder): Sources Root, Test Sources Root, Excluded, and Unmark. Source and test roots go on ty's import path (`extra-paths`) and on `PYTHONPATH` of runs, tests and SSH runs, so `backend/app` can be imported as `app`. Excluded folders are shown in the excluded colour, like `.venv`, and are left out of Go to File, Search Everywhere, Find in Files, the symbol index, TODO and ty. The marks are saved in `.brisk/structure.json`; the first time, they are read from PyCharm's `.idea/*.iml` if the project has one.
 - New Python files use the template `<config>/fileTemplates/Python Script.py` with `${NAME}`, `${PROJECT_NAME}`, `${DATE}`, `${TIME}`, `${USER}`.
 - Scratch files: `Ctrl+Alt+Shift+Insert`. They show under Scratches and Consoles in the Project tree.
 - Structure (`Alt+7`): classes, functions and methods of the current file. The element containing the caret is highlighted and scrolled into view as the caret moves (like Autoscroll from Source).
 - Search Everywhere (`Shift Shift`) with tabs All / Classes / Files / Symbols / Actions. Switch tabs with a click, `Tab` or by repeating the shortcut.
 - `Ctrl+N` Go to Class, `Ctrl+Shift+N` Go to File, `Ctrl+Alt+Shift+N` Go to Symbol, `Ctrl+Shift+A` Find Action, `Ctrl+E` Recent Files, `Ctrl+G` Go to Line (accepts `line:column`).
+- Find Action matches a whole word or the start of words (`sf` finds Show Files, not every title with an s and an f), and an action reachable from several menus is listed once.
 - Files are indexed in the background, respecting `.gitignore`, with fuzzy matching. Classes and functions of all `.py` files are indexed by tree-sitter in the background and updated after each save. This does not need ty.
 - Names match by prefix and by word starts: `fbp` finds `find_by_prefix`, `UR` finds `UserRepository`, `Repo.ad` finds member `ad…` of class `Repo…`. Go to Symbol also lists module-level variables and constants (`MAX_RETRIES`).
 - `Ctrl+F12` File Structure (with a filter), `Alt+↑/↓` previous / next method.
@@ -174,7 +177,7 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 - `Ctrl+Shift+P` Type Info (View → Type Info): the type of the name at the caret from ty, such as the variable's type, `(a: int) -> str` for a function or `type[C]` for a class, in a popup and in the status bar.
 - `Ctrl+Shift+I` Quick Definition: the source of the definition (a function or class with decorators and body, up to 40 lines; for a variable, its assignment) in a popup with file and line.
 - `Alt+F7` Find Usages, as a tree in the Find tool window: groups Import statements, Value write and Usages in code, then files, then lines. The definition itself is not listed.
-- Inlay hints from ty: the inferred type after a name (`x: list[int] = f(1)`) and the parameter name before an argument (`f(a=1)`). Hints that add nothing are hidden: `Any`, `Unknown`, types already visible on the right (literals, list / dict / tuple displays, constructor calls, `= int`), type aliases. Types over 40 characters are shortened, with the full type in a tooltip. Hints are not part of the text: the caret, selection and clicks skip them. Turn them off with Settings → Editor → Show inlay hints.
+- Inlay hints from ty: the inferred type after a name (`x: list[int] = f(1)`) and the parameter name before an argument (`f(a=1)`). Hints that add nothing are hidden: `Any`, `Unknown`, types already visible on the right (literals, list / dict / tuple displays, constructor calls, `= int`), type aliases. Types over 40 characters are shortened, with the full type in a tooltip. Hints are drawn in italics on a quiet background. Hints are not part of the text: the caret, selection and clicks skip them. Turn them off with Settings → Editor → Show inlay hints.
 - Positions are sent to ty in characters (UTF-32), so Cyrillic and emoji do not shift columns.
 
 ### Completion
@@ -236,7 +239,7 @@ Brisk stays usable while ty is missing or still starting (its first answers can 
 
 ### Interpreter
 
-- The status bar shows the project interpreter ("Python 3.12 (myproject)"). Click it to choose: the project's `.venv` / `venv` / `env` (found at once from `pyvenv.cfg`), `$VIRTUAL_ENV`, conda, `py -0p`, `python` on `PATH` (found in the background). The choice is saved.
+- The status bar shows the project interpreter ("Python 3.12 (myproject)"). Click it to choose: the project's `.venv` / `venv` / `env` (found at once from `pyvenv.cfg`), `$VIRTUAL_ENV`, conda, `py -0p`, `python` on `PATH` (found in the background). Each row says what it is (system, conda, project venv, venv) and where, with a shortened path; the full path is in the tooltip. The choice is saved.
 - Add Interpreter… in the same list: pick a base Python (system or conda) and Brisk creates `.venv` in the project (`venv` if `.venv` exists) with `python -m venv`, in the background, with progress in the status bar. The new environment becomes the project interpreter and ty restarts.
 - If the project has `requirements.txt` or `[project].dependencies` in `pyproject.toml`, Brisk offers Install requirements (`pip install -r requirements.txt` or the pyproject dependencies), with a Not now button. The result is shown in the status bar and a notification.
 
@@ -301,7 +304,7 @@ Brisk stays usable while ty is missing or still starting (its first answers can 
 
 ### Run tool window
 
-- Run (`Alt+4`) has one tab per run. The first line is the command line, the last is "Process finished with exit code N". stderr is red. Input for `input()` is typed directly in the window (in green) and sent on `Enter`.
+- Run (`Alt+4`) has one tab per run. The first line is the command as typed by hand (`python app/main.py --x`; Copy command line gives the full one), the last is "Process finished with exit code N in 0.36 s" with a green ✓ or red ✗. stderr is red. Input for `input()` is typed directly in the window (in green) and sent on `Enter`.
 - At most five tabs: a new run closes the oldest finished tab. Running and pinned tabs are kept. Running the same configuration again reuses its tab.
 - Pin Tab: a pinned tab is not replaced by the next run of the same configuration, which opens a new tab instead. Rerun from a pinned tab reruns in it.
 - Toolbar: `Ctrl+F5` Rerun, `Ctrl+F2` Stop (stops the whole process tree), Soft-Wrap, Scroll to End (scrolling up turns it off, scrolling to the bottom turns it on), Clear All, Copy command line, Open in Terminal. Soft-Wrap and Scroll to End are saved per configuration in `.brisk/run-console.json`.
@@ -407,7 +410,7 @@ Brisk stays usable while ty is missing or still starting (its first answers can 
 - Push (`Ctrl+Shift+K`): the Push Commits dialog lists outgoing commits of the current branch and the files of the selected one (double click for the diff). `Enter` pushes. A branch without an upstream is published and the upstream is set. Without a remote, Brisk explains how to add one.
 - Update Project (`Ctrl+T`, pull with merge) reports how many commits and files arrived. Fetch (in VCS Operations) reports how many incoming commits the upstream has.
 - Rollback (`Ctrl+Alt+Z`, with confirmation). In the Commit window it rolls back the checked files, or the selected one if none is checked.
-- VCS Operations popup: `` Alt+` ``.
+- VCS Operations popup: `` Alt+` ``. Items are grouped as in PyCharm and numbered; `1`–`9` run an item at once.
 - Compare with Branch… (VCS Operations, or Git: Compare with Branch… in a file's context menu): the file in the chosen branch against the local version, including unsaved edits. Compare with Local in Show History compares the selected commit with the local version.
 - Annotate with Git Blame (VCS Operations or right click on the gutter): author and date for each line, shaded lighter for older changes. The tooltip shows hash, author and message, and a click opens that commit's diff. Unsaved lines have no annotation. The column is recomputed after save, commit and checkout.
 - Conflicts opens by itself when a merge, pull or rebase stops on conflicts (or via Resolve Conflicts in VCS Operations): Accept Yours, Accept Theirs and Merge…. Merge… is a three-pane dialog (yours, result, theirs) with non-conflicting changes already merged. `»` and `«` take a side (again to append the other side), `×` keeps the base, `↑/↓` and `F7` move between changes, `Alt+→` / `Alt+←`, `Ctrl+Enter` Apply (writes the file and runs `git add`).
@@ -430,7 +433,7 @@ Brisk stays usable while ty is missing or still starting (its first answers can 
 
 ## Terminal
 
-- Terminal (`Alt+F12`). The shell starts the first time the window opens: PowerShell through ConPTY on Windows, `$SHELL` on Linux.
+- Terminal (`Alt+F12`). The shell starts the first time the window opens: PowerShell through ConPTY on Windows, `$SHELL` on Linux. The ▾ next to `+` opens a tab with another shell found on the machine: PowerShell 7, Command Prompt, Git Bash. Tabs are named after their shell.
 - It starts in the project root with the project interpreter's environment activated. For a venv (wherever it is), its folder goes first on `PATH` and `VIRTUAL_ENV` and `VIRTUAL_ENV_PROMPT` are set. For conda, the environment folders go on `PATH` and `CONDA_PREFIX` and `CONDA_DEFAULT_ENV` are set. In PowerShell the prompt starts with `(.venv)`, as after `activate`. Until the interpreter is detected, `.venv` / `venv` in the project root is used. A system interpreter activates nothing. Changing the interpreter applies to new tabs.
 - Tabs Local, Local (2), …: `Ctrl+Shift+T` new, `Ctrl+F4` close, `Alt+←/→` switch, or the `+` button. A tab closes when its shell exits.
 - Override IDE shortcuts: keys go to the shell, except tool window shortcuts (`Alt+<digit>`, `Alt+F12`), `Ctrl+Shift+A`, `Shift+F10` and similar.

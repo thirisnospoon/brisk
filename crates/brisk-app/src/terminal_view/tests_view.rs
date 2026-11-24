@@ -297,7 +297,7 @@ impl TerminalPanel {
         let tests = Some(TestsView::done(tree));
         let now = std::time::Instant::now();
         let run = super::RunTab { name, cfg, cmd, running: false, code: None, tests, started: now, ended: Some(now), pinned: true, stopped: false };
-        self.tabs.push(super::Tab { id, session, title: String::new(), number: 0, run: Some(run) });
+        self.tabs.push(super::Tab { id, session, title: String::new(), number: 0, shell: String::new(), run: Some(run) });
         self.active = self.tabs.len() - 1;
         self.trim_run_tabs();
         self.history_open = false;

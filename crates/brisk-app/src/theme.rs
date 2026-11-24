@@ -32,8 +32,8 @@ impl Theme {
     pub fn selection_row() -> Hsla { ui("selection_row", 0x2e436e, 0xd5e1ff) }
     pub fn hover_row() -> Hsla { ui("hover_row", 0x35373b, 0xe6e8ed) }
     /// Inlay hint chip (a little lighter than the editor) and its text (cool grey).
-    pub fn inlay_bg() -> Hsla { ui("inlay_bg", 0x393b40, 0xebecf0) }
-    pub fn inlay_fg() -> Hsla { ui("inlay_fg", 0x8c8f99, 0x6c707e) }
+    pub fn inlay_bg() -> Hsla { ui("inlay_bg", 0x2a2c30, 0xf2f3f5) }
+    pub fn inlay_fg() -> Hsla { ui("inlay_fg", 0x7e828b, 0x8a8e99) }
     /// A button while the mouse is pressed on it.
     pub fn press() -> Hsla { ui("press", 0x43454a, 0xd3d5db) }
     /// The keyboard focus ring around a field, button or checkbox (2 px).

@@ -26,6 +26,9 @@ const STEPS: &[&str] = &[
     "vcs_operations",
     "tree_menu",
     "find_in_files",
+    "find_in_dir",
+    "tests_menu",
+    "status_history",
     "debug",
     "light_theme",
 ];
@@ -81,6 +84,16 @@ impl Workspace {
                 }
             }
             "find_in_files" => self.dispatch(Action::FindInFiles, window, cx),
+            "find_in_dir" => {
+                let d = self.root.join("app");
+                self.find_in_dir(&d, window, cx);
+            }
+            "tests_menu" => {
+                if let Some(id) = self.tree.find(&self.root.join("tests")) {
+                    self.tree_menu(id, gpui::point(gpui::px(140.), gpui::px(185.)), window, cx);
+                }
+            }
+            "status_history" => self.open_popup(PopupKind::StatusHistory),
             "debug" => {
                 let p = self.root.join("app/main.py");
                 self.open_file(&p, window, cx);

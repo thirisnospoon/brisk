@@ -8,9 +8,88 @@ use super::{PopupItem, PopupKind, Target, Workspace};
 use crate::theme::Theme;
 use gpui::prelude::*;
 use gpui::{div, px, Animation, AnimationExt, Context, Transformation};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// How long a new status message stays in the status bar.
+const SHOWN: Duration = Duration::from_secs(6);
+
+/// The status bar's messages: the one shown now and the recent ones.
+#[derive(Default)]
+pub struct StatusLog {
+    last: String,
+    at: Option<Instant>,
+    n: u64,
+    recent: std::collections::VecDeque<(String, Instant)>,
+}
+
+fn ago(t: Instant) -> String {
+    let s = t.elapsed().as_secs();
+    match s {
+        0..=59 => "just now".into(),
+        60..=3599 => format!("{} min ago", s / 60),
+        _ => format!("{} h ago", s / 3600),
+    }
+}
 
 impl Workspace {
+    /// A new `status` starts its 6 s and goes to the history; a repaint is scheduled for when
+    /// it should fade.
+    pub(super) fn track_status(&mut self, cx: &mut Context<Self>) {
+        if self.status == self.status_log.last {
+            return;
+        }
+        let now = Instant::now();
+        self.status_log.last = self.status.clone();
+        self.status_log.at = Some(now);
+        self.status_log.n += 1;
+        if !self.status.trim().is_empty() {
+            let log = &mut self.status_log.recent;
+            log.retain(|(m, _)| m != &self.status);
+            log.push_front((self.status.clone(), now));
+            log.truncate(20);
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SHOWN).await;
+            let _ = this.update(cx, |_, cx| cx.notify());
+        })
+        .detach();
+    }
+
+    /// The message area: a problem at the caret, else the last message while it is new; then
+    /// it fades out over 400 ms. A click shows the recent messages.
+    pub(super) fn status_message(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let problem = self.active_editor().and_then(|e| e.read(cx).caret_problem());
+        let fresh = self.status_log.at.is_some_and(|t| t.elapsed() < SHOWN);
+        let old = problem.is_none() && !fresh;
+        let text = problem.unwrap_or_else(|| self.status.clone());
+        let mut d = div().id("sb-message").min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().rounded(px(6.)).child(text);
+        if !self.status_log.recent.is_empty() {
+            d = d.cursor_pointer().hover(|s| s.bg(Theme::hover_row())).on_click(cx.listener(|this, _, _, cx| {
+                this.open_popup(PopupKind::StatusHistory);
+                cx.notify();
+            }));
+        }
+        if !old {
+            return d.into_any_element();
+        }
+        if !crate::settings::animations() {
+            return d.opacity(0.).into_any_element();
+        }
+        // Keyed by the message's number, so each message fades once.
+        let id = gpui::ElementId::Name(format!("sb-fade-{}", self.status_log.n).into());
+        d.with_animation(id, Animation::new(Duration::from_millis(400)).with_easing(gpui::ease_out_quint()), |d, t| d.opacity(1. - t)).into_any_element()
+    }
+
+    pub(super) fn status_history_items(&self, q: &str) -> Vec<PopupItem> {
+        let ql = q.to_lowercase();
+        self.status_log
+            .recent
+            .iter()
+            .filter(|(m, _)| m.to_lowercase().contains(&ql))
+            .map(|(m, t)| PopupItem { label: m.clone(), detail: String::new(), hint: ago(*t), target: Target::Task })
+            .collect()
+    }
+
     /// What runs in the background now, for the indicator: one line each, most important
     /// first.
     pub(super) fn bg_tasks(&self) -> Vec<String> {
@@ -93,7 +172,7 @@ impl Workspace {
                 .child(widget("sb-eol").child(eol))
                 .child(widget("sb-enc").child(e.encoding_label()))
                 .child(widget("sb-indent").child(e.indent_label()))
-                .child(widget("sb-lang").child(e.language_name()));
+                .when(e.language_name() != "Python", |r| r.child(widget("sb-lang").child(e.language_name())));
         }
         right = right.child(widget("sb-interpreter").child(self.interpreter_label()).cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
             this.open_popup(PopupKind::Interpreters);
@@ -112,7 +191,6 @@ impl Workspace {
             );
         }
         // Left: the tasks indicator (a spinner and the first task), then the last message.
-        let message = ed.and_then(|e| e.caret_problem()).unwrap_or_else(|| self.status.clone());
         let indicator = (!tasks.is_empty()).then(|| {
             let more = tasks.len() - 1;
             let spinner = crate::icons::ui_icon("loader-circle", 12., Theme::accent())
@@ -137,7 +215,7 @@ impl Workspace {
             .bg(Theme::frame())
             .text_size(ui_px(12.))
             .children(indicator)
-            .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().px(px(4.)).text_color(Theme::text_dim()).child(message))
+            .child(div().flex_1().min_w_0().flex().px(px(4.)).text_color(Theme::text_dim()).child(self.status_message(cx)))
             .child(right)
             .into_any_element()
     }

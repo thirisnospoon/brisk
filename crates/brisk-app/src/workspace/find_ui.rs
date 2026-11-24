@@ -67,6 +67,9 @@ pub struct Find {
     preview: Option<(usize, Arc<Vec<String>>)>,
     confirm_replace: bool,
     pub window: Option<FindWindow>,
+    /// Find in Directory: only files under this folder (relative, '/' separators, ending in
+    /// '/'); None searches the whole project.
+    dir: Option<String>,
 }
 
 impl FindWindow {
@@ -102,6 +105,7 @@ impl Find {
             bar: Default::default(),
             preview: None,
             confirm_replace: false,
+            dir: None,
             window: None,
         }
     }
@@ -172,6 +176,15 @@ fn match_line(m: &Match) -> gpui::Div {
 }
 
 impl Workspace {
+    /// Find in Directory… (the Project view's folder menu): Find in Files limited to `dir`.
+    pub(super) fn find_in_dir(&mut self, dir: &std::path::Path, window: &mut Window, cx: &mut Context<Self>) {
+        let rel = dir.strip_prefix(&self.root).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+        self.find.open = false;
+        self.open_find(false, window, cx);
+        self.find.dir = (!rel.is_empty()).then(|| format!("{rel}/"));
+        self.schedule_search(cx);
+    }
+
     pub(super) fn open_find(&mut self, replace: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.find.open && self.find.replace_mode != replace {
             self.find.replace_mode = replace;
@@ -180,6 +193,10 @@ impl Workspace {
             return;
         }
         self.save_all(cx); // search what the user sees
+        // Ctrl+Shift+F searches the project; Find in Directory sets its folder after this.
+        if !self.find.open {
+            self.find.dir = None;
+        }
         let seed = self.focused_editor(window, cx).and_then(|e| e.read(cx).search_seed());
         let f = &mut self.find;
         f.open = true;
@@ -223,6 +240,11 @@ impl Workspace {
         f.cancel = cancel.clone();
         f.searching = true;
         let opts = f.effective_opts();
+        // Find in Directory: the folder's files only.
+        let files = match &f.dir {
+            Some(d) => Arc::new(brisk_project::FileList { root: files.root.clone(), files: files.files.iter().filter(|p| p.starts_with(d.as_str())).cloned().collect() }),
+            None => files,
+        };
         let timer = cx.background_executor().timer(Duration::from_millis(90));
         let bg = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -696,7 +718,23 @@ impl Workspace {
             .px(px(10.))
             .pb(px(6.))
             .text_size(ui_px(12.))
-            .child(div().px(px(10.)).py(px(3.)).rounded(px(5.)).bg(Theme::selection_row()).child("In Project"))
+            .child(
+                div()
+                    .id("fs-project")
+                    .px(px(10.))
+                    .py(px(3.))
+                    .rounded(px(5.))
+                    .cursor_pointer()
+                    .when(f.dir.is_none(), |d| d.bg(Theme::selection_row()))
+                    .when(f.dir.is_some(), |d| d.hover(|s| s.bg(Theme::hover_row())))
+                    .child("In Project")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.find.dir = None;
+                        this.schedule_search(cx);
+                        cx.notify();
+                    })),
+            )
+            .when_some(f.dir.clone(), |d, dir| d.child(div().px(px(10.)).py(px(3.)).rounded(px(5.)).bg(Theme::selection_row()).child(format!("Directory: {}", dir.trim_end_matches('/')))))
             .when(f.mask_on, |d| d.child(div().flex_1()).child(div().w(px(220.)).child(field_box("fx-mask", &f.opts.file_mask, "*.py", f.field == Field::Mask, false, Field::Mask, cx))));
 
         let selected = f.selected;

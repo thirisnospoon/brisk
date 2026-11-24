@@ -228,6 +228,8 @@ enum PopupKind {
     FolderCrumb,
     /// The status bar's background tasks.
     BackgroundTasks,
+    /// The status bar's recent messages.
+    StatusHistory,
     /// The ▾ at the end of the tab strip: every tab of the group, hidden ones marked.
     TabList,
 }
@@ -510,6 +512,11 @@ pub struct Workspace {
     ctrl_alone: bool,
     ctrl_clone: bool,
     status: String,
+    /// What the status bar shows of `status`: a new message stays 6 s, then fades; the last
+    /// 20 are kept for the history popup (a click on the message area).
+    status_log: status_ui::StatusLog,
+    /// Where the Terminal's first shell starts when Open In → Terminal opens it.
+    terminal_start: Option<PathBuf>,
     started: Instant,
 }
 
@@ -952,6 +959,8 @@ impl Workspace {
             ctrl_clone: false,
             settings_dialog: None,
             status: "Indexing…".into(),
+            status_log: Default::default(),
+            terminal_start: None,
             started: Instant::now(),
         }
     }
@@ -1188,7 +1197,8 @@ impl Workspace {
             Some(t) if !t.read(cx).is_empty() => t.clone(),
             _ => {
                 let activation = self.terminal_activation();
-                let t = cx.new(|cx| TerminalPanel::new(root, activation, cx));
+                let dir = self.terminal_start.take();
+                let t = cx.new(|cx| TerminalPanel::new_in(root, activation, dir, cx));
                 // Hide the tool window when the last shell exits.
                 cx.observe(&t, |this: &mut Self, t, cx| {
                     if t.read(cx).is_empty() && this.bottom == Some(BottomTool::Terminal) {
@@ -1205,6 +1215,26 @@ impl Workspace {
         self.bottom = Some(BottomTool::Terminal);
         let f = term.read(cx).focus_handle(cx);
         window.focus(&f);
+    }
+
+    /// Open In → Terminal: a shell in `dir`, in a new tab when the Terminal is open already.
+    pub(super) fn open_terminal_in(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        match self.terminal.clone().filter(|t| !t.read(cx).is_empty()) {
+            Some(t) => {
+                t.update(cx, |t, cx| {
+                    t.new_tab_in(dir);
+                    cx.notify();
+                });
+                self.bottom = Some(BottomTool::Terminal);
+                window.focus(&t.read(cx).focus_handle(cx));
+            }
+            None => {
+                self.terminal_start = Some(dir);
+                self.bottom = None;
+                self.toggle_terminal(window, cx);
+            }
+        }
+        cx.notify();
     }
 
     fn toggle_bottom(&mut self, tool: BottomTool, window: &mut Window, cx: &mut Context<Self>) {
@@ -1788,30 +1818,32 @@ impl Workspace {
                 if ql.is_empty() {
                     return Some((0, a));
                 }
-                if let Some(p) = title.find(&ql) {
-                    return Some((1000 - p as i32 * 10 - title.len() as i32, a));
-                }
-                // Subsequence match on word starts ("gtd" -> Go To Declaration).
-                let mut it = ql.chars().peekable();
-                for c in title.chars() {
-                    if it.peek() == Some(&c) {
-                        it.next();
-                    }
-                }
-                it.peek().is_none().then(|| (100 - title.len() as i32, a))
+                action_score(&title, &ql).map(|s| (s, a))
             })
             .collect();
         scored.sort_by(|a, b| b.0.cmp(&a.0));
-        scored
-            .into_iter()
-            .take(limit)
-            .map(|(_, a)| PopupItem {
-                label: a.info().title.to_string(),
-                detail: a.info().group.to_string(),
-                hint: self.resolver.keymap().shortcut_label(a).unwrap_or_default(),
-                target: Target::Action(a),
-            })
-            .collect()
+        let km = self.resolver.keymap();
+        // An action and the tool window of the same name ("Run") are one row; the second's
+        // shortcut joins the first's.
+        let mut out: Vec<PopupItem> = Vec::new();
+        for (_, a) in scored {
+            let info = a.info();
+            let hint = km.shortcut_label(a).unwrap_or_default();
+            if let Some(same) = out.iter_mut().find(|i| i.label == info.title) {
+                if !hint.is_empty() && !same.hint.contains(&hint) {
+                    same.hint = if same.hint.is_empty() { hint } else { format!("{}  {hint}", same.hint) };
+                }
+                if !same.detail.contains(info.group) {
+                    same.detail = format!("{} · {}", same.detail, info.group);
+                }
+                continue;
+            }
+            if out.len() == limit {
+                break;
+            }
+            out.push(PopupItem { label: info.title.to_string(), detail: info.group.to_string(), hint, target: Target::Action(a) });
+        }
+        out
     }
 
     fn file_items(&self, q: &str, limit: usize) -> Vec<PopupItem> {
@@ -1896,6 +1928,7 @@ impl Workspace {
             PopupKind::PutLabel => self.put_label_items(&q),
             PopupKind::NewScratch | PopupKind::RecentLocations => self.structure_items(&q),
             PopupKind::BackgroundTasks => self.bg_task_items(&q),
+            PopupKind::StatusHistory => self.status_history_items(&q),
             PopupKind::TabList => self.structure_items(&q),
         };
         let p = self.popup.as_mut().unwrap();
@@ -1906,6 +1939,15 @@ impl Workspace {
     pub(super) fn popup_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
         let Some(p) = self.popup.as_mut() else { return };
+        // VCS Operations: 1–9 run the numbered row, as in PyCharm.
+        let plain = !k.modifiers.control && !k.modifiers.alt && !k.modifiers.shift && !k.modifiers.platform;
+        if p.kind == PopupKind::VcsOperations && p.query.is_empty() && plain {
+            if let Some(n) = k.key.parse::<usize>().ok().filter(|n| (1..=9).contains(n) && *n <= p.items.len()) {
+                p.selected = n - 1;
+                let enter = KeyDownEvent { keystroke: gpui::Keystroke::parse("enter").unwrap(), is_held: false };
+                return self.popup_key(&enter, window, cx);
+            }
+        }
         match k.key.as_str() {
             "escape" => {
                 self.popup = None;
@@ -2311,10 +2353,9 @@ impl Workspace {
                                     Theme::text()
                                 };
                                 let id = r.id;
-                                let mut label = node.name.clone();
-                                if r.id == 0 {
-                                    label = format!("{}  {}", node.name, node.path.display());
-                                }
+                                // The root shows where the project lives, shortened; the full
+                                // path is in the tooltip.
+                                let place = (r.id == 0).then(|| (short_dir(node.path.parent().unwrap_or(&node.path)), node.path.display().to_string()));
                                 div()
                                     .id(("row", r.id))
                                     .h(ui_px(24.))
@@ -2340,7 +2381,11 @@ impl Workspace {
                                             .child(chevron),
                                     )
                                     .child(div().w(ui_px(16.)).flex().items_center().child(crate::icons::glyph(icon, 14., icon_color)))
-                                    .child(div().text_color(name_color).whitespace_nowrap().child(label))
+                                    .child(div().text_color(name_color).whitespace_nowrap().child(node.name.clone()))
+                                    .when_some(place, |d, (short, full)| {
+                                        d.child(div().pl(px(6.)).min_w_0().overflow_hidden().whitespace_nowrap().text_color(Theme::text_dim()).child(short))
+                                            .tooltip(move |_, cx| cx.new(|_| Tip(full.clone().into())).into())
+                                    })
                             })
                             .collect()
                     }),
@@ -2743,13 +2788,13 @@ impl Workspace {
             .text_color(Theme::text_muted())
             .when(!crate::theme::islands(), |d| d.child(div().child(crumbs)))
             .child(div().flex_1())
-            .child(item(self.active_editor().and_then(|e| e.read(cx).caret_problem()).unwrap_or_else(|| self.status.clone())))
+            .child(div().px(px(8.)).min_w_0().child(self.status_message(cx)))
             .when(!pos.is_empty(), |d| {
                 d.child(item(pos))
                     .child(item(eol.into()))
                     .child(item(enc))
                     .child(item(indent))
-                    .child(item(lang.into()))
+                    .when(lang != "Python", |d| d.child(item(lang.into())))
             })
             .child(
                 div()
@@ -2793,6 +2838,7 @@ impl Workspace {
             PopupKind::OpenWhere => ("Open Project", "Type to filter"),
             PopupKind::FileStructure => ("File Structure", "Type to filter"),
             PopupKind::BackgroundTasks => ("Background Tasks", "Type to filter"),
+            PopupKind::StatusHistory => ("Recent Messages", "Type to filter"),
             PopupKind::TabList => ("Open Tabs", "Type to filter · hidden tabs are marked"),
             PopupKind::FolderCrumb => (self.crumb_dir.1.as_str(), "Type to filter · → opens a folder · ← goes up"),
             PopupKind::Bookmarks => ("Bookmarks", "Type to filter"),
@@ -2919,8 +2965,16 @@ impl Workspace {
                                         cx.processor(|this, range: std::ops::Range<usize>, _window, cx| {
                                             let Some(p) = this.popup.as_ref() else { return Vec::new() };
                                             let selected = p.selected;
+                                            // VCS Operations, unfiltered: numbered rows (1–9 run them) in groups.
+                                            let vcs = p.kind == PopupKind::VcsOperations && p.query.is_empty();
                                             let items: Vec<(usize, PopupItem)> = range.filter_map(|i| p.items.get(i).map(|it| (i, it.clone()))).collect();
-                                            items.into_iter().map(|(i, it)| Self::popup_row(i, &it, selected, cx)).collect()
+                                            items
+                                                .into_iter()
+                                                .map(|(i, it)| {
+                                                    let look = RowLook { number: vcs.then(|| if i < 9 { format!("{}", i + 1) } else { String::new() }), group_start: vcs && VCS_GROUP_STARTS.contains(&i) };
+                                                    Self::popup_row(i, &it, selected, look, cx)
+                                                })
+                                                .collect()
                                         }),
                                     )
                                     .track_scroll(self.popup_scroll.clone())
@@ -2933,7 +2987,7 @@ impl Workspace {
         )
     }
 
-    fn popup_row(i: usize, it: &PopupItem, selected: usize, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    fn popup_row(i: usize, it: &PopupItem, selected: usize, look: RowLook, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let (icon, color) = match &it.target {
             Target::File(_) => file_icon(&it.label, false),
             Target::Dir(_) => file_icon(&it.label, true),
@@ -2980,8 +3034,9 @@ impl Workspace {
         let room = 680. - 12. - 16. - 16. - 84. - 3. * 8.;
         let show_detail = !branch || text_width(cx, &it.label, 13.) + text_width(cx, &it.detail, 12.) <= room;
         let label = if branch { fit_text(cx, &it.label, 13., room) } else { it.label.to_string() };
-        let tip: Option<SharedString> = branch.then(|| if it.detail.is_empty() { it.label.to_string() } else { format!("{}
-{}", it.label, it.detail) }.into());
+        let tip: Option<SharedString> = if let Target::Interpreter(p) = &it.target { Some(p.display().to_string().into()) } else { None };
+        let tip: Option<SharedString> = tip.or_else(|| branch.then(|| if it.detail.is_empty() { it.label.to_string() } else { format!("{}
+{}", it.label, it.detail) }.into()));
         // uniform_list sizes an item to its content: the row spans the list's width through a
         // full-width wrapper (its padding is the row's side margin).
         let row = div()
@@ -3018,7 +3073,10 @@ impl Workspace {
             // Fixed slots: the icon and the hint keep their size, the label
             // shrinks with an ellipsis, and the detail only takes what is
             // left (it goes first when the label is long).
-            .child(div().w(ui_px(16.)).flex_shrink_0().flex().items_center().justify_center().child(crate::icons::glyph(icon, 14., color)))
+            .child(match look.number {
+                Some(n) => div().w(ui_px(16.)).flex_shrink_0().flex().items_center().justify_center().font_family(crate::theme::mono_font()).text_size(ui_px(12.)).text_color(Theme::text_dim()).child(n),
+                None => div().w(ui_px(16.)).flex_shrink_0().flex().items_center().justify_center().child(crate::icons::glyph(icon, 14., color)),
+            })
             .child(div().min_w_0().flex_shrink().overflow_hidden().text_ellipsis().child(label))
             .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().text_color(Theme::text_dim()).text_size(ui_px(12.)).when(show_detail, |d| d.child(it.detail.clone())))
             .child(
@@ -3031,9 +3089,30 @@ impl Workspace {
                     .when(branch, |d| d.w(px(84.)).font_family(crate::theme::mono_font()))
                     .child(it.hint.clone()),
             );
-        div().id(("item-wrap", i)).w_full().px(px(6.)).child(row)
+        // A group's first row gets a line above it, inside the row (uniform_list rows keep one
+        // height).
+        div()
+            .id(("item-wrap", i))
+            .relative()
+            .w_full()
+            .px(px(6.))
+            .child(row)
+            .when(look.group_start, |d| d.child(div().absolute().top_0().left(px(14.)).right(px(14.)).h(px(1.)).bg(Theme::divider())))
     }
 }
+
+/// How a popup row is drawn besides its item.
+#[derive(Default)]
+struct RowLook {
+    /// In the icon slot instead of the icon (VCS Operations: "1"…"9", or empty).
+    number: Option<String>,
+    /// A line above the row: a new group starts.
+    group_start: bool,
+}
+
+/// VCS Operations: where its groups start (Commit…Fetch | Branches…Rollback | Annotate…
+/// Compare | Resolve…Unstash | the tool windows), as in PyCharm's Alt+` list.
+const VCS_GROUP_STARTS: [usize; 4] = [4, 7, 10, 13];
 
 /// The width of `text` in the UI font at `size` px (for layouts that must not clip).
 fn text_width(cx: &App, text: &str, size: f32) -> f32 {
@@ -3097,6 +3176,7 @@ impl Focusable for Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.track_status(cx);
         crate::stall::note("Workspace render, layout or paint");
         budget_probe::on_render(window);
         // Text without a size of its own follows the UI scale too.
@@ -3222,6 +3302,75 @@ impl ToolSide {
             Action::ToggleDatabaseWindow => ToolSide::Right,
             _ => ToolSide::Bottom,
         }
+    }
+}
+
+/// How well an action title matches a query, or None. A substring scores highest, more so
+/// at the start of a word; otherwise every query letter must start a word or follow the
+/// letter matched before it ("gtd" → Go To Declaration, "runcon" → Run Context
+/// Configuration). Letters scattered inside words ("run" in "Surround With") do not count.
+fn action_score(title: &str, q: &str) -> Option<i32> {
+    let len = title.len() as i32;
+    if let Some(p) = title.find(q) {
+        let word_start = p == 0 || !title.as_bytes()[p - 1].is_ascii_alphanumeric();
+        return Some(1000 + if word_start { 300 } else { 0 } - p as i32 * 10 - len);
+    }
+    let t: Vec<char> = title.chars().collect();
+    let q: Vec<char> = q.chars().filter(|c| !c.is_whitespace()).collect();
+    fn walk(t: &[char], q: &[char], ti: usize, qi: usize, prev: Option<usize>) -> bool {
+        if qi == q.len() {
+            return true;
+        }
+        (ti..t.len()).any(|i| {
+            let starts = i == 0 || !t[i - 1].is_alphanumeric();
+            let follows = prev == Some(i.wrapping_sub(1)) && i > 0;
+            t[i] == q[qi] && (starts || follows) && walk(t, q, i + 1, qi + 1, Some(i))
+        })
+    }
+    walk(&t, &q, 0, 0, None).then(|| 100 - len)
+}
+
+#[cfg(test)]
+mod action_score_tests {
+    use super::action_score;
+    #[test]
+    fn word_starts_only() {
+        assert!(action_score("go to declaration", "gtd").is_some());
+        assert!(action_score("run context configuration", "runcon").is_some());
+        assert!(action_score("surround with", "run").is_none());
+        assert!(action_score("focus editor", "user").is_none());
+        assert!(action_score("run", "run") > action_score("rerun", "run"));
+    }
+}
+
+/// A folder for display: the home folder as `~`, and the middle of a long path as `…`
+/// (`~\…\Temp\brisk-ux`), so the end of the path, the part that tells folders apart, stays.
+pub(crate) fn short_dir(p: &std::path::Path) -> String {
+    const SEP: char = '\\';
+    let full = p.display().to_string();
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let in_home = !home.is_empty()
+        && full.get(..home.len()).is_some_and(|h| h.eq_ignore_ascii_case(&home))
+        && full[home.len()..].starts_with(SEP);
+    let (head, rest) = if in_home {
+        ("~".to_string(), full[home.len() + 1..].to_string())
+    } else {
+        match full.split_once(SEP) {
+            Some((drive, rest)) => (drive.to_string(), rest.to_string()),
+            None => return full,
+        }
+    };
+    let parts: Vec<&str> = rest.split(SEP).filter(|s| !s.is_empty()).collect();
+    let shown: Vec<&str> = if parts.len() <= 3 { parts } else { vec!["…", parts[parts.len() - 2], parts[parts.len() - 1]] };
+    std::iter::once(head.as_str()).chain(shown).collect::<Vec<_>>().join("\\")
+}
+
+#[cfg(test)]
+mod short_dir_tests {
+    #[test]
+    fn shortens_the_middle() {
+        assert_eq!(super::short_dir(std::path::Path::new(r"D:\a\b")), r"D:\a\b");
+        assert_eq!(super::short_dir(std::path::Path::new(r"D:\a\b\c\d\e")), r"D:\…\d\e");
     }
 }
 

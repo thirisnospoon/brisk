@@ -32,6 +32,8 @@ struct Tab {
     session: Session,
     title: String,
     number: usize,
+    /// The shell's name for Terminal tabs ("PowerShell", "Git Bash").
+    shell: String,
     /// Set for Run window tabs.
     run: Option<RunTab>,
 }
@@ -121,6 +123,10 @@ pub struct TerminalPanel {
     activation: Option<crate::terminal_env::Activation>,
     /// Run tool window (process output) instead of Terminal (shells).
     run_mode: bool,
+    /// The ▾ next to + is open: the shells to start a new tab with.
+    shell_menu: bool,
+    /// Where the next new tab starts (Open in → Terminal); the project root otherwise.
+    start_dir: Option<PathBuf>,
     /// Run window toggles: wrap long lines at the window edge / follow new output.
     pub soft_wrap: bool,
     pub scroll_to_end: bool,
@@ -153,12 +159,81 @@ fn hsla(c: [u8; 3]) -> Hsla {
     rgb(((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32).into()
 }
 
+/// The first line of a run: the command as a person reads it, `python app/main.py --x`
+/// (the interpreter by name, project files relative to the project). Copy Command Line on
+/// the toolbar still gives the full one.
+fn short_command(cmd: &brisk_run::Command, root: &std::path::Path) -> String {
+    let rel = |a: &str| -> String {
+        let p = std::path::Path::new(a);
+        match p.strip_prefix(root) {
+            Ok(r) if p.is_absolute() => r.to_string_lossy().replace('\\', "/"),
+            _ => a.to_string(),
+        }
+    };
+    let program = cmd.program.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| cmd.program.display().to_string());
+    let mut out = program;
+    for a in &cmd.args {
+        let a = rel(a);
+        out.push(' ');
+        if a.is_empty() || a.contains([' ', '\t']) {
+            out.push_str(&format!("\"{a}\""));
+        } else {
+            out.push_str(&a);
+        }
+    }
+    out
+}
+
+/// How long a run took: "0.41 s", "12.3 s", "2 min 5 s".
+fn took(d: std::time::Duration) -> String {
+    let s = d.as_secs_f64();
+    if s < 10. {
+        format!("{s:.2} s")
+    } else if s < 60. {
+        format!("{s:.1} s")
+    } else {
+        format!("{} min {} s", d.as_secs() / 60, d.as_secs() % 60)
+    }
+}
+
+/// A shell the Terminal can start.
+#[derive(Clone)]
+pub struct Shell {
+    pub label: &'static str,
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+/// The shells on this machine, the default (Windows PowerShell) first. WSL is not offered:
+/// starting it boots its virtual machine.
+pub fn shells() -> Vec<Shell> {
+    let mut v = vec![Shell { label: "PowerShell", program: "powershell.exe".into(), args: vec!["-NoLogo".into()] }];
+    if !cfg!(windows) {
+        return v;
+    }
+    let pf = |sub: &str| ["ProgramFiles", "ProgramW6432"].iter().filter_map(|k| std::env::var_os(k)).map(|d| std::path::PathBuf::from(d).join(sub)).find(|p| p.is_file());
+    if let Some(p) = pf(r"PowerShell\7\pwsh.exe") {
+        v.push(Shell { label: "PowerShell 7", program: p.display().to_string(), args: vec!["-NoLogo".into()] });
+    }
+    v.push(Shell { label: "Command Prompt", program: "cmd.exe".into(), args: Vec::new() });
+    if let Some(p) = pf(r"Git\bin\bash.exe") {
+        v.push(Shell { label: "Git Bash", program: p.display().to_string(), args: vec!["--login".into(), "-i".into()] });
+    }
+    v
+}
+
 impl TerminalPanel {
     /// The Terminal tool window; shells start with `activation` (the project interpreter's
     /// environment) when it is known, else with the project's `.venv` on PATH.
     pub fn new(root: PathBuf, activation: Option<crate::terminal_env::Activation>, cx: &mut Context<Self>) -> Self {
+        Self::new_in(root, activation, None, cx)
+    }
+
+    /// The Terminal tool window with its first shell started in `dir` (the root when None).
+    pub fn new_in(root: PathBuf, activation: Option<crate::terminal_env::Activation>, dir: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
         let mut panel = Self::with_mode(root, false, cx);
         panel.activation = activation;
+        panel.start_dir = dir;
         panel.new_tab();
         panel
     }
@@ -203,9 +278,12 @@ impl TerminalPanel {
                                         if r.stopped {
                                             r.code = None;
                                         }
+                                        // PyCharm's line, with a green or red mark and how long it ran.
+                                        let took = took(r.started.elapsed());
                                         let end = match r.code {
-                                            Some(c) => format!("Process finished with exit code {c}"),
-                                            None => "Process terminated".to_string(),
+                                            Some(0) => format!("\x1b[32m✓\x1b[0m Process finished with exit code 0 \x1b[90min {took}\x1b[0m"),
+                                            Some(c) => format!("\x1b[31m✗\x1b[0m Process finished with exit code {c} \x1b[90min {took}\x1b[0m"),
+                                            None => format!("Process terminated \x1b[90mafter {took}\x1b[0m"),
                                         };
                                         t.session.inject(format!("\r\n\x1b[0m{end}\r\n\x1b[?25l").as_bytes());
                                         let tests = r.tests.as_mut().map(|t| t.finish());
@@ -248,6 +326,8 @@ impl TerminalPanel {
             selecting: false,
             error: None,
             run_mode,
+            shell_menu: false,
+            start_dir: None,
             activation: None,
             soft_wrap: true,
             scroll_to_end: true,
@@ -301,15 +381,15 @@ sys.exit(r)";
             let mut args = vec!["-c".to_string(), WRAP.to_string(), spawn.program.display().to_string()];
             args.extend(spawn.args.iter().cloned());
             let opts = brisk_terminal::SpawnOptions { shell: Some((spawn.program.display().to_string(), args)), cwd: Some(spawn.cwd.clone()), env: spawn.env.clone() };
-            Session::spawn_process_pty(opts, &cmd.display(), cols, rows, on_event)
+            Session::spawn_process_pty(opts, &short_command(&cmd, &self.root), cols, rows, on_event)
         } else {
-            Session::spawn_process(spawn.to_std(), &cmd.display(), cols, rows, on_event)
+            Session::spawn_process(spawn.to_std(), &short_command(&cmd, &self.root), cols, rows, on_event)
         }
         .map_err(|e| format!("Cannot run {}: {e}", cmd.program.display()))?;
         let name = cfg.name.clone();
         // "Allow multiple instances": a running tab of the configuration stays.
         let multiple = cfg.allow_multiple;
-        let tab = Tab { id, session, title: String::new(), number: 0, run: Some(RunTab { name: name.clone(), cfg, cmd, running: true, code: None, tests, started: std::time::Instant::now(), ended: None, pinned: false, stopped: false }) };
+        let tab = Tab { id, session, title: String::new(), number: 0, shell: String::new(), run: Some(RunTab { name: name.clone(), cfg, cmd, running: true, code: None, tests, started: std::time::Instant::now(), ended: None, pinned: false, stopped: false }) };
         let reuse = into
             .and_then(|id| self.tabs.iter().position(|t| t.id == id && t.run.is_some()))
             .or_else(|| self.tabs.iter().position(|t| t.run.as_ref().is_some_and(|r| r.name == name && !r.pinned && !(multiple && r.running))));
@@ -581,11 +661,27 @@ sys.exit(r)";
     }
 
     pub fn new_tab(&mut self) {
+        self.new_tab_with(None);
+    }
+
+    /// Open in → Terminal: a new tab with the default shell, started in `dir`.
+    pub fn new_tab_in(&mut self, dir: PathBuf) {
+        self.start_dir = Some(dir);
+        self.new_tab_with(None);
+    }
+
+    /// A new Terminal tab with shell `which` (an index into [`shells`]), or the default one.
+    pub fn new_tab_with(&mut self, which: Option<usize>) {
+        let shells = shells();
+        let shell = which.and_then(|i| shells.get(i)).or(shells.first()).cloned();
         let id = self.next_id;
         self.next_id += 1;
         let tx = self.events.clone();
         let (cols, rows) = self.tabs.get(self.active).map(|t| t.session.size()).unwrap_or((120, 12));
         let mut opts = SpawnOptions::for_project(&self.root);
+        if let Some(d) = self.start_dir.take() {
+            opts.cwd = Some(d);
+        }
         if let Some(a) = &self.activation {
             // The project interpreter decides, not whatever .venv sits in the root.
             opts.env.remove("PATH");
@@ -595,12 +691,17 @@ sys.exit(r)";
                 opts.shell = Some(("powershell.exe".into(), crate::terminal_env::powershell_args(p)));
             }
         }
+        // Another shell than the default PowerShell: its own program; the environment stays.
+        if let Some(sh) = shell.as_ref().filter(|sh| sh.program != "powershell.exe") {
+            opts.shell = Some((sh.program.clone(), sh.args.clone()));
+        }
         match Session::spawn(opts, cols, rows, 8, CELL_H as u16, move |e| {
             let _ = tx.unbounded_send((id, e));
         }) {
             Ok(session) => {
-                let number = (1..).find(|n| !self.tabs.iter().any(|t| t.number == *n)).unwrap();
-                self.tabs.push(Tab { id, session, title: String::new(), number, run: None });
+                let label = shell.map(|s| s.label.to_string()).unwrap_or_else(|| "Local".into());
+                let number = (1..).find(|n| !self.tabs.iter().any(|t| t.number == *n && t.shell == label)).unwrap();
+                self.tabs.push(Tab { id, session, title: String::new(), number, shell: label, run: None });
                 self.active = self.tabs.len() - 1;
                 self.error = None;
             }
@@ -793,8 +894,8 @@ sys.exit(r)";
                 let active = i == self.active;
                 let name = match &t.run {
                     Some(r) => r.name.clone(),
-                    None if t.number == 1 => "Local".to_string(),
-                    None => format!("Local ({})", t.number),
+                    None if t.number == 1 => t.shell.clone(),
+                    None => format!("{} ({})", t.shell, t.number),
                 };
                 let state = t.run.as_ref().map(|r| match (r.running, r.code) {
                     (true, _) => ("play", Theme::run_icon()),
@@ -849,13 +950,80 @@ sys.exit(r)";
                         cx.notify();
                     })),
             ))
-            .when_some(self.tabs.get(self.active).filter(|t| !t.title.is_empty()), |d, t| {
+            // ▾: start a tab with another shell found on this machine.
+            .when(!self.run_mode, |d| d.child(self.render_shell_picker(cx)))
+            // The console title, unless it is just the shell's path.
+            .when_some(self.tabs.get(self.active).filter(|t| !t.title.is_empty() && !t.title.to_lowercase().ends_with(".exe")), |d, t| {
                 d.child(div().flex_1()).child(div().text_color(Theme::text_dim()).text_size(px(12.)).pr(px(8.)).child(t.title.clone()))
             })
     }
 }
 
 impl TerminalPanel {
+    fn render_shell_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let menu = self.shell_menu.then(|| {
+            let rows = shells().into_iter().enumerate().map(|(i, sh)| {
+                div()
+                    .id(("shell-pick", i))
+                    .px(px(10.))
+                    .py(px(3.))
+                    .rounded(px(4.))
+                    .flex()
+                    .gap(px(10.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Theme::hover_row()))
+                    .child(sh.label)
+                    .when(i == 0, |d| d.child(div().text_color(Theme::text_dim()).child("default")))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.shell_menu = false;
+                        this.new_tab_with(Some(i));
+                        window.focus(&this.focus);
+                        cx.notify();
+                    }))
+            });
+            gpui::deferred(
+                div()
+                    .id("shell-menu")
+                    .absolute()
+                    .top(px(24.))
+                    .left_0()
+                    .min_w(px(180.))
+                    .p(px(4.))
+                    .bg(Theme::panel())
+                    .border_1()
+                    .border_color(Theme::divider())
+                    .rounded(px(6.))
+                    .shadow_md()
+                    .text_size(px(13.))
+                    .text_color(Theme::text())
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        this.shell_menu = false;
+                        cx.notify();
+                    }))
+                    .children(rows),
+            )
+            .with_priority(1)
+        });
+        div()
+            .relative()
+            .child(
+                div()
+                    .id("term-shells")
+                    .px(px(4.))
+                    .py(px(2.))
+                    .rounded(px(5.))
+                    .text_color(Theme::text_muted())
+                    .hover(|s| s.bg(Theme::hover_row()))
+                    .cursor_pointer()
+                    .child(crate::icons::ui_icon("chevron-down", 12., Theme::text_muted()))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.shell_menu = !this.shell_menu;
+                        cx.notify();
+                    })),
+            )
+            .children(menu)
+    }
+
     fn render_run_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let running = self.tabs.get(self.active).and_then(|t| t.run.as_ref()).is_some_and(|r| r.running);
         let button = |id: &'static str, glyph: &'static str, color: Hsla| {

@@ -531,6 +531,31 @@ impl Workspace {
         };
         let mut v = self.new_entries(self.target_dir());
         v.push(Entry::Separator);
+        // A folder: search it, or run the tests in it (Ctrl+Shift+F10 on a folder does the same).
+        if is_dir {
+            let d = path.clone();
+            v.push(Entry::Item {
+                label: "Find in Directory…".into(),
+                shortcut: self.resolver.keymap().shortcut_label(brisk_keymap::Action::FindInFiles).unwrap_or_default(),
+                enabled: true,
+                run: Rc::new(move |this: &mut Workspace, window, cx| this.find_in_dir(&d, window, cx)),
+            });
+            let tests = self.tree.mark(id) == Some(brisk_project::Mark::Tests) || path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("test"));
+            if tests {
+                let d = path.clone();
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                v.push(Entry::Item {
+                    label: format!("Run Tests in '{name}'"),
+                    shortcut: self.resolver.keymap().shortcut_label(brisk_keymap::Action::RunContext).unwrap_or_default(),
+                    enabled: true,
+                    run: Rc::new(move |this: &mut Workspace, window, cx| {
+                        let cfg = brisk_run::RunConfig::for_tests_with(&this.root, &d, &[], this.default_test_kind());
+                        this.run_config(cfg, window, cx);
+                    }),
+                });
+            }
+            v.push(Entry::Separator);
+        }
         v.push(op("Rename…", "Shift+F6", !root, FileOp::Rename(path.clone())));
         v.push(op("Copy…", "F5", !root, FileOp::Copy(path.clone())));
         v.push(op("Move…", "F6", !root, FileOp::Move(path.clone())));
@@ -565,14 +590,27 @@ impl Workspace {
             ],
         });
         v.push(self.path_entries(path.clone()));
-        v.push(Entry::Item {
-            label: "Show in Explorer".into(),
-            shortcut: String::new(),
-            enabled: true,
-            run: Rc::new({
-                let p = path.clone();
-                move |_, _, cx| cx.reveal_path(&p)
-            }),
+        // Open in ▸ Explorer / Terminal (PyCharm's Open In).
+        let dir = if is_dir { path.clone() } else { path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| self.root.clone()) };
+        v.push(Entry::Submenu {
+            label: "Open In".into(),
+            entries: vec![
+                Entry::Item {
+                    label: "Explorer".into(),
+                    shortcut: String::new(),
+                    enabled: true,
+                    run: Rc::new({
+                        let p = path.clone();
+                        move |_, _, cx| cx.reveal_path(&p)
+                    }),
+                },
+                Entry::Item {
+                    label: "Terminal".into(),
+                    shortcut: String::new(),
+                    enabled: true,
+                    run: Rc::new(move |this: &mut Workspace, window, cx| this.open_terminal_in(dir.clone(), window, cx)),
+                },
+            ],
         });
         v.push(Entry::Separator);
         v.push(Entry::Item {
