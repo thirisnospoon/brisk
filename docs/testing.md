@@ -307,6 +307,10 @@ Folder: empty. Needs fastapi, uvicorn and flask.
 
 Checks app detection in the dialog, runs `api/main.py` as FastAPI and `webapp.py` as Flask on ports 18765 and 18766, checks the HTTP response at the address printed in the output and opening the link. Then runs `site/manage.py` as Django server on port 18767 and Django tests with the label `polls`, against a stub `django` package the smoke writes next to it (Django itself is not needed). Stops the servers at the end. `=dialog` leaves the dialog open, `=dialog-add` the template list.
 
+### `BRISK_SMOKE_TOUR=1`
+
+Not a check: opens the main windows and popups one by one (editor, Search Everywhere, Settings, Commit, Git log, Run, the Python tool windows, Run Configurations, Find in Files, Debug, the light theme) and prints `tour: <n> <name>` for each, for UI review screenshots. With `BRISK_TOUR_SYNC=<dir>` it writes `<n>.ready` there and waits for `<n>.done` (up to 15 s) before the next step, so a screenshot script can keep up. Run it on a git copy of `examples/demo_project` with `app/main.py`.
+
 ### `BRISK_SMOKE_KEYMAP=1`
 
 Settings folder: a scratch `APPDATA` (the smoke writes `keymap.json` and a fake PyCharm settings folder there). Ty is not needed.

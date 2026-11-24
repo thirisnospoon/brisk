@@ -11,6 +11,7 @@ mod webnav_smoke;
 mod ssh_smoke;
 mod marks_smoke;
 mod keymap_smoke;
+mod tour_smoke;
 mod web_ui;
 mod ssh_ui;
 mod keymap_ui;
@@ -713,6 +714,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_RUNANYTHING").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_anything_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_TOUR").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.tour_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_KEYMAP").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.keymap_smoke(window, cx));

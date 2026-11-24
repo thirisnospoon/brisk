@@ -1214,21 +1214,34 @@ impl Workspace {
                     .p(px(10.))
                     .border_t_1()
                     .border_color(Theme::divider())
+                    // Amend on the left, the shortcut (or what is running) on the right: the
+                    // button row below has no room for it in a narrow window.
                     .child(
                         div()
-                            .id("amend")
                             .flex()
                             .items_center()
-                            .gap(px(6.))
-                            .text_size(ui_px(13.))
-                            .cursor_pointer()
-                            .child(checkbox(Some(amend)))
-                            .child("Amend")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(g) = this.git.as_mut() {
-                                    g.amend = !g.amend;
-                                }
-                                cx.notify();
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .id("amend")
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.))
+                                    .text_size(ui_px(13.))
+                                    .cursor_pointer()
+                                    .child(checkbox(Some(amend)))
+                                    .child("Amend")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(g) = this.git.as_mut() {
+                                            g.amend = !g.amend;
+                                        }
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(div().flex_1())
+                            .child(div().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().text_size(ui_px(11.)).text_color(Theme::text_dim()).child(match busy {
+                                Some(b) => format!("{b}…"),
+                                None => format!("Ctrl+Enter · {}", shortcut(Action::Commit)),
                             })),
                     )
                     .child(
@@ -1248,12 +1261,7 @@ impl Workspace {
                             .items_center()
                             .gap(px(8.))
                             .child(commit_btn("btn-commit", if included_n > 0 { format!("Commit ({included_n})") } else { "Commit".into() }, true, false, cx))
-                            .child(commit_btn("btn-commit-push", "Commit and Push…".into(), false, true, cx))
-                            .child(div().flex_1())
-                            .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).child(match busy {
-                                Some(b) => format!("{b}…"),
-                                None => format!("Ctrl+Enter · {}", shortcut(Action::Commit)),
-                            })),
+                            .child(commit_btn("btn-commit-push", "Commit and Push…".into(), false, true, cx)),
                     ),
             )
             .into_any_element()
@@ -1371,7 +1379,7 @@ impl Workspace {
                             } else {
                                 (r.clone(), gpui::rgb(0x6c9be8))
                             };
-                            div().px(px(5.)).rounded(px(3.)).border_1().border_color(color).text_color(color).text_size(ui_px(11.)).whitespace_nowrap().child(label)
+                            div().px(px(5.)).min_w_0().flex_shrink().overflow_hidden().text_ellipsis().rounded(px(3.)).border_1().border_color(color).text_color(color).text_size(ui_px(11.)).whitespace_nowrap().child(label)
                         });
                         div()
                             .id(("commit", i))
@@ -1396,9 +1404,10 @@ impl Workspace {
                                 this.log_commit_menu(c, e.position, cx);
                             }))
                             .child(graph)
-                            .child(div().flex().gap(px(4.)).children(refs))
-                            .child(div().pl(px(6.)).flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(c.subject.clone()))
-                            .child(div().w(px(130.)).flex_shrink_0().overflow_hidden().whitespace_nowrap().text_color(Theme::text_muted()).child(c.author.clone()))
+                            // Branch labels give way before the subject does: at most 40% of the row.
+                            .child(div().flex().gap(px(4.)).min_w_0().max_w(gpui::relative(0.4)).overflow_hidden().children(refs))
+                            .child(div().pl(px(6.)).mr(px(10.)).flex_1().min_w(px(80.)).overflow_hidden().text_ellipsis().whitespace_nowrap().child(c.subject.clone()))
+                            .child(div().w(px(102.)).mr(px(8.)).flex_shrink_0().overflow_hidden().text_ellipsis().whitespace_nowrap().text_color(Theme::text_muted()).child(c.author.clone()))
                             .child(div().w(px(130.)).flex_shrink_0().whitespace_nowrap().text_color(Theme::text_muted()).text_size(ui_px(12.)).child(fmt_time(c.time)))
                     })
                     .collect()

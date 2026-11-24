@@ -717,15 +717,15 @@ impl Workspace {
             .border_b_1()
             .border_color(Theme::divider())
             .child(crate::ui_kit::tool_title("Python Packages"))
-            .child(input(&p.filter, 200., "Filter packages", cx))
+            .child(input(&p.filter, 160., "Filter packages", cx))
             .child(
                 ui_kit::icon_button("pkg-refresh", "rotate-cw", !p.loading)
                     .tooltip(|_, cx| cx.new(|_| super::Tip("Reload the list".into())).into())
                     .on_click(cx.listener(|this, _, _, cx| this.refresh_packages(cx))),
             )
             .child(div().w(px(1.)).h(ui_px(18.)).mx(px(2.)).bg(Theme::divider()))
-            .child(div().relative().child(input(&p.name, 180., "Package name", cx)).children(popup))
-            .child(input(&p.version, 160., "Version", cx))
+            .child(div().relative().child(input(&p.name, 160., "Package name", cx)).children(popup))
+            .child(input(&p.version, 90., "Version", cx))
             .child(ui_kit::button("pkg-install", "Install", true, true).on_click(cx.listener(|this, _, _, cx| {
                 this.install_package(cx);
                 cx.notify();

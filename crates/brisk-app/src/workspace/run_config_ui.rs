@@ -937,8 +937,10 @@ impl Workspace {
             for f in if d.templates { template_fields(kind) } else { fields(kind, dr.cfg.temporary) } {
                 let active = d.field == f;
                 let value: gpui::AnyElement = match f {
+                    // Eleven kinds do not fit one line: they wrap, and the row grows.
                     Field::Kind => div()
                         .flex()
+                        .flex_wrap()
                         .gap(px(2.))
                         .children(Kind::ALL.iter().enumerate().map(|(i, &k)| {
                             let on = k == kind;
@@ -1105,13 +1107,15 @@ impl Workspace {
                 rows.push(
                     div()
                         .id(("rc-field", f as usize))
-                        .h(ui_px(32.))
+                        .when(f != Field::Kind, |d| d.h(ui_px(32.)))
+                        .when(f == Field::Kind, |d| d.min_h(ui_px(32.)).py(px(3.)))
                         .flex()
                         .items_center()
                         .gap(px(10.))
-                        .child(div().w(px(130.)).flex_shrink_0().text_color(Theme::text_muted()).child(label(f, kind)))
+                        .child(div().w(px(150.)).flex_shrink_0().whitespace_nowrap().overflow_hidden().text_ellipsis().text_color(Theme::text_muted()).child(label(f, kind)))
                         .child(
                             crate::ui_kit::input_frame(active, false, crate::ui_kit::CONTROL_H)
+                                .when(f == Field::Kind, |d| d.h_auto().min_h(px(crate::ui_kit::CONTROL_H)).py(px(3.)))
                                 .flex_1()
                                 .flex_shrink()
                                 .min_w_0()

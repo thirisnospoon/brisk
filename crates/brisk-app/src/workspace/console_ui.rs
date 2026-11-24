@@ -553,7 +553,7 @@ impl Workspace {
         let hint = if p.waiting_input.is_some() {
             "Type a line for input() and press Enter"
         } else {
-            "Enter runs a complete statement, Shift+Enter adds a line, ↑/↓ — history"
+            "Enter runs · Shift+Enter new line · ↑/↓ history"
         };
         let input = div()
             .flex()
@@ -575,7 +575,7 @@ impl Workspace {
                     .overflow_hidden()
                     .child(p.input.clone())
                     .when(empty && !focused, |d| {
-                        d.child(div().absolute().top_0().left_0().text_color(Theme::text_dim()).child(hint))
+                        d.child(div().absolute().top_0().left_0().whitespace_nowrap().text_color(Theme::text_dim()).child(hint))
                     }),
             );
         let vars = div()

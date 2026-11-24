@@ -251,7 +251,18 @@ impl Workspace {
                 .when(focus == Some(c), |x| x.child(crate::ui_kit::focus_ring(5., 0.)))
         };
         let row = |label: &'static str, value: gpui::AnyElement| {
-            div().min_h(ui_px(36.)).flex().items_center().gap(px(12.)).child(div().w(px(110.)).flex_shrink_0().text_color(Theme::text_muted()).child(label)).child(value)
+            // The value takes the rest of the width, so a wrapping value (the fonts) grows the
+            // row instead of running into the next one.
+            // Rows do not shrink in the scrolling body: a shrunk row lets its value spill over
+            // the next one.
+            div()
+                .flex_shrink_0()
+                .min_h(ui_px(36.))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(div().w(px(110.)).flex_shrink_0().text_color(Theme::text_muted()).child(label))
+                .child(div().flex_1().min_w_0().py(px(4.)).child(value))
         };
         // − value +
         let stepper = |id: &'static str, value: String, ctl: fn(i8) -> SetCtl, cx: &mut Context<Self>| {
@@ -385,11 +396,8 @@ impl Workspace {
                         .id("settings-dialog")
                         .w(px(620.))
                         .max_h(gpui::relative(0.86))
-                        .overflow_y_scroll()
                         .flex()
                         .flex_col()
-                        .gap(px(2.))
-                        .p(px(16.))
                         .bg(Theme::panel())
                         .border_1()
                         .border_color(Theme::divider())
@@ -397,7 +405,17 @@ impl Workspace {
                         .map(crate::ui_kit::floating)
                         .text_size(ui_px(13.))
                         .text_color(Theme::text())
-                        .child(div().font_weight(gpui::FontWeight::SEMIBOLD).pb(px(8.)).child("Settings"))
+                        .child(div().font_weight(gpui::FontWeight::SEMIBOLD).px(px(16.)).pt(px(16.)).pb(px(8.)).child("Settings"))
+                        .child(
+                            div()
+                                .id("settings-body")
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_y_scroll()
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.))
+                                .px(px(16.))
                         .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pb(px(2.)).child("APPEARANCE"))
                         .child(row("Theme", theme))
                         .child(row("UI style", style))
@@ -425,10 +443,14 @@ impl Workspace {
                         .child(row("", comment_space))
                         .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("TOOLS › ACTIONS ON SAVE"))
                         .child(row("", reformat))
-                        .child(row("", imports))
+                        .child(row("", imports)),
+                        )
                         .child(
                             div()
+                                .p(px(16.))
                                 .pt(px(12.))
+                                .border_t_1()
+                                .border_color(Theme::divider())
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
