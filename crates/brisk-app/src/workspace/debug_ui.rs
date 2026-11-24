@@ -1721,6 +1721,9 @@ impl Workspace {
             self.show_toast(format!("'{}' is a Compound: run it, or debug its configurations one at a time", cfg.name), true, cx);
             return;
         }
+        if self.remote_blocks(&cfg, "Debugging", cx) {
+            return;
+        }
         if self.before_launch(&cfg, super::before_launch_ui::Then::Debug, window, cx) {
             return;
         }

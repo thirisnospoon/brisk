@@ -238,6 +238,14 @@ Brisk stays usable while ty is missing or still starting (its first answers can 
 - Add Interpreter… in the same list: pick a base Python (system or conda) and Brisk creates `.venv` in the project (`venv` if `.venv` exists) with `python -m venv`, in the background, with progress in the status bar. The new environment becomes the project interpreter and ty restarts.
 - If the project has `requirements.txt` or `[project].dependencies` in `pyproject.toml`, Brisk offers Install requirements (`pip install -r requirements.txt` or the pyproject dependencies), with a Not now button. The result is shown in the status bar and a notification.
 
+### SSH interpreters
+
+- Add SSH Interpreter… in the interpreter list: pick a host from `~/.ssh/config` or type `user@host` / `user@host:port`, then one of the Pythons Brisk finds there (`python3`, `python3.x`, `~/.venv`, conda, pyenv). The system `ssh` is used (Windows OpenSSH, or the one from Git for Windows) with keys or the ssh agent; passwords are not supported.
+- The project goes to `~/brisk-projects/<project>` on the host. Before each run Brisk uploads what changed since the last upload (by size and time, files under 50 MB, the same files the project tree shows) and removes deleted ones.
+- Runs of scripts, modules, pytest/unittest, Django, FastAPI and Flask go through `ssh` with the configuration's parameters and environment, `PYTHONPATH` set to the project folder. Stop ends the remote process. A web server's port is forwarded to the same port on this machine, so the printed address opens.
+- Paths in the output are mapped back: a traceback line on the host opens the local file.
+- Not yet: debugging, coverage and profiling say so instead of running locally; tests run without the test tree; code insight, the Python console and Python Packages use a local interpreter.
+
 ### uv and Poetry projects
 
 - A project uses uv when it has `uv.lock` or a `[tool.uv]` table, and Poetry when it has `poetry.lock` or `[tool.poetry]`. uv and Poetry are looked up next to the project interpreter, on `PATH`, and in the folders of their official installers (`%USERPROFILE%\.local\bin`, `%APPDATA%\Python\Scripts`, `%APPDATA%\pypoetry`).

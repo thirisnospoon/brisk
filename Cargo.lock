@@ -787,6 +787,7 @@ dependencies = [
 name = "brisk-run"
 version = "0.2.7"
 dependencies = [
+ "brisk-project",
  "brisk-terminal",
  "roxmltree",
  "serde",

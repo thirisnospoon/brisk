@@ -66,11 +66,22 @@ impl Runs {
 
     /// The project interpreter: the one chosen in the status bar, else the project venv,
     /// else the first interpreter found on the machine.
+    /// With an SSH interpreter selected this is the local fallback that code insight, the
+    /// console and the debugger use ([`Self::ssh`] is what runs use).
     pub fn interpreter(&self, root: &Path) -> Option<Interpreter> {
         match &self.file.interpreter {
-            Some(p) => Some(self.lookup(&brisk_run::resolve(root, p))),
+            Some(p) if !p.starts_with(brisk_run::ssh::SCHEME) => Some(self.lookup(&brisk_run::resolve(root, p))),
+            Some(_) => self.venvs.first().or_else(|| self.all.as_ref().and_then(|a| a.first())).cloned(),
             None => self.venvs.first().or_else(|| self.all.as_ref().and_then(|a| a.first())).cloned(),
         }
+    }
+}
+
+impl Runs {
+    /// The project's SSH interpreter, when one is selected.
+    pub fn ssh(&self) -> Option<brisk_run::ssh::SshInterpreter> {
+        let uri = self.file.interpreter.as_deref()?;
+        self.file.ssh.iter().find(|s| s.uri() == uri).cloned()
     }
 }
 
@@ -93,6 +104,9 @@ impl Workspace {
     }
 
     pub(super) fn interpreter_label(&self) -> String {
+        if let Some(s) = self.runs.ssh() {
+            return s.label();
+        }
         match self.runs.interpreter(&self.root) {
             Some(i) => i.label(&self.root),
             None if self.runs.all.is_none() => "Detecting interpreter…".into(),
@@ -276,6 +290,10 @@ impl Workspace {
             return;
         }
         self.save_all(cx);
+        if let Some(remote) = self.ssh_for(&cfg) {
+            self.run_remote(cfg, remote, window, cx);
+            return;
+        }
         let python = match &cfg.interpreter {
             Some(p) => Some(brisk_run::resolve(&self.root, p)),
             None => self.runs.interpreter(&self.root).map(|i| i.path),
@@ -400,6 +418,14 @@ impl Workspace {
 
     /// [`Self::run_command`] into Run tab `tab` (a Rerun keeps its tab, pinned or not).
     pub(super) fn run_command_in(&mut self, cfg: RunConfig, cmd: brisk_run::Command, tab: Option<u64>, window: &mut Window, cx: &mut Context<Self>) {
+        // A run on an SSH host uploads the project first.
+        if self.run_remote_command(cfg.clone(), cmd.clone(), tab, window, cx) {
+            return;
+        }
+        self.run_command_now(cfg, cmd, tab, window, cx);
+    }
+
+    pub(super) fn run_command_now(&mut self, cfg: RunConfig, cmd: brisk_run::Command, tab: Option<u64>, window: &mut Window, cx: &mut Context<Self>) {
         let panel = self.ensure_run_panel(window, cx);
         let (name, on_start) = (cfg.name.clone(), cfg.on_start);
         let res = panel.update(cx, |p, cx| {
@@ -551,6 +577,13 @@ impl Workspace {
                 if self.runs.all.is_none() {
                     v.push(PopupItem { label: "Detecting interpreters…".into(), detail: String::new(), hint: String::new(), target: Target::Cancel });
                 }
+                // With an SSH interpreter selected, the local fallback gets no check mark.
+                if self.runs.ssh().is_some() {
+                    for i in &mut v {
+                        i.hint.clear();
+                    }
+                }
+                v.extend(self.ssh_interpreter_items(&ql));
                 if "add interpreter".contains(&ql) && !self.venv_busy {
                     v.push(PopupItem { label: "Add Interpreter…".into(), detail: "a new .venv in the project".into(), hint: String::new(), target: Target::AddInterpreter });
                 }

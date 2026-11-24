@@ -307,6 +307,12 @@ Folder: empty. Needs fastapi, uvicorn and flask.
 
 Checks app detection in the dialog, runs `api/main.py` as FastAPI and `webapp.py` as Flask on ports 18765 and 18766, checks the HTTP response at the address printed in the output and opening the link. Then runs `site/manage.py` as Django server on port 18767 and Django tests with the label `polls`, against a stub `django` package the smoke writes next to it (Django itself is not needed). Stops the servers at the end. `=dialog` leaves the dialog open, `=dialog-add` the template list.
 
+### `BRISK_SMOKE_SSH=<host>`
+
+Folder: empty. Needs a host reachable with `ssh <host>` without a password, with Python 3.
+
+Makes the host's first Python the project interpreter, runs `app.py` (it imports `pkg/util.py` and raises), checks the output and that the first traceback link opens the local `app.py`, edits it and runs again (one file uploaded), then removes `~/brisk-projects/<folder>` on the host. `cargo test -p brisk-run ssh -- --ignored` with `BRISK_SSH_TEST_HOST=<host>` checks the upload and a run without the UI.
+
 ### `BRISK_SMOKE_WEBNAV=1`
 
 Folder: empty. Writes a small Django project (`mysite`, app `polls` with templates).

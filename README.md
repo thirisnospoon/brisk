@@ -34,6 +34,11 @@ about 60 MB of memory while idle.
 > Only Windows builds exist. Settings and file formats may change between versions.
 > Bug reports are very welcome: [open an issue](https://github.com/thirisnospoon/brisk/issues).
 
+Raw as it is, Brisk is already usable for everyday Python editing, running, testing and
+debugging, and trying it now is the best way to shape it: every report changes what gets
+fixed next. To follow where it goes, star the repository, or click **Watch → Custom →
+Releases** to get a notification when a new version is out.
+
 ![Brisk lightweight Python IDE with the project tree, a Python file open in the editor, inlay hints and the PyCharm-style toolbar](docs/images/brisk.png)
 
 ## Why Brisk?
@@ -131,7 +136,9 @@ The full list, including the places where Brisk deliberately differs from PyChar
 
 - Only Python gets full language support. JSON, TOML, YAML, JavaScript, TypeScript,
   HTML and CSS are highlighted, without code insight.
-- No plugins, no remote interpreters (SSH, WSL, Docker), no Jupyter notebook editor.
+- No plugins, no WSL or Docker interpreters, no Jupyter notebook editor. SSH
+  interpreters (on `main`) run code on the host, but debugging, coverage, profiling,
+  the Python console and code insight stay local.
 - Windows only. GPUI runs on macOS and Linux, but Brisk has not been ported.
 - Far fewer features than PyCharm overall. It covers everyday editing, running,
   debugging, testing and Git for a Python project, not everything a full IDE does.
@@ -148,7 +155,7 @@ benchmark.
 | Keymap | PyCharm's default keymap | PyCharm | Its own; keymap extensions exist |
 | Debugger, refactoring, Git, test runners | Yes, basic to solid | Yes, extensive | Yes, through extensions |
 | Plugins | No | Large marketplace | Large marketplace |
-| Remote development | No | Yes | Yes |
+| Remote development | SSH interpreters for runs (on `main`) | Yes | Yes |
 | Platforms | Windows 10/11 x64 | Windows, macOS, Linux | Windows, macOS, Linux |
 | License | MIT OR Apache-2.0 | Proprietary; free core features, paid Pro | Code - OSS is MIT; Microsoft's builds are proprietary |
 | Maturity | Early (0.2.x) | Mature | Mature |
@@ -283,8 +290,12 @@ far less mature.
 - **On `main`, not released yet (continued):** Django, FastAPI and Flask navigation:
   template and URL names, Go to Related between templates and views, an Endpoints
   window, template tag highlighting.
-- **In progress:** completion of template and URL names.
-- **Planned:** remote interpreters (SSH, WSL, Docker); Docker containers without
+- **On `main`, not released yet (continued):** SSH interpreters: a Python on another
+  machine through `ssh`; the project is uploaded before each run and tracebacks open the
+  local files.
+- **In progress:** remote debugging and tests over SSH; completion of template and URL
+  names.
+- **Planned:** WSL and Docker interpreters; Docker containers without
   Docker Desktop or WSL ([design](docs/design/containers.md)).
 - **Not started:** macOS and Linux builds, plugins.
 

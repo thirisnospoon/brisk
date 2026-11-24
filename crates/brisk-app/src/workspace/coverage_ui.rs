@@ -42,6 +42,9 @@ impl Workspace {
             self.show_toast(format!("'{}' is a Compound: run its configurations with coverage one at a time", cfg.name), true, cx);
             return;
         }
+        if self.remote_blocks(&cfg, "Coverage", cx) {
+            return;
+        }
         let Some(python) = self.config_python(&cfg) else {
             self.show_toast("No Python interpreter configured: create a .venv or install Python".into(), true, cx);
             return;

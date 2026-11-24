@@ -273,7 +273,8 @@ impl TerminalPanel {
         let tx = self.events.clone();
         let (cols, rows) = self.tabs.get(self.active).map(|t| t.session.size()).unwrap_or((120, 12));
         let mut spawn = cmd.clone();
-        let tests = if cfg.kind.is_tests() {
+        // On an SSH host the reporting plugin cannot write back: plain output, no test tree.
+        let tests = if cfg.kind.is_tests() && !brisk_run::ssh::is_remote(&cmd) {
             let events = brisk_run::pytest::attach_runner(&mut spawn, cfg.kind).map_err(|e| format!("Cannot prepare the test runner: {e}"))?;
             if self.failed_first {
                 let failed = brisk_run::pytest::history::last_failed(&self.root, &cfg.name);
@@ -457,7 +458,12 @@ sys.exit(r)";
 
     /// Resolve a console link against the run's working directory.
     fn link_target(&self, path: &str, line: usize) -> Option<(PathBuf, usize)> {
-        let cwd = self.tabs.get(self.active).and_then(|t| t.run.as_ref()).map(|r| r.cmd.cwd.clone()).unwrap_or_else(|| self.root.clone());
+        let run_cmd = self.tabs.get(self.active).and_then(|t| t.run.as_ref()).map(|r| &r.cmd);
+        // A path printed on an SSH host is the project's file.
+        if let Some(p) = run_cmd.and_then(|c| brisk_run::ssh::to_local(&c.env, path)) {
+            return p.is_file().then_some((p, line));
+        }
+        let cwd = run_cmd.map(|c| c.cwd.clone()).unwrap_or_else(|| self.root.clone());
         let p = PathBuf::from(path);
         let p = if p.is_absolute() { p } else { cwd.join(p) };
         p.is_file().then_some((p, line))

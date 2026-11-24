@@ -8,7 +8,9 @@ mod packages_smoke;
 mod pyproj_smoke;
 mod todo_ui;
 mod webnav_smoke;
+mod ssh_smoke;
 mod web_ui;
+mod ssh_ui;
 mod db_ui;
 mod services_ui;
 mod pin_smoke;
@@ -178,6 +180,10 @@ enum PopupKind {
     Interpreters,
     /// Add Interpreter: the base Python for a new project venv.
     AddInterpreter,
+    /// Add SSH Interpreter: the host.
+    SshHosts,
+    /// Add SSH Interpreter: one of the Pythons found on the host.
+    SshPythons,
     /// Run Anything (double Ctrl).
     RunAnything,
     /// Alt+Enter: quick fixes for the problem at the caret.
@@ -309,6 +315,14 @@ enum Target {
     Interpreter(PathBuf),
     /// "Add Interpreter…" in the interpreter popup.
     AddInterpreter,
+    /// "Add SSH Interpreter".
+    AddSsh,
+    /// A host to look for Pythons on.
+    SshHost(String),
+    /// Host, Python path, version: the new SSH interpreter.
+    SshPython(String, String, String),
+    /// An SSH interpreter (its `ssh://` URI) as the project interpreter.
+    SshUse(String),
     /// A new project venv from this base interpreter.
     CreateVenv(PathBuf),
     /// `uv sync` / `poetry install`: the project's environment from its lock file.
@@ -408,6 +422,8 @@ pub struct Workspace {
     pyc: Option<console_ui::PyConsole>,
     /// A project venv is being created (Add Interpreter).
     venv_busy: bool,
+    /// Add SSH Interpreter: the host just probed and what it has.
+    ssh_found: Option<(String, brisk_run::ssh::HostInfo)>,
     /// The offer to install requirements into a new venv.
     venv_offer: Option<venv_ui::VenvOffer>,
     /// `pyproj::deps_fingerprint` of pyproject.toml when the project opened or was last synced.
@@ -680,6 +696,9 @@ impl Workspace {
         if std::env::var_os("BRISK_SMOKE_RUNANYTHING").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.run_anything_smoke(window, cx));
         }
+        if std::env::var_os("BRISK_SMOKE_SSH").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.ssh_smoke(window, cx));
+        }
         if std::env::var_os("BRISK_SMOKE_WEBNAV").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.webnav_smoke(window, cx));
         }
@@ -863,6 +882,7 @@ impl Workspace {
             debug,
             pyc: None,
             venv_busy: false,
+            ssh_found: None,
             venv_offer: None,
             pyproject_fp: None,
             ra_history: Vec::new(),
@@ -1828,6 +1848,8 @@ impl Workspace {
             k @ (PopupKind::Branches | PopupKind::NewBranch | PopupKind::VcsOperations | PopupKind::Confirm) => self.git_popup_items(k, &q),
             k @ (PopupKind::RunConfigs(_) | PopupKind::Interpreters) => self.run_popup_items(k, &q),
             PopupKind::AddInterpreter => self.add_interpreter_items(&q),
+            PopupKind::SshHosts => self.ssh_host_items(&q),
+            PopupKind::SshPythons => self.ssh_python_items(&q),
             PopupKind::RunAnything => self.run_anything_items(&q),
             PopupKind::Intentions => self.intention_items(&q),
             PopupKind::Rename => self.rename_items(&q),
@@ -1926,6 +1948,13 @@ impl Workspace {
                         self.open_popup(PopupKind::AddInterpreter);
                         cx.notify();
                     }
+                    Some(Target::AddSsh) => {
+                        self.open_popup(PopupKind::SshHosts);
+                        cx.notify();
+                    }
+                    Some(Target::SshHost(h)) => self.ssh_pick_host(h, window, cx),
+                    Some(Target::SshPython(h, p, v)) => self.ssh_pick_python(h, p, v, window, cx),
+                    Some(Target::SshUse(uri)) => self.ssh_use(uri, window, cx),
                     Some(Target::RunAnything(line)) => {
                         self.popup = None;
                         self.run_anything(line, window, cx);
@@ -2708,6 +2737,8 @@ impl Workspace {
             PopupKind::RunConfigs(false) => ("Run Configurations", "Type to filter"),
             PopupKind::Interpreters => ("Python Interpreter", "Type to filter"),
             PopupKind::AddInterpreter => ("Add Interpreter", "A new virtual environment in the project from this Python"),
+            PopupKind::SshHosts => ("Add SSH Interpreter", "Host from ~/.ssh/config, or user@host[:port]"),
+            PopupKind::SshPythons => ("Add SSH Interpreter", "Python on the host"),
             PopupKind::RunAnything => ("Run Anything", "python x.py, pytest …, pip install …, a configuration or any command"),
             PopupKind::Intentions => (self.problems.intents_title.unwrap_or("Context Actions"), "Type to filter"),
             PopupKind::Rename => ("Rename", "New name"),
@@ -2874,7 +2905,8 @@ impl Workspace {
             Target::EditRunConfigs => ("✎", Theme::text_muted()),
             Target::SaveRunConfig(_) => ("⎙", Theme::text_muted()),
             Target::Interpreter(_) => ("◆", gpui::rgb(0x4b8bbe).into()),
-            Target::AddInterpreter | Target::CreateVenv(_) | Target::SyncEnv(_) => ("+", gpui::rgb(0x4b8bbe).into()),
+            Target::AddInterpreter | Target::CreateVenv(_) | Target::SyncEnv(_) | Target::AddSsh => ("+", gpui::rgb(0x4b8bbe).into()),
+            Target::SshUse(_) | Target::SshHost(_) | Target::SshPython(..) => ("◆", gpui::rgb(0x4b8bbe).into()),
             Target::RunAnything(_) => ("▶", gpui::rgb(0x5fb865).into()),
             Target::Intention(_) => ("✦", gpui::rgb(0xe0b84a).into()),
             Target::Rename(_) => ("✎", gpui::rgb(0x4b8bbe).into()),

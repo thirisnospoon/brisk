@@ -216,6 +216,10 @@ pub struct RunFile {
     /// Default test runner; `None` is Autodetect.
     #[serde(default, rename = "testRunner", skip_serializing_if = "Option::is_none")]
     pub test_runner: Option<TestRunner>,
+    /// SSH interpreters added to the project; `interpreter` is `ssh://host/python` when one
+    /// of them is the project interpreter.
+    #[serde(default, rename = "sshInterpreters", skip_serializing_if = "Vec::is_empty")]
+    pub ssh: Vec<crate::ssh::SshInterpreter>,
 }
 
 /// The kinds with a configuration template, and the template's name.
