@@ -306,9 +306,7 @@ far less mature.
   local files.
 - **On `main`, not released yet (continued):** Mark Directory as Sources Root, Test
   Sources Root or Excluded, used by ty, runs and search, and read from PyCharm's `.iml`.
-- **Next, the basics:** Git change hunks
-  (show and roll back from the gutter, commit part of a file); a configurable keymap; a
-  new-version notice in the app.
+- **Next, the basics:** a configurable keymap; a new-version notice in the app.
 - **In progress:** remote debugging and tests over SSH; completion of template and URL
   names.
 - **Planned:** WSL and Docker interpreters; Compose services in the Services window and a
