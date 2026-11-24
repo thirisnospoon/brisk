@@ -293,10 +293,17 @@ far less mature.
 - **On `main`, not released yet (continued):** SSH interpreters: a Python on another
   machine through `ssh`; the project is uploaded before each run and tracebacks open the
   local files.
+- **Next, the basics:** marking folders as source roots or excluded; Git change hunks
+  (show and roll back from the gutter, commit part of a file); a configurable keymap; a
+  new-version notice in the app.
 - **In progress:** remote debugging and tests over SSH; completion of template and URL
   names.
-- **Planned:** WSL and Docker interpreters; Docker containers without
-  Docker Desktop or WSL ([design](docs/design/containers.md)).
+- **Planned:** WSL and Docker interpreters; Compose services in the Services window and a
+  local PostgreSQL with one click; Docker containers without Docker Desktop or WSL
+  ([design](docs/design/containers.md)).
+- **Idea:** BriskAPI, a FastAPI application generated from a visual model of entities
+  and relations, which stays editable visually and by hand
+  ([design](docs/design/briskapi.md)).
 - **Not started:** macOS and Linux builds, plugins.
 
 ## Contributing
