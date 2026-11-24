@@ -1,0 +1,11 @@
+[package]
+name = "brisk-vm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Brisk Engine: a Linux VM on Windows Hypervisor Platform for containers, without Docker Desktop or WSL"
+
+[dependencies]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
