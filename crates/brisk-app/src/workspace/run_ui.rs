@@ -54,10 +54,13 @@ impl Runs {
     }
 
     pub(super) fn lookup(&self, path: &Path) -> Interpreter {
-        self.known().find(|i| i.path == path).cloned().unwrap_or_else(|| Interpreter {
-            path: path.to_path_buf(),
-            version: String::new(),
-            kind: if Interpreter::venv_dir_of(path).is_some() { InterpKind::Venv } else { InterpKind::System },
+        self.known().find(|i| i.path == path).cloned().unwrap_or_else(|| {
+            let venv = Interpreter::venv_dir_of(path);
+            Interpreter {
+                path: path.to_path_buf(),
+                version: venv.as_deref().map(brisk_run::venv_version).unwrap_or_default(),
+                kind: if venv.is_some() { InterpKind::Venv } else { InterpKind::System },
+            }
         })
     }
 

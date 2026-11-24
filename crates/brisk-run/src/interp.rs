@@ -35,11 +35,11 @@ impl Interpreter {
             InterpKind::System => v,
             InterpKind::Venv | InterpKind::Conda => {
                 let Some(dir) = Self::venv_dir_of(&self.path).or_else(|| self.path.parent().map(Path::to_path_buf)) else { return v };
-                let name = if dir.parent() == Some(root) {
-                    root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
-                } else {
-                    dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
-                };
+                let dir_name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                if let Some(project) = poetry_env_project(&dir_name) {
+                    return format!("{v} Poetry ({project})");
+                }
+                let name = if dir.parent() == Some(root) { root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default() } else { dir_name };
                 format!("{v} ({name})")
             }
         }
@@ -57,6 +57,21 @@ impl Interpreter {
 pub fn venv_python(dir: &Path) -> Option<PathBuf> {
     let candidates: &[(&str, &str)] = if cfg!(windows) { &[("Scripts", "python.exe")] } else { &[("bin", "python"), ("bin", "python3")] };
     candidates.iter().map(|(d, f)| dir.join(d).join(f)).find(|p| p.is_file())
+}
+
+/// The project name in a Poetry environment's folder name, `<project>-<8-char hash>-py3.12`.
+fn poetry_env_project(dir_name: &str) -> Option<&str> {
+    let (rest, py) = dir_name.rsplit_once("-py")?;
+    if py.is_empty() || !py.chars().all(|c| c.is_ascii_digit() || c == '.') || rest.len() < 10 || !rest.is_char_boundary(rest.len() - 9) {
+        return None;
+    }
+    let (project, hash) = rest.split_at(rest.len() - 9);
+    (hash.starts_with('-') && hash[1..].chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).then_some(project)
+}
+
+/// The Python version a virtual environment records in its `pyvenv.cfg` ("3.12.1"), or "".
+pub fn venv_version(dir: &Path) -> String {
+    pyvenv_version(dir)
 }
 
 fn pyvenv_version(dir: &Path) -> String {
@@ -156,6 +171,12 @@ fn same_file(a: &Path, b: &Path) -> bool {
 pub fn discover_all(root: &Path) -> Vec<Interpreter> {
     let mut out = project_venvs(root);
     let mut candidates: Vec<PathBuf> = Vec::new();
+    // A Poetry project's environment usually lives in Poetry's cache, outside the project.
+    if crate::pyproj::detect(root) == Some(crate::pyproj::Manager::Poetry) {
+        if let Some(py) = crate::pyproj::find_tool(crate::pyproj::Manager::Poetry, None).and_then(|p| crate::pyproj::poetry_env_python(&p, root)) {
+            candidates.push(py);
+        }
+    }
     for var in ["VIRTUAL_ENV", "CONDA_PREFIX"] {
         if let Some(d) = std::env::var_os(var) {
             let d = PathBuf::from(d);
@@ -194,4 +215,17 @@ pub fn discover_all(root: &Path) -> Vec<Interpreter> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poetry_env_names() {
+        assert_eq!(poetry_env_project("smokepoetry-nLnZ7pEb-py3.14"), Some("smokepoetry"));
+        assert_eq!(poetry_env_project("my-app-a_-B9zQ1-py3.12"), Some("my-app"));
+        assert_eq!(poetry_env_project(".venv"), None);
+        assert_eq!(poetry_env_project("tools-py3"), None);
+    }
 }

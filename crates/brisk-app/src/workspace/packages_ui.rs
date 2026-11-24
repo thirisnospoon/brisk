@@ -57,6 +57,9 @@ pub struct Packages {
     pub focus: FocusHandle,
     pub python: Option<PathBuf>,
     pub tool: Option<Tool>,
+    /// uv or Poetry of the project, when the interpreter is the project's environment
+    /// (`None` inside: checked, a plain environment; outer `None`: not checked yet).
+    pub project: Option<Option<crate::py_manager::ProjectTool>>,
     pub list: Vec<Package>,
     /// Index into the filtered list.
     pub selected: usize,
@@ -114,6 +117,7 @@ impl Packages {
             focus: cx.focus_handle(),
             python: None,
             tool: None,
+            project: None,
             list: Vec::new(),
             selected: 0,
             loading: false,
@@ -201,6 +205,7 @@ impl Workspace {
         };
         if p.python != python {
             p.tool = None;
+            p.project = None;
             p.list.clear();
             p.outdated.clear();
         }
@@ -208,17 +213,21 @@ impl Workspace {
         p.loading = true;
         p.error = None;
         let tool = p.tool.clone();
+        let project = p.project.clone();
+        let root = self.root.clone();
         let task = cx.background_executor().spawn(async move {
             let tool = tool.unwrap_or_else(|| py_packages::tool_for(&py));
+            let project = project.unwrap_or_else(|| crate::py_manager::project_tool(&root, &py));
             let list = py_packages::list(&py, &tool);
-            (tool, list)
+            (tool, project, list)
         });
         cx.spawn(async move |this, cx| {
-            let (tool, list) = task.await;
+            let (tool, project, list) = task.await;
             let _ = this.update(cx, |this, cx| {
                 let Some(p) = this.packages.as_mut() else { return };
                 p.loading = false;
                 p.tool = Some(tool);
+                p.project = Some(project);
                 let ok = list.is_ok();
                 match list {
                     Ok(l) => p.list = l,
@@ -285,13 +294,19 @@ impl Workspace {
         p.busy = Some(label.clone());
         p.running = Some(op.clone());
         self.status = label;
+        let project = p.project.clone().flatten();
         let task = cx.background_executor().spawn({
             let op = op.clone();
             async move {
-                match &op {
-                    Op::Install(n, v) => py_packages::install(&py, &tool, n, v).map(|_| format!("Installed {}", py_packages::requirement(n, v))),
-                    Op::Uninstall(pk) => py_packages::uninstall(&py, &tool, &pk.name).map(|_| format!("Uninstalled {}", pk.name)),
-                    Op::Upgrade(n) => py_packages::upgrade(&py, &tool, n).map(|_| format!("Upgraded {n}")),
+                // In a uv or Poetry project the change goes into pyproject.toml and the lock
+                // file, as PyCharm does; elsewhere straight into the environment.
+                match (&op, &project) {
+                    (Op::Install(n, v), Some(pt)) => pt.install(&py_packages::requirement(n, v)).map(|_| format!("Added {} to pyproject.toml", py_packages::requirement(n, v))),
+                    (Op::Uninstall(pk), Some(pt)) => pt.uninstall(&pk.name).map(|_| format!("Removed {} from pyproject.toml", pk.name)),
+                    (Op::Upgrade(n), Some(pt)) => pt.upgrade(n).map(|_| format!("Upgraded {n}")),
+                    (Op::Install(n, v), None) => py_packages::install(&py, &tool, n, v).map(|_| format!("Installed {}", py_packages::requirement(n, v))),
+                    (Op::Uninstall(pk), None) => py_packages::uninstall(&py, &tool, &pk.name).map(|_| format!("Uninstalled {}", pk.name)),
+                    (Op::Upgrade(n), None) => py_packages::upgrade(&py, &tool, n).map(|_| format!("Upgraded {n}")),
                 }
             }
         });
@@ -635,7 +650,11 @@ impl Workspace {
             let focused = e.read(cx).focus_handle(cx).is_focused(window);
             ui_kit::editor_field(e, hint, focused, false, CONTROL_H, cx).w(px(w))
         };
-        let tool = p.tool.as_ref().map(|t| t.label()).unwrap_or("pip");
+        let tool = match (&p.project, &p.tool) {
+            (Some(Some(pt)), _) => pt.label(),
+            (_, Some(t)) => t.label().to_string(),
+            _ => "pip".to_string(),
+        };
         let interp = p.python.as_ref().map(|x| x.display().to_string()).unwrap_or_else(|| "<No interpreter>".into());
         let selected = p.selected.min(visible.len().saturating_sub(1));
         let sel_pkg = visible.get(selected);

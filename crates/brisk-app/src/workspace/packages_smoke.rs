@@ -8,7 +8,7 @@ use std::path::Path;
 
 /// Builds the smokes' wheels (briskdemo 1.0 and 2.0, brisktwo 1.0) and a Simple-API JSON
 /// for the name suggestions into argv[1].
-const MAKE_WHEELS: &str = r#"
+pub(super) const MAKE_WHEELS: &str = r#"
 import base64, hashlib, json, os, sys, zipfile
 out = sys.argv[1]
 os.makedirs(out, exist_ok=True)

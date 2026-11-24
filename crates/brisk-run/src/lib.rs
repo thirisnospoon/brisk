@@ -9,10 +9,11 @@ pub mod envfile;
 pub mod web;
 pub mod django;
 pub mod project_files;
+pub mod pyproj;
 
 pub use config::{compound_names, idea_test_runner, import_idea, load, save, BeforeStep, OnStart, RunConfig, RunFile, RunKind, TestRunner, CONFIG_FILE, MAX_TEMPORARY, TEMPLATE_KINDS};
 pub use pytest::{is_test_file, split_nodeid, TestFeed, TestStatus, TestTree, TreeView};
-pub use interp::{discover_all, probe, project_venvs, venv_python, InterpKind, Interpreter};
+pub use interp::{discover_all, probe, project_venvs, venv_python, venv_version, InterpKind, Interpreter};
 pub use links::{find_links, find_urls, Link};
 
 use std::collections::HashMap;

@@ -61,7 +61,7 @@ impl Workspace {
             sub("Refactor", group(&["Refactor"], true)),
             sub("Run", group(&["Run"], false)),
             sub("Git", group(&["Git"], false)),
-            sub("Tools", group(&["Database"], false)),
+            sub("Tools", group(&["Python Environment", "Database"], false)),
             sub("Window", group(&["Window"], false)),
         ]
     }

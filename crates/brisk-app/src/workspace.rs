@@ -5,6 +5,7 @@ mod bookmarks_ui;
 mod console_ui;
 mod packages_ui;
 mod packages_smoke;
+mod pyproj_smoke;
 mod todo_ui;
 mod db_ui;
 mod services_ui;
@@ -306,6 +307,8 @@ enum Target {
     AddInterpreter,
     /// A new project venv from this base interpreter.
     CreateVenv(PathBuf),
+    /// `uv sync` / `poetry install`: the project's environment from its lock file.
+    SyncEnv(brisk_run::pyproj::Manager),
     /// A Run Anything command line.
     RunAnything(String),
     Intention(Box<problems_ui::Intent>),
@@ -403,6 +406,8 @@ pub struct Workspace {
     venv_busy: bool,
     /// The offer to install requirements into a new venv.
     venv_offer: Option<venv_ui::VenvOffer>,
+    /// `pyproj::deps_fingerprint` of pyproject.toml when the project opened or was last synced.
+    pyproject_fp: Option<u64>,
     /// Run Anything history, newest first.
     ra_history: Vec<String>,
     /// The last coverage report (Run with Coverage).
@@ -493,7 +498,10 @@ impl Workspace {
         if imported_runs > 0 {
             cx.defer_in(window, move |this: &mut Self, _, cx| this.show_toast(format!("Imported {imported_runs} run configuration(s) from .idea"), false, cx));
         }
-        cx.defer_in(window, |this: &mut Self, _, cx| this.start_interpreter_discovery(cx));
+        cx.defer_in(window, |this: &mut Self, _, cx| {
+            this.remember_pyproject();
+            this.start_interpreter_discovery(cx);
+        });
         if let Some(f) = std::env::var_os("BRISK_SMOKE_LINT") {
             let f = PathBuf::from(f);
             cx.defer_in(window, move |this: &mut Self, window, cx| this.lint_smoke(f, window, cx));
@@ -671,6 +679,9 @@ impl Workspace {
         if std::env::var_os("BRISK_SMOKE_PKGQUEUE").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.python_packages_queue_smoke(window, cx));
         }
+        if let Ok(which) = std::env::var("BRISK_SMOKE_PYPROJ") {
+            cx.defer_in(window, move |this: &mut Self, window, cx| this.pyproj_smoke(which, window, cx));
+        }
         if std::env::var_os("BRISK_SMOKE_PACKAGES").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.python_packages_smoke(window, cx));
         }
@@ -840,6 +851,7 @@ impl Workspace {
             pyc: None,
             venv_busy: false,
             venv_offer: None,
+            pyproject_fp: None,
             ra_history: Vec::new(),
             coverage: None,
             cov_pending: None,
@@ -959,6 +971,7 @@ impl Workspace {
             self.status = p.clone();
             self.show_toast(p, true, cx);
         }
+        self.pyproject_saved(&saved_paths, cx);
         self.todo_files_saved(saved_paths, cx);
         if saved > 0 {
             self.persist_bookmarks(cx);
@@ -1461,6 +1474,14 @@ impl Workspace {
             }
             A::TogglePythonConsole => self.toggle_python_console(window, cx),
             A::TogglePythonPackages => self.toggle_python_packages(window, cx),
+            A::SyncPythonEnvironment => match brisk_run::pyproj::detect(&self.root) {
+                Some(m) => self.sync_env(m, cx),
+                None => {
+                    let msg = "The project uses neither uv nor Poetry: no uv.lock, poetry.lock, [tool.uv] or [tool.poetry]".to_string();
+                    self.status = msg.clone();
+                    self.show_toast(msg, false, cx);
+                }
+            },
             A::ToggleTodoWindow => self.toggle_todo_window(window, cx),
             A::ToggleCoverageWindow => self.toggle_coverage_window(window, cx),
             A::RunWithCoverage => self.run_with_coverage(window, cx),
@@ -1893,6 +1914,11 @@ impl Workspace {
                     Some(Target::CreateVenv(base)) => {
                         self.popup = None;
                         self.create_venv(base, cx);
+                        self.focus_editor(window, cx);
+                    }
+                    Some(Target::SyncEnv(m)) => {
+                        self.popup = None;
+                        self.sync_env(m, cx);
                         self.focus_editor(window, cx);
                     }
                     Some(Target::Intention(i)) => self.apply_intent(*i, window, cx),
@@ -2828,7 +2854,7 @@ impl Workspace {
             Target::EditRunConfigs => ("✎", Theme::text_muted()),
             Target::SaveRunConfig(_) => ("⎙", Theme::text_muted()),
             Target::Interpreter(_) => ("◆", gpui::rgb(0x4b8bbe).into()),
-            Target::AddInterpreter | Target::CreateVenv(_) => ("+", gpui::rgb(0x4b8bbe).into()),
+            Target::AddInterpreter | Target::CreateVenv(_) | Target::SyncEnv(_) => ("+", gpui::rgb(0x4b8bbe).into()),
             Target::RunAnything(_) => ("▶", gpui::rgb(0x5fb865).into()),
             Target::Intention(_) => ("✦", gpui::rgb(0xe0b84a).into()),
             Target::Rename(_) => ("✎", gpui::rgb(0x4b8bbe).into()),

@@ -238,6 +238,14 @@ Brisk stays usable while ty is missing or still starting (its first answers can 
 - Add Interpreter… in the same list: pick a base Python (system or conda) and Brisk creates `.venv` in the project (`venv` if `.venv` exists) with `python -m venv`, in the background, with progress in the status bar. The new environment becomes the project interpreter and ty restarts.
 - If the project has `requirements.txt` or `[project].dependencies` in `pyproject.toml`, Brisk offers Install requirements (`pip install -r requirements.txt` or the pyproject dependencies), with a Not now button. The result is shown in the status bar and a notification.
 
+### uv and Poetry projects
+
+- A project uses uv when it has `uv.lock` or a `[tool.uv]` table, and Poetry when it has `poetry.lock` or `[tool.poetry]`. uv and Poetry are looked up next to the project interpreter, on `PATH`, and in the folders of their official installers (`%USERPROFILE%\.local\bin`, `%APPDATA%\Python\Scripts`, `%APPDATA%\pypoetry`).
+- Add Interpreter… starts with uv sync (creates or updates `.venv` from `pyproject.toml` and `uv.lock`) or poetry install (creates or updates the Poetry environment, running `poetry lock` first when the lock file is older than `pyproject.toml`). The environment becomes the project interpreter. Tools → Sync Python Environment does the same at any time.
+- A Poetry environment that lives in Poetry's cache, outside the project, is found through `poetry env info` and shown as "Python 3.12 Poetry (myproject)".
+- In Python Packages, when the interpreter is the project's own environment, Install, Uninstall and Upgrade go through the project manager, as in PyCharm: `uv add` / `uv remove` / `uv sync --upgrade-package`, or `poetry add` / `poetry remove` / `poetry update`. `pyproject.toml` and the lock file change with the environment. A development dependency (`[dependency-groups] dev`, `[tool.poetry.group.dev.dependencies]`) is removed from its own group. The toolbar shows "uv · pyproject.toml" or "Poetry · pyproject.toml".
+- After `pyproject.toml` is saved with changed dependencies while the lock file is older, a balloon offers to lock and sync (uv sync, or poetry lock and install). Edits that do not affect the lock file, such as `[tool.ruff]` or the description, do not trigger it.
+
 ### Running
 
 - `Ctrl+Shift+F10` runs the current file (or the one selected in Project). It creates a temporary configuration named after the file, as PyCharm does, and keeps the last 5. If the file already has a configuration, that one is used.

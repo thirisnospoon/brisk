@@ -386,6 +386,12 @@ Stops on the line marked `# BREAK`, opens View as DataFrame, sorts, filters, for
 
 Opens Python Console and enters an expression, a multi-line function, a loop with `Shift+Enter`, an error, `input()`, and an infinite loop interrupted with `Ctrl+C`. Browses history, then restarts and stops the console. `=hold` leaves the window open.
 
+### `BRISK_SMOKE_PYPROJ=uv` / `BRISK_SMOKE_PYPROJ=poetry`
+
+Folder: empty. Needs uv or Poetry on `PATH`. Writes `pyproject.toml` and local wheels in `wheels/`, and keeps uv offline (`UV_NO_INDEX`, `UV_FIND_LINKS`) and Poetry's environments in a `<folder>-poetry-cache` folder next to it.
+
+uv: syncs the environment from Add Interpreter, adds and removes `briskdemo` through Python Packages (checking `pyproject.toml`), checks that an unrelated edit of `pyproject.toml` offers nothing and a new dependency offers a sync, and runs it from the balloon. Poetry: `poetry install` creates an environment outside the project, which becomes the project interpreter and which Python Packages recognizes as the project's.
+
 ### `BRISK_SMOKE_PACKAGES=1`
 
 Folder: empty. Creates `.venv` with the first Python it finds and local wheels in `wheels/`; does not use the network.

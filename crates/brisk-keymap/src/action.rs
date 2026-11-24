@@ -267,6 +267,7 @@ actions! {
     StopPythonConsole => "Stop Python Console", "Python Console";
     ClearPythonConsole => "Clear Python Console", "Python Console";
     TogglePythonPackages => "Python Packages", "Tools";
+    SyncPythonEnvironment => "Sync Python Environment (uv / Poetry)", "Python Environment";
     RefreshPythonPackages => "Reload Python Packages", "Python Packages";
     InstallPythonPackage => "Install Package…", "Python Packages";
     UninstallPythonPackage => "Uninstall Package", "Python Packages";

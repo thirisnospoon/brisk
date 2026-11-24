@@ -18,6 +18,7 @@ mod keys;
 mod local_history;
 mod py_console;
 mod py_packages;
+mod py_manager;
 mod py_venv;
 mod run_anything;
 mod terminal_env;

@@ -5,6 +5,8 @@
 use crate::theme::ui_px;
 use super::{PopupItem, Target, Workspace};
 use crate::py_venv::{self, Requirements};
+use crate::py_manager;
+use brisk_run::pyproj::{self, Manager};
 use crate::theme::Theme;
 use brisk_run::InterpKind;
 use gpui::prelude::*;
@@ -14,9 +16,33 @@ use std::path::PathBuf;
 /// "Install requirements?" after a new environment was created.
 pub struct VenvOffer {
     pub python: PathBuf,
-    pub req: Requirements,
-    /// pip is running.
+    pub what: OfferKind,
+    /// pip, uv or Poetry is running.
     pub installing: bool,
+}
+
+pub enum OfferKind {
+    /// Install the project's requirements into a new environment.
+    Install(Requirements),
+    /// `pyproject.toml` changed after the lock file: sync with uv or Poetry.
+    Sync(Manager),
+}
+
+impl VenvOffer {
+    pub(super) fn text(&self) -> String {
+        match &self.what {
+            OfferKind::Install(req) => format!("The project lists its requirements in {}. Install them into the new environment?", req.label()),
+            OfferKind::Sync(m) => format!("pyproject.toml changed and {} is out of date. Lock and sync the environment with {}?", m.lock_file(), m.name()),
+        }
+    }
+
+    fn button(&self) -> &'static str {
+        match self.what {
+            OfferKind::Install(_) => "Install requirements",
+            OfferKind::Sync(Manager::Uv) => "uv sync",
+            OfferKind::Sync(Manager::Poetry) => "poetry lock && install",
+        }
+    }
 }
 
 thread_local! {
@@ -38,9 +64,21 @@ impl Workspace {
     /// Items of the Add Interpreter popup: base interpreters (system and conda).
     pub(super) fn add_interpreter_items(&self, q: &str) -> Vec<PopupItem> {
         let ql = q.to_lowercase();
+        // A uv or Poetry project gets its environment from the lock file first.
+        let mut managed = Vec::new();
+        if let Some(m) = pyproj::detect(&self.root) {
+            let (label, detail) = match m {
+                Manager::Uv => ("uv sync", "create or update .venv from pyproject.toml and uv.lock"),
+                Manager::Poetry => ("poetry install", "create or update the Poetry environment from poetry.lock"),
+            };
+            if label.contains(&ql) || m.name().to_lowercase().contains(&ql) {
+                managed.push(PopupItem { label: label.into(), detail: detail.into(), hint: String::new(), target: Target::SyncEnv(m) });
+            }
+        }
         let dir = py_venv::free_dir(&self.root).and_then(|d| d.file_name().map(|n| n.to_string_lossy().into_owned()));
         let Some(dir) = dir else {
-            return vec![PopupItem { label: "The project already has .venv and venv".into(), detail: "select one of them in the interpreter list".into(), hint: String::new(), target: Target::Cancel }];
+            managed.push(PopupItem { label: "The project already has .venv and venv".into(), detail: "select one of them in the interpreter list".into(), hint: String::new(), target: Target::Cancel });
+            return managed;
         };
         let mut v: Vec<PopupItem> = self
             .runs
@@ -59,10 +97,94 @@ impl Workspace {
         v.dedup_by(|a, b| a.detail == b.detail);
         if self.runs.all.is_none() {
             v.push(PopupItem { label: "Detecting interpreters…".into(), detail: String::new(), hint: String::new(), target: Target::Cancel });
-        } else if v.is_empty() {
+        } else if v.is_empty() && managed.is_empty() {
             v.push(PopupItem { label: "No base Python found".into(), detail: "install Python from python.org".into(), hint: String::new(), target: Target::Cancel });
         }
-        v
+        managed.extend(v);
+        managed
+    }
+
+    /// `uv sync` / `poetry install` in the background, then make the environment the project
+    /// interpreter, as after creating a venv.
+    pub(super) fn sync_env(&mut self, m: Manager, cx: &mut Context<Self>) {
+        if self.venv_busy {
+            return;
+        }
+        let current = self.runs.interpreter(&self.root).map(|i| i.path);
+        let tool = match py_manager::tool(m, current.as_deref()) {
+            Ok(t) => t,
+            Err(e) => {
+                self.status = e.clone();
+                self.show_toast(e, true, cx);
+                return;
+            }
+        };
+        let what = m.sync_args().join(" ");
+        let what = format!("{} {what}", m.name().to_lowercase());
+        self.venv_busy = true;
+        self.status = format!("{what}…");
+        let root = self.root.clone();
+        let task = cx.background_executor().spawn(async move { py_manager::sync(m, &tool, &root) });
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.venv_busy = false;
+                match res {
+                    Ok(python) => this.use_new_environment(python, format!("{what}: done"), cx),
+                    Err(e) => {
+                        let msg = format!("{what} failed: {e}");
+                        this.status = msg.clone();
+                        this.show_toast(msg, true, cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// After a save of `pyproject.toml` whose dependencies changed while the lock file is older:
+    /// the balloon offering `uv sync` / `poetry lock && install`.
+    pub(super) fn pyproject_saved(&mut self, saved: &[PathBuf], cx: &mut Context<Self>) {
+        let file = self.root.join("pyproject.toml");
+        if !saved.iter().any(|p| *p == file) {
+            return;
+        }
+        let fp = std::fs::read_to_string(&file).ok().map(|t| pyproj::deps_fingerprint(&t));
+        let changed = fp != self.pyproject_fp;
+        self.pyproject_fp = fp;
+        let Some(m) = pyproj::detect(&self.root) else { return };
+        if !changed || !pyproj::lock_outdated(&self.root, m) || self.venv_busy || self.venv_offer.is_some() {
+            return;
+        }
+        let python = self.runs.interpreter(&self.root).map(|i| i.path).unwrap_or_default();
+        self.venv_offer = Some(VenvOffer { python, what: OfferKind::Sync(m), installing: false });
+        cx.notify();
+    }
+
+    /// Remembers the dependency part of `pyproject.toml`, so a later save can tell whether
+    /// the dependencies changed.
+    pub(super) fn remember_pyproject(&mut self) {
+        self.pyproject_fp = std::fs::read_to_string(self.root.join("pyproject.toml")).ok().map(|t| pyproj::deps_fingerprint(&t));
+    }
+
+    /// Makes a freshly created or synced environment the project interpreter and tells every
+    /// part that depends on it (ty, the terminal, Packages, the interpreter list).
+    fn use_new_environment(&mut self, python: PathBuf, msg: String, cx: &mut Context<Self>) {
+        self.remember_pyproject();
+        self.runs.venvs = brisk_run::project_venvs(&self.root);
+        self.runs.file.interpreter = Some(brisk_run::relativize(&self.root, &python));
+        self.save_runs();
+        self.restart_ty(cx);
+        self.sync_terminal_env(cx);
+        self.start_interpreter_discovery(cx);
+        let label = self.runs.lookup(&python).label(&self.root);
+        let msg = format!("{msg}; the project interpreter is {label}");
+        self.status = msg.clone();
+        self.show_toast(msg, false, cx);
+        if self.packages.is_some() {
+            self.refresh_packages(cx);
+        }
     }
 
     /// `base -m venv .venv` in the background, then make it the project interpreter.
@@ -97,7 +219,7 @@ impl Workspace {
                         let msg = format!("Created {name}: it is the project interpreter now");
                         this.status = msg.clone();
                         this.show_toast(msg, false, cx);
-                        this.venv_offer = req.map(|req| VenvOffer { python, req, installing: false });
+                        this.venv_offer = req.map(|req| VenvOffer { python, what: OfferKind::Install(req), installing: false });
                     }
                     Err(e) => {
                         let msg = format!("Cannot create {name}: {e}");
@@ -113,8 +235,17 @@ impl Workspace {
 
     pub(super) fn install_requirements(&mut self, cx: &mut Context<Self>) {
         let Some(o) = self.venv_offer.as_mut().filter(|o| !o.installing) else { return };
+        let req = match &o.what {
+            OfferKind::Install(req) => req.clone(),
+            OfferKind::Sync(m) => {
+                let m = *m;
+                self.venv_offer = None;
+                self.sync_env(m, cx);
+                return;
+            }
+        };
         o.installing = true;
-        let (python, req, root) = (o.python.clone(), o.req.clone(), self.root.clone());
+        let (python, root) = (o.python.clone(), self.root.clone());
         self.status = format!("Installing requirements from {}…", req.label());
         let task = cx.background_executor().spawn(async move { py_venv::install(&python, &root, &req) });
         cx.spawn(async move |this, cx| {
@@ -174,14 +305,14 @@ impl Workspace {
                 .map(crate::ui_kit::floating)
                 .text_size(ui_px(13.))
                 .text_color(Theme::text())
-                .child(div().child(format!("The project lists its requirements in {}. Install them into the new environment?", o.req.label())))
+                .child(div().child(o.text()))
                 .child(if o.installing {
                     div().text_color(Theme::text_muted()).child("Installing… (progress in the status bar)").into_any_element()
                 } else {
                     div()
                         .flex()
                         .gap(px(8.))
-                        .child(button("venv-install", "Install requirements", true).on_click(cx.listener(|this, _, _, cx| this.install_requirements(cx))))
+                        .child(button("venv-install", o.button(), true).on_click(cx.listener(|this, _, _, cx| this.install_requirements(cx))))
                         .child(button("venv-dismiss", "Not now", false).on_click(cx.listener(|this, _, _, cx| {
                             this.venv_offer = None;
                             cx.notify();
@@ -233,7 +364,7 @@ impl Workspace {
             let hold = std::env::var("BRISK_SMOKE_VENV").as_deref() == Ok("hold");
             let _ = this.update_in(cx, |this, _, _| {
                 eprintln!("smoke-venv: created -> interpreter {:?}, .venv exists {}, toast {:?}", this.interpreter_label(), this.root.join(".venv").join("pyvenv.cfg").is_file(), this.toast.as_ref().map(|t| t.0.clone()));
-                eprintln!("smoke-venv: offer {:?}", this.venv_offer.as_ref().map(|o| o.req.label()));
+                eprintln!("smoke-venv: offer {:?}", this.venv_offer.as_ref().map(|o| o.text()));
             });
             if hold {
                 return;
@@ -275,7 +406,7 @@ impl Workspace {
                 // The offer again (as after another Add Interpreter), to click Not now.
                 OFFER_BUTTONS.with(|c| *c.borrow_mut() = [None, None]);
                 let python = brisk_run::venv_python(&this.root.join(".venv"));
-                this.venv_offer = python.zip(py_venv::requirements(&this.root)).map(|(python, req)| VenvOffer { python, req, installing: false });
+                this.venv_offer = python.zip(py_venv::requirements(&this.root)).map(|(python, req)| VenvOffer { python, what: OfferKind::Install(req), installing: false });
                 cx.notify();
             });
             for _ in 0..30 {
@@ -296,7 +427,7 @@ impl Workspace {
                 }
             }
             let _ = this.update_in(cx, |this, _, cx| {
-                eprintln!("smoke-venv: after Not now offer {:?}, status {:?}", this.venv_offer.as_ref().map(|o| o.req.label()), this.status);
+                eprintln!("smoke-venv: after Not now offer {:?}, status {:?}", this.venv_offer.as_ref().map(|o| o.text()), this.status);
                 cx.quit();
             });
         })
