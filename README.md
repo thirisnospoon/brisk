@@ -6,7 +6,7 @@
 
 <p align="center">
   A fast, native Python IDE written in Rust, for developers who like the PyCharm workflow
-  but not the weight of a JVM or Electron runtime.
+  but not the sound of their laptop fan.
 </p>
 
 <p align="center">
@@ -26,27 +26,29 @@ Brisk is a free, open-source Python IDE. It keeps PyCharm's window layout, defau
 keymap and action names, so your habits carry over, and it is written from scratch
 in Rust on [GPUI](https://www.gpui.rs/), the GPU-rendered UI framework behind the Zed
 editor. The IDE is a single 26 MB executable, starts in under half a second and uses
-about 60 MB of memory while idle.
+about 60 MB of memory while idle. Probably less than the browser tab you are reading this
+in.
 
 > [!WARNING]
 > **Brisk is in early development (version 0.2.x) and still raw.** Expect bugs, missing
 > features and rough edges, and keep PyCharm or another editor at hand for real work.
 > Only Windows builds exist. Settings and file formats may change between versions.
 > Bug reports are very welcome: [open an issue](https://github.com/thirisnospoon/brisk/issues).
+> It is raw. Not "rare steak" raw, more "the oven was just turned on" raw.
 
-Raw as it is, Brisk is already usable for everyday Python editing, running, testing and
-debugging, and trying it now is the best way to shape it: every report changes what gets
-fixed next. To follow where it goes, star the repository, or click **Watch → Custom →
-Releases** to get a notification when a new version is out.
+Raw, but already useful: you can write, run, test and debug real Python in it. The best
+time to try it is now, while your bug report still changes the plan instead of landing in
+a backlog of 4,000 issues. Star the repository so you do not lose it, or click **Watch →
+Custom → Releases** to hear when a new version is out.
 
 ![Brisk lightweight Python IDE with the project tree, a Python file open in the editor, inlay hints and the PyCharm-style toolbar](docs/images/brisk.png)
 
 ## Why Brisk?
 
-Full IDEs are great at Python, but they are heavy: a JVM or a browser engine, hundreds
-of megabytes of memory before you open a file, and background indexing that you can
-hear on a laptop fan. Lightweight editors start fast, but a Python workflow on them
-means assembling extensions and learning new shortcuts.
+Full IDEs are great at Python. They also bring a JVM or a browser engine, hundreds of
+megabytes of memory before you open a file, and background indexing you can hear from the
+next room through the laptop fan. Lightweight editors start instantly, and then you spend
+an evening assembling twelve extensions and learning new shortcuts.
 
 Brisk aims at the middle:
 
@@ -58,7 +60,7 @@ Brisk aims at the middle:
 - **Python first.** Completion, navigation, inspections, refactoring, the debugger,
   test runners and the package manager are built in and work out of the box.
 - **Measured.** Size, startup time and memory are checked against fixed limits on
-  every merge (see below), so the IDE does not get heavier by accident.
+  every merge (see below). If the IDE gets fatter, CI notices before you do.
 
 Brisk is an independent project and is not a copy of PyCharm's code. It reproduces
 behaviour and shortcuts; the code, icons and artwork are its own.
@@ -85,10 +87,14 @@ What these numbers do and do not say:
 - The IDE process and its helpers are reported separately. ty (types, completion,
   navigation) and ruff (inspections, formatting) run as child processes. Their memory
   grows with the size of your project; the figures above are for a small project.
-- Startup was over its own 0.4 s limit in this run; the time goes mostly into loading
-  fonts. Earlier runs were under it.
+- Startup missed its own 0.4 s limit in this run by 45 ms; most of the time goes into
+  loading fonts. Earlier runs were under it. Yes, we are that petty about milliseconds.
 - Brisk has not been benchmarked against other IDEs here. If you compare, measure on
   your own machine and project.
+
+We wanted a splash screen like PyCharm's: a nice logo, a progress bar, time to make tea.
+Sadly, Brisk opens a project in about 0.45 s (445 ms, median of 5 runs), and the splash
+would not get its first frame on screen. We are not slowing the IDE down to show it.
 
 ## Features
 
@@ -143,6 +149,9 @@ The full list, including the places where Brisk deliberately differs from PyChar
 - Far fewer features than PyCharm overall. It covers everyday editing, running,
   debugging, testing and Git for a Python project, not everything a full IDE does.
 
+If you need Jupyter, plugins and macOS today, PyCharm is right there, and we will not be
+offended. Much.
+
 ## Brisk, PyCharm and VS Code compared
 
 A factual comparison of how the three are built and what they cover. It is not a
@@ -176,8 +185,9 @@ The zip already contains [ty](https://github.com/astral-sh/ty),
 [ruff](https://github.com/astral-sh/ruff) and
 [debugpy](https://github.com/microsoft/debugpy).
 
-Windows SmartScreen may warn about an unsigned executable from the internet; choose
-"More info" → "Run anyway", or build from source.
+Windows SmartScreen will warn you about an unsigned executable from the internet. It is
+right to be suspicious; we are just not paying for a code-signing certificate yet. Choose
+"More info" → "Run anyway", or build from source and trust only yourself.
 
 ### Building from source
 
@@ -267,14 +277,15 @@ other refactorings are built in.
 
 **Can Brisk run on low-end computers?**
 It is designed to be light on memory and CPU, but it has only been tested on modern
-hardware so far. Reports from older machines are welcome.
+hardware so far. Reports from older machines are welcome; we promise to read them
+faster than the old machine boots.
 
 **Which operating systems does Brisk support?**
 Windows 10 and 11, 64-bit. macOS and Linux are not supported yet.
 
 **Can Brisk replace PyCharm for everyday Python development?**
 Not yet for most people. It is early software with fewer features and more bugs.
-Try it on a side project first.
+Try it on a side project first, not on the production hotfix at 2 a.m.
 
 **What are the differences between Brisk and VS Code?**
 VS Code is a general-purpose editor on Electron that gets Python support from
@@ -304,8 +315,8 @@ far less mature.
   local PostgreSQL with one click; Docker containers without Docker Desktop or WSL
   ([design](docs/design/containers.md)).
 - **Idea:** BriskAPI, a FastAPI application generated from a visual model of entities
-  and relations, which stays editable visually and by hand
-  ([design](docs/design/briskapi.md)).
+  and relations, which stays editable visually and by hand: an API in two clicks, three
+  if you read the dialog ([design](docs/design/briskapi.md)).
 - **Not started:** macOS and Linux builds, plugins.
 
 ## Contributing
@@ -317,7 +328,8 @@ Issues and pull requests are welcome.
 - Code: build with the steps above, run `cargo test --workspace`, and see
   [docs/testing.md](docs/testing.md) for the UI smoke tests. Keep changes inside the
   size and memory budget (`scripts\budget.ps1`).
-- Code, comments and docs are in English.
+- Code, comments and docs are in English. Bug reports may be emotional, as long as they
+  include steps to reproduce.
 
 ## Relationship to JetBrains
 
