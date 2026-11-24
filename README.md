@@ -1,82 +1,178 @@
-# Brisk
+<p align="center">
+  <img src="docs/images/brisk-logo.png" width="96" height="96" alt="Brisk logo">
+</p>
 
-Brisk is a lightweight Python IDE for people whose hands already know PyCharm.
-It keeps PyCharm's window layout, default keymap, action names and most of its
-behaviour, and it is written from scratch in Rust on [GPUI](https://www.gpui.rs/).
-The whole IDE is one 26 MB executable that opens a project in about half a second
-and sits at roughly 60 MB of memory while idle.
+<h1 align="center">Brisk: a lightweight, open-source PyCharm alternative</h1>
 
-![Brisk editing a Python project](docs/images/brisk.png)
+<p align="center">
+  A fast, native Python IDE written in Rust, for developers who like the PyCharm workflow
+  but not the weight of a JVM or Electron runtime.
+</p>
 
-## Download
+<p align="center">
+  <a href="https://github.com/thirisnospoon/brisk/releases/latest"><img src="https://img.shields.io/github/v/release/thirisnospoon/brisk?include_prereleases&label=release" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-blue" alt="Platform: Windows 10/11 x64">
+  <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green" alt="License: MIT or Apache-2.0">
+</p>
 
-Brisk is currently built for **Windows 10/11 x64**.
+<p align="center">
+  <b><a href="https://github.com/thirisnospoon/brisk/releases/latest">Download for Windows</a></b>
+  · <a href="docs/features.md">Features</a>
+  · <a href="#frequently-asked-questions">FAQ</a>
+  · <a href="docs/building.md">Build from source</a>
+</p>
 
-Get `Brisk-<version>-windows-x64.zip` from the [latest release](https://github.com/thirisnospoon/brisk/releases/latest),
-unpack it anywhere and run `brisk.exe`. There is no installer and no admin
-rights are needed. The zip already contains:
+Brisk is a free, open-source Python IDE. It keeps PyCharm's window layout, default
+keymap and action names, so your habits carry over, and it is written from scratch
+in Rust on [GPUI](https://www.gpui.rs/), the GPU-rendered UI framework behind the Zed
+editor. The IDE is a single 26 MB executable, starts in under half a second and uses
+about 60 MB of memory while idle.
 
-- [ty](https://github.com/astral-sh/ty) for types, navigation, completion and rename,
-- [ruff](https://github.com/astral-sh/ruff) for inspections, quick fixes and formatting,
-- [debugpy](https://github.com/microsoft/debugpy) for the debugger.
+> [!WARNING]
+> **Brisk is in early development (version 0.2.x) and still raw.** Expect bugs, missing
+> features and rough edges, and keep PyCharm or another editor at hand for real work.
+> Only Windows builds exist. Settings and file formats may change between versions.
+> Bug reports are very welcome: [open an issue](https://github.com/thirisnospoon/brisk/issues).
 
-You only need a Python interpreter on the machine to run and debug code.
-Settings live next to the executable (portable mode), so the folder can be moved
-or carried on a USB stick.
+![Brisk lightweight Python IDE with the project tree, a Python file open in the editor, inlay hints and the PyCharm-style toolbar](docs/images/brisk.png)
 
-## What it does
+## Why Brisk?
 
-If you have used PyCharm, nothing below needs explaining, and that is the point.
+Full IDEs are great at Python, but they are heavy: a JVM or a browser engine, hundreds
+of megabytes of memory before you open a file, and background indexing that you can
+hear on a laptop fan. Lightweight editors start fast, but a Python workflow on them
+means assembling extensions and learning new shortcuts.
 
-- **Editor**: multiple carets and column selection, Extend Selection (Ctrl+W),
-  smart Enter and paste, Join Lines, folding, sticky lines, soft wraps,
-  live templates and postfix completion, Local History, scratch files.
-- **Code insight**: completion with auto-import, Ctrl+B / Ctrl+Alt+B, Find Usages,
-  Quick Documentation, Parameter Info, inlay type hints, inspections with
-  Alt+Enter fixes, Optimize Imports and Reformat Code (also on save).
-- **Refactoring**: Rename (in place, or project-wide with a preview), Extract
-  Variable / Constant / Method, Inline, Generate (`__init__`, `__repr__`,
-  `__eq__`, properties), Override / Implement Methods, Move Statement, Surround With.
-- **Run and debug**: run configurations compatible with `.idea/runConfigurations`
-  (Python, module, pytest, unittest, FastAPI, Flask, Django), gutter run marks,
-  breakpoints with conditions and exception breakpoints, stepping, Smart Step
-  Into, Evaluate, Watches, inline values, Attach to Process, View as DataFrame.
-- **Testing**: test tree with rerun of failed tests, test history, coverage
-  and the cProfile profiler.
-- **Git**: commit with partial commits by hunk, diff, three-way merge,
-  annotate (blame), log with graph and filters, branches, stash, push/pull,
-  cherry-pick, reset, revert.
-- **Tools**: Python Console, Python Packages, terminal, Search Everywhere,
-  Find in Files, TODO, Problems, Services, a database console for SQLite,
-  PostgreSQL and MySQL.
+Brisk aims at the middle:
 
-The full list, with the places where Brisk deliberately differs from PyCharm,
-is in [docs/features.md](docs/features.md).
+- **Native and small.** Compiled Rust, no JVM, no Electron, no installer. One
+  executable plus the Python tools it drives.
+- **Familiar.** PyCharm's layout, keymap (Ctrl+B, Shift+F6, Alt+Enter, double Shift
+  and the rest), run configurations and tool windows. It can import your existing
+  `.idea` run configurations.
+- **Python first.** Completion, navigation, inspections, refactoring, the debugger,
+  test runners and the package manager are built in and work out of the box.
+- **Measured.** Size, startup time and memory are checked against fixed limits on
+  every merge (see below), so the IDE does not get heavier by accident.
 
-## What it does not do (yet)
+Brisk is an independent project and is not a copy of PyCharm's code. It reproduces
+behaviour and shortcuts; the code, icons and artwork are its own.
 
-- Only Python gets full language support. JSON, TOML, YAML, JavaScript,
-  TypeScript, HTML and CSS are highlighted but have no code insight.
-- No plugins, no remote interpreters (SSH, WSL, Docker), no Jupyter notebook editor.
-- Only Windows builds are produced and tested. GPUI runs on macOS and Linux,
-  but Brisk has not been ported there.
-- It is early software (0.2.x). Expect rough edges, and please
-  [open an issue](https://github.com/thirisnospoon/brisk/issues) when you hit one.
+## Performance and memory usage
 
-## Performance budget
+Measured with `scripts\budget.ps1` on Brisk 0.2.7 (release build), Windows 11 Pro,
+AMD Ryzen 7 7735HS, 28 GB RAM, opening the bundled `examples\demo_project`. Every
+launch uses a fresh settings folder. Numbers are working sets unless noted.
 
-Every merge is checked against fixed limits with `scripts\budget.ps1` and a set
-of UI smoke tests that drive the real window:
-
-| Metric | Limit | 0.2.7 |
+| Metric | Brisk 0.2.7 | Limit checked on every merge |
 |---|---|---|
-| `brisk.exe` size | 26 MB | 25.7 MB |
-| Portable zip (with ty, ruff, debugpy) | 39 MB | 38.5 MB |
-| Idle working set, demo project | 110 MB | 62 MB |
-| Working set after a heavy session (200k lines of output, 50 tabs, find in files) | 200 MB | 148 MB |
-| Frame time while scrolling any large list (20k files, 10k variables, 2k commits) | p95 16 ms | under 10 ms |
+| `brisk.exe` size | 25.7 MB | 26 MB |
+| Portable zip (with ty, ruff, debugpy) | 38.6 MB | 39 MB |
+| Startup, process start to first frame with the project open (median of 5) | 0.45 s | 0.4 s |
+| IDE process, idle, 5 s after start | 59 MB (80 MB private) | 110 MB |
+| IDE process after a heavy session: 200k lines of run output, 50 tabs, Find in Files | 157 MB | 200 MB |
+| ty language server, peak during that session (separate process) | 94 MB | not checked |
+| ruff, peak during that session (separate process) | 17 MB | not checked |
+| Frame time while scrolling large lists (20k files, 10k variables, 2k commits) | under 10 ms | p95 16 ms |
 
-## Building from source
+What these numbers do and do not say:
+
+- The IDE process and its helpers are reported separately. ty (types, completion,
+  navigation) and ruff (inspections, formatting) run as child processes. Their memory
+  grows with the size of your project; the figures above are for a small project.
+- Startup was over its own 0.4 s limit in this run; the time goes mostly into loading
+  fonts. Earlier runs were under it.
+- Brisk has not been benchmarked against other IDEs here. If you compare, measure on
+  your own machine and project.
+
+## Features
+
+The full list, including the places where Brisk deliberately differs from PyCharm, is in
+[docs/features.md](docs/features.md). In short:
+
+**Editing**
+- Multiple carets and column selection, Extend Selection (Ctrl+W), smart Enter and
+  paste, Join Lines, folding, sticky lines, soft wraps.
+- Live templates and postfix completion, Local History, scratch files.
+
+**Code insight** (through [ty](https://github.com/astral-sh/ty) and [ruff](https://github.com/astral-sh/ruff))
+- Completion with auto-import, Go to Declaration (Ctrl+B), Go to Type Declaration,
+  Find Usages, Quick Documentation, Parameter Info, inlay type hints.
+- Inspections with Alt+Enter quick fixes, Optimize Imports, Reformat Code (also on save).
+
+**Navigation and refactoring**
+- Search Everywhere (double Shift), Go to File / Class / Symbol, File Structure,
+  Recent Files and Locations, bookmarks.
+- Rename (in place, or project-wide with a preview), Extract Variable / Constant /
+  Method, Inline, Generate (`__init__`, `__repr__`, `__eq__`, properties),
+  Override / Implement Methods, Move Statement, Surround With.
+
+**Running and debugging**
+- Run configurations for scripts, modules, pytest, unittest, FastAPI, Flask and Django,
+  compatible with PyCharm's `.idea/runConfigurations`; gutter run marks.
+- Python debugger (debugpy): breakpoints with conditions, exception breakpoints,
+  stepping, Smart Step Into, Evaluate, Watches, inline values, Attach to Process,
+  View as DataFrame.
+
+**Testing**
+- Test tree with rerun of failed tests and test history, coverage, the cProfile profiler.
+
+**Git**
+- Commit with partial commits by hunk, diff, three-way merge, annotate (blame), log
+  with graph and filters, branches, stash, push and pull, cherry-pick, reset, revert.
+  Git runs through your own `git`, so credentials, hooks and LFS work as usual.
+
+**Python environments and tools**
+- Interpreter selection and venv creation, Python Packages window, Python Console,
+  terminal, Find in Files, TODO, Problems, a database console for SQLite, PostgreSQL
+  and MySQL.
+
+### What it does not do (yet)
+
+- Only Python gets full language support. JSON, TOML, YAML, JavaScript, TypeScript,
+  HTML and CSS are highlighted, without code insight.
+- No plugins, no remote interpreters (SSH, WSL, Docker), no Jupyter notebook editor.
+- Windows only. GPUI runs on macOS and Linux, but Brisk has not been ported.
+- Far fewer features than PyCharm overall. It covers everyday editing, running,
+  debugging, testing and Git for a Python project, not everything a full IDE does.
+
+## Brisk, PyCharm and VS Code compared
+
+A factual comparison of how the three are built and what they cover. It is not a
+benchmark.
+
+| | Brisk | PyCharm | VS Code |
+|---|---|---|---|
+| Built with | Rust, native GPU-rendered UI (GPUI) | Java / Kotlin on the IntelliJ Platform (JVM) | TypeScript on Electron (Chromium, Node.js) |
+| Python support | Built in, Python only | Built in | Through extensions (Python, Pylance, debugger) |
+| Keymap | PyCharm's default keymap | PyCharm | Its own; keymap extensions exist |
+| Debugger, refactoring, Git, test runners | Yes, basic to solid | Yes, extensive | Yes, through extensions |
+| Plugins | No | Large marketplace | Large marketplace |
+| Remote development | No | Yes | Yes |
+| Platforms | Windows 10/11 x64 | Windows, macOS, Linux | Windows, macOS, Linux |
+| License | MIT OR Apache-2.0 | Proprietary; free core features, paid Pro | Code - OSS is MIT; Microsoft's builds are proprietary |
+| Maturity | Early (0.2.x) | Mature | Mature |
+
+## Download and installation
+
+**Requirements:** Windows 10 or 11, 64-bit. A Python interpreter on the machine to run
+and debug code (Brisk does not bundle Python itself).
+
+1. Download `Brisk-<version>-windows-x64.zip` from the
+   [latest release](https://github.com/thirisnospoon/brisk/releases/latest).
+2. Unpack it anywhere, for example to `C:\Tools\Brisk`.
+3. Run `brisk.exe` and open a project folder.
+
+There is no installer and no administrator rights are needed. Settings are stored next
+to the executable (portable mode), so the folder can be moved or carried on a USB stick.
+The zip already contains [ty](https://github.com/astral-sh/ty),
+[ruff](https://github.com/astral-sh/ruff) and
+[debugpy](https://github.com/microsoft/debugpy).
+
+Windows SmartScreen may warn about an unsigned executable from the internet; choose
+"More info" → "Run anyway", or build from source.
+
+### Building from source
 
 You need a stable Rust toolchain (MSVC on Windows) and PowerShell.
 
@@ -90,12 +186,29 @@ cargo run --release -p brisk-app -- examples\demo_project
 
 `scripts\package-portable.ps1` builds the release zip. See
 [docs/building.md](docs/building.md) for details and [docs/testing.md](docs/testing.md)
-for the unit and smoke tests.
+for the unit and UI smoke tests.
 
-## How it is put together
+## Who is Brisk for?
 
-The UI is one GPUI crate; everything else is a plain Rust library that can be
-tested without a window.
+- Python developers who know PyCharm's shortcuts and want them in a lighter tool.
+- People on laptops or machines with limited memory, or who keep several projects
+  and other heavy apps open at once.
+- Developers who prefer native desktop applications to Electron or JVM ones.
+- Anyone who wants a free, open-source, portable Python IDE they can unpack and run.
+
+It is not yet for teams that depend on PyCharm Professional features (remote
+interpreters, web frameworks beyond run configurations, Jupyter), for macOS or Linux
+users, or for work where an IDE bug would be costly.
+
+## Architecture and technology
+
+The UI is one GPUI crate; everything else is a plain Rust library that can be tested
+without a window. Language intelligence comes from proven external tools rather than
+being re-implemented: [ty](https://github.com/astral-sh/ty) over the Language Server
+Protocol, [ruff](https://github.com/astral-sh/ruff) for linting and formatting,
+[debugpy](https://github.com/microsoft/debugpy) over the Debug Adapter Protocol, and
+[tree-sitter](https://tree-sitter.github.io/) for highlighting and structure. Child
+processes live in one Windows Job Object, so nothing outlives the IDE.
 
 | Crate | Purpose |
 |---|---|
@@ -106,21 +219,90 @@ tested without a window.
 | `brisk-lint` | ruff integration |
 | `brisk-dap` | Debug Adapter Protocol client for debugpy |
 | `brisk-run` | Run configurations (including `.idea` import), test runners, output parsing |
-| `brisk-git` | Git through the `git` CLI, so your credentials, hooks and LFS just work |
+| `brisk-git` | Git through the `git` CLI |
 | `brisk-project` | Project tree and the fuzzy file index behind Go to File |
 | `brisk-search` | Find in Files |
 | `brisk-terminal` | ConPTY plus `alacritty_terminal` for VT emulation |
 | `brisk-db` | Database console (SQLite, PostgreSQL, MySQL) |
 | `brisk-keymap` | Actions and the PyCharm keymap |
-| `brisk-proc` | Child processes in one Job Object, so nothing outlives the IDE |
+| `brisk-proc` | Child processes in one Job Object |
+| `brisk-vm` | Groundwork for running containers without Docker Desktop (experimental) |
 
 Design notes are in [docs/architecture.md](docs/architecture.md).
 
+## Frequently asked questions
+
+**What is Brisk?**
+A lightweight, open-source Python IDE for Windows, written in Rust. It follows
+PyCharm's layout, keymap and behaviour.
+
+**Is Brisk a free and open-source PyCharm alternative?**
+Yes. It is free and licensed under MIT OR Apache-2.0. It is an alternative for
+everyday Python work, not a full replacement for PyCharm (see the next answers).
+
+**Is Brisk lighter than PyCharm? How much RAM does it use?**
+The IDE process uses about 60 MB while idle and stayed under 160 MB in a heavy test
+session; the ty and ruff helper processes add to that depending on project size (about
+110 MB at peak on a small project). We have not published side-by-side measurements
+with other IDEs; see [Performance and memory usage](#performance-and-memory-usage).
+
+**Is Brisk written in Rust? Does it use Electron?**
+It is written in Rust on GPUI and draws its UI on the GPU. There is no Electron,
+browser engine or JVM.
+
+**Does Brisk support Python debugging?**
+Yes, through debugpy: breakpoints, conditions, exception breakpoints, stepping,
+Evaluate, Watches and Attach to Process.
+
+**Does Brisk support code completion and refactoring?**
+Yes. Completion and navigation come from ty; Rename, Extract, Inline, Generate and
+other refactorings are built in.
+
+**Can Brisk run on low-end computers?**
+It is designed to be light on memory and CPU, but it has only been tested on modern
+hardware so far. Reports from older machines are welcome.
+
+**Which operating systems does Brisk support?**
+Windows 10 and 11, 64-bit. macOS and Linux are not supported yet.
+
+**Can Brisk replace PyCharm for everyday Python development?**
+Not yet for most people. It is early software with fewer features and more bugs.
+Try it on a side project first.
+
+**What are the differences between Brisk and VS Code?**
+VS Code is a general-purpose editor on Electron that gets Python support from
+extensions. Brisk is a native, Python-only IDE with PyCharm's workflow built in, and
+far less mature.
+
+## Roadmap
+
+- **Released:** everything in [docs/features.md](docs/features.md) that is in the
+  latest release.
+- **On `main`, not released yet:** uv and Poetry projects (sync the environment from
+  the lock file, Python Packages edits `pyproject.toml`).
+- **In progress:** Django and FastAPI support: URL and template navigation, an
+  endpoints list.
+- **Planned:** remote interpreters (SSH, WSL, Docker); Docker containers without
+  Docker Desktop or WSL ([design](docs/design/containers.md)).
+- **Not started:** macOS and Linux builds, plugins.
+
+## Contributing
+
+Issues and pull requests are welcome.
+
+- Bugs and feature requests: [GitHub issues](https://github.com/thirisnospoon/brisk/issues).
+  For a bug, include the Brisk version, Windows version and steps to reproduce.
+- Code: build with the steps above, run `cargo test --workspace`, and see
+  [docs/testing.md](docs/testing.md) for the UI smoke tests. Keep changes inside the
+  size and memory budget (`scripts\budget.ps1`).
+- Code, comments and docs are in English.
+
 ## Relationship to JetBrains
 
-Brisk is an independent project and is not affiliated with JetBrains. It
-reproduces PyCharm's behaviour and shortcuts so that the habits carry over; the
-code, icons and artwork are its own.
+Brisk is an independent project and is not affiliated with, endorsed by or sponsored
+by JetBrains. PyCharm is a trademark of JetBrains s.r.o. Brisk reproduces PyCharm's
+behaviour and shortcuts so that habits carry over; the code, icons and artwork are
+its own.
 
 ## License
 
