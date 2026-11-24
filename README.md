@@ -2,7 +2,7 @@
   <img src="docs/images/brisk-logo.png" width="96" height="96" alt="Brisk logo">
 </p>
 
-<h1 align="center">Brisk: a lightweight, open-source PyCharm alternative</h1>
+<h1 align="center">Brisk IDE: a lightweight, open-source PyCharm alternative</h1>
 
 <p align="center">
   A fast, native Python IDE written in Rust, for developers who like the PyCharm workflow
@@ -22,17 +22,19 @@
   · <a href="docs/building.md">Build from source</a>
 </p>
 
-Brisk is a free, open-source Python IDE. It keeps PyCharm's window layout, default
+Brisk IDE is a free, open-source Python IDE. It keeps PyCharm's window layout, default
 keymap and action names, so your habits carry over, and it is written from scratch
 in Rust on [GPUI](https://www.gpui.rs/), the GPU-rendered UI framework behind the Zed
-editor. The IDE is a single 26 MB executable, starts in under half a second and uses
-about 60 MB of memory while idle. Probably less than the browser tab you are reading this
-in.
+editor. The IDE is a single 26 MB executable, starts in under half a second, and the IDE
+process itself uses about 60 MB of memory while idle (the ty and ruff helpers run as
+separate processes; [details](#performance-and-memory-usage)). Probably less than the
+browser tab you are reading this in.
 
 > [!WARNING]
 > **Brisk is in early development (version 0.2.x) and still raw.** Expect bugs, missing
-> features and rough edges, and keep PyCharm or another editor at hand for real work.
-> Only Windows builds exist. Settings and file formats may change between versions.
+> features and rough edges. Only Windows builds exist. Settings and file formats may
+> change between versions. The full list of gaps is in
+> [What it does not do (yet)](#what-it-does-not-do-yet).
 > Bug reports are very welcome: [open an issue](https://github.com/thirisnospoon/brisk/issues).
 > It is raw. Not "rare steak" raw, more "the oven was just turned on" raw.
 
@@ -213,9 +215,7 @@ for the unit and UI smoke tests.
 - Developers who prefer native desktop applications to Electron or JVM ones.
 - Anyone who wants a free, open-source, portable Python IDE they can unpack and run.
 
-It is not yet for teams that depend on PyCharm Professional features (remote
-interpreters, web frameworks beyond run configurations, Jupyter), for macOS or Linux
-users, or for work where an IDE bug would be costly.
+If you need Jupyter, plugins, macOS or Linux, it is not there yet.
 
 ## Architecture and technology
 
@@ -249,7 +249,7 @@ Design notes are in [docs/architecture.md](docs/architecture.md).
 
 ## Frequently asked questions
 
-**What is Brisk?**
+**What is Brisk IDE?**
 A lightweight, open-source Python IDE for Windows, written in Rust. It follows
 PyCharm's layout, keymap and behaviour.
 
@@ -284,8 +284,8 @@ faster than the old machine boots.
 Windows 10 and 11, 64-bit. macOS and Linux are not supported yet.
 
 **Can Brisk replace PyCharm for everyday Python development?**
-Not yet for most people. It is early software with fewer features and more bugs.
-Try it on a side project first, not on the production hotfix at 2 a.m.
+For everyday editing, running, debugging, testing and Git on a Python project, it is
+worth a try today. Start with a side project, not the production hotfix at 2 a.m.
 
 **What are the differences between Brisk and VS Code?**
 VS Code is a general-purpose editor on Electron that gets Python support from
