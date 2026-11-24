@@ -52,6 +52,8 @@ pub struct Settings {
     /// "Add a space at line comment start" (both on in PyCharm).
     pub line_comment_first_column: bool,
     pub line_comment_space: bool,
+    /// Appearance: popups, dialogs and tool windows ease in (off: they appear at once).
+    pub animations: bool,
 }
 
 /// PyCharm's default for "Soft-wrap these files".
@@ -59,7 +61,7 @@ pub const DEFAULT_SOFT_WRAP_FILES: &str = "*.md; *.txt; *.rst; *.adoc";
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false, ui_font_size: DEFAULT_UI_FONT_SIZE, ui_zoom: 1.0, reformat_on_save: false, optimize_imports_on_save: false, smooth_scrolling: true, caret_blinking: true, smooth_caret: false, sticky_lines: true, soft_wrap_files: DEFAULT_SOFT_WRAP_FILES.into(), soft_wrap_indent: true, soft_wrap_extra_indent: 0, line_comment_first_column: true, line_comment_space: true, show_whitespaces: false }
+        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false, ui_font_size: DEFAULT_UI_FONT_SIZE, ui_zoom: 1.0, reformat_on_save: false, optimize_imports_on_save: false, smooth_scrolling: true, caret_blinking: true, smooth_caret: false, sticky_lines: true, soft_wrap_files: DEFAULT_SOFT_WRAP_FILES.into(), soft_wrap_indent: true, soft_wrap_extra_indent: 0, line_comment_first_column: true, line_comment_space: true, show_whitespaces: false, animations: true }
     }
 }
 
@@ -81,6 +83,7 @@ static CARET_BLINKING: AtomicBool = AtomicBool::new(true);
 static SMOOTH_CARET: AtomicBool = AtomicBool::new(false);
 static STICKY_LINES: AtomicBool = AtomicBool::new(true);
 static SHOW_WHITESPACES: AtomicBool = AtomicBool::new(false);
+static ANIMATIONS: AtomicBool = AtomicBool::new(true);
 /// The font size in use (the setting, or a zoomed size: Alt+Shift+. / Ctrl+wheel).
 static FONT_SIZE: AtomicU32 = AtomicU32::new(0);
 static SPACING: AtomicU32 = AtomicU32::new(0);
@@ -141,6 +144,7 @@ pub fn load() -> Settings {
             s.smooth_caret = flag("smooth_caret").unwrap_or(s.smooth_caret);
             s.sticky_lines = flag("sticky_lines").unwrap_or(s.sticky_lines);
             s.show_whitespaces = flag("show_whitespaces").unwrap_or(s.show_whitespaces);
+            s.animations = flag("animations").unwrap_or(s.animations);
             if let Some(t) = v.get("soft_wrap_files").and_then(|t| t.as_str()) {
                 s.soft_wrap_files = t.to_string();
             }
@@ -176,6 +180,7 @@ pub fn apply(s: &Settings) {
     SMOOTH_CARET.store(s.smooth_caret, Ordering::Relaxed);
     STICKY_LINES.store(s.sticky_lines, Ordering::Relaxed);
     SHOW_WHITESPACES.store(s.show_whitespaces, Ordering::Relaxed);
+    ANIMATIONS.store(s.animations, Ordering::Relaxed);
     FONT_SIZE.store(s.font_size.to_bits(), Ordering::Relaxed);
     SPACING.store(s.line_spacing.to_bits(), Ordering::Relaxed);
     if let Ok(mut c) = CURRENT.write() {
@@ -202,6 +207,7 @@ pub fn save(s: &Settings) -> std::io::Result<()> {
         "smooth_caret": s.smooth_caret,
         "sticky_lines": s.sticky_lines,
         "show_whitespaces": s.show_whitespaces,
+        "animations": s.animations,
         "soft_wrap_files": s.soft_wrap_files,
         "soft_wrap_indent": s.soft_wrap_indent,
         "soft_wrap_extra_indent": s.soft_wrap_extra_indent,
@@ -298,6 +304,10 @@ pub fn caret_blinking() -> bool {
 
 pub fn smooth_caret() -> bool {
     SMOOTH_CARET.load(Ordering::Relaxed)
+}
+
+pub fn animations() -> bool {
+    ANIMATIONS.load(Ordering::Relaxed)
 }
 
 pub fn show_whitespaces() -> bool {

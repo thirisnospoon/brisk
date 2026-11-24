@@ -3103,6 +3103,7 @@ impl Render for Workspace {
         window.set_rem_size(gpui::px(16. * crate::theme::ui_scale()));
         crate::stall::frame_begin();
         let viewport = window.viewport_size();
+        let (left_tool, bottom_tool) = (self.left, self.bottom);
         let left: Option<gpui::AnyElement> = match self.left {
             Some(LeftTool::Project) => Some(self.render_project(cx).into_any_element()),
             Some(LeftTool::Structure) => Some(self.render_structure(cx).into_any_element()),
@@ -3160,7 +3161,7 @@ impl Render for Workspace {
                     // The gaps next to the editor are splitters (see `splitter_ui`).
                     .when_some(left, |d, panel| {
                         let p = div().w(px(left_w)).h_full().flex_shrink_0().flex().bg(Theme::panel())
-                            .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-left-in", panel)))
+                            .child(div().flex_1().min_w_0().h_full().child(panel_in(gpui::ElementId::Name(format!("panel-in-{left_tool:?}").into()), ToolSide::Left, panel)))
                             .child(self.hide_column(ToolSide::Left, cx));
                         d.child(if islands { crate::ui_kit::island(p) } else { p }).child(split_l)
                     })
@@ -3173,14 +3174,14 @@ impl Render for Workspace {
                             .child(center)
                             .when_some(bottom, |d, panel| {
                                 let p = div().h(px(bottom_h)).flex_shrink_0().flex().bg(Theme::panel())
-                                    .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-bottom-in", panel)))
+                                    .child(div().flex_1().min_w_0().h_full().child(panel_in(gpui::ElementId::Name(format!("panel-in-{bottom_tool:?}").into()), ToolSide::Bottom, panel)))
                                     .child(self.hide_column(ToolSide::Bottom, cx));
                                 d.child(split_b).child(if islands { crate::ui_kit::island(p) } else { p })
                             }),
                     )
                     .when_some(right, |d, panel| {
                         let p = div().w(px(right_w)).h_full().flex_shrink_0().flex().bg(Theme::panel())
-                            .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-right-in", panel)))
+                            .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-in-database", ToolSide::Right, panel)))
                             .child(self.hide_column(ToolSide::Right, cx));
                         d.child(split_r).child(if islands { crate::ui_kit::island(p) } else { p })
                     })
@@ -3189,19 +3190,19 @@ impl Render for Workspace {
             )
             .children(self.split_cursor())
             .child(self.render_status(cx))
-            .children(self.render_toast().map(|e| fade_in("toast-in", e, 160)))
-            .children(self.render_venv_offer(cx).map(|e| fade_in("venv-offer-in", e, 160)))
-            .children(self.render_cov_offer(cx).map(|e| fade_in("cov-offer-in", e, 160)))
-            .children(self.render_popup(cx).map(|e| fade_in("popup-in", e, 110)))
-            .children(self.render_find_popup(cx).map(|e| fade_in("find-in", e, 110)))
-            .children(self.render_ds_dialog(cx).map(|e| fade_in("ds-in", e, 110)))
-            .children(self.render_settings(cx).map(|e| fade_in("settings-in", e, 110)))
+            .children(self.render_toast().map(|e| fade_in("toast-in", e, Enter::Toast)))
+            .children(self.render_venv_offer(cx).map(|e| fade_in("venv-offer-in", e, Enter::Toast)))
+            .children(self.render_cov_offer(cx).map(|e| fade_in("cov-offer-in", e, Enter::Toast)))
+            .children(self.render_popup(cx).map(|e| fade_in("popup-in", e, Enter::Popup)))
+            .children(self.render_find_popup(cx).map(|e| fade_in("find-in", e, Enter::Popup)))
+            .children(self.render_ds_dialog(cx).map(|e| fade_in("ds-in", e, Enter::Dialog)))
+            .children(self.render_settings(cx).map(|e| fade_in("settings-in", e, Enter::Dialog)))
             .children(self.render_key_capture())
-            .children(self.render_bp_dialog(cx).map(|e| fade_in("bp-dialog-in", e, 110)))
+            .children(self.render_bp_dialog(cx).map(|e| fade_in("bp-dialog-in", e, Enter::Dialog)))
             .children(self.render_chooser(cx))
-            .children(self.render_run_dialog(cx).map(|e| fade_in("run-dialog-in", e, 110)))
-            .children(self.render_git_dialog(cx).map(|e| fade_in("git-dialog-in", e, 110)))
-            .children(self.render_menu(viewport, cx).map(|e| fade_in("menu-in", e, 90)))
+            .children(self.render_run_dialog(cx).map(|e| fade_in("run-dialog-in", e, Enter::Dialog)))
+            .children(self.render_git_dialog(cx).map(|e| fade_in("git-dialog-in", e, Enter::Dialog)))
+            .children(self.render_menu(viewport, cx).map(|e| fade_in("menu-in", e, Enter::Menu)))
             .children(crate::stall::frame_probe())
     }
 }
@@ -3224,33 +3225,65 @@ impl ToolSide {
     }
 }
 
-/// Overlays (popups, menus, dialogs, toasts) fade in over `ms` instead of popping up, and
-/// settle the last few pixels upward: short enough never to hold up the next keystroke.
-fn fade_in(id: &'static str, e: impl IntoElement, ms: u64) -> impl IntoElement {
+/// How an overlay comes in. Short enough never to hold up the next keystroke; the input goes
+/// to it from the first frame.
+#[derive(Clone, Copy)]
+enum Enter {
+    /// Context menus: quick, a small rise.
+    Menu,
+    /// Popups (Search Everywhere, Find Action, lists): a little longer and higher.
+    Popup,
+    /// Modal dialogs: the same rise, and the window behind dims.
+    Dialog,
+    /// Toasts and offers: the most rise.
+    Toast,
+}
+
+/// Overlays (popups, menus, dialogs, toasts) fade in and settle the last pixels upward on an
+/// ease-out curve. GPUI scales the shadow with the opacity, so the shadow eases in too.
+/// Settings → Animations off: they appear at once.
+fn fade_in(id: &'static str, e: impl IntoElement, kind: Enter) -> gpui::AnyElement {
     use gpui::{Animation, AnimationExt};
-    // Islands: popups, menus and dialogs take 140 ms (toasts keep 160), still ease-out.
-    let ms = if crate::theme::islands() { ms.clamp(140, 160) } else { ms };
-    // The surface's shadow fades in with it: GPUI scales shadow alpha by the element opacity
-    // (from 0 to the `ui_kit::floating` target over the same 140 ms), so no shadow animation of
-    // its own is needed.
-    // Toasts and balloons rise a little more than popups and menus.
-    let rise = if ms >= 160 { 8. } else if ms >= 110 { 4. } else { 2. };
-    div()
-        .absolute()
-        .left_0()
-        .size_full()
-        .child(e)
+    let (ms, rise, dim) = match kind {
+        Enter::Menu => (120, 4., 0.),
+        Enter::Popup => (170, 8., 0.),
+        Enter::Dialog => (190, 10., if crate::settings::is_light() { 0.10 } else { 0.22 }),
+        Enter::Toast => (200, 12., 0.),
+    };
+    let base = div().absolute().left_0().size_full().when(dim > 0., |d| d.bg(gpui::hsla(0., 0., 0., dim)));
+    if !crate::settings::animations() {
+        return base.top_0().child(e).into_any_element();
+    }
+    base.child(e)
         .with_animation(id, Animation::new(std::time::Duration::from_millis(ms)).with_easing(gpui::ease_out_quint()), move |d, t| {
             d.opacity(t).top(px((1. - t) * rise))
         })
+        .into_any_element()
 }
 
-/// A tool window fades in when it opens (no slide: the editor next to it must not move twice).
-fn panel_in(id: &'static str, e: impl IntoElement) -> impl IntoElement {
+/// A tool window comes in from its edge: it slides the last 14 px and fades in over the
+/// panel's own background, while the editor takes its new size at once (it must not move
+/// twice). Keyed by the tool, so switching Run → Terminal plays it again.
+fn panel_in(id: impl Into<gpui::ElementId>, side: ToolSide, e: impl IntoElement) -> gpui::AnyElement {
     use gpui::{Animation, AnimationExt};
-    div().size_full().child(e).with_animation(id, Animation::new(std::time::Duration::from_millis(120)).with_easing(gpui::ease_out_quint()), |d, t| {
-        d.opacity(0.35 + 0.65 * t)
-    })
+    if !crate::settings::animations() {
+        return div().size_full().child(e).into_any_element();
+    }
+    div()
+        .size_full()
+        .overflow_hidden()
+        .child(
+            div().relative().size_full().child(e).with_animation(id.into(), Animation::new(std::time::Duration::from_millis(180)).with_easing(gpui::ease_out_quint()), move |d, t| {
+                let o = px((1. - t) * 14.);
+                let d = d.opacity(t);
+                match side {
+                    ToolSide::Left => d.left(-o),
+                    ToolSide::Right => d.left(o),
+                    ToolSide::Bottom => d.top(o),
+                }
+            }),
+        )
+        .into_any_element()
 }
 
 impl Workspace {

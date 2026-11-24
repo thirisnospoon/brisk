@@ -37,6 +37,7 @@ pub(super) enum SetCtl {
     Size(i8),
     Spacing(i8),
     Inlay,
+    Animations,
     Whitespace,
     TabRows(bool),
     TabLimit(i8),
@@ -55,7 +56,7 @@ impl SettingsDialog {
     /// Every control, in the order Tab visits them (top to bottom, left to right).
     fn controls(&self) -> Vec<SetCtl> {
         use SetCtl::*;
-        let mut v = vec![Theme(false), Theme(true), Style(false), Style(true), UiSize(-1), UiSize(1), Smooth, Blink, Slide, Sticky];
+        let mut v = vec![Theme(false), Theme(true), Style(false), Style(true), UiSize(-1), UiSize(1), Animations, Smooth, Blink, Slide, Sticky];
         v.extend((0..self.fonts.len()).map(Font));
         v.extend([Size(-1), Size(1), Spacing(-1), Spacing(1), Inlay, Whitespace, TabRows(false), TabRows(true), TabLimit(-1), TabLimit(1)]);
         v.extend([WrapFiles, WrapIndent, WrapExtra(-1), WrapExtra(1), CommentCol, CommentSpace]);
@@ -209,6 +210,7 @@ impl Workspace {
             SetCtl::Sticky => self.settings_edit(|s| s.sticky_lines = !s.sticky_lines, window),
             SetCtl::Whitespace => self.settings_edit(|s| s.show_whitespaces = !s.show_whitespaces, window),
             SetCtl::Inlay => self.settings_edit(|s| s.inlay_hints = !s.inlay_hints, window),
+            SetCtl::Animations => self.settings_edit(|s| s.animations = !s.animations, window),
             SetCtl::Reformat => self.settings_edit(|s| s.reformat_on_save = !s.reformat_on_save, window),
             SetCtl::Imports => self.settings_edit(|s| s.optimize_imports_on_save = !s.optimize_imports_on_save, window),
             SetCtl::TabRows(rows) => self.settings_edit(|s| s.tab_rows = rows, window),
@@ -327,6 +329,7 @@ impl Workspace {
         let inlay = checkbox("set-inlay", s.inlay_hints, "Show inlay hints", "(inferred types, parameter names)", SetCtl::Inlay, cx);
         let reformat = checkbox("set-reformat", s.reformat_on_save, "Reformat code", "(ruff format)", SetCtl::Reformat, cx);
         let imports = checkbox("set-imports", s.optimize_imports_on_save, "Optimize imports", "(ruff: unused, sorted)", SetCtl::Imports, cx);
+        let animations = checkbox("set-anim", s.animations, "Animate popups, dialogs and tool windows", "(off: they appear at once)", SetCtl::Animations, cx);
         let smooth = checkbox("set-smooth", s.smooth_scrolling, "Enable smooth scrolling", "", SetCtl::Smooth, cx);
         let caret = div()
             .flex()
@@ -420,6 +423,7 @@ impl Workspace {
                         .child(row("Theme", theme))
                         .child(row("UI style", style))
                         .child(row("UI font size", ui_size))
+                        .child(row("Animations", animations))
                         .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › GENERAL"))
                         .child(row("Scrolling", smooth))
                         .child(row("Caret", caret))

@@ -7,6 +7,7 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 ### Layout
 
 - The window layout follows PyCharm's New UI: a toolbar with the project, the Git branch (read from `.git/HEAD`) and the run configuration; tool window stripes on the left and right; a status bar with `Ln:Col`, line separator (LF/CRLF), encoding, indent, language and interpreter.
+- Popups, menus and toasts fade in and rise the last few pixels (120 to 200 ms); modal dialogs also dim the window behind them. A tool window slides the last 14 px in from its edge while the editor takes its new size at once. Nothing waits for an animation: keys go to the new window from the first frame. Settings → Appearance → Animations turns them off.
 - Tool windows resize by dragging their edge. In Islands the gap between a tool window and the editor is the splitter, in Classic it is a line. The width of the left and right tool windows and the height of each bottom one are saved per project.
 - All tool window headers have the same height, with the title on the left and 24 px buttons on the right.
 - The active editor tab is underlined. The close button on inactive tabs shows on hover.
