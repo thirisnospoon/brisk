@@ -564,6 +564,7 @@ impl Workspace {
                 // Back from another app: pick up external edits and git changes.
                 this.reload_editors(cx);
                 this.refresh_git(cx);
+                this.poll_disk_now(window, cx);
             }
         })
         .detach();

@@ -3,7 +3,8 @@
 //! expanded Project view folders pick up added and removed files. Polling, about every 1.5 s:
 //! one metadata call per open file and per expanded folder, made off the UI thread together
 //! with the re-read of the folders that changed (an `npm install` or a `git checkout` can put
-//! tens of thousands of files in one folder); the UI thread only applies the result.
+//! tens of thousands of files in one folder); the UI thread only applies the result. While the
+//! window is inactive the poll runs about every 10 s, and once right away when it is activated.
 
 use super::Workspace;
 use crate::editor::{DiskCheck, Editor};
@@ -13,6 +14,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
 pub const POLL: Duration = Duration::from_millis(1500);
+/// The poll period while the window is inactive.
+const POLL_INACTIVE: Duration = Duration::from_secs(10);
 
 /// Last seen modification time of each expanded folder, and when Brisk last saved files.
 #[derive(Default)]
@@ -87,12 +90,20 @@ impl Snapshot {
 impl Workspace {
     pub(super) fn start_disk_poll(&self, window: &mut Window, cx: &mut Context<Self>) {
         let bg = cx.background_executor().clone();
-        cx.spawn_in(window, async move |this, cx| loop {
-            bg.timer(POLL).await;
-            let Ok(snap) = this.update(cx, |this, cx| this.disk_snapshot(cx)) else { break };
-            let polled = bg.spawn(async move { snap.poll() }).await;
-            if this.update_in(cx, |this, window, cx| this.apply_disk_poll(polled, window, cx)).is_err() {
-                break;
+        cx.spawn_in(window, async move |this, cx| {
+            let mut last = Instant::now();
+            loop {
+                bg.timer(POLL).await;
+                let Ok(active) = this.update_in(cx, |_, window, _| window.is_window_active()) else { break };
+                if !active && last.elapsed() < POLL_INACTIVE {
+                    continue;
+                }
+                last = Instant::now();
+                let Ok(snap) = this.update(cx, |this, cx| this.disk_snapshot(cx)) else { break };
+                let polled = bg.spawn(async move { snap.poll() }).await;
+                if this.update_in(cx, |this, window, cx| this.apply_disk_poll(polled, window, cx)).is_err() {
+                    break;
+                }
             }
         })
         .detach();
@@ -108,6 +119,17 @@ impl Workspace {
         if saved.iter().any(|p| p.file_name().is_some_and(|n| n == ".gitignore" || n == ".ignore")) {
             self.reindex_files(cx);
         }
+    }
+
+    /// One poll now (the window was activated), besides the periodic one.
+    pub(super) fn poll_disk_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let snap = self.disk_snapshot(cx);
+        let bg = cx.background_executor().clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let polled = bg.spawn(async move { snap.poll() }).await;
+            let _ = this.update_in(cx, |this, window, cx| this.apply_disk_poll(polled, window, cx));
+        })
+        .detach();
     }
 
     fn disk_snapshot(&mut self, cx: &mut Context<Self>) -> Snapshot {
