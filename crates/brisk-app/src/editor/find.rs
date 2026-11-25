@@ -38,6 +38,9 @@ pub struct FindBar {
     origin: usize,
     /// "In Selection": the searched range and the buffer version it is in.
     scope: Option<(u64, Range<usize>)>,
+    /// The replace preview for (buffer version, current match, replacement version, options):
+    /// the find bar is drawn every frame, and the preview compiles the regex.
+    preview: Option<((u64, usize, u64, FindOpts), Option<String>)>,
     _subs: Vec<Subscription>,
 }
 
@@ -77,7 +80,7 @@ impl Editor {
                 let subs = vec![cx.observe(&query, |this, _, cx| this.find_query_changed(cx))];
                 let origin = self.buffer.selections.first().map(|s| s.range().start).unwrap_or(0);
                 self.find =
-                    Some(FindBar { query, replace: None, opts, matches: Vec::new(), current: None, error: None, searched: None, origin, scope, _subs: subs });
+                    Some(FindBar { query, replace: None, opts, matches: Vec::new(), current: None, error: None, searched: None, origin, scope, preview: None, _subs: subs });
             }
             Some(f) if multiline => {
                 f.opts.in_selection = true;
@@ -159,7 +162,8 @@ impl Editor {
         }
         let scope = f.scope.as_ref().filter(|_| f.opts.in_selection).map(|(_, r)| r.clone());
         let opts = f.opts.clone();
-        let text = self.text().to_string();
+        self.text();
+        let text = self.text_cache.1.clone();
         let (matches, error) = if opts.query.is_empty() {
             (Vec::new(), None)
         } else {
@@ -228,6 +232,7 @@ impl Editor {
                 searched: None,
                 origin: 0,
                 scope: None,
+                preview: None,
                 _subs: Vec::new(),
             });
             self.refresh_find(false, cx);
@@ -350,22 +355,32 @@ impl Editor {
             file_mask: String::new(),
         };
         let Ok(q) = brisk_search::Query::new(&o) else { return keep_case(with) };
-        let text = self.text().to_string();
+        self.text();
         let rope = self.buffer.rope();
-        keep_case(q.expand(&text, rope.char_to_byte(m.start)..rope.char_to_byte(m.end), &with))
+        keep_case(q.expand(&self.text_cache.1, rope.char_to_byte(m.start)..rope.char_to_byte(m.end), &with))
     }
 
     /// What Replace would put in place of the current match (regex groups expanded, case kept),
     /// when that differs from the typed replacement: shown next to the field, like PyCharm.
     fn replace_preview(&mut self, cx: &mut Context<Self>) -> Option<String> {
         let f = self.find.as_ref()?;
-        let typed = f.replace.as_ref()?.read(cx).buffer.text();
         if !(f.opts.regex || f.opts.preserve_case) {
             return None;
         }
         let i = f.current?;
+        let key = (self.buffer.version(), i, f.replace.as_ref()?.read(cx).buffer.version(), f.opts.clone());
+        if let Some((k, out)) = &f.preview {
+            if *k == key {
+                return out.clone();
+            }
+        }
+        let typed = f.replace.as_ref()?.read(cx).buffer.text();
         let out = self.replacement_for(i, cx);
-        (out != typed).then_some(out)
+        let out = (out != typed).then_some(out);
+        if let Some(f) = self.find.as_mut() {
+            f.preview = Some((key, out.clone()));
+        }
+        out
     }
 
     pub fn toggle_find_opt(&mut self, which: char, cx: &mut Context<Self>) {

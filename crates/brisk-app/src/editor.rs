@@ -58,6 +58,10 @@ pub use quick_def::definition_source;
 
 /// PyCharm's default "Hard wrap at" for Python.
 const RIGHT_MARGIN: usize = 120;
+/// Files shorter than this are diffed against HEAD on every edit, longer ones in the
+/// background after `VCS_DEBOUNCE` without typing.
+const VCS_SYNC_LINES: usize = 2_000;
+const VCS_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
 
 pub fn line_height() -> f32 {
     crate::settings::line_height()
@@ -88,7 +92,9 @@ pub struct Editor {
     pub buffer: Buffer,
     syntax: Option<SyntaxTree>,
     parsed_version: u64,
-    text_cache: (u64, String),
+    /// The text as one string for `version`, shared: background jobs (occurrences, the
+    /// gutter diff, find) take it without a copy.
+    text_cache: (u64, std::sync::Arc<str>),
     focus: FocusHandle,
     scroll_y: f32,
     scroll_x: f32,
@@ -131,8 +137,10 @@ pub struct Editor {
     marked: Option<Range<usize>>,
     pub read_error: Option<String>,
     /// File contents at HEAD (None: not in git / untracked). Drives the gutter change markers.
-    vcs_base: Option<String>,
+    vcs_base: Option<std::sync::Arc<str>>,
     vcs_changes: Vec<brisk_git::LineChange>,
+    /// Buffer version a background gutter diff is scheduled for.
+    vcs_job: Option<u64>,
     /// Set by a diff viewer before each render of this editor in it: changed lines get the
     /// diff backgrounds for that frame (the same editor in its own tab stays plain).
     pub diff_bg: bool,
@@ -326,7 +334,7 @@ impl Editor {
             buffer,
             syntax: lang.map(SyntaxTree::new),
             parsed_version: u64::MAX,
-            text_cache: (u64::MAX, String::new()),
+            text_cache: (u64::MAX, "".into()),
             focus: cx.focus_handle(),
             scroll_y: 0.0,
             scroll_x: 0.0,
@@ -355,6 +363,7 @@ impl Editor {
             read_error: err,
             vcs_base: None,
             vcs_changes: Vec::new(),
+            vcs_job: None,
             diff_bg: false,
             diff_words: Vec::new(),
             diff_blocks: Vec::new(),
@@ -422,7 +431,7 @@ impl Editor {
             buffer,
             syntax: None,
             parsed_version: u64::MAX,
-            text_cache: (u64::MAX, String::new()),
+            text_cache: (u64::MAX, "".into()),
             focus: cx.focus_handle(),
             scroll_y: 0.0,
             scroll_x: 0.0,
@@ -451,6 +460,7 @@ impl Editor {
             read_error: None,
             vcs_base: None,
             vcs_changes: Vec::new(),
+            vcs_job: None,
             diff_bg: false,
             diff_words: Vec::new(),
             diff_blocks: Vec::new(),
@@ -495,28 +505,70 @@ impl Editor {
     }
 
     pub fn set_vcs_base(&mut self, base: Option<String>) {
-        if self.vcs_base != base {
-            self.vcs_base = base;
+        if self.vcs_base.as_deref() != base.as_deref() {
+            self.vcs_base = base.map(Into::into);
             self.vcs_version = u64::MAX;
+            self.vcs_job = None;
             if self.vcs_base.is_none() {
                 self.vcs_changes.clear();
             }
         }
     }
 
-    fn refresh_vcs(&mut self) {
+    /// Prepaint: gutter change marks for the current text. A short file is diffed here; a
+    /// longer one on a background thread once typing pauses, so a keystroke never waits for
+    /// a diff of the whole file (the old marks stay until the new ones arrive).
+    fn refresh_vcs(&mut self, cx: &mut Context<Self>) {
+        let v = self.buffer.version();
+        if self.vcs_version == v || self.vcs_job == Some(v) {
+            return;
+        }
+        if self.vcs_base.is_none() || self.buffer.len_lines() < VCS_SYNC_LINES || self.buffer.len_lines() > 20_000 {
+            self.vcs_now();
+            return;
+        }
+        self.vcs_job = Some(v);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(VCS_DEBOUNCE).await;
+            let job = this
+                .update(cx, |e, cx| {
+                    if e.buffer.version() != v || e.vcs_version == v {
+                        return None;
+                    }
+                    let base = e.vcs_base.clone()?;
+                    e.text();
+                    let text = e.text_cache.1.clone();
+                    Some(cx.background_executor().spawn(async move { brisk_git::line_changes(&base, &text) }))
+                })
+                .ok()
+                .flatten();
+            let Some(job) = job else { return };
+            let changes = job.await;
+            let _ = this.update(cx, |e, cx| {
+                if e.buffer.version() == v && e.vcs_version != v {
+                    e.vcs_changes = changes;
+                    e.vcs_version = v;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The gutter change marks of the current text, computed here and now.
+    pub(crate) fn vcs_now(&mut self) {
         let v = self.buffer.version();
         if self.vcs_version == v {
             return;
         }
         self.vcs_version = v;
-        let Some(base) = self.vcs_base.clone() else { return };
-        if self.buffer.len_lines() > 20_000 {
+        if self.vcs_base.is_none() || self.buffer.len_lines() > 20_000 {
             self.vcs_changes.clear();
             return;
         }
-        let text = self.text().to_string();
-        self.vcs_changes = brisk_git::line_changes(&base, &text);
+        self.text();
+        let (Some(base), text) = (self.vcs_base.as_deref(), &self.text_cache.1) else { return };
+        self.vcs_changes = brisk_git::line_changes(base, text);
     }
 
     pub fn text_string(&self) -> String {
@@ -578,7 +630,7 @@ impl Editor {
     fn text(&mut self) -> &str {
         let v = self.buffer.version();
         if self.text_cache.0 != v {
-            self.text_cache = (v, self.buffer.text());
+            self.text_cache = (v, self.buffer.text().into());
         }
         &self.text_cache.1
     }
@@ -605,8 +657,9 @@ impl Editor {
 
     pub fn outline(&mut self) -> Vec<brisk_syntax::OutlineItem> {
         self.reparse();
-        let text = self.text().to_string();
-        self.syntax.as_ref().map(|s| s.outline(&text)).unwrap_or_default()
+        self.text();
+        let text = &self.text_cache.1;
+        self.syntax.as_ref().map(|s| s.outline(text)).unwrap_or_default()
     }
 
     pub fn is_python(&self) -> bool {
@@ -1746,7 +1799,7 @@ impl Element for EditorElement {
             ed.background_parse(cx);
             ed.schedule_folds(cx);
             ed.update_occurrences(cx);
-            ed.refresh_vcs();
+            ed.refresh_vcs(cx);
             ed.refresh_line_extent();
             ed.sync_folds();
             ed.sync_bookmarks();
@@ -2231,7 +2284,14 @@ impl Element for EditorElement {
             let (l, c) = b.pos_to_line_col(b.primary().head);
             let target = idx_of(l).map(|_| point(x_of(l, c), yc(l, c)));
             let key = (b.version(), b.primary().head, b.selections.len());
-            ed.motion.caret_look(key, target, point(px(ed.scroll_x), px(ed.scroll_y)))
+            let mut look = ed.motion.caret_look(key, target, point(px(ed.scroll_x), px(ed.scroll_y)));
+            // Behind another application the caret stays solid and nothing wakes the window
+            // (PyCharm stops blinking too); activation repaints it and the blink resumes.
+            if !window.is_window_active() {
+                look.alpha = 1.0;
+                look.wake_in = None;
+            }
+            look
         });
         if let Some(look) = caret_look.as_ref().filter(|k| k.alpha > 0.0) {
             let scale = window.scale_factor();

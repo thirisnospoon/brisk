@@ -18,25 +18,51 @@ pub struct Folds {
 }
 
 /// Regions from indentation, for files without a grammar: a line followed by more deeply
-/// indented lines.
-fn indent_regions(lines: &[String]) -> Vec<(usize, usize)> {
-    let indent = |s: &str| -> Option<usize> { (!s.trim().is_empty()).then(|| s.chars().take_while(|c| c.is_whitespace()).count()) };
+/// indented lines. `indents` has one entry per line, `None` for a blank line. One pass with a
+/// stack of open headers, sorted by first line.
+fn indent_regions(indents: impl IntoIterator<Item = Option<usize>>) -> Vec<(usize, usize)> {
+    // (header line, its indent, last line seen inside it so far)
+    let mut open: Vec<(usize, usize, usize)> = Vec::new();
     let mut out = Vec::new();
-    for (i, l) in lines.iter().enumerate() {
-        let Some(base) = indent(l) else { continue };
-        let mut last = i;
-        for (j, m) in lines.iter().enumerate().skip(i + 1) {
-            match indent(m) {
-                Some(d) if d > base => last = j,
-                Some(_) => break,
-                None => {}
-            }
+    let close = |open: &mut Vec<(usize, usize, usize)>, out: &mut Vec<(usize, usize)>| {
+        let (line, _, last) = open.pop().expect("an open header");
+        if last > line {
+            out.push((line, last));
         }
-        if last > i {
-            out.push((i, last));
+        // Whatever was inside it is inside its parent too.
+        if let Some(p) = open.last_mut() {
+            p.2 = p.2.max(last);
         }
+    };
+    for (j, d) in indents.into_iter().enumerate() {
+        let Some(d) = d else { continue };
+        while open.last().is_some_and(|o| o.1 >= d) {
+            close(&mut open, &mut out);
+        }
+        if let Some(p) = open.last_mut() {
+            p.2 = j;
+        }
+        open.push((j, d, j));
     }
+    while !open.is_empty() {
+        close(&mut open, &mut out);
+    }
+    out.sort_unstable();
     out
+}
+
+/// The indent of each line in chars, `None` for a blank one, without copying the lines.
+fn line_indents(rope: &brisk_text::TextRope) -> impl Iterator<Item = Option<usize>> + '_ {
+    rope.lines().map(|l| {
+        let mut n = 0;
+        for c in l.chars() {
+            if !c.is_whitespace() {
+                return Some(n);
+            }
+            n += 1;
+        }
+        None
+    })
 }
 
 impl Editor {
@@ -169,8 +195,7 @@ impl Editor {
             let c = match &self.syntax {
                 Some(s) => s.fold_ranges(),
                 None if self.buffer.len_lines() <= 50_000 => {
-                    let lines: Vec<String> = (0..self.buffer.len_lines()).map(|l| self.buffer.line(l)).collect();
-                    indent_regions(&lines)
+                    indent_regions(line_indents(self.buffer.rope()))
                 }
                 None => Vec::new(),
             };
@@ -384,9 +409,48 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
+    fn regions(text: &str) -> Vec<(usize, usize)> {
+        super::indent_regions(super::line_indents(&brisk_text::TextRope::from_str(text)))
+    }
+
     #[test]
     fn indent_regions() {
-        let lines: Vec<String> = ["a:", "  b", "", "  c:", "    d", "e"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(super::indent_regions(&lines), vec![(0, 4), (3, 4)]);
+        assert_eq!(regions("a:\n  b\n\n  c:\n    d\ne"), vec![(0, 4), (3, 4)]);
+    }
+
+    /// The one-pass version finds what scanning forward from every line finds.
+    #[test]
+    fn indent_regions_match_the_quadratic_scan() {
+        fn slow(text: &str) -> Vec<(usize, usize)> {
+            let indent = |s: &str| (!s.trim().is_empty()).then(|| s.chars().take_while(|c| c.is_whitespace()).count());
+            let lines: Vec<&str> = text.split('\n').collect();
+            let mut out = Vec::new();
+            for (i, l) in lines.iter().enumerate() {
+                let Some(base) = indent(l) else { continue };
+                let mut last = i;
+                for (j, m) in lines.iter().enumerate().skip(i + 1) {
+                    match indent(m) {
+                        Some(d) if d > base => last = j,
+                        Some(_) => break,
+                        None => {}
+                    }
+                }
+                if last > i {
+                    out.push((i, last));
+                }
+            }
+            out
+        }
+        let samples = [
+            "",
+            "a",
+            "a\n b\n  c\n   d\n  e\n f\ng",
+            "a\n\tb\n\n\tc\n\n\nd\n    e\n  f\n      g\nh\n",
+            "  x\n    y\nz\n  w\n\n    v\n",
+            "a\n    b\n  c\n    d\n      e\n\n",
+        ];
+        for t in samples {
+            assert_eq!(regions(t), slow(t), "{t:?}");
+        }
     }
 }

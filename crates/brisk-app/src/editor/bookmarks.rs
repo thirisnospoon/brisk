@@ -107,7 +107,7 @@ impl Editor {
 
     /// Alt+Down / Alt+Up: the caret goes to the name of the next / previous class or function.
     pub fn goto_method(&mut self, forward: bool, cx: &mut gpui::Context<Self>) -> bool {
-        let items = self.outline();
+        let items = self.outline_cached();
         let (line, col) = self.caret_line_col();
         let here = (line, col);
         let target = if forward {

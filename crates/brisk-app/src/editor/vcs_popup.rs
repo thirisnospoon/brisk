@@ -90,6 +90,8 @@ impl Editor {
 
     /// Rollback Lines: put change `i` back as it is in HEAD (one undoable edit).
     pub fn rollback_change(&mut self, i: usize, cx: &mut gpui::Context<Self>) -> bool {
+        // A long file is diffed after a pause in typing: roll back against the current text.
+        self.vcs_now();
         let Some(c) = self.vcs_changes.get(i).cloned() else { return false };
         let Some(mut old) = self.base_text(i) else { return false };
         let n = self.buffer.len_lines();
@@ -104,7 +106,7 @@ impl Editor {
         }
         self.buffer.replace_ranges(vec![(start..end, old)]);
         self.vcs_popup = None;
-        self.refresh_vcs();
+        self.vcs_now();
         cx.notify();
         true
     }

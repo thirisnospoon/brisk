@@ -30,7 +30,14 @@ impl Editor {
         let v = self.buffer.version();
         if self.max_line.0 != v && !(self.max_line.0 != u64::MAX && self.defer_extent()) {
             // One pass over the cached text: much cheaper than a rope lookup per line.
-            let longest = self.text().split('\n').map(|l| l.chars().count()).max().unwrap_or(0);
+            // A line's byte length bounds its char count, so chars are counted only on lines
+            // that could beat the longest so far: the pass is mostly the newline search.
+            let mut longest = 0;
+            for l in self.text().split('\n') {
+                if l.len() > longest {
+                    longest = longest.max(l.chars().count());
+                }
+            }
             self.max_line = (v, longest);
         }
     }

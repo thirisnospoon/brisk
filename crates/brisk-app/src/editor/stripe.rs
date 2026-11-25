@@ -161,7 +161,12 @@ impl Editor {
                 .and_then(|p| p.extension())
                 .and_then(|e| e.to_str())
                 .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "txt" | "md" | "rst"));
+            // This runs on every edit: lines without the keywords are skipped before the
+            // comment parsing and lowercasing in `find_in_line`.
             for (l, line) in self.text().split('\n').enumerate() {
+                if !has_todo_keyword(line.as_bytes()) {
+                    continue;
+                }
                 if let Some((at, text)) = crate::todo_scan::find_in_line(line, plain) {
                     out.push((l, line[..at].chars().count(), text));
                 }
@@ -353,5 +358,32 @@ impl Editor {
     #[cfg(feature = "smoke")]
     pub fn stripe_click_for_smoke(&mut self, p: Point<Pixels>, cx: &mut Context<Self>) -> bool {
         self.stripe_click(p, cx)
+    }
+}
+
+/// Whether `line` has "todo" or "fixme" in any ASCII case: the keywords `find_in_line` looks
+/// for (a line it accepts always has one of them byte for byte, up to ASCII case).
+fn has_todo_keyword(line: &[u8]) -> bool {
+    let at = |i: usize, k: &[u8]| line.len() >= i + k.len() && line[i..i + k.len()].eq_ignore_ascii_case(k);
+    (0..line.len()).any(|i| match line[i] | 0x20 {
+        b't' => at(i, b"todo"),
+        b'f' => at(i, b"fixme"),
+        _ => false,
+    })
+}
+
+#[cfg(test)]
+mod todo_prefilter_tests {
+    #[test]
+    fn keeps_every_line_find_in_line_accepts() {
+        for (line, plain) in
+            [("# TODO: x", false), ("x = 1  # fixme later", false), ("// ToDo", false), ("* FIXME", false), ("todo list", true), ("a ТODO", true)]
+        {
+            if crate::todo_scan::find_in_line(line, plain).is_some() {
+                assert!(super::has_todo_keyword(line.as_bytes()), "{line}");
+            }
+        }
+        assert!(!super::has_todo_keyword(b"def f(): return 1"));
+        assert!(!super::has_todo_keyword(b"tod"));
     }
 }
