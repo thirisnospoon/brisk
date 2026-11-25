@@ -262,6 +262,8 @@ pub struct Snapshot {
     pub rows: usize,
     /// Row-major, `rows * cols`. Spacer cells of wide characters are `'\0'`.
     pub cells: Vec<CellView>,
+    /// Per screen row: the line goes on in the next row (soft-wrapped at the right edge).
+    pub wrapped: Vec<bool>,
     /// (row, col) on screen, if visible.
     pub cursor: Option<(usize, usize)>,
     pub display_offset: usize,
@@ -666,7 +668,11 @@ impl Session {
         let crow = cur.line.0 + offset;
         let cursor = (crow >= 0 && (crow as usize) < rows && !content.mode.contains(TermMode::VI) && content.mode.contains(TermMode::SHOW_CURSOR))
             .then(|| (crow as usize, cur.column.0.min(cols.saturating_sub(1))));
-        Snapshot { cols, rows, cells, cursor, display_offset: content.display_offset, alt_screen: content.mode.contains(TermMode::ALT_SCREEN) }
+        let display_offset = content.display_offset;
+        let alt_screen = content.mode.contains(TermMode::ALT_SCREEN);
+        let grid = term.grid();
+        let wrapped = (0..rows).map(|r| cols > 0 && grid[Line(r as i32 - offset)][Column(cols - 1)].flags.contains(Flags::WRAPLINE)).collect();
+        Snapshot { cols, rows, cells, wrapped, cursor, display_offset, alt_screen }
     }
 }
 

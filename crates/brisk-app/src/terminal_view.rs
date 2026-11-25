@@ -113,6 +113,29 @@ fn row_text(cells: &[brisk_terminal::CellView]) -> (String, Vec<usize>) {
     (s, idx)
 }
 
+/// The screen rows of the line that holds `row`: a soft-wrapped line takes several rows.
+fn line_rows(snap: &brisk_terminal::Snapshot, row: usize) -> std::ops::Range<usize> {
+    let wrapped = |r: usize| snap.wrapped.get(r).copied().unwrap_or(false);
+    let mut start = row;
+    while start > 0 && wrapped(start - 1) {
+        start -= 1;
+    }
+    let mut end = row + 1;
+    while end < snap.rows && wrapped(end - 1) {
+        end += 1;
+    }
+    start..end
+}
+
+/// The text of the line that holds screen `row`, with each character's index in `snap.cells`,
+/// so a traceback path wrapped onto the next row is still found as one link.
+fn line_text(snap: &brisk_terminal::Snapshot, row: usize) -> (String, Vec<usize>, std::ops::Range<usize>) {
+    let rows = line_rows(snap, row);
+    let cells = snap.cells.get(rows.start * snap.cols..rows.end * snap.cols).unwrap_or_default();
+    let (text, idx) = row_text(cells);
+    (text, idx.into_iter().map(|i| i + rows.start * snap.cols).collect(), rows)
+}
+
 pub struct TerminalPanel {
     root: PathBuf,
     tabs: Vec<Tab>,
@@ -283,11 +306,10 @@ impl TerminalPanel {
                                         if r.stopped {
                                             r.code = None;
                                         }
-                                        // PyCharm's line, with a green or red mark and how long it ran.
+                                        // PyCharm's line and how long it ran; the tab's icon shows how it ended.
                                         let took = took(r.started.elapsed());
                                         let end = match r.code {
-                                            Some(0) => format!("\x1b[32m✓\x1b[0m Process finished with exit code 0 \x1b[90min {took}\x1b[0m"),
-                                            Some(c) => format!("\x1b[31m✗\x1b[0m Process finished with exit code {c} \x1b[90min {took}\x1b[0m"),
+                                            Some(c) => format!("Process finished with exit code {c} \x1b[90min {took}\x1b[0m"),
                                             None => format!("Process terminated \x1b[90mafter {took}\x1b[0m"),
                                         };
                                         t.session.inject(format!("\r\n\x1b[0m{end}\r\n\x1b[?25l").as_bytes());
@@ -606,18 +628,22 @@ sys.exit(r)";
     /// The `http(s)://` link under a grid cell, if any.
     fn url_at(&self, row: usize, col: usize) -> Option<String> {
         let snap = self.session()?.snapshot();
-        let cells = snap.cells.get(row * snap.cols..(row + 1) * snap.cols)?;
-        let (text, idx) = row_text(cells);
-        let ch = idx.iter().position(|&c| c >= col)?;
+        if row >= snap.rows {
+            return None;
+        }
+        let (text, idx, _) = line_text(&snap, row);
+        let ch = idx.iter().position(|&i| i >= row * snap.cols + col)?;
         brisk_run::find_urls(&text).into_iter().find(|(r, _)| r.contains(&ch)).map(|(_, u)| u)
     }
 
     /// The link under a grid cell, if any.
     fn link_at(&self, row: usize, col: usize) -> Option<(PathBuf, usize, usize)> {
         let snap = self.session()?.snapshot();
-        let cells = snap.cells.get(row * snap.cols..(row + 1) * snap.cols)?;
-        let (text, idx) = row_text(cells);
-        let ch = idx.iter().position(|&c| c >= col)?;
+        if row >= snap.rows {
+            return None;
+        }
+        let (text, idx, _) = line_text(&snap, row);
+        let ch = idx.iter().position(|&i| i >= row * snap.cols + col)?;
         let l = brisk_run::find_links(&text).into_iter().find(|l| l.cols.contains(&ch))?;
         self.link_target(&l.path, l.line).map(|(p, line)| (p, line, l.col))
     }
@@ -939,9 +965,9 @@ sys.exit(r)";
                 };
                 let state = t.run.as_ref().map(|r| match (r.running, r.code) {
                     (true, _) => ("play", Theme::run_icon()),
-                    (false, Some(0)) => ("check", Theme::text_muted()),
-                    (false, None) => ("stop-solid", Theme::text_muted()),
-                    (false, _) => ("x", Theme::error()),
+                    (false, Some(0)) => ("circle-check", Theme::run_passed()),
+                    (false, None) => ("circle-slash", Theme::text_muted()),
+                    (false, _) => ("circle-x", Theme::error()),
                 });
                 let id = t.id;
                 div()
@@ -1328,22 +1354,24 @@ impl Element for TerminalElement {
         });
         let Some((mut snap, run_mode)) = snap else { return Prepaint { rects: vec![], texts: vec![], cursor: None } };
         if run_mode {
-            // Traceback and `file.py:12` links: blue and underlined, like PyCharm.
-            for r in 0..snap.rows {
-                let row = &mut snap.cells[r * snap.cols..(r + 1) * snap.cols];
-                for cell in row.iter_mut().filter(|c| c.link) {
-                    cell.underline = true;
-                }
-                let (text, idx) = row_text(row);
+            // Traceback and `file.py:12` links: blue and underlined, like PyCharm. Found in whole
+            // lines, so a long path wrapped onto the next row is still one link.
+            for cell in snap.cells.iter_mut().filter(|c| c.link) {
+                cell.underline = true;
+            }
+            let mut r = 0;
+            while r < snap.rows {
+                let (text, idx, rows) = line_text(&snap, r);
                 let urls = brisk_run::find_urls(&text).into_iter().map(|(r, _)| r);
                 for cols in brisk_run::find_links(&text).into_iter().map(|l| l.cols).chain(urls) {
                     for ch in cols {
-                        if let Some(&c) = idx.get(ch) {
-                            row[c].fg = LINK;
-                            row[c].underline = true;
+                        if let Some(&i) = idx.get(ch) {
+                            snap.cells[i].fg = LINK;
+                            snap.cells[i].underline = true;
                         }
                     }
                 }
+                r = rows.end;
             }
         }
 
@@ -1498,6 +1526,32 @@ mod tests {
         for p in [r"C:\Windows\System32\OpenSSH\ssh.exe", "cmd.exe", "/usr/bin/pytest", "uv"] {
             assert!(!is_python(std::path::Path::new(p)), "{p}");
         }
+    }
+
+    /// A screen of `cols`-wide rows; `wrapped` marks the rows whose line goes on below.
+    fn screen(rows: &[&str], wrapped: &[bool], cols: usize) -> brisk_terminal::Snapshot {
+        let blank =
+            brisk_terminal::CellView { c: ' ', fg: [0; 3], bg: None, bold: false, italic: false, underline: false, wide: false, selected: false, link: false };
+        let mut cells = vec![blank; rows.len() * cols];
+        for (r, text) in rows.iter().enumerate() {
+            for (c, ch) in text.chars().enumerate() {
+                cells[r * cols + c].c = ch;
+            }
+        }
+        brisk_terminal::Snapshot { cols, rows: rows.len(), cells, wrapped: wrapped.to_vec(), cursor: None, display_offset: 0, alt_screen: false }
+    }
+
+    #[test]
+    fn a_wrapped_traceback_path_is_one_link() {
+        let snap = screen(&[r#"  File "C:\Temp\a-very-long-fol"#, r#"der\tb.py", line 8, in f"#, "    raise ValueError"], &[true, false, false], 31);
+        assert_eq!(line_rows(&snap, 1), 0..2);
+        assert_eq!(line_rows(&snap, 2), 2..3);
+        let (text, idx, _) = line_text(&snap, 1);
+        let link = brisk_run::find_links(&text).into_iter().next().expect("a link");
+        assert_eq!(link.path, r"C:\Temp\a-very-long-folder\tb.py");
+        assert_eq!(link.line, 8);
+        // Its characters run on into the second row.
+        assert!(link.cols.clone().any(|ch| idx[ch] >= snap.cols));
     }
 
     #[test]
