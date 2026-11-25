@@ -292,6 +292,34 @@ share them.
 Keymap contexts are `&'static str` (`"Editor"`, `"ToolWindow"`, `"GitLog"`) written in
 `pycharm.rs` and in `Workspace::contexts`. A typo unbinds a shortcut silently.
 
+
+### 10. Platform code is spread over the crates
+
+Brisk ships for Windows only, but most of its code is not tied to Windows: GPUI, the PTY
+(`brisk-terminal` has ConPTY and openpty), git, the DAP and LSP clients and the database
+drivers all work on Linux and macOS. What is tied to Windows is scattered:
+
+- 53 `#[cfg(windows)]` / `target_os = "windows"` items in 34 files across 11 crates.
+- Virtualenv layout (`Scripts\python.exe` against `bin/python`): 47 references in 12 files,
+  most in `brisk-run/src/ssh.rs` (13, for the remote host), `terminal_env.rs` (11) and
+  `brisk-run/src/interp.rs` (8).
+- Default shells (`cmd`, PowerShell, `$SHELL`) are chosen in 9 files, among them
+  `brisk-terminal`, `brisk-run`, `terminal_view.rs` and `run_anything.rs`.
+- `CREATE_NO_WINDOW` is set by hand at 24 call sites in 22 files; the kill-on-close Job
+  Object lives in `brisk-proc`, but every call site has to remember `adopt`.
+- The atomic replace uses `ReplaceFileW` in `editor/disk.rs:121`, with its own fallback.
+- Saved database passwords use DPAPI (`brisk-db/src/secrets.rs`); without it they are stored
+  as `plain:` hex, which a Linux build would do.
+- The settings folder (`%APPDATA%\Brisk`, or `data` in the portable build) is defined in
+  `brisk-db/src/config.rs:24` and used by the whole app; `APPDATA` is also read directly in 6
+  other files.
+- Build and release tooling is PowerShell only, and the mouse smokes post Win32 messages
+  (`workspace/win_input.rs`).
+- Nothing builds the workspace on Linux, so whether it compiles there is unknown.
+
+None of this is wrong for a Windows product. The cost comes with a port: every one of these
+places would have to be found and fixed on its own.
+
 ## Target architecture
 
 The goal is that a change in one area touches one area's files, that each area can be read
@@ -413,6 +441,36 @@ not compile.
 `Action` itself stays a static enum in `brisk-keymap`: it is what keymap files and the
 PyCharm import refer to by id.
 
+
+### `brisk-platform`
+
+One crate at the bottom of the dependency graph holds everything that differs between
+operating systems. It has no `brisk-*` dependencies, so every crate can use it. Inside, each
+concern is a module with `windows.rs` and `unix.rs` (or `linux.rs` / `macos.rs` where they
+differ) behind one `#[cfg]` on the `mod` line. A Linux port is a second implementation of
+this crate; callers do not change.
+
+| Module | API | Windows today |
+|---|---|---|
+| `process` | `command(program) -> Command` (no console window, adopted into the kill-on-close group on spawn), `kill_tree`, `memory`, `live_children` | `CREATE_NO_WINDOW`, Job Object (all of `brisk-proc` moves here) |
+| `python` | `Layout::Windows` / `Layout::Unix` with `python()`, `scripts_dir()`, `activate()`; `Layout::host()` for this machine | `Scripts\python.exe`. The layout is a value, not a `cfg`, because an SSH or WSL interpreter has the Unix layout on a Windows host. |
+| `shell` | `default_shell()`, `shell_command(line)` | `cmd` / PowerShell |
+| `fs` | `replace_atomic(tmp, target)`, `reveal(path)`, `trash(path)`, `open_with_default(path)` | `ReplaceFileW`, Explorer |
+| `secrets` | `protect(&[u8])`, `unprotect(&[u8])` | DPAPI. The Unix side returns "no secret store" until a keyring backend is written; the data source dialog then refuses to save the password and says why, instead of writing it in clear text. |
+| `dirs` | `config_dir()`, `data_dir()`, `cache_dir()`, `portable()` | `%APPDATA%\Brisk`, `data` next to the exe |
+| `fonts` | default UI and editor font names, extra font folders | Segoe UI, Consolas (now in `theme.rs` and `main.rs`) |
+
+Rules:
+
+- No `cfg(windows)` outside `brisk-platform`, `main.rs` (the window subsystem attribute) and
+  the smoke input module. CI checks this with a grep.
+- Paths are built with `Path::join`, never with `\` or `/` in string literals. Tests compare
+  `Path`s, not strings.
+- The `python` layouts are tested on every OS: they are plain path logic.
+- Build and release tooling moves from PowerShell to a Rust `xtask` crate
+  (`cargo xtask package`, `cargo xtask budget`), as rust-analyzer does. The `.ps1` files
+  become one-line wrappers or go away.
+
 ### CI
 
 A GitHub Actions workflow on `windows-latest`, on every push and pull request:
@@ -428,6 +486,12 @@ A GitHub Actions workflow on `windows-latest`, on every push and pull request:
 5. A small set of headless smokes on the `--features smoke` build: the ones that exit 1 on
    failure and need no mouse or network (SCOPE, EDIT2, RUNCFG, DISK, MEMBUDGET).
 
+6. `cargo check --workspace --all-targets` and `cargo test` of the library crates on
+   `ubuntu-latest` (GPUI needs the `libxkbcommon`, `libwayland`, `libvulkan` and
+   `libfontconfig` dev packages). Packaging and the size budget stay Windows-only until there
+   is a Linux package.
+
+
 Workspace lints in the root `Cargo.toml` (`[workspace.lints]`) so every crate gets the same
 set, including `clippy::unwrap_used` for non-test code in `brisk-app`.
 
@@ -438,8 +502,10 @@ None depends on a later one. The order is chosen so that the steps touching ever
 (format, smoke move) come first, while no other branch is open, and the steps that split
 `Workspace` go from the least connected area to the most connected.
 
-Nothing starts before `ui-audit` is merged: it changes 34 files, including `workspace.rs`,
-`debug_ui.rs`, `git_ui.rs`, `db_ui.rs` and most of the `*_ui.rs` files this plan moves.
+`ui-audit` was merged in `cef294c`; steps 1 and 2 landed before 0.3.0 (`89bf766`, `0051e6d`).
+
+The exe is at 25.99 of its 26 MB limit (0.3.0), so step 4 (smokes behind a feature) comes
+before step 3: it frees the most room, and clippy then runs on code without the smoke hooks.
 
 "Smokes" in the verify column means the smokes listed for that area in
 [testing.md](testing.md), run on a copy of `examples/demo_project`. "Budget" means
@@ -494,10 +560,65 @@ Pure file moves of the 41 `*_smoke.rs` files and the smoke functions inside ordi
 Methods they need from `Workspace` become `pub(crate)`; nothing else changes.
 Files: listed. Verify: tests, all smokes. Risk: low.
 
+
+### Phase 1b: `brisk-platform`
+
+This comes before the code moves of phase 2, so the code that moves into library crates
+already calls the platform API.
+
+#### Step P1. Linux check in CI
+
+Add CI item 6. Where something does not compile on Linux, add the Unix side next to the
+Windows code. Do not add a `cfg` at the call site.
+Files: the workflow, whatever fails. Verify: the job passes, Windows CI unchanged.
+Risk: low.
+
+#### Step P2. Create `brisk-platform` from `brisk-proc`
+
+Rename `brisk-proc` to `brisk-platform::process` and add `command()`. Replace the 24
+`creation_flags` sites with it, and the `adopt` calls where `command()` now does it.
+Files: `crates/brisk-proc`, the 22 files with `creation_flags`, every `Cargo.toml` that
+names `brisk-proc`. Verify: tests; RUN, DEBUG, LSP, LINT, GIT smokes; MEMBUDGET reports 0
+live children after exit. Risk: medium: a missed `adopt` leaves a child running after a
+crash.
+
+#### Step P3. `python` and `shell`
+
+Move the venv layout and the default shell choice into the crate. Replace the 47 layout
+references and the shell choice in the 9 files.
+Files: `brisk-run/src/interp.rs`, `pyproj.rs`, `ssh.rs`, `terminal_env.rs`,
+`terminal_view.rs`, `run_anything.rs`, `brisk-lint`, `brisk-lsp`, `brisk-terminal`,
+`debug_ui.rs`. Verify: unit tests for both layouts; venv, packages, LSP, RUN, Terminal
+smokes; an SSH interpreter still resolves `bin/python`. Risk: medium.
+
+#### Step P4. `fs`, `dirs` and `fonts`
+
+`replace_atomic` from `editor/disk.rs` (`crate::editor::write_atomic` keeps its name and
+calls it). `config_dir` moves out of `brisk-db` into `dirs`, and the 6 direct `APPDATA`
+reads go through it. The default fonts move out of `theme.rs` and the font folders out of
+`main.rs`.
+Verify: tests (atomic write round trip, portable mode); DISK, SETTINGS smokes; budget.
+Risk: medium: a wrong settings folder looks like lost settings. Test portable and installed
+mode.
+
+#### Step P5. `secrets`
+
+Move DPAPI into the crate. On other platforms, refuse to save a password without a keyring.
+Files: `brisk-db/src/secrets.rs`, the data source dialog. Verify: `cargo test -p brisk-db`
+(round trip, damaged file kept). Risk: low on Windows.
+
+#### Step P6. `xtask`
+
+Port `package-portable.ps1` and `budget.ps1` to `cargo xtask`; CI calls the xtask. The
+`.ps1` names stay as wrappers until the release checklist and `docs/building.md` are
+updated. Verify: the zip matches the script's, file for file, and the budget numbers match.
+Risk: medium, since release packaging depends on it. Do it between releases.
+
 ### Phase 2: move logic out of `brisk-app`
 
-Each of these is independent of the others and of phase 1, and touches files that the
-`Workspace` split does not, so they can be done in parallel.
+Each of these is independent of the others. They come after phase 1b, so the code they move
+already calls `brisk-platform`, and they touch files that the `Workspace` split does not, so
+they can be done in parallel.
 
 #### Step 6. Python environment code to `brisk-run::env`
 
