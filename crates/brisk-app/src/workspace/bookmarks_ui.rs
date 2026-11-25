@@ -27,11 +27,30 @@ fn root_key(root: &Path) -> String {
     root.to_string_lossy().to_lowercase()
 }
 
+/// Each project's bookmarks as last read from or written to the file: a save that leaves them
+/// as they are does not rewrite it.
+static WRITTEN: std::sync::Mutex<Option<std::collections::HashMap<String, Vec<serde_json::Value>>>> = std::sync::Mutex::new(None);
+
+fn written(key: &str, list: &[serde_json::Value]) -> bool {
+    WRITTEN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(key)).is_some_and(|l| l.as_slice() == list)
+}
+
+fn set_written(key: String, list: Vec<serde_json::Value>) {
+    WRITTEN.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).insert(key, list);
+}
+
 /// Bookmarks saved for this project.
 pub fn load(root: &Path) -> Vec<Stored> {
-    let Ok(s) = std::fs::read_to_string(store_path()) else { return Vec::new() };
+    let Ok(s) = std::fs::read_to_string(store_path()) else {
+        set_written(root_key(root), Vec::new());
+        return Vec::new();
+    };
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) else { return Vec::new() };
-    let Some(list) = v.get(root_key(root)).and_then(|l| l.as_array()) else { return Vec::new() };
+    let Some(list) = v.get(root_key(root)).and_then(|l| l.as_array()) else {
+        set_written(root_key(root), Vec::new());
+        return Vec::new();
+    };
+    set_written(root_key(root), list.clone());
     list.iter()
         .filter_map(|b| {
             Some(Stored {
@@ -62,12 +81,6 @@ impl Workspace {
     }
 
     pub(super) fn persist_bookmarks(&self, cx: &gpui::App) {
-        let path = store_path();
-        let mut all: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.as_object().cloned())
-            .unwrap_or_default();
         let list: Vec<serde_json::Value> = self
             .all_bookmarks(cx)
             .into_iter()
@@ -77,6 +90,16 @@ impl Workspace {
             })
             .collect();
         let key = root_key(&self.root);
+        if written(&key, &list) {
+            return;
+        }
+        let path = store_path();
+        let mut all: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        set_written(key.clone(), list.clone());
         if list.is_empty() {
             all.remove(&key);
         } else {
