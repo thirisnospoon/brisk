@@ -583,6 +583,11 @@ Windows code. Do not add a `cfg` at the call site.
 Files: the workflow, whatever fails. Verify: the job passes, Windows CI unchanged.
 Risk: low.
 
+Started on branch `batch1`: the `linux` job runs `cargo check --workspace --all-targets` and
+the tests of every crate but `brisk-app` on `ubuntu-latest`. Nothing here can build for Linux
+(no target, no WSL), so the job is `continue-on-error` until its first green run; the fixes
+follow from its log.
+
 #### Step P2. Create `brisk-platform` from `brisk-proc`
 
 Rename `brisk-proc` to `brisk-platform::process` and add `command()`. Replace the 24
