@@ -869,6 +869,8 @@ impl Buf {
             link: false,
         };
         let mut cells = vec![blank; cols * rows];
+        // Per screen row: the line goes on in the next row.
+        let mut wrapped = vec![false; rows];
         let top = self.top();
         let total = self.total_rows();
         let n = self.n_lines();
@@ -926,7 +928,10 @@ impl Buf {
                     }
                     true
                 });
-                sr0 += line_rows(line, cols) - r0;
+                let lr = line_rows(line, cols);
+                let end = (sr0 + lr.saturating_sub(1).saturating_sub(r0)).min(rows);
+                wrapped[sr0..end].fill(true);
+                sr0 += lr - r0;
                 r0 = 0;
                 i += 1;
             }
@@ -952,7 +957,7 @@ impl Buf {
             (r, c)
         });
         let cursor = cursor.and_then(|(r, c)| (r >= top && r - top < rows).then(|| (r - top, c)));
-        Snapshot { cols, rows, cells, cursor, display_offset: self.offset.min(self.history()), alt_screen: false }
+        Snapshot { cols, rows, cells, wrapped, cursor, display_offset: self.offset.min(self.history()), alt_screen: false }
     }
 
     /// Plain text of everything kept, trailing blanks of each line trimmed.
@@ -1229,6 +1234,22 @@ mod tests {
         assert_eq!(l.text().lines().last(), Some("7x%"));
         feed(&mut l, "ab\x1b[3Cc\x1b[9999Cz\n");
         assert_eq!(l.text().lines().last().map(str::len), Some(l.cols));
+    }
+
+    /// The rows a soft-wrapped line goes on from are marked, so links are found in whole lines.
+    #[test]
+    fn wrapped_rows() {
+        let mut l = log(4, 6);
+        feed(&mut l, "abcdefghij\nxy\n");
+        let (rows, s) = (screen(&l), l.snapshot());
+        let got: Vec<(&str, bool)> = rows.iter().map(String::as_str).zip(s.wrapped.iter().copied()).filter(|(t, _)| !t.is_empty()).collect();
+        assert_eq!(got, vec![("abcd", true), ("efgh", true), ("ij", false), ("xy", false)]);
+        // Scrolled so that the long line starts above the view: its visible rows still wrap.
+        let mut l = log(4, 2);
+        feed(&mut l, "abcdefghij");
+        let (rows, s) = (screen(&l), l.snapshot());
+        assert_eq!(rows, vec!["efgh", "ij"]);
+        assert_eq!(s.wrapped, vec![true, false]);
     }
 
     #[test]
