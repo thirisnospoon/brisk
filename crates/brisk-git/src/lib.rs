@@ -244,7 +244,8 @@ impl Repo {
     }
 
     pub fn refs(&self) -> Result<Refs> {
-        let out = self.git(&["for-each-ref", "--format=%(refname)%1f%(HEAD)%1f%(upstream:short)%1f%(objectname)", "refs/heads", "refs/remotes", "refs/tags"])?;
+        let out =
+            self.git(&["for-each-ref", "--format=%(refname)%1f%(HEAD)%1f%(upstream:short)%1f%(objectname)", "refs/heads", "refs/remotes", "refs/tags"])?;
         let mut tags = Vec::new();
         let mut v: Vec<Branch> = out
             .lines()

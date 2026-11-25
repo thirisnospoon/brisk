@@ -53,16 +53,7 @@ fn indent_regions(indents: impl IntoIterator<Item = Option<usize>>) -> Vec<(usiz
 
 /// The indent of each line in chars, `None` for a blank one, without copying the lines.
 fn line_indents(rope: &brisk_text::TextRope) -> impl Iterator<Item = Option<usize>> + '_ {
-    rope.lines().map(|l| {
-        let mut n = 0;
-        for c in l.chars() {
-            if !c.is_whitespace() {
-                return Some(n);
-            }
-            n += 1;
-        }
-        None
-    })
+    rope.lines().map(|l| l.chars().position(|c| !c.is_whitespace()))
 }
 
 impl Editor {
@@ -194,9 +185,7 @@ impl Editor {
             self.reparse();
             let c = match &self.syntax {
                 Some(s) => s.fold_ranges(),
-                None if self.buffer.len_lines() <= 50_000 => {
-                    indent_regions(line_indents(self.buffer.rope()))
-                }
+                None if self.buffer.len_lines() <= 50_000 => indent_regions(line_indents(self.buffer.rope())),
                 None => Vec::new(),
             };
             self.folds.candidates = (Some(v), c);

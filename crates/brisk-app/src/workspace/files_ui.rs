@@ -421,7 +421,7 @@ impl Workspace {
     /// Files were added or removed in these folders (the disk poll): walk only them again,
     /// unless a full scan is still running (its result would be dropped for this one).
     pub(super) fn reindex_dirs(&mut self, dirs: Vec<PathBuf>, cx: &mut Context<Self>) {
-        let dirs = Some(dirs).filter(|_| self.reindex_full.is_none() && self.files.is_some());
+        let dirs = (self.reindex_full.is_none() && self.files.is_some()).then_some(dirs);
         self.reindex(dirs, cx);
     }
 

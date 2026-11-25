@@ -24,6 +24,9 @@ pub struct FindOpts {
     pub in_selection: bool,
 }
 
+/// (buffer version, current match, replacement version, options) of a replace preview.
+type PreviewKey = (u64, usize, u64, FindOpts);
+
 pub struct FindBar {
     pub query: Entity<Editor>,
     pub replace: Option<Entity<Editor>>,
@@ -40,7 +43,7 @@ pub struct FindBar {
     scope: Option<(u64, Range<usize>)>,
     /// The replace preview for (buffer version, current match, replacement version, options):
     /// the find bar is drawn every frame, and the preview compiles the regex.
-    preview: Option<((u64, usize, u64, FindOpts), Option<String>)>,
+    preview: Option<(PreviewKey, Option<String>)>,
     _subs: Vec<Subscription>,
 }
 
@@ -79,8 +82,19 @@ impl Editor {
                 let query = field(&opts.query, window, cx);
                 let subs = vec![cx.observe(&query, |this, _, cx| this.find_query_changed(cx))];
                 let origin = self.buffer.selections.first().map(|s| s.range().start).unwrap_or(0);
-                self.find =
-                    Some(FindBar { query, replace: None, opts, matches: Vec::new(), current: None, error: None, searched: None, origin, scope, preview: None, _subs: subs });
+                self.find = Some(FindBar {
+                    query,
+                    replace: None,
+                    opts,
+                    matches: Vec::new(),
+                    current: None,
+                    error: None,
+                    searched: None,
+                    origin,
+                    scope,
+                    preview: None,
+                    _subs: subs,
+                });
             }
             Some(f) if multiline => {
                 f.opts.in_selection = true;

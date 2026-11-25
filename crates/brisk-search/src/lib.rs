@@ -69,7 +69,12 @@ impl Query {
             e => e.to_string(),
         })?;
         // Built after the `str` regex, which rejects patterns that match invalid UTF-8.
-        let bytes_re = regex::bytes::RegexBuilder::new(&pat).case_insensitive(!o.case_sensitive).multi_line(true).size_limit(1 << 22).build().map_err(|e| e.to_string())?;
+        let bytes_re = regex::bytes::RegexBuilder::new(&pat)
+            .case_insensitive(!o.case_sensitive)
+            .multi_line(true)
+            .size_limit(1 << 22)
+            .build()
+            .map_err(|e| e.to_string())?;
         let (include, exclude) = parse_mask(&o.file_mask)?;
         Ok(Query { re, bytes_re, include, exclude, regex_mode: o.regex })
     }

@@ -115,7 +115,8 @@ impl Workspace {
         let task = cx.background_executor().spawn(async move {
             // Ignored files stay out, as in the full scan: only files in the project's list
             // (sorted) count. A file not in it yet (just created) takes a fresh list.
-            let listed = |list: &brisk_project::FileList, p: &PathBuf| brisk_project::rel_path(&list.root, p).is_some_and(|rel| list.files.binary_search(&rel).is_ok());
+            let listed =
+                |list: &brisk_project::FileList, p: &PathBuf| brisk_project::rel_path(&list.root, p).is_some_and(|rel| list.files.binary_search(&rel).is_ok());
             let list = match files {
                 Some(l) if paths.iter().all(|p| listed(&l, p)) => l,
                 _ => std::sync::Arc::new(brisk_project::FileList::scan(&root)),

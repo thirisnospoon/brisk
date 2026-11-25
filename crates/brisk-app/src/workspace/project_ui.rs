@@ -99,12 +99,12 @@ pub(super) struct SymRef<'a> {
 #[derive(Default)]
 pub(super) struct SymIndex {
     files: Vec<(u32, Arc<FileSyms>)>,
-    len: usize,
 }
 
 impl SymIndex {
+    #[cfg(feature = "smoke")]
     pub fn len(&self) -> usize {
-        self.len
+        self.files.iter().map(|f| f.1.syms.len()).sum()
     }
 
     fn get(&self, slot: u32, i: u32) -> SymRef<'_> {
@@ -212,9 +212,8 @@ fn index(files: &FileList, old: &SymCache) -> (SymIndex, SymCache) {
     };
     parts.sort_unstable_by_key(|p| p.0);
     let cache: SymCache = parts.iter().map(|(i, e)| (files.files[*i as usize].clone(), e.clone())).collect();
-    let len = parts.iter().map(|p| p.1.syms.len()).sum();
     parts.retain(|p| !p.1.syms.is_empty());
-    (SymIndex { files: parts, len }, cache)
+    (SymIndex { files: parts }, cache)
 }
 
 /// A query for [`name_score`], lowercased once instead of per name.
@@ -249,10 +248,10 @@ impl NameQuery {
         // Word starts: first char, after `_`, and upper-case letters after lower-case ones.
         let mut it = self.letters.iter().peekable();
         for (i, &c) in n.iter().enumerate() {
-            if i == 0 || n[i - 1] == b'_' || (c.is_ascii_uppercase() && n[i - 1].is_ascii_lowercase()) {
-                if it.peek().is_some_and(|&&l| l == c.to_ascii_lowercase() as char) {
-                    it.next();
-                }
+            if (i == 0 || n[i - 1] == b'_' || (c.is_ascii_uppercase() && n[i - 1].is_ascii_lowercase()))
+                && it.peek().is_some_and(|&&l| l == c.to_ascii_lowercase() as char)
+            {
+                it.next();
             }
         }
         if it.peek().is_none() {
@@ -393,7 +392,11 @@ impl Workspace {
         };
         let mut last = self.symbols.last.borrow_mut();
         let narrow = last.as_ref().filter(|l| {
-            std::sync::Weak::ptr_eq(&l.list, &Arc::downgrade(list)) && q.is_ascii() && l.classes_only == classes_only && q.starts_with(l.query.as_str()) && !q.contains('.')
+            std::sync::Weak::ptr_eq(&l.list, &Arc::downgrade(list))
+                && q.is_ascii()
+                && l.classes_only == classes_only
+                && q.starts_with(l.query.as_str())
+                && !q.contains('.')
         });
         let hits: Vec<Hit> = match narrow {
             Some(l) => l.hits.iter().filter_map(|&(slot, i)| Some((score(slot, i)?, slot, i))).collect(),
@@ -672,7 +675,8 @@ mod tests {
         let d = std::env::temp_dir().join(format!("brisk-syms-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         let f = d.join("m.py");
-        std::fs::write(&f, "X = 1\nclass A:\n    def f(self): pass\n    def g(self): pass\n    class B:\n        def h(self): pass\ndef top(): pass\n").unwrap();
+        std::fs::write(&f, "X = 1\nclass A:\n    def f(self): pass\n    def g(self): pass\n    class B:\n        def h(self): pass\ndef top(): pass\n")
+            .unwrap();
         let syms = super::file_symbols(&f);
         let got: Vec<(&str, &str, u32)> = syms.iter().map(|s| (&*s.name, &*s.container, s.line)).collect();
         assert_eq!(got, vec![("A", "", 1), ("f", "A", 2), ("g", "A", 3), ("B", "A", 4), ("h", "A.B", 5), ("top", "", 6), ("X", "", 0)]);

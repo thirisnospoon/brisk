@@ -289,8 +289,11 @@ pub struct SyntaxTree {
     generation: u64,
     /// Highlights of the last few byte ranges (the view, sticky lines) for `generation`: a
     /// frame that only blinks the caret does not run the query again.
-    hl_cache: std::cell::RefCell<(u64, Vec<((Range<usize>, usize), Vec<Span>)>)>,
+    hl_cache: std::cell::RefCell<(u64, Vec<HlEntry>)>,
 }
+
+/// A cached highlight: (byte range, text length) and its spans.
+type HlEntry = ((Range<usize>, usize), Vec<Span>);
 
 /// A complete parse with its own parser (for a background thread), reusing `old` edited to
 /// `text` when given.
