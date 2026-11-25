@@ -368,6 +368,17 @@ impl Workspace {
     /// afterwards. Branches are read again only when the refs on disk changed, and the log
     /// only when HEAD, the current branch, a ref or the filters changed.
     pub(super) fn refresh_git(&mut self, cx: &mut Context<Self>) {
+        let delay = if self.git.as_ref().is_some_and(|g| g.loaded) { REFRESH_DELAY } else { Duration::ZERO };
+        self.schedule_git_refresh(delay, cx);
+    }
+
+    /// [`Workspace::refresh_git`] without the wait for more calls: the user changed what the
+    /// log shows (a filter, a Refresh button).
+    pub(super) fn refresh_git_now(&mut self, cx: &mut Context<Self>) {
+        self.schedule_git_refresh(Duration::ZERO, cx);
+    }
+
+    fn schedule_git_refresh(&mut self, delay: Duration, cx: &mut Context<Self>) {
         let Some(g) = self.git.as_mut() else { return };
         if g.refresh_running {
             g.refresh_again = true;
@@ -381,7 +392,6 @@ impl Workspace {
         let gen = g.refresh_gen;
         // The first status comes at once; later ones wait for calls that come right after
         // (a save and the window activation that caused it).
-        let delay = if g.loaded { REFRESH_DELAY } else { Duration::ZERO };
         let timer = cx.background_executor().timer(delay);
         cx.spawn(async move |this, cx| {
             timer.await;
@@ -397,7 +407,7 @@ impl Workspace {
             g.refs_stamp = None;
             g.log_fp = None;
         }
-        self.refresh_git(cx);
+        self.refresh_git_now(cx);
     }
 
     /// At startup: the repository found without git is confirmed by the first refresh; without

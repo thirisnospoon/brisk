@@ -65,7 +65,7 @@ impl Workspace {
             timer.await;
             let _ = this.update(cx, |this, cx| {
                 if this.git.as_ref().is_some_and(|g| g.filter.generation == gen) {
-                    this.refresh_git(cx);
+                    this.refresh_git_now(cx);
                 }
             });
         })
@@ -76,7 +76,7 @@ impl Workspace {
         if let Some(g) = self.git.as_mut() {
             g.filter.query.branch = branch;
         }
-        self.refresh_git(cx);
+        self.refresh_git_now(cx);
         cx.notify();
     }
 
@@ -84,7 +84,7 @@ impl Workspace {
         if let Some(g) = self.git.as_mut() {
             g.filter.query.author = author;
         }
-        self.refresh_git(cx);
+        self.refresh_git_now(cx);
         cx.notify();
     }
 
@@ -92,7 +92,7 @@ impl Workspace {
         if let Some(g) = self.git.as_mut() {
             g.filter.query.since_days = days;
         }
-        self.refresh_git(cx);
+        self.refresh_git_now(cx);
         cx.notify();
     }
 
@@ -100,7 +100,7 @@ impl Workspace {
         if let Some(g) = self.git.as_mut() {
             g.filter.query.path = path;
         }
-        self.refresh_git(cx);
+        self.refresh_git_now(cx);
         cx.notify();
     }
 
@@ -111,7 +111,7 @@ impl Workspace {
         g.filter.generation += 1;
         let field = g.filter.field.clone();
         field.update(cx, |e, cx| e.replace_all_text("", cx));
-        self.refresh_git(cx);
+        self.refresh_git_now(cx);
         cx.notify();
     }
 
@@ -131,7 +131,7 @@ impl Workspace {
                 if let Some(g) = self.git.as_mut() {
                     g.filter.generation += 1;
                 }
-                self.refresh_git(cx);
+                self.refresh_git_now(cx);
                 window.focus(&focus);
                 true
             }
