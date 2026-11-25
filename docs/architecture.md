@@ -552,6 +552,10 @@ dead-code warnings found the probes. `budget.ps1` runs MEMBUDGET on the smoke bu
 25.99 to 21.58 MB and contains no `BRISK_SMOKE` string; with a `BRISK_SMOKE_*` variable set
 it starts normally. Start-up time is unchanged against `main` on the same machine.
 
+Later the smoke build got its own cargo profile, `smoke`: release without LTO, with 256
+incremental codegen units, built to `target\smoke\brisk.exe`. A rebuild after a change takes
+about a minute instead of ten.
+
 #### Step 5. Move the smoke files into `workspace/smoke/`
 
 Pure file moves of the 41 `*_smoke.rs` files and `win_input.rs` into `workspace/smoke/`,

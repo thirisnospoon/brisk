@@ -24,10 +24,10 @@ cargo test -p brisk-db -- --ignored
 
 A smoke test starts Brisk on a project folder, performs a scripted sequence of actions, prints what it observes to stderr, and quits.
 
-Smokes and the `BRISK_OPEN_*` helpers are compiled only with the `smoke` feature; the release exe has none of them. Build the smoke exe in its own target folder, so it does not replace the release one:
+Smokes and the `BRISK_OPEN_*` helpers are compiled only with the `smoke` feature; the release exe has none of them. Build the smoke exe with the `smoke` profile. It is the release build without LTO, so a rebuild after a change takes about a minute, and it lands in `target\smoke`, beside the release exe instead of over it:
 
 ```powershell
-cargo build --release -p brisk-app --features smoke --target-dir target\smoke
+cargo build --profile smoke -p brisk-app --features smoke
 ```
 
 To run a smoke, set the variable and pass the project folder as the argument:
@@ -35,7 +35,7 @@ To run a smoke, set the variable and pass the project folder as the argument:
 ```powershell
 $env:APPDATA = "$env:TEMP\brisk-smoke-appdata"
 $env:BRISK_SMOKE_SCOPE = "1"
-target\smoke\release\brisk.exe C:\tmp\empty-folder
+target\smoke\brisk.exe C:\tmp\empty-folder
 ```
 
 - Point `APPDATA` at a temporary folder. Several smokes change settings, local history or run configurations, and a fresh `APPDATA` keeps your own settings out of the result.
@@ -43,6 +43,7 @@ target\smoke\release\brisk.exe C:\tmp\empty-folder
 - Output lines usually start with the smoke's name, e.g. `smoke-ansi: …`. Most smokes only report; you read the output. Smokes that check results themselves exit with code 1 on failure, as noted below.
 - Smokes never touch the network. Under any `BRISK_SMOKE_*` variable pip gets `PIP_NO_INDEX=1` unless `PIP_INDEX_URL` is set, the PyPI name index is read only from a `file://` URL, and no browser is opened.
 - Smokes that use real Windows mouse messages say so below; they need Windows.
+- Smokes run in the background. On Windows the window is nearly transparent (alpha 1 of 255), behind all other windows, click-through, without focus or a taskbar button, so nothing flashes on the screen. It still draws real frames, and `PrintWindow` captures it as usual (`scripts\ui-shot.ps1`). `BRISK_SMOKE_VISIBLE=1` opens it normally, to watch a smoke or look at a hold.
 
 Arguments:
 
@@ -52,7 +53,7 @@ Arguments:
 
 ## Startup helpers
 
-These are not smokes. They open something at startup, for screenshots and measurements.
+These are not smokes. They open something at startup, for screenshots and measurements. Like smokes, they run in the background unless `BRISK_SMOKE_VISIBLE=1` is set.
 
 - `BRISK_OPEN_FILE=<file>` opens the file.
 - `BRISK_OPEN_SETTINGS=1` opens the Settings dialog.

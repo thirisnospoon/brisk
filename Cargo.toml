@@ -55,6 +55,15 @@ codegen-units = 1
 strip = true
 panic = "abort"
 
+# The build that smokes run on (`--profile smoke --features smoke`, docs/testing.md): release
+# optimizations without LTO and with parallel, incremental codegen, so a rebuild after a change
+# takes about a minute instead of ten. Size and startup are measured on the real release build.
+[profile.smoke]
+inherits = "release"
+lto = false
+codegen-units = 256
+incremental = true
+
 [profile.dev.package."*"]
 opt-level = 2
 

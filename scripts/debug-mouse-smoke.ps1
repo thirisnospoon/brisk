@@ -1,5 +1,5 @@
 param([string]$Exe, [string]$Project, [string]$File, [string]$AppData, [string]$OutDir, [string]$Steps)
-# $Exe has to be a build with the smoke feature, target/smoke/release/brisk.exe (docs/testing.md).
+# $Exe has to be a build with the smoke feature, target/smoke/brisk.exe (docs/testing.md).
 # Starts brisk paused at the first breakpoint (BRISK_SMOKE_DEBUG_HOLD), then runs $Steps against
 # its own window with posted mouse messages: "shot:name; click:x,y; dbl:x,y; rclick:x,y; key:vk; skey:vk (with Shift); mkey:SCA,vk (modifiers); char:text; move:x,y; drag:x1,y1,x2,y2; wait:ms".
 # Coordinates are client pixels of brisk's window. stderr goes to $OutDir\log.txt.

@@ -3,10 +3,10 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\budget.ps1 [-Build] [-Package] [-Runs 3]
 #       [-Exe target\release\brisk.exe] [-Zip dist\x.zip] [-Project examples\demo_project]
-#       [-SmokeExe target\smoke\release\brisk.exe] [-NoMembudget] [-SizeOnly] [-Out results.json]
+#       [-SmokeExe target\smoke\brisk.exe] [-NoMembudget] [-SizeOnly] [-Out results.json]
 #
 # MEMBUDGET is a smoke, so it runs on a build with the smoke feature (-SmokeExe); the release
-# exe has no smokes. -Build builds both, the smoke one in target\smoke.
+# exe has no smokes. -Build builds both, the smoke one with the smoke profile.
 #
 # -SizeOnly checks exe_mb and zip_mb and launches nothing. CI uses it: start time and memory
 # on shared runners vary too much to fail a build on.
@@ -39,7 +39,7 @@ $Limits = [ordered]@{
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $Exe) { $Exe = Join-Path $root 'target\release\brisk.exe' }
-if (-not $SmokeExe) { $SmokeExe = Join-Path $root 'target\smoke\release\brisk.exe' }
+if (-not $SmokeExe) { $SmokeExe = Join-Path $root 'target\smoke\brisk.exe' }
 if (-not $Project) { $Project = Join-Path $root 'examples\demo_project' }
 $Exe = [IO.Path]::GetFullPath($Exe)
 $SmokeExe = [IO.Path]::GetFullPath($SmokeExe)
@@ -51,7 +51,7 @@ if ($Build) {
         cargo build --release -p brisk-app
         if ($LASTEXITCODE -ne 0) { Write-Host "cargo build failed"; exit 2 }
         if (-not $NoMembudget -and -not $SizeOnly) {
-            cargo build --release -p brisk-app --features smoke --target-dir target\smoke
+            cargo build --profile smoke -p brisk-app --features smoke
             if ($LASTEXITCODE -ne 0) { Write-Host "cargo build --features smoke failed"; exit 2 }
         }
     } finally { Pop-Location }

@@ -82,15 +82,16 @@ fn main() {
         workspace::budget_probe::mark("fonts");
         let bounds = Bounds::centered(None, size(px(1400.), px(900.)), cx);
         let title = format!("{} – Brisk", root.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions { title: Some(title.into()), ..Default::default() }),
-                ..Default::default()
-            },
-            |window, cx| cx.new(|cx| Workspace::new(root.clone(), window, cx)),
-        )
-        .expect("failed to open window");
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions { title: Some(title.into()), ..Default::default() }),
+            ..Default::default()
+        };
+        #[cfg(feature = "smoke")]
+        let options = smoke::window_options(options);
+        cx.open_window(options, |window, cx| cx.new(|cx| Workspace::new(root.clone(), window, cx))).expect("failed to open window");
+        #[cfg(feature = "smoke")]
+        smoke::window_opened();
         workspace::budget_probe::mark("window_opened");
         cx.activate(true);
         stall::start(cx);
