@@ -42,7 +42,10 @@ impl Workspace {
             bg.timer(Duration::from_millis(300)).await;
             let marks = ed.update(cx, |e, _| e.stripe_for_smoke()).unwrap_or_default();
             let search = marks.iter().filter(|(m, _)| m == "Search").count();
-            eprintln!("smoke-stripe: after find 'total' -> {search} search marks (lines with hits), errors still {}", marks.iter().filter(|(m, _)| m == "Error").count());
+            eprintln!(
+                "smoke-stripe: after find 'total' -> {search} search marks (lines with hits), errors still {}",
+                marks.iter().filter(|(m, _)| m == "Error").count()
+            );
             let _ = cx.update(|window, cx| ed.update(cx, |e, cx| e.close_find(window, cx)));
             bg.timer(Duration::from_millis(200)).await;
             // Idle: the caret blinks, frames are drawn, the marks stay as built.
@@ -69,7 +72,11 @@ impl Workspace {
             let clicked = ed.update(cx, |e, cx| e.stripe_click_for_smoke(p, cx)).unwrap_or(false);
             bg.timer(Duration::from_millis(300)).await;
             let (caret, top) = ed.read_with(cx, |e, _| (e.caret_line_col(), e.scroll_state().1)).unwrap_or_default();
-            eprintln!("smoke-stripe: click the error mark -> {clicked}, caret {:?}, view top row {:.0}", (caret.0 + 1, caret.1 + 1), top / crate::settings::line_height());
+            eprintln!(
+                "smoke-stripe: click the error mark -> {clicked}, caret {:?}, view top row {:.0}",
+                (caret.0 + 1, caret.1 + 1),
+                top / crate::settings::line_height()
+            );
             let typed = ed.read_with(cx, |e, _| e.stripe_builds_for_smoke()).unwrap_or(0);
             eprintln!("smoke-stripe: rebuilds so far {typed}");
             eprintln!("smoke-stripe: done");

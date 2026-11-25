@@ -3,8 +3,8 @@
 //! language, interpreter, branch), each a pill on hover, the clickable ones opening their
 //! popup. Classic keeps its own status bar (`Workspace::render_status`).
 
-use crate::theme::ui_px;
 use super::{PopupItem, PopupKind, Target, Workspace};
+use crate::theme::ui_px;
 use crate::theme::Theme;
 use gpui::prelude::*;
 use gpui::{div, px, Animation, AnimationExt, Context, Transformation};
@@ -195,8 +195,11 @@ impl Workspace {
         // Left: the tasks indicator (a spinner and the first task), then the last message.
         let indicator = (!tasks.is_empty()).then(|| {
             let more = tasks.len() - 1;
-            let spinner = crate::icons::ui_icon("loader-circle", 12., Theme::accent())
-                .with_animation("sb-spin", Animation::new(Duration::from_millis(900)).repeat(), |s, d| s.with_transformation(Transformation::rotate(gpui::percentage(d))));
+            let spinner = crate::icons::ui_icon("loader-circle", 12., Theme::accent()).with_animation(
+                "sb-spin",
+                Animation::new(Duration::from_millis(900)).repeat(),
+                |s, d| s.with_transformation(Transformation::rotate(gpui::percentage(d))),
+            );
             widget("sb-tasks")
                 .cursor_pointer()
                 .child(spinner)

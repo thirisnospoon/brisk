@@ -172,7 +172,10 @@ impl Workspace {
     /// configuration (its parameters reach the script), as PyCharm does.
     pub(super) fn run_marks_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
-        let _ = std::fs::write(root.join("app.py"), "def greet(name):\n    return f\"hi {name}\"\n\n\nif __name__ == \"__main__\":\n    import sys\n    print(greet(\"run icon\"), *sys.argv[1:])\n");
+        let _ = std::fs::write(
+            root.join("app.py"),
+            "def greet(name):\n    return f\"hi {name}\"\n\n\nif __name__ == \"__main__\":\n    import sys\n    print(greet(\"run icon\"), *sys.argv[1:])\n",
+        );
         let saved = RunConfig { name: "app".into(), target: "app.py".into(), parameters: "from-config".into(), ..Default::default() };
         let _ = brisk_run::save(&root, &brisk_run::RunFile { configurations: vec![saved], ..Default::default() });
         self.reload_runs();
@@ -322,7 +325,16 @@ mod tests {
         let root = Path::new("C:/p");
         let mut m = TestMarks::new();
         let r = |id: &str, s| (None, id.to_string(), s);
-        merge_results(&mut m, root, &[r("t/test_a.py::TestX::test_ok", TestStatus::Passed), r("t/test_a.py::TestX::test_p[1]", TestStatus::Passed), r("t/test_a.py::TestX::test_p[2]", TestStatus::Failed), r("t/test_a.py::test_f", TestStatus::Passed)]);
+        merge_results(
+            &mut m,
+            root,
+            &[
+                r("t/test_a.py::TestX::test_ok", TestStatus::Passed),
+                r("t/test_a.py::TestX::test_p[1]", TestStatus::Passed),
+                r("t/test_a.py::TestX::test_p[2]", TestStatus::Failed),
+                r("t/test_a.py::test_f", TestStatus::Passed),
+            ],
+        );
         let f = &m[&norm(&root.join("t/test_a.py"))];
         assert_eq!(f["TestX::test_ok"], TestStatus::Passed);
         assert_eq!(f["TestX::test_p"], TestStatus::Failed);

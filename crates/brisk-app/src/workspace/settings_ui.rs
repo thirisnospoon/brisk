@@ -2,9 +2,9 @@
 //! size, line spacing, inlay hints, editor tabs, actions on save; font zoom
 //! (Alt+Shift+. / Alt+Shift+, / Ctrl+wheel) and the quick theme switch.
 
-use crate::theme::ui_px;
 use super::Workspace;
 use crate::settings::{self, Settings};
+use crate::theme::ui_px;
 use crate::theme::Theme;
 use brisk_keymap::Action;
 use gpui::prelude::*;
@@ -152,9 +152,12 @@ impl Workspace {
             }
             // The masks field: a plain one-line text box.
             "backspace" if self.settings_dialog.as_ref().is_some_and(|d| d.mask_edit) => {
-                self.settings_edit(|s| {
-                    s.soft_wrap_files.pop();
-                }, window);
+                self.settings_edit(
+                    |s| {
+                        s.soft_wrap_files.pop();
+                    },
+                    window,
+                );
             }
             // Tab / Shift+Tab move the focus over the controls, Space presses the focused one.
             "tab" => {
@@ -169,7 +172,11 @@ impl Workspace {
                     d.mask_edit = d.focused() == Some(SetCtl::WrapFiles);
                 }
             }
-            _ if self.settings_dialog.as_ref().is_some_and(|d| d.mask_edit) && !k.modifiers.control && !k.modifiers.alt && k.key_char.as_ref().is_some_and(|t| t.chars().all(|c| !c.is_control())) => {
+            _ if self.settings_dialog.as_ref().is_some_and(|d| d.mask_edit)
+                && !k.modifiers.control
+                && !k.modifiers.alt
+                && k.key_char.as_ref().is_some_and(|t| t.chars().all(|c| !c.is_control())) =>
+            {
                 let t = k.key_char.clone().unwrap_or_default();
                 self.settings_edit(|s| s.soft_wrap_files.push_str(&t), window);
             }
@@ -279,27 +286,48 @@ impl Workspace {
         };
         // Two or more choices, one of them on.
         let choices = |id: &'static str, items: Vec<(String, bool, SetCtl)>, cx: &mut Context<Self>| {
-            div().flex().items_center().flex_wrap().gap(px(6.)).children(items.into_iter().enumerate().map(|(i, (label, on, c))| chip((id, i), on, label, c).on_click(Self::settings_click(c, cx))))
+            div()
+                .flex()
+                .items_center()
+                .flex_wrap()
+                .gap(px(6.))
+                .children(items.into_iter().enumerate().map(|(i, (label, on, c))| chip((id, i), on, label, c).on_click(Self::settings_click(c, cx))))
         };
-        let theme = choices("set-theme", vec![("Dark".into(), !s.light, SetCtl::Theme(false)), ("Light".into(), s.light, SetCtl::Theme(true))], cx).into_any_element();
+        let theme =
+            choices("set-theme", vec![("Dark".into(), !s.light, SetCtl::Theme(false)), ("Light".into(), s.light, SetCtl::Theme(true))], cx).into_any_element();
         // UI style: the setting; BRISK_DESIGN, when it names a style, wins (and says so).
         let forced = crate::theme::islands_override();
         let style = choices("set-style", vec![("Classic".into(), !s.islands, SetCtl::Style(false)), ("Islands".into(), s.islands, SetCtl::Style(true))], cx)
             .when_some(forced, |d, on| {
-                d.child(div().pl(px(6.)).text_size(ui_px(11.5)).text_color(Theme::text_dim()).child(format!("BRISK_DESIGN sets {} for this run", if on { "Islands" } else { "Classic" })))
+                d.child(
+                    div()
+                        .pl(px(6.))
+                        .text_size(ui_px(11.5))
+                        .text_color(Theme::text_dim())
+                        .child(format!("BRISK_DESIGN sets {} for this run", if on { "Islands" } else { "Classic" })),
+                )
             })
             .into_any_element();
         let fonts = div()
             .flex()
             .flex_wrap()
             .gap(px(6.))
-            .children(d.fonts.iter().enumerate().map(|(i, f)| chip(("set-font", i), f.eq_ignore_ascii_case(&s.editor_font), f.clone(), SetCtl::Font(i)).font_family(f.clone()).on_click(Self::settings_click(SetCtl::Font(i), cx))))
+            .children(d.fonts.iter().enumerate().map(|(i, f)| {
+                chip(("set-font", i), f.eq_ignore_ascii_case(&s.editor_font), f.clone(), SetCtl::Font(i))
+                    .font_family(f.clone())
+                    .on_click(Self::settings_click(SetCtl::Font(i), cx))
+            }))
             .into_any_element();
         let size = stepper("set-size", format!("{}", s.font_size), SetCtl::Size, cx);
         let spacing = stepper("set-spacing", format!("{:.1}", s.line_spacing), SetCtl::Spacing, cx);
         let ui_size = stepper("set-ui-size", format!("{}", s.ui_font_size), SetCtl::UiSize, cx);
         let tab_limit = stepper("set-tab-limit", format!("{}", s.tab_limit), SetCtl::TabLimit, cx);
-        let tab_rows = choices("set-tab-rows", vec![("One row".into(), !s.tab_rows, SetCtl::TabRows(false)), ("Multiple rows".into(), s.tab_rows, SetCtl::TabRows(true))], cx).into_any_element();
+        let tab_rows = choices(
+            "set-tab-rows",
+            vec![("One row".into(), !s.tab_rows, SetCtl::TabRows(false)), ("Multiple rows".into(), s.tab_rows, SetCtl::TabRows(true))],
+            cx,
+        )
+        .into_any_element();
         // A checkbox; filled with the accent when on, so its focus ring sits outside.
         let checkbox = |id: &'static str, on: bool, label: &'static str, note: &'static str, c: SetCtl, cx: &mut Context<Self>| {
             div()
@@ -374,8 +402,20 @@ impl Workspace {
             .font_family(s.editor_font.clone())
             .text_size(px(s.font_size))
             .line_height(px(settings::line_height()))
-            .child(div().flex().child(div().text_color(Theme::syntax(brisk_syntax::Highlight::Keyword)).child("def ")).child(div().text_color(Theme::syntax(brisk_syntax::Highlight::Function)).child("greet")).child(div().text_color(Theme::text()).child("(name):")))
-            .child(div().flex().child(div().text_color(Theme::syntax(brisk_syntax::Highlight::Keyword)).child("    return ")).child(div().text_color(Theme::syntax(brisk_syntax::Highlight::String)).child("f\"Hello, {name}!\"")).child(div().text_color(Theme::syntax(brisk_syntax::Highlight::Comment)).child("  # 0O1lI")));
+            .child(
+                div()
+                    .flex()
+                    .child(div().text_color(Theme::syntax(brisk_syntax::Highlight::Keyword)).child("def "))
+                    .child(div().text_color(Theme::syntax(brisk_syntax::Highlight::Function)).child("greet"))
+                    .child(div().text_color(Theme::text()).child("(name):")),
+            )
+            .child(
+                div()
+                    .flex()
+                    .child(div().text_color(Theme::syntax(brisk_syntax::Highlight::Keyword)).child("    return "))
+                    .child(div().text_color(Theme::syntax(brisk_syntax::Highlight::String)).child("f\"Hello, {name}!\""))
+                    .child(div().text_color(Theme::syntax(brisk_syntax::Highlight::Comment)).child("  # 0O1lI")),
+            );
         let button = |id: &'static str, label: &'static str, primary: bool, c: SetCtl, cx: &mut Context<Self>| {
             crate::ui_kit::button(id, label, true, primary)
                 .text_size(ui_px(13.))
@@ -419,35 +459,42 @@ impl Workspace {
                                 .flex_col()
                                 .gap(px(2.))
                                 .px(px(16.))
-                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pb(px(2.)).child("APPEARANCE"))
-                        .child(row("Theme", theme))
-                        .child(row("UI style", style))
-                        .child(row("UI font size", ui_size))
-                        .child(row("Animations", animations))
-                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › GENERAL"))
-                        .child(row("Scrolling", smooth))
-                        .child(row("Caret", caret))
-                        .child(row("Sticky lines", sticky))
-                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › FONT"))
-                        .child(row("Font", fonts))
-                        .child(row("Size", size))
-                        .child(row("Line spacing", spacing))
-                        .child(preview)
-                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › APPEARANCE"))
-                        .child(row("Inlay hints", inlay))
-                        .child(row("Whitespaces", whitespace))
-                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › EDITOR TABS"))
-                        .child(row("Show tabs in", tab_rows))
-                        .child(row("Tab limit", tab_limit))
-                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › GENERAL › SOFT WRAPS"))
-                        .child(row("Soft-wrap files", masks))
-                        .child(row("", div().flex().items_center().gap(px(12.)).child(wrap_indent).child(wrap_extra).into_any_element()))
-                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › CODE STYLE › PYTHON › CODE GENERATION"))
-                        .child(row("Comment code", comment_col))
-                        .child(row("", comment_space))
-                        .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("TOOLS › ACTIONS ON SAVE"))
-                        .child(row("", reformat))
-                        .child(row("", imports)),
+                                .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pb(px(2.)).child("APPEARANCE"))
+                                .child(row("Theme", theme))
+                                .child(row("UI style", style))
+                                .child(row("UI font size", ui_size))
+                                .child(row("Animations", animations))
+                                .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › GENERAL"))
+                                .child(row("Scrolling", smooth))
+                                .child(row("Caret", caret))
+                                .child(row("Sticky lines", sticky))
+                                .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › FONT"))
+                                .child(row("Font", fonts))
+                                .child(row("Size", size))
+                                .child(row("Line spacing", spacing))
+                                .child(preview)
+                                .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › APPEARANCE"))
+                                .child(row("Inlay hints", inlay))
+                                .child(row("Whitespaces", whitespace))
+                                .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › EDITOR TABS"))
+                                .child(row("Show tabs in", tab_rows))
+                                .child(row("Tab limit", tab_limit))
+                                .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("EDITOR › GENERAL › SOFT WRAPS"))
+                                .child(row("Soft-wrap files", masks))
+                                .child(row("", div().flex().items_center().gap(px(12.)).child(wrap_indent).child(wrap_extra).into_any_element()))
+                                .child(
+                                    div()
+                                        .text_size(ui_px(11.))
+                                        .text_color(Theme::text_dim())
+                                        .pt(px(8.))
+                                        .pb(px(2.))
+                                        .child("EDITOR › CODE STYLE › PYTHON › CODE GENERATION"),
+                                )
+                                .child(row("Comment code", comment_col))
+                                .child(row("", comment_space))
+                                .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("TOOLS › ACTIONS ON SAVE"))
+                                .child(row("", reformat))
+                                .child(row("", imports)),
                         )
                         .child(
                             div()
@@ -458,7 +505,13 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("Alt+Shift+. / Alt+Shift+, or Ctrl+wheel: zoom all editors"))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_size(ui_px(11.))
+                                        .text_color(Theme::text_dim())
+                                        .child("Alt+Shift+. / Alt+Shift+, or Ctrl+wheel: zoom all editors"),
+                                )
                                 .child(button("set-cancel", "Cancel", false, SetCtl::Cancel, cx))
                                 .child(button("set-ok", "OK", true, SetCtl::Ok, cx)),
                         ),
@@ -471,7 +524,14 @@ impl Workspace {
     pub(super) fn settings_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let show = || {
             let s = settings::current();
-            format!("light={} font={} size={} spacing={} line_height={}", s.light, s.editor_font, settings::font_size(), s.line_spacing, settings::line_height())
+            format!(
+                "light={} font={} size={} spacing={} line_height={}",
+                s.light,
+                s.editor_font,
+                settings::font_size(),
+                s.line_spacing,
+                settings::line_height()
+            )
         };
         eprintln!("smoke-settings: start -> {}", show());
         self.dispatch(Action::Settings, window, cx);
@@ -491,9 +551,21 @@ impl Workspace {
         self.settings_edit(|s| s.islands = true, window);
         eprintln!("smoke-settings: ui style islands (live) -> islands={}", crate::theme::islands());
         self.settings_edit(|s| (s.smooth_scrolling, s.caret_blinking, s.smooth_caret) = (false, false, true), window);
-        eprintln!("smoke-settings: smooth scrolling / caret blinking / smooth caret (live) -> {} {} {}", settings::smooth_scrolling(), settings::caret_blinking(), settings::smooth_caret());
+        eprintln!(
+            "smoke-settings: smooth scrolling / caret blinking / smooth caret (live) -> {} {} {}",
+            settings::smooth_scrolling(),
+            settings::caret_blinking(),
+            settings::smooth_caret()
+        );
         self.smoke_press("escape", window, cx);
-        eprintln!("smoke-settings: escape -> inlay hints {} islands={} smooth scrolling {} caret blinking {} smooth caret {}", settings::inlay_hints(), crate::theme::islands(), settings::smooth_scrolling(), settings::caret_blinking(), settings::smooth_caret());
+        eprintln!(
+            "smoke-settings: escape -> inlay hints {} islands={} smooth scrolling {} caret blinking {} smooth caret {}",
+            settings::inlay_hints(),
+            crate::theme::islands(),
+            settings::smooth_scrolling(),
+            settings::caret_blinking(),
+            settings::smooth_caret()
+        );
         // Keyboard focus: Tab / Shift+Tab move the ring, Space presses the focused control,
         // Enter on Cancel cancels.
         self.dispatch(Action::Settings, window, cx);
@@ -512,12 +584,15 @@ impl Workspace {
         );
         self.dispatch(Action::Settings, window, cx);
         let font = self.settings_dialog.as_ref().and_then(|d| d.fonts.last().cloned()).unwrap_or_default();
-        self.settings_edit(|s| {
-            s.light = true;
-            s.font_size = 15.0;
-            s.line_spacing = 1.2;
-            s.editor_font = font;
-        }, window);
+        self.settings_edit(
+            |s| {
+                s.light = true;
+                s.font_size = 15.0;
+                s.line_spacing = 1.2;
+                s.editor_font = font;
+            },
+            window,
+        );
         self.smoke_press("enter", window, cx);
         let saved = std::fs::read_to_string(brisk_db::config_dir().join("settings.json")).unwrap_or_default();
         eprintln!("smoke-settings: OK -> {} saved={}", show(), saved.replace(['\n', ' '], ""));
@@ -537,7 +612,10 @@ impl Workspace {
         // .editorconfig: indent from the config, trailing spaces and final newline on save.
         let dir = self.root.join("ec_smoke");
         let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(self.root.join(".editorconfig"), "root = true\n[*]\ninsert_final_newline = true\ntrim_trailing_whitespace = true\n[ec_smoke/*.py]\nindent_size = 2\nend_of_line = crlf\n");
+        let _ = std::fs::write(
+            self.root.join(".editorconfig"),
+            "root = true\n[*]\ninsert_final_newline = true\ntrim_trailing_whitespace = true\n[ec_smoke/*.py]\nindent_size = 2\nend_of_line = crlf\n",
+        );
         let file = dir.join("ec.py");
         let _ = std::fs::write(&file, "def f():\n        return 1   \nx = 2   ");
         let detect = self.root.join("tabs.mk");

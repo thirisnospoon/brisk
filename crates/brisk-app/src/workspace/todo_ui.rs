@@ -2,9 +2,9 @@
 //! Enter) opens the line. Rescanned when the window opens, on Refresh, and for each file
 //! saved while the window exists.
 
-use crate::theme::ui_px;
 use super::{BottomTool, Workspace};
-use crate::theme::{Theme, mono_font};
+use crate::theme::ui_px;
+use crate::theme::{mono_font, Theme};
 use crate::todo_scan::{self, Item};
 use brisk_keymap::Action;
 use gpui::prelude::*;
@@ -196,17 +196,15 @@ impl Workspace {
     pub(super) fn render_todo(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let Some(t) = &self.todo else { return div().into_any_element() };
         let rows = t.rows();
-        let summary = if t.scanning && t.groups.is_empty() {
-            "Scanning…".to_string()
-        } else {
-            format!("Found {} TODO items in {} files", t.count(), t.groups.len())
-        };
+        let summary =
+            if t.scanning && t.groups.is_empty() { "Scanning…".to_string() } else { format!("Found {} TODO items in {} files", t.count(), t.groups.len()) };
         let toolbar = div()
             .flex()
             .flex_shrink_0()
             .items_center()
             .gap(px(6.))
-            .pl(px(12.)).pr(px(6.))
+            .pl(px(12.))
+            .pr(px(6.))
             .h(px(crate::ui_kit::header_h()))
             .border_b_1()
             .border_color(Theme::divider())
@@ -253,14 +251,7 @@ impl Workspace {
                     .track_scroll(t.scroll.clone()),
                 )
             });
-        div()
-            .id("todo-window")
-            .size_full()
-            .flex()
-            .flex_col()
-            .child(toolbar)
-            .child(list)
-            .into_any_element()
+        div().id("todo-window").size_full().flex().flex_col().child(toolbar).child(list).into_any_element()
     }
 
     /// One row of the TODO list (only the rows in view are built).
@@ -282,14 +273,17 @@ impl Workspace {
                     .cursor_pointer()
                     .when(sel, |d| d.bg(Theme::selection_row()))
                     .when(!sel, |d| d.hover(|s| s.bg(Theme::hover_row())))
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, w, cx| {
-                        if let Some(t) = this.todo.as_mut() {
-                            t.selected = i;
-                            w.focus(&t.focus.clone());
-                        }
-                        // A click opens an item, or folds / unfolds a file.
-                        this.todo_open(i, w, cx);
-                    }));
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, _, w, cx| {
+                            if let Some(t) = this.todo.as_mut() {
+                                t.selected = i;
+                                w.focus(&t.focus.clone());
+                            }
+                            // A click opens an item, or folds / unfolds a file.
+                            this.todo_open(i, w, cx);
+                        }),
+                    );
                 let el = match r {
                     Row::File(p, n) => {
                         let open = !t.collapsed.contains(p);
@@ -304,8 +298,14 @@ impl Workspace {
                     Row::Item(it) => {
                         let fixme = it.text.to_lowercase().starts_with("fixme");
                         row.pl(px(34.))
-                            .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).font_family(mono_font()).child(format!("({}, {})", it.line + 1, it.col + 1)))
-                            .child(div().text_color(if fixme { Theme::warning() } else { Theme::syntax(brisk_syntax::Highlight::Comment) }).child(it.text.clone()))
+                            .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).font_family(mono_font()).child(format!(
+                                "({}, {})",
+                                it.line + 1,
+                                it.col + 1
+                            )))
+                            .child(
+                                div().text_color(if fixme { Theme::warning() } else { Theme::syntax(brisk_syntax::Highlight::Comment) }).child(it.text.clone()),
+                            )
                     }
                 };
                 el.into_any_element()
@@ -322,7 +322,10 @@ impl Workspace {
         let _ = std::fs::create_dir_all(root.join("pkg"));
         let _ = std::fs::create_dir_all(root.join("build"));
         let _ = std::fs::write(root.join(".gitignore"), "build/\n");
-        let _ = std::fs::write(root.join("app.py"), "import os\n\n\ndef main():\n    # TODO: read the config from env\n    path = os.getcwd()  # FIXME handle a missing folder\n    return path\n");
+        let _ = std::fs::write(
+            root.join("app.py"),
+            "import os\n\n\ndef main():\n    # TODO: read the config from env\n    path = os.getcwd()  # FIXME handle a missing folder\n    return path\n",
+        );
         let _ = std::fs::write(root.join("pkg/util.py"), "def todo_list():\n    return []  # todo_list is a name, not an item\n");
         let _ = std::fs::write(root.join("pkg/web.js"), "// TODO debounce the handler\nfunction f() {}\n/* FIXME: leaks */\n");
         let _ = std::fs::write(root.join("notes.md"), "# Notes\n\n- [ ] TODO write the README\n");
@@ -335,7 +338,16 @@ impl Workspace {
             pause(1200).await;
             let dump = |this: &Workspace| {
                 let t = this.todo.as_ref().unwrap();
-                t.groups.iter().map(|(p, items)| format!("{}: {:?}", p.strip_prefix(&this.root).unwrap_or(p).display(), items.iter().map(|i| format!("{}:{} {}", i.line + 1, i.col + 1, i.text)).collect::<Vec<_>>())).collect::<Vec<_>>()
+                t.groups
+                    .iter()
+                    .map(|(p, items)| {
+                        format!(
+                            "{}: {:?}",
+                            p.strip_prefix(&this.root).unwrap_or(p).display(),
+                            items.iter().map(|i| format!("{}:{} {}", i.line + 1, i.col + 1, i.text)).collect::<Vec<_>>()
+                        )
+                    })
+                    .collect::<Vec<_>>()
             };
             let _ = this.update_in(cx, |this, window, cx| {
                 eprintln!("smoke-todo: scan -> {:#?}", dump(this));

@@ -214,7 +214,10 @@ impl Workspace {
 
     fn format_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let file = self.root.join("messy.py");
-        let _ = std::fs::write(&file, "import sys\nimport os\nimport json\ndef f( a,b ):\n  return {'a':a,\n'b':b}\nx=f(1,2)\ny = [ 1,2 ]\nprint(os.getcwd(),x,y)\n");
+        let _ = std::fs::write(
+            &file,
+            "import sys\nimport os\nimport json\ndef f( a,b ):\n  return {'a':a,\n'b':b}\nx=f(1,2)\ny = [ 1,2 ]\nprint(os.getcwd(),x,y)\n",
+        );
         self.open_file(&file, window, cx);
         let Some(ed) = self.active_editor().cloned() else { return };
         self.dispatch(Action::OptimizeImports, window, cx);
@@ -227,7 +230,11 @@ impl Workspace {
         });
         self.dispatch(Action::ReformatCode, window, cx);
         let t = ed.read(cx).text_string();
-        eprintln!("smoke-edit2: reformat selection -> y line {:?}, x line {:?}", t.lines().find(|l| l.starts_with("y")), t.lines().find(|l| l.starts_with("x")));
+        eprintln!(
+            "smoke-edit2: reformat selection -> y line {:?}, x line {:?}",
+            t.lines().find(|l| l.starts_with("y")),
+            t.lines().find(|l| l.starts_with("x"))
+        );
         ed.update(cx, |e, _| e.buffer.set_caret(0, false));
         self.dispatch(Action::ReformatCode, window, cx);
         eprintln!("smoke-edit2: reformat file -> {:?} | status {:?}", ed.read(cx).text_string(), self.status);
@@ -331,7 +338,9 @@ impl Workspace {
         let _ = std::fs::write(&file, src);
         self.open_file(&file, window, cx);
         let Some(ed) = self.active_editor().cloned() else { return };
-        let lines = |this: &Self, cx: &mut Context<Self>, r: std::ops::Range<usize>| this.active_editor().map(|e| e.read(cx).text_string().lines().skip(r.start).take(r.len()).map(String::from).collect::<Vec<_>>()).unwrap_or_default();
+        let lines = |this: &Self, cx: &mut Context<Self>, r: std::ops::Range<usize>| {
+            this.active_editor().map(|e| e.read(cx).text_string().lines().skip(r.start).take(r.len()).map(String::from).collect::<Vec<_>>()).unwrap_or_default()
+        };
         let pick = |this: &mut Self, prefix: &str, window: &mut Window, cx: &mut Context<Self>| {
             let t = this.problems.intents.iter().find(|i| i.label.starts_with(prefix)).map(|i| i.target.clone());
             this.popup = None;
@@ -339,9 +348,13 @@ impl Workspace {
                 this.apply_intent(*i, window, cx);
             }
         };
-        let at = |e: &crate::editor::Editor, needle: &str, off: usize| e.text_string().find(needle).map(|b| e.text_string()[..b + off].chars().count()).unwrap_or(0);
+        let at =
+            |e: &crate::editor::Editor, needle: &str, off: usize| e.text_string().find(needle).map(|b| e.text_string()[..b + off].chars().count()).unwrap_or(0);
         // Ctrl+Alt+V on `items` without a selection: the Expressions choice.
-        ed.update(cx, |e, _| { let p = at(e, "sum(items)", 5); e.buffer.set_caret(p, false) });
+        ed.update(cx, |e, _| {
+            let p = at(e, "sum(items)", 5);
+            e.buffer.set_caret(p, false)
+        });
         self.smoke_press("ctrl-alt-v", window, cx);
         let labels: Vec<_> = self.problems.intents.iter().map(|i| i.label.clone()).collect();
         eprintln!("smoke-edit2: extract variable -> {:?} {labels:?}", self.problems.intents_title);
@@ -349,7 +362,10 @@ impl Workspace {
         eprintln!("smoke-edit2: extracted variable -> {:?}", lines(self, cx, 3..6));
         self.dispatch(Action::Undo, window, cx);
         // Ctrl+Alt+C on `0.1`: pick `0.2 + 0.1`.
-        ed.update(cx, |e, _| { let p = at(e, "0.1", 1); e.buffer.set_caret(p, false) });
+        ed.update(cx, |e, _| {
+            let p = at(e, "0.1", 1);
+            e.buffer.set_caret(p, false)
+        });
         self.smoke_press("ctrl-alt-c", window, cx);
         pick(self, "0.2 + 0.1", window, cx);
         eprintln!("smoke-edit2: extracted constant -> {:?} / {:?}", lines(self, cx, 0..3), lines(self, cx, 17..18));
@@ -365,11 +381,17 @@ impl Workspace {
         self.dispatch(Action::Undo, window, cx);
         eprintln!("smoke-edit2: extract method undo -> {}", ed.read(cx).text_string() == src);
         // Ctrl+Alt+N on `rate`, then on `def sq`.
-        ed.update(cx, |e, _| { let p = at(e, "rate =", 1); e.buffer.set_caret(p, false) });
+        ed.update(cx, |e, _| {
+            let p = at(e, "rate =", 1);
+            e.buffer.set_caret(p, false)
+        });
         self.smoke_press("ctrl-alt-n", window, cx);
         eprintln!("smoke-edit2: inline variable -> {:?} {:?}", self.status, lines(self, cx, 14..17));
         self.dispatch(Action::Undo, window, cx);
-        ed.update(cx, |e, _| { let p = at(e, "def sq", 5); e.buffer.set_caret(p, false) });
+        ed.update(cx, |e, _| {
+            let p = at(e, "def sq", 5);
+            e.buffer.set_caret(p, false)
+        });
         self.smoke_press("ctrl-alt-n", window, cx);
         let labels: Vec<_> = self.problems.intents.iter().map(|i| i.label.clone()).collect();
         eprintln!("smoke-edit2: inline function -> {:?} {labels:?}", self.problems.intents_title);
@@ -407,8 +429,10 @@ impl Workspace {
         eprintln!("smoke-edit2: ctrl-3 -> caret line {}", ed.read(cx).caret_line_col().0);
         ed.update(cx, |e, _| {
             e.buffer.set_caret(0, false);
-            e.buffer.insert("# shifted
-");
+            e.buffer.insert(
+                "# shifted
+",
+            );
         });
         self.dispatch(Action::ShowBookmarks, window, cx);
         eprintln!("smoke-edit2: after inserting a line, shift-f11 -> {}", self.smoke_popup());
@@ -418,7 +442,10 @@ impl Workspace {
         eprintln!("smoke-edit2: tab closed, stored -> {:?}", self.all_bookmarks(cx).iter().map(|b| (b.line, b.mnemonic)).collect::<Vec<_>>());
         self.open_file(&file, window, cx);
         let back = self.active_editor().map(|e| e.update(cx, |e, _| e.bookmark_lines()));
-        eprintln!("smoke-edit2: reopened -> {back:?}, saved file has project: {}", std::fs::read_to_string(brisk_db::config_dir().join("bookmarks.json")).map(|s| s.contains("stage2.py")).unwrap_or(false));
+        eprintln!(
+            "smoke-edit2: reopened -> {back:?}, saved file has project: {}",
+            std::fs::read_to_string(brisk_db::config_dir().join("bookmarks.json")).map(|s| s.contains("stage2.py")).unwrap_or(false)
+        );
 
         // --- Extend / Shrink Selection, Clone Caret, Paste from History ---
         if let Some(ed) = self.active_editor().cloned() {
@@ -470,8 +497,10 @@ impl Workspace {
 
         // --- Tabs and split ---
         let third = self.root.join("third.py");
-        let _ = std::fs::write(&third, "x = 3
-");
+        let _ = std::fs::write(
+            &third, "x = 3
+",
+        );
         self.open_file(&third, window, cx);
         eprintln!("smoke-edit2: tabs -> {}", self.panes_for_smoke(cx));
         self.dispatch(Action::SplitVertically, window, cx);
@@ -485,11 +514,20 @@ impl Workspace {
         let editors = self.editors().count();
         eprintln!("smoke-edit2: editors in both groups -> {editors}");
         self.tab_menu(false, 0, gpui::point(gpui::px(300.), gpui::px(60.)), window, cx);
-        let labels: Vec<String> = self.menu.as_ref().map(|m| m.entries.iter().filter_map(|e| match e {
-            super::menu_ui::Entry::Item { label, enabled, .. } => Some(format!("{label}{}", if *enabled { "" } else { " (off)" })),
-            super::menu_ui::Entry::Separator => None,
-            super::menu_ui::Entry::Submenu { label, .. } => Some(format!("{label} ›")),
-        }).collect()).unwrap_or_default();
+        let labels: Vec<String> = self
+            .menu
+            .as_ref()
+            .map(|m| {
+                m.entries
+                    .iter()
+                    .filter_map(|e| match e {
+                        super::menu_ui::Entry::Item { label, enabled, .. } => Some(format!("{label}{}", if *enabled { "" } else { " (off)" })),
+                        super::menu_ui::Entry::Separator => None,
+                        super::menu_ui::Entry::Submenu { label, .. } => Some(format!("{label} ›")),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         self.menu = None;
         eprintln!("smoke-edit2: tab menu -> {labels:?}");
         self.dispatch(Action::CloseOtherTabs, window, cx);

@@ -25,7 +25,11 @@ impl Workspace {
             if ed.update(cx, |e, cx| e.expand_live_template(cx)) {
                 return;
             }
-            TEMPLATES.iter().filter(|t| t.key != "ifmain").map(|t| item(t.key.to_string(), t.desc.to_string(), String::new(), Intent::Template(t.key))).collect()
+            TEMPLATES
+                .iter()
+                .filter(|t| t.key != "ifmain")
+                .map(|t| item(t.key.to_string(), t.desc.to_string(), String::new(), Intent::Template(t.key)))
+                .collect()
         };
         self.problems.intents = items;
         self.problems.intents_title = Some(title);

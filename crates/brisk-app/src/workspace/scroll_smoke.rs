@@ -73,7 +73,8 @@ fn generate(root: &Path) {
     }
     let mut outline = String::new();
     for i in 0..1250 {
-        outline.push_str(&format!("class C{i}:\n    def a(self):\n        return {i}\n\n    def b(self):\n        pass\n\n    def c(self):\n        pass\n\n\n"));
+        outline
+            .push_str(&format!("class C{i}:\n    def a(self):\n        return {i}\n\n    def b(self):\n        pass\n\n    def c(self):\n        pass\n\n\n"));
     }
     let _ = std::fs::write(root.join("outline.py"), outline);
     let _ = std::fs::write(
@@ -294,7 +295,13 @@ impl Workspace {
                     d.vars = (0..10_000)
                         .map(|i| super::debug_ui::VarRow {
                             depth: if i == 0 { 0 } else { 1 },
-                            var: brisk_dap::Variable { name: format!("[{i}]"), value: format!("{{'key': {i}, 'name': 'row {i}'}}"), type_name: "dict".into(), reference: 0, evaluate_name: String::new() },
+                            var: brisk_dap::Variable {
+                                name: format!("[{i}]"),
+                                value: format!("{{'key': {i}, 'name': 'row {i}'}}"),
+                                type_name: "dict".into(),
+                                reference: 0,
+                                evaluate_name: String::new(),
+                            },
                             expanded: i == 0,
                             kind: if i == 0 { super::debug_ui::RowKind::Scope } else { super::debug_ui::RowKind::Var },
                             parent: 0,
@@ -367,7 +374,12 @@ impl Workspace {
             }
 
             if want("test-tree") {
-                let cfg = brisk_run::RunConfig { name: "scroll tests".into(), kind: brisk_run::RunKind::Pytest, target: "test_scroll.py".into(), ..Default::default() };
+                let cfg = brisk_run::RunConfig {
+                    name: "scroll tests".into(),
+                    kind: brisk_run::RunKind::Pytest,
+                    target: "test_scroll.py".into(),
+                    ..Default::default()
+                };
                 for _ in 0..100 {
                     if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(true) {
                         break;
@@ -377,7 +389,9 @@ impl Workspace {
                 let _ = this.update_in(cx, |this, window, cx| this.run_config(cfg, window, cx));
                 for _ in 0..600 {
                     wait(cx, 100).await;
-                    let done = this.update(cx, |t, cx| t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default().contains("Process finished")).unwrap_or(true);
+                    let done = this
+                        .update(cx, |t, cx| t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default().contains("Process finished"))
+                        .unwrap_or(true);
                     if done {
                         break;
                     }
@@ -409,4 +423,3 @@ impl Workspace {
         .detach();
     }
 }
-

@@ -53,7 +53,11 @@ pub fn sort(rows: &mut [Row], by: SortBy, desc: bool, root: &Path) {
             SortBy::Own => a.own.total_cmp(&b.own),
             SortBy::Total => a.total.total_cmp(&b.total),
         };
-        if desc { o.reverse() } else { o }
+        if desc {
+            o.reverse()
+        } else {
+            o
+        }
     });
 }
 

@@ -90,10 +90,8 @@ impl PipeIo {
         // Readers only read; one writer thread orders output by whole lines, so a stderr line
         // never lands in the middle of a stdout line that `print()` wrote in pieces.
         let (chunk_tx, chunk_rx) = std::sync::mpsc::channel::<(usize, Option<Vec<u8>>)>();
-        let streams: [Option<Box<dyn Read + Send>>; 2] = [
-            child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
-            child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
-        ];
+        let streams: [Option<Box<dyn Read + Send>>; 2] =
+            [child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>), child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>)];
         let mut open = 0;
         // Streams still being read: once both are closed, the rest of the output is queued and
         // the exit waits for it to reach the console, however far behind the parser is.

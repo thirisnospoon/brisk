@@ -2,10 +2,10 @@
 //! popups. The log is reloaded through `git log` with the filters, so the graph follows the
 //! filtered list.
 
-use crate::theme::ui_px;
 use super::menu_ui::Entry;
 use super::Workspace;
 use crate::editor::Editor;
+use crate::theme::ui_px;
 use crate::theme::Theme;
 use brisk_git::LogQuery;
 use gpui::prelude::*;
@@ -218,7 +218,14 @@ impl Workspace {
         let Some(root) = self.git.as_ref().map(|g| g.repo.root().to_path_buf()) else { return };
         let task = cx.background_executor().spawn(async move {
             let mut dirs: Vec<String> = std::fs::read_dir(root)
-                .map(|rd| rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| !n.starts_with('.')).map(|n| format!("{n}/")).collect())
+                .map(|rd| {
+                    rd.flatten()
+                        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .filter(|n| !n.starts_with('.'))
+                        .map(|n| format!("{n}/"))
+                        .collect()
+                })
                 .unwrap_or_default();
             dirs.sort_by_key(|d| d.to_lowercase());
             dirs
@@ -328,12 +335,11 @@ impl Workspace {
             .child(user)
             .child(date)
             .child(paths)
-            .when(!q.is_empty(), |d| {
-                d.child(chip("log-filter-clear", "✕".into(), false).on_click(cx.listener(|this, _, w, cx| this.clear_log_filters(w, cx))))
-            })
+            .when(!q.is_empty(), |d| d.child(chip("log-filter-clear", "✕".into(), false).on_click(cx.listener(|this, _, w, cx| this.clear_log_filters(w, cx)))))
             .into_any_element()
     }
 }
 
 /// The Date filter's choices (PyCharm's list), as days back.
-const DATES: [(&str, Option<u32>); 6] = [("All", None), ("Last 24 hours", Some(1)), ("Last 7 days", Some(7)), ("Last 30 days", Some(30)), ("Last 90 days", Some(90)), ("Last year", Some(365))];
+const DATES: [(&str, Option<u32>); 6] =
+    [("All", None), ("Last 24 hours", Some(1)), ("Last 7 days", Some(7)), ("Last 30 days", Some(30)), ("Last 90 days", Some(90)), ("Last year", Some(365))];

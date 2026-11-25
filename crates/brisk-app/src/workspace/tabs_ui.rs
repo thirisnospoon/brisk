@@ -6,11 +6,11 @@
 //! "the current tabs" keeps working; the other group waits in `split` and they swap places
 //! when focus moves. A file is open in one group at a time.
 
-use crate::theme::ui_px;
 use super::menu_ui::Entry;
 use super::{PopupItem, PopupKind, Tab, Target, Workspace};
 use crate::editor::Editor;
-use crate::theme::{Theme, mono_font};
+use crate::theme::ui_px;
+use crate::theme::{mono_font, Theme};
 use brisk_keymap::Action;
 use gpui::prelude::*;
 use gpui::{div, px, Context, Entity, MouseButton, Pixels, Point, Window};
@@ -260,12 +260,7 @@ impl Workspace {
         if let Some(p) = self.tabs.get(i).and_then(|t| Self::tab_path(t, cx)) {
             v.push(Entry::Separator);
             v.push(self.path_entries(p.clone()));
-            v.push(Entry::Item {
-                label: "Show in Explorer".into(),
-                shortcut: String::new(),
-                enabled: true,
-                run: Rc::new(move |_, _, cx| cx.reveal_path(&p)),
-            });
+            v.push(Entry::Item { label: "Show in Explorer".into(), shortcut: String::new(), enabled: true, run: Rc::new(move |_, _, cx| cx.reveal_path(&p)) });
         }
         self.open_menu(pos, v, cx);
     }
@@ -309,7 +304,17 @@ impl Workspace {
         let (outline, chain) = e.update(cx, |ed, _| ed.caret_scope());
         let file = parts.len() - 1;
         let last = file + chain.len();
-        let mut row = div().h(ui_px(24.)).flex_shrink_0().flex().items_center().gap(px(4.)).px(px(12.)).text_size(ui_px(12.)).font_family(crate::theme::ui_font()).whitespace_nowrap().overflow_hidden();
+        let mut row = div()
+            .h(ui_px(24.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .px(px(12.))
+            .text_size(ui_px(12.))
+            .font_family(crate::theme::ui_font())
+            .whitespace_nowrap()
+            .overflow_hidden();
         let crumb = |id: usize, text: String, color: gpui::Hsla| {
             div().id(("crumb", id)).px(px(3.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).text_color(color).child(text)
         };
@@ -321,7 +326,10 @@ impl Workspace {
                 // The file (its icon first): its top-level classes and functions.
                 let ed = e.clone();
                 row = row.child(crate::icons::glyph(crate::icons::file_kind(&p, false), 12., Theme::text_muted()));
-                row = row.child(crumb(i, p, if i == last { Theme::text() } else { Theme::text_muted() }).on_click(cx.listener(move |this, _, w, cx| this.open_crumb_popup(&ed, None, w, cx))));
+                row = row.child(
+                    crumb(i, p, if i == last { Theme::text() } else { Theme::text_muted() })
+                        .on_click(cx.listener(move |this, _, w, cx| this.open_crumb_popup(&ed, None, w, cx))),
+                );
             } else {
                 // A folder (the first crumb is the project root): its contents.
                 let dir = rel.iter().take(i).fold(self.root.clone(), |d, c| d.join(c));
@@ -490,7 +498,12 @@ impl Workspace {
             .collect();
         v.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())));
         v.into_iter()
-            .map(|(dir, label, path)| PopupItem { label, detail: String::new(), hint: if dir { "›".into() } else { String::new() }, target: if dir { Target::Dir(path) } else { Target::File(path) } })
+            .map(|(dir, label, path)| PopupItem {
+                label,
+                detail: String::new(),
+                hint: if dir { "›".into() } else { String::new() },
+                target: if dir { Target::Dir(path) } else { Target::File(path) },
+            })
             .collect()
     }
 
@@ -510,7 +523,12 @@ impl Workspace {
             .iter()
             .map(|&i| {
                 let o = &outline[i];
-                PopupItem { label: o.name.clone(), detail: format!(":{}", o.line + 1), hint: String::new(), target: Target::Symbol(path.clone(), o.line, 0, o.kind) }
+                PopupItem {
+                    label: o.name.clone(),
+                    detail: format!(":{}", o.line + 1),
+                    hint: String::new(),
+                    target: Target::Symbol(path.clone(), o.line, 0, o.kind),
+                }
             })
             .collect();
         self.open_popup(PopupKind::FileStructure);
@@ -576,7 +594,11 @@ impl Workspace {
                 .enumerate()
                 .map(|(i, t)| {
                     let n = Self::tab_path(t, cx).and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_else(|| "?".into());
-                    if Some(i) == active { format!("[{n}]") } else { n }
+                    if Some(i) == active {
+                        format!("[{n}]")
+                    } else {
+                        n
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join(" ")

@@ -58,7 +58,13 @@ impl Snapshot {
             stamps.insert(p.clone(), now);
         }
         changed.sort_by_key(|p| p.components().count());
-        let changed = changed.into_iter().map(|d| { let e = brisk_project::read_entries(&d); (d, e) }).collect();
+        let changed = changed
+            .into_iter()
+            .map(|d| {
+                let e = brisk_project::read_entries(&d);
+                (d, e)
+            })
+            .collect();
         Polled { editors, stamps, changed }
     }
 }
@@ -199,9 +205,7 @@ impl Workspace {
             // A file created by another program shows up in the Project view.
             let _ = std::fs::write(root.join("disk_created.py"), "");
             wait(2000).await;
-            let listed = this
-                .update(cx, |this, _| this.tree.rows().to_vec().iter().any(|r| this.tree.nodes[r.id].name == "disk_created.py"))
-                .unwrap_or(false);
+            let listed = this.update(cx, |this, _| this.tree.rows().to_vec().iter().any(|r| this.tree.nodes[r.id].name == "disk_created.py")).unwrap_or(false);
             eprintln!("smoke-disk: created outside -> in tree={listed}");
 
             // Deleted outside with nothing unsaved: the tab closes.

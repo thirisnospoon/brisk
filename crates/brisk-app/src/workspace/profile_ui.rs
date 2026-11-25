@@ -2,9 +2,9 @@
 //! functions (Name, Call Count, Own Time, Time) sortable by a click on a column header;
 //! a double click or Enter opens the function.
 
-use crate::theme::ui_px;
 use super::{BottomTool, Workspace};
 use crate::profile::{self, Row, SortBy};
+use crate::theme::ui_px;
 use crate::theme::Theme;
 use brisk_keymap::Action;
 use brisk_run::RunKind;
@@ -131,7 +131,8 @@ impl Workspace {
                         profile::sort(&mut rows, SortBy::Own, true, &this.root);
                         this.status = format!("Profile of '{name}': {} functions, {} ms", rows.len(), ms(total));
                         let focus = this.profile.as_ref().map(|p| p.focus.clone()).unwrap_or_else(|| cx.focus_handle());
-                        this.profile = Some(ProfileView { rows, total, name, sort: SortBy::Own, desc: true, selected: 0, focus, scroll: gpui::ScrollHandle::new() });
+                        this.profile =
+                            Some(ProfileView { rows, total, name, sort: SortBy::Own, desc: true, selected: 0, focus, scroll: gpui::ScrollHandle::new() });
                         this.bottom = Some(BottomTool::Profiler);
                     }
                     Err(e) => this.show_toast(format!("Profile of '{name}': {e}"), true, cx),
@@ -200,7 +201,15 @@ impl Workspace {
         let root = self.root.clone();
         let col = |i: usize, by: SortBy, title: &'static str, w: Option<f32>| {
             let on = p.sort == by;
-            let arrow = if on { if p.desc { " ▾" } else { " ▴" } } else { "" };
+            let arrow = if on {
+                if p.desc {
+                    " ▾"
+                } else {
+                    " ▴"
+                }
+            } else {
+                ""
+            };
             div()
                 .id(("prof-h", i))
                 .relative()
@@ -223,7 +232,8 @@ impl Workspace {
             .flex_shrink_0()
             .items_center()
             .gap(px(6.))
-            .pl(px(12.)).pr(px(6.))
+            .pl(px(12.))
+            .pr(px(6.))
             .h(px(crate::ui_kit::header_h()))
             .border_b_1()
             .border_color(Theme::divider())
@@ -244,7 +254,12 @@ impl Workspace {
                     .tooltip(|_, cx| cx.new(|_| super::Tip("Profile again".into())).into())
                     .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Profile, w, cx))),
             )
-            .child(div().text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(format!("'{}': {} functions, {} ms total (times in ms)", p.name, p.rows.len(), ms(p.total))));
+            .child(div().text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(format!(
+                "'{}': {} functions, {} ms total (times in ms)",
+                p.name,
+                p.rows.len(),
+                ms(p.total)
+            )));
         let header = div()
             .flex()
             .flex_shrink_0()
@@ -288,17 +303,29 @@ impl Workspace {
                     .cursor_pointer()
                     .when(sel, |d| d.bg(Theme::selection_row()))
                     .when(!sel, |d| d.hover(|s| s.bg(Theme::hover_row())))
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, e: &gpui::MouseDownEvent, w, cx| {
-                        if let Some(p) = this.profile.as_mut() {
-                            p.selected = i;
-                            w.focus(&p.focus.clone());
-                        }
-                        if e.click_count >= 2 {
-                            this.profile_open(i, w, cx);
-                        }
-                        cx.notify();
-                    }))
-                    .child(div().flex_1().min_w_0().px(px(6.)).overflow_hidden().text_ellipsis().text_color(if r.file == "~" { Theme::text_muted() } else { Theme::text() }).child(r.name(&root)))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, e: &gpui::MouseDownEvent, w, cx| {
+                            if let Some(p) = this.profile.as_mut() {
+                                p.selected = i;
+                                w.focus(&p.focus.clone());
+                            }
+                            if e.click_count >= 2 {
+                                this.profile_open(i, w, cx);
+                            }
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .px(px(6.))
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .text_color(if r.file == "~" { Theme::text_muted() } else { Theme::text() })
+                            .child(r.name(&root)),
+                    )
                     .child(num(calls))
                     .child(num(ms(r.own)))
                     .child(num(ms(r.total)))
@@ -336,7 +363,16 @@ impl Workspace {
                 }
             }
             let top = |this: &Workspace, n: usize| {
-                this.profile.as_ref().map(|p| p.rows.iter().take(n).map(|r| format!("{} calls={} own={} total={}", r.name(&this.root), r.calls, ms(r.own), ms(r.total))).collect::<Vec<_>>()).unwrap_or_default()
+                this.profile
+                    .as_ref()
+                    .map(|p| {
+                        p.rows
+                            .iter()
+                            .take(n)
+                            .map(|r| format!("{} calls={} own={} total={}", r.name(&this.root), r.calls, ms(r.own), ms(r.total)))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
             };
             let _ = this.update(cx, |this, _| {
                 eprintln!("smoke-profile: window {}, status {:?}", this.bottom == Some(BottomTool::Profiler), this.status);
@@ -372,7 +408,9 @@ impl Workspace {
                     p.selected = p.rows.iter().position(|r| r.func == "fib").unwrap_or(0);
                 }
                 this.profile_key("enter", window, cx);
-                let at = this.active_editor().map(|e| (e.read(cx).path.clone().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())), e.read(cx).caret_line_col().0 + 1));
+                let at = this.active_editor().map(|e| {
+                    (e.read(cx).path.clone().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())), e.read(cx).caret_line_col().0 + 1)
+                });
                 eprintln!("smoke-profile: enter on fib -> {at:?}");
                 cx.quit();
             });

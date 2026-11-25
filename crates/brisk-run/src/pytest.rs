@@ -412,16 +412,9 @@ impl TestTree {
             parts.push(("ignored", c.skipped));
         }
         let stopped = finished && (self.done.is_none() || c.pending > 0);
-        let head = if !finished || stopped {
-            String::from(if finished { "Tests stopped" } else { "Running" })
-        } else {
-            format!("Tests {}", parts[0].0)
-        };
-        let body: Vec<String> = parts
-            .iter()
-            .enumerate()
-            .map(|(k, (name, n))| if k == 0 && finished && !stopped { n.to_string() } else { format!("{name}: {n}") })
-            .collect();
+        let head = if !finished || stopped { String::from(if finished { "Tests stopped" } else { "Running" }) } else { format!("Tests {}", parts[0].0) };
+        let body: Vec<String> =
+            parts.iter().enumerate().map(|(k, (name, n))| if k == 0 && finished && !stopped { n.to_string() } else { format!("{name}: {n}") }).collect();
         format!("{head}: {} of {} test{} – {dur}", body.join(", "), c.total, if c.total == 1 { "" } else { "s" })
     }
 

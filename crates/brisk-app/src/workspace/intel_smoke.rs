@@ -17,7 +17,11 @@ use std::time::{Duration, Instant};
 const SRC: &str = "import sys\nimport os\n\nx = defaultdict(list)\nprint(os.sep, x)\n";
 
 fn pass(ok: bool) -> &'static str {
-    if ok { "ok" } else { "FAIL" }
+    if ok {
+        "ok"
+    } else {
+        "FAIL"
+    }
 }
 
 /// No HTML entity or backslash escape left over from ty's Markdown.

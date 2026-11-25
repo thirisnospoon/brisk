@@ -28,10 +28,15 @@ impl Workspace {
                     break;
                 }
             }
-            let _ = this.update_in(cx, |this, window, cx| this.run_config(RunConfig { name: "ansi".into(), target: "ansi.py".into(), ..Default::default() }, window, cx));
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.run_config(RunConfig { name: "ansi".into(), target: "ansi.py".into(), ..Default::default() }, window, cx)
+            });
             for _ in 0..100 {
                 pause(100).await;
-                if this.update(cx, |t, cx| t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default().contains("Process finished")).unwrap_or(false) {
+                if this
+                    .update(cx, |t, cx| t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default().contains("Process finished"))
+                    .unwrap_or(false)
+                {
                     break;
                 }
             }

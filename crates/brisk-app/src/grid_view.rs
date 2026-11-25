@@ -1,12 +1,12 @@
 //! Result grid: query output in the Services window and "Edit Data" tabs. Read-only for now.
 //! Only visible rows are built (uniform_list), so a 500-row page costs the same as 20.
 
-use crate::theme::{Theme, mono_font};
+use crate::theme::{mono_font, Theme};
 use brisk_db::QueryOutput;
 use gpui::prelude::*;
 use gpui::{
-    div, px, uniform_list, App, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, Keystroke, ScrollHandle,
-    ScrollStrategy, UniformListScrollHandle, Window,
+    div, px, uniform_list, App, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, Keystroke, ScrollHandle, ScrollStrategy, UniformListScrollHandle,
+    Window,
 };
 use std::sync::Arc;
 use std::time::Instant;
@@ -168,7 +168,13 @@ impl GridView {
         let view_w = f32::from(self.hscroll.bounds().size.width);
         let off = -f32::from(self.hscroll.offset().x);
         if view_w > 0. {
-            let new = if x0 < off + NUM_W { (x0 - NUM_W).max(0.) } else if x1 > off + view_w { x1 - view_w } else { off };
+            let new = if x0 < off + NUM_W {
+                (x0 - NUM_W).max(0.)
+            } else if x1 > off + view_w {
+                x1 - view_w
+            } else {
+                off
+            };
             if new != off {
                 self.hscroll.set_offset(gpui::point(px(-new), px(0.)));
             }
@@ -186,7 +192,11 @@ impl GridView {
         let running = self.is_running();
         let reload = self.source.is_some() && !running;
         let btn = |id: &'static str, glyph: &'static str| {
-            div().id(id).px(px(6.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(crate::icons::glyph(glyph, 14., Theme::text_muted()))
+            div().id(id).px(px(6.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(crate::icons::glyph(
+                glyph,
+                14.,
+                Theme::text_muted(),
+            ))
         };
         div()
             .h(px(28.))
@@ -199,9 +209,7 @@ impl GridView {
             .border_color(Theme::divider())
             .text_size(px(12.))
             .when(reload, |d| d.child(btn("grid-reload", "⟳").on_click(cx.listener(|_, _, _, cx| cx.emit(GridEvent::Reload)))))
-            .when(running, |d| {
-                d.child(btn("grid-cancel", "■").text_color(Theme::error()).on_click(cx.listener(|_, _, _, cx| cx.emit(GridEvent::Cancel))))
-            })
+            .when(running, |d| d.child(btn("grid-cancel", "■").text_color(Theme::error()).on_click(cx.listener(|_, _, _, cx| cx.emit(GridEvent::Cancel)))))
             .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_color(color).child(text))
     }
 
@@ -248,7 +256,15 @@ impl GridView {
                             .flex()
                             .when(r % 2 == 1, |d| d.bg(Theme::panel_alt()))
                             .child(
-                                div().w(px(NUM_W)).flex_shrink_0().px(px(6.)).flex().items_center().justify_end().text_color(Theme::text_dim()).child((r + 1).to_string()),
+                                div()
+                                    .w(px(NUM_W))
+                                    .flex_shrink_0()
+                                    .px(px(6.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_end()
+                                    .text_color(Theme::text_dim())
+                                    .child((r + 1).to_string()),
                             )
                             .children(row.iter().zip(&widths).enumerate().map(|(c, (v, w))| {
                                 let selected = focused_sel_eq(this.sel, r, c);

@@ -2,19 +2,21 @@
 //!
 //! Highlighting is computed only for the visible byte range, so cost does not grow with file size.
 
-mod scope;
 mod generate;
 mod intentions;
 mod refactor;
+mod scope;
 mod sql;
 mod structure;
 mod template_tags;
-pub use scope::{name_refs_of, occurrences_of, NameRefs};
-pub use structure::{statement_move, unwrap_options, Unwrap};
+pub use generate::{
+    class_at, class_named, data_fields, gen_eq, gen_init, gen_override, gen_property, gen_repr, object_methods, property_candidates, ClassInfo, Field, Method,
+};
 pub use intentions::{create_function, hint_target, import_edit, intentions_at, HintTarget, Intention, Returned};
 pub use refactor::{constant_row, expressions_at, extract_method, inline_at, text_occurrences, Inline, MethodPlan};
-pub use generate::{class_at, class_named, data_fields, gen_eq, gen_init, gen_override, gen_property, gen_repr, object_methods, property_candidates, ClassInfo, Field, Method};
+pub use scope::{name_refs_of, occurrences_of, NameRefs};
 pub use sql::highlight_sql;
+pub use structure::{statement_move, unwrap_options, Unwrap};
 pub use tree_sitter::Tree;
 
 use std::ops::Range;
@@ -179,11 +181,19 @@ impl Lang {
             Lang::Markdown => tree_sitter_md::HIGHLIGHT_QUERY_BLOCK.into(),
             Lang::Html => tree_sitter_html::HIGHLIGHTS_QUERY.into(),
             Lang::Css => tree_sitter_css::HIGHLIGHTS_QUERY.into(),
-            Lang::JavaScript => format!("{}
-{}", tree_sitter_javascript::HIGHLIGHT_QUERY, tree_sitter_javascript::JSX_HIGHLIGHT_QUERY),
+            Lang::JavaScript => format!(
+                "{}
+{}",
+                tree_sitter_javascript::HIGHLIGHT_QUERY,
+                tree_sitter_javascript::JSX_HIGHLIGHT_QUERY
+            ),
             // The TypeScript query extends the JavaScript one.
-            Lang::TypeScript => format!("{}
-{}", tree_sitter_typescript::HIGHLIGHTS_QUERY, tree_sitter_javascript::HIGHLIGHT_QUERY),
+            Lang::TypeScript => format!(
+                "{}
+{}",
+                tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                tree_sitter_javascript::HIGHLIGHT_QUERY
+            ),
             Lang::Tsx => format!(
                 "{}
 {}
@@ -444,12 +454,7 @@ impl SyntaxTree {
                 _ => 0,
             }
         };
-        raw.sort_by(|a, b| {
-            (b.0.len())
-                .cmp(&a.0.len())
-                .then_with(|| specificity(a.2).cmp(&specificity(b.2)))
-                .then_with(|| b.1.cmp(&a.1))
-        });
+        raw.sort_by(|a, b| (b.0.len()).cmp(&a.0.len()).then_with(|| specificity(a.2).cmp(&specificity(b.2))).then_with(|| b.1.cmp(&a.1)));
         let lo = bytes.start;
         let hi = bytes.end.min(text.len());
         if hi <= lo {
@@ -574,7 +579,8 @@ impl SyntaxTree {
                 let n = node.child_count();
                 let (open, close) = (node.child(0), n.checked_sub(1).and_then(|i| node.child(i as _)));
                 if let (Some(o), Some(c), true) = (open, close, n >= 3) {
-                    let inner = node.child(1).map(|f| f.start_byte()).unwrap_or(o.end_byte())..node.child((n - 2) as _).map(|l| l.end_byte()).unwrap_or(c.start_byte());
+                    let inner =
+                        node.child(1).map(|f| f.start_byte()).unwrap_or(o.end_byte())..node.child((n - 2) as _).map(|l| l.end_byte()).unwrap_or(c.start_byte());
                     if matches!(o.kind(), "(" | "[" | "{") && matches!(c.kind(), ")" | "]" | "}") && within(&inner) {
                         return Some(inner);
                     }
@@ -656,7 +662,14 @@ impl SyntaxTree {
                 if name == "__all__" || out.iter().any(|o| o.name == name) {
                     continue;
                 }
-                out.push(OutlineItem { name: name.to_string(), kind: OutlineKind::Variable, depth: 0, byte: n.start_byte(), line: n.start_position().row, end_line: st.end_position().row });
+                out.push(OutlineItem {
+                    name: name.to_string(),
+                    kind: OutlineKind::Variable,
+                    depth: 0,
+                    byte: n.start_byte(),
+                    line: n.start_position().row,
+                    end_line: st.end_position().row,
+                });
             }
         }
         out
@@ -697,10 +710,28 @@ pub fn fold_ranges_of(lang: Lang, tree: &Tree) -> Vec<(usize, usize)> {
         match lang {
             Lang::Python => matches!(
                 k,
-                "class_definition" | "function_definition" | "if_statement" | "for_statement" | "while_statement"
-                    | "try_statement" | "with_statement" | "match_statement" | "elif_clause" | "else_clause"
-                    | "except_clause" | "finally_clause" | "case_clause" | "dictionary" | "list" | "tuple" | "set"
-                    | "argument_list" | "parameters" | "string" | "list_comprehension" | "dictionary_comprehension"
+                "class_definition"
+                    | "function_definition"
+                    | "if_statement"
+                    | "for_statement"
+                    | "while_statement"
+                    | "try_statement"
+                    | "with_statement"
+                    | "match_statement"
+                    | "elif_clause"
+                    | "else_clause"
+                    | "except_clause"
+                    | "finally_clause"
+                    | "case_clause"
+                    | "dictionary"
+                    | "list"
+                    | "tuple"
+                    | "set"
+                    | "argument_list"
+                    | "parameters"
+                    | "string"
+                    | "list_comprehension"
+                    | "dictionary_comprehension"
                     | "parenthesized_expression"
             ),
             Lang::Markdown => matches!(k, "section" | "fenced_code_block" | "list"),
@@ -709,10 +740,26 @@ pub fn fold_ranges_of(lang: Lang, tree: &Tree) -> Vec<(usize, usize)> {
             Lang::Html => matches!(k, "element" | "script_element" | "style_element" | "comment"),
             _ => matches!(
                 k,
-                "object" | "array" | "statement_block" | "class_body" | "block" | "rule_set" | "arguments"
-                    | "formal_parameters" | "object_type" | "interface_body" | "enum_body" | "switch_body"
-                    | "template_string" | "comment" | "jsx_element" | "compound_statement" | "do_group"
-                    | "declaration_list" | "keyframe_block_list" | "parenthesized_expression"
+                "object"
+                    | "array"
+                    | "statement_block"
+                    | "class_body"
+                    | "block"
+                    | "rule_set"
+                    | "arguments"
+                    | "formal_parameters"
+                    | "object_type"
+                    | "interface_body"
+                    | "enum_body"
+                    | "switch_body"
+                    | "template_string"
+                    | "comment"
+                    | "jsx_element"
+                    | "compound_statement"
+                    | "do_group"
+                    | "declaration_list"
+                    | "keyframe_block_list"
+                    | "parenthesized_expression"
             ),
         }
     };
@@ -811,43 +858,88 @@ mod tests {
         let cases: &[(&str, &str, &str, Highlight)] = &[
             ("a.json", "{\"name\": true, \"n\": 1}", "\"name\"", Highlight::Property),
             ("a.json", "{\"name\": true, \"n\": 1}", "true", Highlight::ConstantBuiltin),
-            ("pyproject.toml", "[project]
+            (
+                "pyproject.toml",
+                "[project]
 name = \"x\" # c
-", "name", Highlight::Property),
-            ("pyproject.toml", "[project]
+",
+                "name",
+                Highlight::Property,
+            ),
+            (
+                "pyproject.toml",
+                "[project]
 name = \"x\" # c
-", "\"x\"", Highlight::String),
-            ("ci.yml", "jobs:
+",
+                "\"x\"",
+                Highlight::String,
+            ),
+            (
+                "ci.yml",
+                "jobs:
   test: 1 # c
-", "jobs", Highlight::Property),
-            ("ci.yml", "jobs:
+",
+                "jobs",
+                Highlight::Property,
+            ),
+            (
+                "ci.yml",
+                "jobs:
   test: 1 # c
-", "# c", Highlight::Comment),
-            ("README.md", "# Title
+",
+                "# c",
+                Highlight::Comment,
+            ),
+            (
+                "README.md",
+                "# Title
 
 ```py
 x
 ```
-", "Title", Highlight::Keyword),
+",
+                "Title",
+                Highlight::Keyword,
+            ),
             ("index.html", "<div class=\"a\">hi</div>", "div", Highlight::Keyword),
             ("index.html", "<div class=\"a\">hi</div>", "class", Highlight::Property),
             ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "{%", Highlight::Keyword),
             ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "extends", Highlight::Keyword),
             ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "base.html", Highlight::String),
             ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "url", Highlight::Keyword),
-            ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "polls:detail", Highlight::String),
+            (
+                "t.html",
+                "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}",
+                "polls:detail",
+                Highlight::String,
+            ),
             ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "upper", Highlight::Function),
             ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "note", Highlight::Comment),
             ("t.html", "{% extends \"base.html\" %}<a href=\"{% url 'polls:detail' q.id %}\">{{ q.text|upper }}</a>{# note #}", "}}", Highlight::Keyword),
             ("s.css", ".a { color: red; }", "color", Highlight::Property),
-            ("app.js", "const x = 'a'; // c
-foo(1);", "const", Highlight::Keyword),
-            ("app.js", "const x = 'a'; // c
-foo(1);", "'a'", Highlight::String),
+            (
+                "app.js",
+                "const x = 'a'; // c
+foo(1);",
+                "const",
+                Highlight::Keyword,
+            ),
+            (
+                "app.js",
+                "const x = 'a'; // c
+foo(1);",
+                "'a'",
+                Highlight::String,
+            ),
             ("app.ts", "interface A { b: number }", "interface", Highlight::Keyword),
             ("app.tsx", "const a = <div>x</div>;", "const", Highlight::Keyword),
-            ("run.sh", "echo \"hi\" # c
-", "# c", Highlight::Comment),
+            (
+                "run.sh",
+                "echo \"hi\" # c
+",
+                "# c",
+                Highlight::Comment,
+            ),
         ];
         for (file, src, needle, want) in cases {
             let lang = Lang::from_path(Path::new(file)).unwrap();

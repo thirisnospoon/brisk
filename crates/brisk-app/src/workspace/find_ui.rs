@@ -2,8 +2,8 @@
 //! (Alt+3, or Ctrl+Enter from the popup). Searches run in the background, restart on every
 //! keystroke (debounced), and are cancelled when superseded.
 
-use crate::theme::ui_px;
 use super::*;
+use crate::theme::ui_px;
 use brisk_search::{Match, Options, Query, Results};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -193,7 +193,7 @@ impl Workspace {
             return;
         }
         self.save_all(cx); // search what the user sees
-        // Ctrl+Shift+F searches the project; Find in Directory sets its folder after this.
+                           // Ctrl+Shift+F searches the project; Find in Directory sets its folder after this.
         if !self.find.open {
             self.find.dir = None;
         }
@@ -242,7 +242,10 @@ impl Workspace {
         let opts = f.effective_opts();
         // Find in Directory: the folder's files only.
         let files = match &f.dir {
-            Some(d) => Arc::new(brisk_project::FileList { root: files.root.clone(), files: files.files.iter().filter(|p| p.starts_with(d.as_str())).cloned().collect() }),
+            Some(d) => Arc::new(brisk_project::FileList {
+                root: files.root.clone(),
+                files: files.files.iter().filter(|p| p.starts_with(d.as_str())).cloned().collect(),
+            }),
             None => files,
         };
         let timer = cx.background_executor().timer(Duration::from_millis(90));
@@ -326,7 +329,18 @@ impl Workspace {
         let results = f.results.clone();
         let title = format!("“{}” in Project", f.opts.query);
         let focus = cx.focus_handle();
-        let mut w = FindWindow { title, files, results, rows: Vec::new(), selected: 0, scroll: UniformListScrollHandle::new(), bar: Default::default(), focus: focus.clone(), group_of: Vec::new(), collapsed: Default::default() };
+        let mut w = FindWindow {
+            title,
+            files,
+            results,
+            rows: Vec::new(),
+            selected: 0,
+            scroll: UniformListScrollHandle::new(),
+            bar: Default::default(),
+            focus: focus.clone(),
+            group_of: Vec::new(),
+            collapsed: Default::default(),
+        };
         w.rebuild_rows();
         w.selected = w.rows.iter().position(|r| matches!(r, WRow::Match(_))).unwrap_or(0);
         self.find.window = Some(w);
@@ -338,7 +352,13 @@ impl Workspace {
 
     /// Find Usages results in the Find tool window: `(file, line, char columns)`.
     /// Line text comes from the open editor when the file is open (unsaved edits), else disk.
-    pub(super) fn show_usages(&mut self, title: String, mut usages: Vec<(PathBuf, usize, std::ops::Range<usize>)>, window: &mut Window, cx: &mut Context<Self>) -> usize {
+    pub(super) fn show_usages(
+        &mut self,
+        title: String,
+        mut usages: Vec<(PathBuf, usize, std::ops::Range<usize>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> usize {
         usages.sort_by(|a, b| (&a.0, a.1, a.2.start).cmp(&(&b.0, b.1, b.2.start)));
         usages.dedup();
         let truncated = usages.len() > LIMIT;
@@ -512,7 +532,11 @@ impl Workspace {
             }
         }
         if failed.is_empty() {
-            self.show_toast(format!("Replaced {total} occurrence{} in {nfiles} file{}", if total == 1 { "" } else { "s" }, if nfiles == 1 { "" } else { "s" }), false, cx);
+            self.show_toast(
+                format!("Replaced {total} occurrence{} in {nfiles} file{}", if total == 1 { "" } else { "s" }, if nfiles == 1 { "" } else { "s" }),
+                false,
+                cx,
+            );
         } else {
             self.show_toast(format!("Replaced {total} occurrences; could not write: {}", failed.join(", ")), true, cx);
         }
@@ -549,7 +573,8 @@ impl Workspace {
             "tab" => {
                 let f = &mut self.find;
                 f.seed_selected = false;
-                let order: Vec<Field> = [Some(Field::Query), f.replace_mode.then_some(Field::Replace), f.mask_on.then_some(Field::Mask)].into_iter().flatten().collect();
+                let order: Vec<Field> =
+                    [Some(Field::Query), f.replace_mode.then_some(Field::Replace), f.mask_on.then_some(Field::Mask)].into_iter().flatten().collect();
                 let i = order.iter().position(|x| *x == f.field).unwrap_or(0);
                 f.field = order[if m.shift { (i + order.len() - 1) % order.len() } else { (i + 1) % order.len() }];
             }
@@ -693,7 +718,11 @@ impl Workspace {
                     cx.notify();
                 }))
                 .child(if value.is_empty() {
-                    div().flex().child(div().when(focused, |d| d.w(px(1.5)).h(ui_px(16.)).bg(Theme::caret()))).child(div().text_color(Theme::text_dim()).child(placeholder)).into_any_element()
+                    div()
+                        .flex()
+                        .child(div().when(focused, |d| d.w(px(1.5)).h(ui_px(16.)).bg(Theme::caret())))
+                        .child(div().text_color(Theme::text_dim()).child(placeholder))
+                        .into_any_element()
                 } else {
                     div()
                         .flex()
@@ -743,8 +772,20 @@ impl Workspace {
                         cx.notify();
                     })),
             )
-            .when_some(f.dir.clone(), |d, dir| d.child(div().px(px(10.)).py(px(3.)).rounded(px(5.)).bg(Theme::selection_row()).child(format!("Directory: {}", dir.trim_end_matches('/')))))
-            .when(f.mask_on, |d| d.child(div().flex_1()).child(div().w(px(220.)).child(field_box("fx-mask", &f.opts.file_mask, "*.py", f.field == Field::Mask, false, Field::Mask, cx))));
+            .when_some(f.dir.clone(), |d, dir| {
+                d.child(div().px(px(10.)).py(px(3.)).rounded(px(5.)).bg(Theme::selection_row()).child(format!("Directory: {}", dir.trim_end_matches('/'))))
+            })
+            .when(f.mask_on, |d| {
+                d.child(div().flex_1()).child(div().w(px(220.)).child(field_box(
+                    "fx-mask",
+                    &f.opts.file_mask,
+                    "*.py",
+                    f.field == Field::Mask,
+                    false,
+                    Field::Mask,
+                    cx,
+                )))
+            });
 
         let selected = f.selected;
         let list = uniform_list(
@@ -781,14 +822,28 @@ impl Workspace {
                                 cx.notify();
                             }))
                             .child(match_line(m).flex_1().font_family(mono_font()).text_size(ui_px(12.5)))
-                            .child(div().flex_shrink_0().text_size(ui_px(12.)).text_color(Theme::text_muted()).whitespace_nowrap().child(format!("{name} {}", m.line + 1)))
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_size(ui_px(12.))
+                                    .text_color(Theme::text_muted())
+                                    .whitespace_nowrap()
+                                    .child(format!("{name} {}", m.line + 1)),
+                            )
                     })
                     .collect()
             }),
         )
         .track_scroll(f.scroll.clone())
         .flex_1();
-        let list = div().relative().flex_1().min_h_0().flex().flex_col().child(list).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&f.scroll), f.bar.clone()));
+        let list = div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(list)
+            .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&f.scroll), f.bar.clone()));
 
         // Preview of the selected match with a few lines of context.
         let preview = f.results.matches.get(f.selected).and_then(|m| {
@@ -820,18 +875,17 @@ impl Workspace {
         });
 
         let replace_bar = f.replace_mode.then(|| {
-            let label = if f.confirm_replace {
-                format!("Confirm: replace {} in {} files", n, f.results.files_with_matches)
-            } else {
-                "Replace All  Alt+A".to_string()
-            };
+            let label =
+                if f.confirm_replace { format!("Confirm: replace {} in {} files", n, f.results.files_with_matches) } else { "Replace All  Alt+A".to_string() };
             div()
                 .flex()
                 .items_center()
                 .gap(px(8.))
                 .px(px(10.))
                 .pt(px(6.))
-                .child(div().flex_1().child(field_box("fx-replace", &f.replace, "Replace with", f.field == Field::Replace, false, Field::Replace, cx).mx(px(0.))))
+                .child(
+                    div().flex_1().child(field_box("fx-replace", &f.replace, "Replace with", f.field == Field::Replace, false, Field::Replace, cx).mx(px(0.))),
+                )
                 .child(
                     div()
                         .id("btn-replace-all")
@@ -949,10 +1003,8 @@ impl Workspace {
                             }
                             cx.notify();
                         });
-                        let arrow = div()
-                            .id(("fw-fold", i))
-                            .child(crate::icons::tree_arrow(true, !w.is_collapsed(row), Theme::text_muted()))
-                            .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
+                        let arrow = div().id(("fw-fold", i)).child(crate::icons::tree_arrow(true, !w.is_collapsed(row), Theme::text_muted())).on_click(
+                            cx.listener(move |this, e: &ClickEvent, _, cx| {
                                 if e.click_count() == 1 {
                                     if let Some(w) = this.find.window.as_mut() {
                                         w.toggle(i);
@@ -960,7 +1012,8 @@ impl Workspace {
                                     cx.stop_propagation();
                                     cx.notify();
                                 }
-                            }));
+                            }),
+                        );
                         let (one, many) = if w.group_of.is_empty() { ("match", "matches") } else { ("usage", "usages") };
                         let count_label = move |n: usize| format!("{n} {}", if n == 1 { one } else { many });
                         match row {
@@ -994,7 +1047,17 @@ impl Workspace {
                                         }
                                         cx.notify();
                                     }))
-                                    .child(div().w(px(40.)).flex_shrink_0().flex().justify_end().text_color(Theme::gutter_fg_active()).font_family(mono_font()).text_size(ui_px(12.)).child((m.line + 1).to_string()))
+                                    .child(
+                                        div()
+                                            .w(px(40.))
+                                            .flex_shrink_0()
+                                            .flex()
+                                            .justify_end()
+                                            .text_color(Theme::gutter_fg_active())
+                                            .font_family(mono_font())
+                                            .text_size(ui_px(12.))
+                                            .child((m.line + 1).to_string()),
+                                    )
                                     .child(match_line(m).flex_1().font_family(mono_font()).text_size(ui_px(12.5)))
                             }
                         }
@@ -1004,7 +1067,14 @@ impl Workspace {
         )
         .track_scroll(w.scroll.clone())
         .flex_1();
-        let list = div().relative().flex_1().min_h_0().flex().flex_col().child(list).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&w.scroll), w.bar.clone()));
+        let list = div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(list)
+            .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&w.scroll), w.bar.clone()));
         div()
             .id("find-window-root")
             .track_focus(&focus)
@@ -1022,7 +1092,15 @@ impl Workspace {
                     .child(div().flex_1())
                     .when(self.nav.pending.is_some(), |d| {
                         let button = |id: &'static str, label: &'static str, primary: bool| {
-                            div().id(id).px(px(10.)).py(px(2.)).rounded(px(4.)).cursor_pointer().text_size(ui_px(12.5)).border_1().border_color(Theme::divider())
+                            div()
+                                .id(id)
+                                .px(px(10.))
+                                .py(px(2.))
+                                .rounded(px(4.))
+                                .cursor_pointer()
+                                .text_size(ui_px(12.5))
+                                .border_1()
+                                .border_color(Theme::divider())
                                 .when(primary, |d| d.bg(Theme::selection_row()))
                                 .hover(|s| s.bg(Theme::hover_row()))
                                 .child(label)
@@ -1036,16 +1114,15 @@ impl Workspace {
                                 cx.notify();
                             })))
                     })
-                    .child(
-                        crate::ui_kit::header_action("fw-rerun").child(crate::icons::ui_icon("rotate-cw", 14., Theme::text_muted()))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.find.open = true;
-                                this.find.seed_selected = false;
-                                window.focus(&this.focus);
-                                this.schedule_search(cx);
-                                cx.notify();
-                            })),
-                    ),
+                    .child(crate::ui_kit::header_action("fw-rerun").child(crate::icons::ui_icon("rotate-cw", 14., Theme::text_muted())).on_click(cx.listener(
+                        |this, _, window, cx| {
+                            this.find.open = true;
+                            this.find.seed_selected = false;
+                            window.focus(&this.focus);
+                            this.schedule_search(cx);
+                            cx.notify();
+                        },
+                    ))),
             )
             .child(list)
             .into_any_element()

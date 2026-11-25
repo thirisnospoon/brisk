@@ -21,7 +21,8 @@ impl Workspace {
                 }
             }
             let a = brisk_run::RunConfig { name: "a".into(), target: "a.py".into(), ..Default::default() };
-            let run = |cfg: brisk_run::RunConfig| move |this: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>| this.run_config(cfg, window, cx);
+            let run =
+                |cfg: brisk_run::RunConfig| move |this: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>| this.run_config(cfg, window, cx);
             let _ = this.update_in(cx, run(a.clone()));
             pause(1500).await;
             // Pin it with a real click on the toolbar's pin button.
@@ -37,7 +38,11 @@ impl Workspace {
             pause(1500).await;
             let _ = this.update(cx, |this, cx| {
                 let p = this.runs.panel.as_ref().unwrap().read(cx);
-                eprintln!("smoke-pin: run again -> tabs {:?}, active shows SECOND {}", p.run_tabs_detail().iter().map(|t| (t.0.clone(), t.1)).collect::<Vec<_>>(), p.active_text().unwrap_or_default().contains("SECOND"));
+                eprintln!(
+                    "smoke-pin: run again -> tabs {:?}, active shows SECOND {}",
+                    p.run_tabs_detail().iter().map(|t| (t.0.clone(), t.1)).collect::<Vec<_>>(),
+                    p.active_text().unwrap_or_default().contains("SECOND")
+                );
             });
             // Rerun from the pinned tab reruns there (and the unpinned one is left alone).
             let _ = this.update_in(cx, |this, window, cx| {
@@ -64,7 +69,9 @@ impl Workspace {
             let _ = this.update_in(cx, run(n));
             for _ in 0..300 {
                 pause(200).await;
-                let done = this.update(cx, |t, cx| t.runs.panel.as_ref().is_some_and(|p| p.read(cx).runs_info().iter().any(|r| r.name == "big" && !r.running))).unwrap_or(false);
+                let done = this
+                    .update(cx, |t, cx| t.runs.panel.as_ref().is_some_and(|p| p.read(cx).runs_info().iter().any(|r| r.name == "big" && !r.running)))
+                    .unwrap_or(false);
                 if done {
                     break;
                 }
@@ -76,7 +83,11 @@ impl Workspace {
                 let text = p.active_text().unwrap_or_default();
                 let first = text.lines().next().unwrap_or("").to_string();
                 let last = text.lines().filter(|l| l.starts_with("line ")).last().unwrap_or("").to_string();
-                eprintln!("smoke-pin: big output -> history {history:?} (limit {}), lines {}, first {first:?}, last {last:?}", brisk_terminal::RUN_HISTORY_LINES, text.lines().count());
+                eprintln!(
+                    "smoke-pin: big output -> history {history:?} (limit {}), lines {}, first {first:?}, last {last:?}",
+                    brisk_terminal::RUN_HISTORY_LINES,
+                    text.lines().count()
+                );
             });
             let _ = this.update(cx, |_, cx| cx.quit());
         })

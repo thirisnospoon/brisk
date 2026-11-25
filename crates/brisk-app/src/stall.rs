@@ -27,10 +27,7 @@ fn now_ms() -> u64 {
 pub fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
-        cfg!(debug_assertions)
-            || std::env::var_os("BRISK_WATCHDOG").is_some()
-            || std::env::var_os("BRISK_SMOKE_HANG").is_some()
-            || frames_enabled()
+        cfg!(debug_assertions) || std::env::var_os("BRISK_WATCHDOG").is_some() || std::env::var_os("BRISK_SMOKE_HANG").is_some() || frames_enabled()
     })
 }
 

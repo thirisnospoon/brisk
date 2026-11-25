@@ -58,7 +58,9 @@ pub fn json_command(python: &Path, data: &Path, out: &Path, cwd: &Path) -> std::
 /// Parse `coverage json` output; keep files under `root` (paths resolved against `cwd`).
 pub fn parse(json: &str, root: &Path, cwd: &Path) -> Result<Report, String> {
     let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("Bad coverage report: {e}"))?;
-    let lines = |x: &serde_json::Value| -> Vec<usize> { x.as_array().map(|a| a.iter().filter_map(|n| n.as_u64()).map(|n| (n as usize).saturating_sub(1)).collect()).unwrap_or_default() };
+    let lines = |x: &serde_json::Value| -> Vec<usize> {
+        x.as_array().map(|a| a.iter().filter_map(|n| n.as_u64()).map(|n| (n as usize).saturating_sub(1)).collect()).unwrap_or_default()
+    };
     let mut files = Vec::new();
     if let Some(map) = v.get("files").and_then(|f| f.as_object()) {
         for (name, f) in map {
@@ -109,7 +111,8 @@ mod tests {
     fn wraps_after_interpreter_options() {
         let root = Path::new("/p");
         let cfg = RunConfig { target: "app.py".into(), parameters: "x".into(), interpreter_options: "-X dev".into(), ..Default::default() };
-        let mut cmd = Command { program: "python".into(), args: vec!["-X".into(), "dev".into(), "/p/app.py".into(), "x".into()], cwd: root.into(), env: HashMap::new() };
+        let mut cmd =
+            Command { program: "python".into(), args: vec!["-X".into(), "dev".into(), "/p/app.py".into(), "x".into()], cwd: root.into(), env: HashMap::new() };
         wrap(&mut cmd, &cfg, Path::new("/p/.brisk/coverage.data"));
         assert_eq!(cmd.args[..6], ["-X", "dev", "-m", "coverage", "run", "--data-file=/p/.brisk/coverage.data"]);
         assert_eq!(cmd.args[6..], ["/p/app.py", "x"]);

@@ -15,7 +15,8 @@ impl Workspace {
         if let Some(d) = self.runs.dialog.as_mut() {
             d.toggle_templates();
         }
-        let shown = |this: &Workspace| this.runs.dialog.as_ref().map(|d| (d.templates, d.drafts.iter().map(|x| x.cfg.name.clone()).collect::<Vec<_>>(), d.field));
+        let shown =
+            |this: &Workspace| this.runs.dialog.as_ref().map(|d| (d.templates, d.drafts.iter().map(|x| x.cfg.name.clone()).collect::<Vec<_>>(), d.field));
         eprintln!("smoke-runtpl: templates -> {:?}", shown(self));
         self.smoke_press("tab", window, cx); // Working directory
         self.rc_type("sub", window, cx);
@@ -26,7 +27,10 @@ impl Workspace {
         }
         self.smoke_press("enter", window, cx);
         let file = brisk_run::load(&root).0;
-        eprintln!("smoke-runtpl: saved templates {:?}", file.templates.iter().map(|t| (t.name.clone(), t.working_directory.clone(), t.env.clone())).collect::<Vec<_>>());
+        eprintln!(
+            "smoke-runtpl: saved templates {:?}",
+            file.templates.iter().map(|t| (t.name.clone(), t.working_directory.clone(), t.env.clone())).collect::<Vec<_>>()
+        );
         // "+" (Alt+Insert, Enter: Python script) and a pytest one.
         self.dispatch(brisk_keymap::Action::EditRunConfigurations, window, cx);
         self.smoke_press("alt-insert enter", window, cx);

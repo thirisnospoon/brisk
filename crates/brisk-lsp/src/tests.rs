@@ -20,13 +20,23 @@ fn parsing() {
     assert_eq!(sig.doc, "Add.");
     let md = "```python\ndef add(\n    a: int\n) -> int\n```\n---\nAdd two numbers.\n";
     assert_eq!(doc_blocks(md), [DocBlock::Code("def add(\n    a: int\n) -> int".into()), DocBlock::Rule, DocBlock::Text("Add two numbers.".into())]);
-    let c = parse_completion(&json!({"isIncomplete": true, "items": [{"label": "path", "kind": 9, "sortText": "1"}, {"label": "PathLike", "kind": 7, "sortText": " 0", "detail": "<class 'PathLike'>"}]}));
+    let c = parse_completion(
+        &json!({"isIncomplete": true, "items": [{"label": "path", "kind": 9, "sortText": "1"}, {"label": "PathLike", "kind": 7, "sortText": " 0", "detail": "<class 'PathLike'>"}]}),
+    );
     assert_eq!(c.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["PathLike", "path"]);
     assert_eq!(c[0].insert, "PathLike");
-    let a = parse_code_actions(&json!([{"title": "import collections.defaultdict", "isPreferred": true, "kind": "quickfix", "edit": {"changes": {path_to_uri(Path::new("/a.py")): [{"newText": "from collections import defaultdict\n", "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}}]}}}, {"title": "cmd", "command": "x"}]));
+    let a = parse_code_actions(
+        &json!([{"title": "import collections.defaultdict", "isPreferred": true, "kind": "quickfix", "edit": {"changes": {path_to_uri(Path::new("/a.py")): [{"newText": "from collections import defaultdict\n", "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}}]}}}, {"title": "cmd", "command": "x"}]),
+    );
     assert_eq!(a.len(), 1);
-    assert_eq!((a[0].title.as_str(), a[0].preferred, a[0].edits[0].1[0].content.as_str()), ("import collections.defaultdict", true, "from collections import defaultdict\n"));
-    let d = parse_diagnostics(Path::new("a.py"), &json!({"items": [{"code": "invalid-assignment", "message": "bad", "severity": 1, "range": {"start": {"line": 2, "character": 9}, "end": {"line": 2, "character": 18}}}]}));
+    assert_eq!(
+        (a[0].title.as_str(), a[0].preferred, a[0].edits[0].1[0].content.as_str()),
+        ("import collections.defaultdict", true, "from collections import defaultdict\n")
+    );
+    let d = parse_diagnostics(
+        Path::new("a.py"),
+        &json!({"items": [{"code": "invalid-assignment", "message": "bad", "severity": 1, "range": {"start": {"line": 2, "character": 9}, "end": {"line": 2, "character": 18}}}]}),
+    );
     assert_eq!((d[0].severity, d[0].start, d[0].title()), (Severity::Error, Pos { line: 2, col: 9 }, "bad (invalid-assignment)".to_string()));
 }
 
@@ -50,7 +60,6 @@ fn real_ty() {
     let text = "from pkg.util import add\n\nx: str = add(1, 2)\ns = 'привет'; print(add(3, 4))\n";
     let t = Ty::start(&ty, &root, None, serde_json::Value::Null).unwrap();
     t.did_open(&main, 1, text);
-
 
     let d = futures::executor::block_on(t.diagnostics(&main)).unwrap();
     assert_eq!(d.len(), 1, "{d:?}");
@@ -113,7 +122,10 @@ fn inlay_hints() {
         {"label": "x", "position": {"line": 0, "character": 0}, "paddingRight": true}
     ]);
     let h = parse_inlay_hints(&v);
-    assert_eq!(h.iter().map(|h| (h.pos.line, h.pos.col, h.label.as_str(), h.parameter)).collect::<Vec<_>>(), [(0, 0, "x ", false), (3, 1, ": list[int]", false), (3, 9, "b=", true)]);
+    assert_eq!(
+        h.iter().map(|h| (h.pos.line, h.pos.col, h.label.as_str(), h.parameter)).collect::<Vec<_>>(),
+        [(0, 0, "x ", false), (3, 1, ": list[int]", false), (3, 9, "b=", true)]
+    );
 }
 
 #[test]
@@ -121,7 +133,11 @@ fn merged_edits() {
     let e = |l: usize, a: usize, b: usize, t: &str| Edit { start: Pos { line: l, col: a }, end: Pos { line: l, col: b }, content: t.into() };
     let a = PathBuf::from("a.py");
     // `import pkg.util`: renaming the package and its module both touch the same name.
-    let merged = merge_file_edits(vec![(a.clone(), vec![e(0, 7, 10, "lib")]), (a.clone(), vec![e(0, 7, 15, "lib.util"), e(2, 0, 3, "lib")]), (PathBuf::from("b.py"), vec![])]);
+    let merged = merge_file_edits(vec![
+        (a.clone(), vec![e(0, 7, 10, "lib")]),
+        (a.clone(), vec![e(0, 7, 15, "lib.util"), e(2, 0, 3, "lib")]),
+        (PathBuf::from("b.py"), vec![]),
+    ]);
     assert_eq!(merged, vec![(a, vec![e(0, 7, 15, "lib.util"), e(2, 0, 3, "lib")])]);
 }
 
@@ -134,7 +150,15 @@ fn markdown_inline() {
     let d = parse_doc_text("Serialize ``obj`` to a **JSON** str, see [docs](https://docs.python.org/3/) or https://x.org/a.", false);
     assert_eq!(d.text, "Serialize obj to a JSON str, see docs or https://x.org/a.");
     let st: Vec<(&str, &InlineStyle)> = d.styles.iter().map(|(r, s)| (&d.text[r.clone()], s)).collect();
-    assert_eq!(st, [("obj", &InlineStyle::Code), ("JSON", &InlineStyle::Bold), ("docs", &InlineStyle::Link("https://docs.python.org/3/".into())), ("https://x.org/a", &InlineStyle::Link("https://x.org/a".into()))]);
+    assert_eq!(
+        st,
+        [
+            ("obj", &InlineStyle::Code),
+            ("JSON", &InlineStyle::Bold),
+            ("docs", &InlineStyle::Link("https://docs.python.org/3/".into())),
+            ("https://x.org/a", &InlineStyle::Link("https://x.org/a".into()))
+        ]
+    );
     // Soft-wrapped lines join; list items and headings get their own lines; snake_case stays.
     let d = parse_doc_text("# Notes\nfirst\nline\n- one_two\n- *three*", false);
     assert_eq!(d.text, "Notes\nfirst line\n• one_two\n• three");

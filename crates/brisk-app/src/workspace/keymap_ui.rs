@@ -8,7 +8,7 @@ use super::git_merge_ui::dialog_frame;
 use super::{PopupItem, PopupKind, Target, Workspace};
 use crate::keymap_store;
 use crate::theme::{ui_px, Theme};
-use brisk_keymap::{chord_id, pycharm_keymap, Action, Keystroke, KeyResolver, ALL_ACTIONS};
+use brisk_keymap::{chord_id, pycharm_keymap, Action, KeyResolver, Keystroke, ALL_ACTIONS};
 use gpui::prelude::*;
 use gpui::{div, px, Context, KeyDownEvent, Window};
 
@@ -40,13 +40,28 @@ impl Workspace {
         let as_keys = ql.replace(['+', ' '], "-");
         let mut v = Vec::new();
         if let Some(e) = keymap_store::load_error() {
-            v.push(PopupItem { label: "Your keymap.json could not be read: the defaults are in use".into(), detail: e, hint: String::new(), target: Target::Note });
+            v.push(PopupItem {
+                label: "Your keymap.json could not be read: the defaults are in use".into(),
+                detail: e,
+                hint: String::new(),
+                target: Target::Note,
+            });
         }
         if ql.is_empty() || "import pycharm keymap".contains(&ql) {
-            v.push(PopupItem { label: "Import PyCharm Keymap".into(), detail: "your active custom keymap from PyCharm's settings".into(), hint: String::new(), target: Target::KeymapImport });
+            v.push(PopupItem {
+                label: "Import PyCharm Keymap".into(),
+                detail: "your active custom keymap from PyCharm's settings".into(),
+                hint: String::new(),
+                target: Target::KeymapImport,
+            });
         }
         if !user.is_empty() && (ql.is_empty() || "reset all shortcuts".contains(&ql)) {
-            v.push(PopupItem { label: "Reset All Shortcuts".into(), detail: format!("{} changed action(s) back to PyCharm's defaults", user.bindings.len()), hint: String::new(), target: Target::KeymapResetAll });
+            v.push(PopupItem {
+                label: "Reset All Shortcuts".into(),
+                detail: format!("{} changed action(s) back to PyCharm's defaults", user.bindings.len()),
+                hint: String::new(),
+                target: Target::KeymapResetAll,
+            });
         }
         for &a in ALL_ACTIONS {
             let info = a.info();
@@ -82,7 +97,12 @@ impl Workspace {
         let km = self.resolver.keymap();
         let mut v = vec![PopupItem { label: "Add Keyboard Shortcut…".into(), detail: String::new(), hint: String::new(), target: Target::KeymapAdd(a) }];
         for c in km.chords_for(a) {
-            v.push(PopupItem { label: format!("Remove {}", chord_label(&c)), detail: String::new(), hint: String::new(), target: Target::KeymapRemove(a, chord_id(&c)) });
+            v.push(PopupItem {
+                label: format!("Remove {}", chord_label(&c)),
+                detail: String::new(),
+                hint: String::new(),
+                target: Target::KeymapRemove(a, chord_id(&c)),
+            });
         }
         if keymap_store::user().bindings.contains_key(a.info().id) {
             let defaults: Vec<String> = pycharm_keymap().chords_for(a).iter().map(|c| chord_label(c)).collect();
@@ -217,24 +237,29 @@ impl Workspace {
         let km = self.resolver.keymap();
         let conflicts = if cap.strokes.is_empty() { Vec::new() } else { km.conflicts(cap.action, &cap.strokes) };
         let keys = if cap.strokes.is_empty() { "Press the keys…".to_string() } else { chord_label(&cap.strokes) };
-        let mut body = dialog_frame("key-capture", 420., &format!("Keyboard Shortcut for '{}'", cap.action.info().title))
-            .child(
-                div()
-                    .px(px(10.))
-                    .py(px(8.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(Theme::accent())
-                    .bg(Theme::bg())
-                    .text_size(ui_px(15.))
-                    .text_color(if cap.strokes.is_empty() { Theme::text_muted() } else { Theme::text() })
-                    .child(keys),
-            );
+        let mut body = dialog_frame("key-capture", 420., &format!("Keyboard Shortcut for '{}'", cap.action.info().title)).child(
+            div()
+                .px(px(10.))
+                .py(px(8.))
+                .rounded(px(6.))
+                .border_1()
+                .border_color(Theme::accent())
+                .bg(Theme::bg())
+                .text_size(ui_px(15.))
+                .text_color(if cap.strokes.is_empty() { Theme::text_muted() } else { Theme::text() })
+                .child(keys),
+        );
         if !conflicts.is_empty() {
             let names = conflicts.iter().map(|a| a.info().title).collect::<Vec<_>>().join(", ");
             body = body.child(div().pt(px(8.)).text_color(Theme::excluded()).child(format!("Already used by {names}; Enter takes it away from them.")));
         }
-        body = body.child(div().pt(px(10.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child("Up to two keystrokes (Ctrl+K, Ctrl+C). Enter applies, Esc cancels, a third keystroke starts over."));
+        body = body.child(
+            div()
+                .pt(px(10.))
+                .text_size(ui_px(12.))
+                .text_color(Theme::text_muted())
+                .child("Up to two keystrokes (Ctrl+K, Ctrl+C). Enter applies, Esc cancels, a third keystroke starts over."),
+        );
         Some(div().absolute().top_0().left_0().size_full().flex().justify_center().items_start().pt(px(120.)).occlude().child(body).into_any_element())
     }
 }

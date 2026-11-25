@@ -229,9 +229,8 @@ impl Repo {
         let tmp = std::path::PathBuf::from(tmp);
         // The new file keeps the old one's permissions (an executable script stays executable).
         let perms = std::fs::metadata(&path).ok().map(|m| m.permissions());
-        let written = std::fs::write(&tmp, text)
-            .and_then(|_| perms.map_or(Ok(()), |p| std::fs::set_permissions(&tmp, p)))
-            .and_then(|_| std::fs::rename(&tmp, &path));
+        let written =
+            std::fs::write(&tmp, text).and_then(|_| perms.map_or(Ok(()), |p| std::fs::set_permissions(&tmp, p))).and_then(|_| std::fs::rename(&tmp, &path));
         if let Err(e) = written {
             let _ = std::fs::remove_file(&tmp);
             return Err(GitError(format!("{rel}: {e}")));

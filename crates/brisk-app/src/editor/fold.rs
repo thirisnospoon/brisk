@@ -89,13 +89,8 @@ impl Editor {
 
     fn rebuild_hidden(&mut self) {
         let b = &self.buffer;
-        let mut lines: Vec<(usize, usize)> = self
-            .folds
-            .regions
-            .iter()
-            .map(|&(s, e)| (b.pos_to_line_col(s).0 + 1, b.pos_to_line_col(e).0))
-            .filter(|(a, z)| a <= z)
-            .collect();
+        let mut lines: Vec<(usize, usize)> =
+            self.folds.regions.iter().map(|&(s, e)| (b.pos_to_line_col(s).0 + 1, b.pos_to_line_col(e).0)).filter(|(a, z)| a <= z).collect();
         lines.sort();
         let mut merged: Vec<(usize, usize)> = Vec::with_capacity(lines.len());
         for (a, z) in lines {
@@ -242,12 +237,7 @@ impl Editor {
         self.sync_folds();
         let (line, _) = self.caret_line_col();
         let folded: Vec<usize> = self.folds.regions.iter().map(|r| self.buffer.pos_to_line_col(r.0).0).collect();
-        let pick = self
-            .fold_candidates()
-            .iter()
-            .filter(|r| r.0 <= line && line <= r.1 && !folded.contains(&r.0))
-            .min_by_key(|r| r.1 - r.0)
-            .copied();
+        let pick = self.fold_candidates().iter().filter(|r| r.0 <= line && line <= r.1 && !folded.contains(&r.0)).min_by_key(|r| r.1 - r.0).copied();
         if let Some((a, z)) = pick {
             self.collapse_lines(a, z);
         }

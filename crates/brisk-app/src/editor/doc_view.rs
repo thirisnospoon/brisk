@@ -2,7 +2,7 @@
 //! Python, prose with inline code, emphasis and clickable links. Shared by Quick
 //! Documentation (Ctrl+Q / hover) and the completion list's documentation panel.
 
-use crate::theme::{Theme, mono_font, ui_font};
+use crate::theme::{mono_font, ui_font, Theme};
 use brisk_lsp::{DocBlock, InlineStyle};
 use brisk_syntax::{Lang, SyntaxTree};
 use gpui::prelude::*;
@@ -29,7 +29,9 @@ fn code_highlights(code: &str) -> Vec<(std::ops::Range<usize>, HighlightStyle)> 
 
 fn inline_style(s: &InlineStyle) -> HighlightStyle {
     match s {
-        InlineStyle::Code => HighlightStyle { color: Some(Theme::syntax(brisk_syntax::Highlight::String)), background_color: Some(Theme::hover_row()), ..Default::default() },
+        InlineStyle::Code => {
+            HighlightStyle { color: Some(Theme::syntax(brisk_syntax::Highlight::String)), background_color: Some(Theme::hover_row()), ..Default::default() }
+        }
         InlineStyle::Bold => HighlightStyle { font_weight: Some(FontWeight::BOLD), ..Default::default() },
         InlineStyle::Italic => HighlightStyle { font_style: Some(FontStyle::Italic), ..Default::default() },
         InlineStyle::Link(_) => HighlightStyle {

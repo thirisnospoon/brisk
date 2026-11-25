@@ -119,7 +119,14 @@ fn file_symbols(path: &Path) -> Vec<Sym> {
     }
     for o in tree.module_variables(&text) {
         let line_start = text[..o.byte].rfind('\n').map(|n| n + 1).unwrap_or(0);
-        out.push(Sym { name: o.name.as_str().into(), kind: o.kind, container: "".into(), file: 0, line: o.line, col: text[line_start..o.byte].chars().count() });
+        out.push(Sym {
+            name: o.name.as_str().into(),
+            kind: o.kind,
+            container: "".into(),
+            file: 0,
+            line: o.line,
+            col: text[line_start..o.byte].chars().count(),
+        });
     }
     out
 }
@@ -242,12 +249,7 @@ impl Workspace {
             .map(|(_, s)| {
                 let rel = &files.files[s.file];
                 let detail = if s.container.is_empty() { format!("{rel}:{}", s.line + 1) } else { format!("{} · {rel}:{}", s.container, s.line + 1) };
-                PopupItem {
-                    label: s.name.to_string(),
-                    detail,
-                    hint: String::new(),
-                    target: Target::Symbol(files.abs(s.file), s.line, s.col, s.kind),
-                }
+                PopupItem { label: s.name.to_string(), detail, hint: String::new(), target: Target::Symbol(files.abs(s.file), s.line, s.col, s.kind) }
             })
             .collect()
     }
@@ -447,7 +449,13 @@ impl Workspace {
             eprintln!("smoke-ui: click outside -> {}", this.update(cx, |this, _| this.smoke_state()).unwrap_or_default());
 
             let _ = this.update(cx, |this, cx| {
-                for (tab, q) in [(super::SeTab::Classes, "user"), (super::SeTab::Symbols, "fbp"), (super::SeTab::All, "repo"), (super::SeTab::Symbols, "Repo.ad"), (super::SeTab::Symbols, "max_r")] {
+                for (tab, q) in [
+                    (super::SeTab::Classes, "user"),
+                    (super::SeTab::Symbols, "fbp"),
+                    (super::SeTab::All, "repo"),
+                    (super::SeTab::Symbols, "Repo.ad"),
+                    (super::SeTab::Symbols, "max_r"),
+                ] {
                     this.open_popup(PopupKind::SearchEverywhere(tab));
                     if let Some(p) = this.popup.as_mut() {
                         p.query = q.into();
@@ -491,4 +499,3 @@ impl Workspace {
         cx.notify();
     }
 }
-

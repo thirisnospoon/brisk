@@ -2,7 +2,7 @@
 //! placeholder position), so toolbars and dialogs line up.
 
 use crate::theme::ui_px;
-use gpui::{div, px, prelude::*, Div, Entity, Stateful, Styled};
+use gpui::{div, prelude::*, px, Div, Entity, Stateful, Styled};
 
 use crate::editor::Editor;
 use crate::theme::{ui_font, Theme};
@@ -26,7 +26,13 @@ pub fn input_frame(focused: bool, bad: bool, h: f32) -> Div {
         .items_center()
         .rounded(px(RADIUS))
         .border_1()
-        .border_color(if bad { Theme::error() } else if focused { Theme::accent() } else { Theme::divider() })
+        .border_color(if bad {
+            Theme::error()
+        } else if focused {
+            Theme::accent()
+        } else {
+            Theme::divider()
+        })
         .bg(Theme::bg())
         .overflow_hidden()
 }
@@ -37,13 +43,9 @@ pub fn input_frame(focused: bool, bad: bool, h: f32) -> Div {
 pub fn editor_slot(e: &Entity<Editor>, placeholder: &'static str, show_placeholder: bool, h: f32) -> Div {
     let lh = crate::editor::line_height();
     let top = ((h - lh) / 2.).floor().max(0.);
-    div()
-        .relative()
-        .flex_1()
-        .min_w_0()
-        .h_full()
-        .child(div().absolute().left_0().right_0().top(px(top)).h(px(lh)).child(e.clone()))
-        .when(show_placeholder, |d| {
+    div().relative().flex_1().min_w_0().h_full().child(div().absolute().left_0().right_0().top(px(top)).h(px(lh)).child(e.clone())).when(
+        show_placeholder,
+        |d| {
             d.child(
                 div()
                     .absolute()
@@ -58,7 +60,8 @@ pub fn editor_slot(e: &Entity<Editor>, placeholder: &'static str, show_placehold
                     .text_color(Theme::text_dim())
                     .child(placeholder),
             )
-        })
+        },
+    )
 }
 
 /// A one-line editor field: `input_frame` around `editor_slot`.

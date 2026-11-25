@@ -119,7 +119,11 @@ fn info(class: Node, text: &str, caret_row: Option<usize>) -> Option<ClassInfo> 
         if name.starts_with("__") || c.class_fields.iter().any(|f| f.name == name) {
             continue;
         }
-        c.class_fields.push(Field { name, annotation: a.child_by_field_name("type").map(|t| text_of(t, text)), default: a.child_by_field_name("right").map(|r| text_of(r, text)) });
+        c.class_fields.push(Field {
+            name,
+            annotation: a.child_by_field_name("type").map(|t| text_of(t, text)),
+            default: a.child_by_field_name("right").map(|r| text_of(r, text)),
+        });
     }
     Some(c)
 }
@@ -240,7 +244,11 @@ pub fn gen_property(field: &str) -> String {
 
 /// Private `self._x` attributes that have no property yet.
 pub fn property_candidates(c: &ClassInfo) -> Vec<String> {
-    c.self_fields.iter().filter(|f| f.starts_with('_') && !f.starts_with("__") && !c.methods.iter().any(|m| m.name == f.trim_start_matches('_'))).cloned().collect()
+    c.self_fields
+        .iter()
+        .filter(|f| f.starts_with('_') && !f.starts_with("__") && !c.methods.iter().any(|m| m.name == f.trim_start_matches('_')))
+        .cloned()
+        .collect()
 }
 
 /// Split parameters at top-level commas.
@@ -324,7 +332,13 @@ pub fn object_methods() -> Vec<Method> {
         ("__reduce__", "self", None),
     ]
     .into_iter()
-    .map(|(name, params, returns)| Method { name: name.into(), params: params.into(), returns: returns.map(Into::into), decorators: Vec::new(), is_async: false })
+    .map(|(name, params, returns)| Method {
+        name: name.into(),
+        params: params.into(),
+        returns: returns.map(Into::into),
+        decorators: Vec::new(),
+        is_async: false,
+    })
     .collect()
 }
 
@@ -365,7 +379,13 @@ mod tests {
         assert_eq!(gen_init(&c), "def __init__(self, x: int, y: int = 0, label=\"p\"):\n    self.x = x\n    self.y = y\n    self.label = label");
         assert_eq!(gen_repr(&c), "def __repr__(self):\n    return f\"Point(x={self.x!r}, y={self.y!r}, label={self.label!r}, _hidden={self._hidden!r})\"");
         assert!(gen_eq(&c).ends_with("return (self.x, self.y, self.label, self._hidden) == (other.x, other.y, other.label, other._hidden)"));
-        let m = Method { name: "run".into(), params: "self, a: int, *args, key=None, **kw".into(), returns: Some("str".into()), decorators: vec![], is_async: false };
+        let m = Method {
+            name: "run".into(),
+            params: "self, a: int, *args, key=None, **kw".into(),
+            returns: Some("str".into()),
+            decorators: vec![],
+            is_async: false,
+        };
         assert_eq!(gen_override(&m, "Base"), "def run(self, a: int, *args, key=None, **kw) -> str:\n    return super().run(a, *args, key=key, **kw)");
         let m = Method { name: "step".into(), params: "self, x".into(), returns: None, decorators: vec!["@abstractmethod".into()], is_async: true };
         assert_eq!(gen_override(&m, "Base"), "async def step(self, x):\n    pass");

@@ -1,20 +1,28 @@
 //! Git > Stash Changes… (a message, keep untracked files) and Unstash Changes… (the stash
 //! list with Apply / Pop / Drop and the files of the selected stash; a file opens its diff).
 
-use crate::theme::ui_px;
 use super::git_merge_ui::{button, dialog_frame, GitDialog};
 use super::git_ui::{dir_name, file_name, fmt_time, status_color};
 use super::Workspace;
 use crate::diff_view::DiffView;
+use crate::theme::ui_px;
 use crate::theme::Theme;
 use brisk_git::{FileChange, FileStatus, StashEntry};
 use gpui::prelude::*;
 use gpui::{div, px, Context, KeyDownEvent, Window};
 
 pub enum StashDialog {
-    Push { message: String, untracked: bool },
+    Push {
+        message: String,
+        untracked: bool,
+    },
     /// `confirm_drop`: Drop was asked for; the dialog shows its confirmation (Enter / Esc).
-    List { entries: Vec<StashEntry>, selected: usize, files: Vec<FileChange>, confirm_drop: bool },
+    List {
+        entries: Vec<StashEntry>,
+        selected: usize,
+        files: Vec<FileChange>,
+        confirm_drop: bool,
+    },
 }
 
 impl Workspace {
@@ -378,7 +386,13 @@ impl Workspace {
         dialog_frame("unstash-dialog", 720., "Unstash Changes")
             .child(div().pb(px(8.)).text_color(Theme::text_muted()).child(format!("{} stash(es) · changes go to {branch}", entries.len())))
             .child(div().flex().gap(px(12.)).child(div().id("stash-list").flex_1().max_h(ui_px(220.)).overflow_y_scroll().children(rows)).child(side))
-            .child(div().pt(px(12.)).pb(px(4.)).text_color(Theme::text_muted()).child(format!("Files in {} (click: diff)", entries.get(selected).map(|e| e.name.as_str()).unwrap_or(""))))
+            .child(
+                div()
+                    .pt(px(12.))
+                    .pb(px(4.))
+                    .text_color(Theme::text_muted())
+                    .child(format!("Files in {} (click: diff)", entries.get(selected).map(|e| e.name.as_str()).unwrap_or(""))),
+            )
             .child(
                 div()
                     .id("stash-files")
@@ -414,7 +428,13 @@ impl Workspace {
                     .pt(px(12.))
                     .flex()
                     .items_center()
-                    .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("↑↓ select · Enter Apply · Shift+Enter Pop · Delete Drop · Ctrl+D diff · Esc close"))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(ui_px(11.))
+                            .text_color(Theme::text_dim())
+                            .child("↑↓ select · Enter Apply · Shift+Enter Pop · Delete Drop · Ctrl+D diff · Esc close"),
+                    )
                     .child(button("st-close", "Close", false).on_click(cx.listener(|this, _, w, cx| {
                         this.set_stash_dialog(None, cx);
                         this.focus_editor(w, cx);

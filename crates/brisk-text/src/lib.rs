@@ -336,12 +336,7 @@ impl Buffer {
 
     /// Apply non-overlapping edits (given in original coordinates, any order).
     /// `after` computes the new selections from a position-mapping function.
-    fn apply(
-        &mut self,
-        mut edits: Vec<(Range<usize>, String)>,
-        kind: EditKind,
-        after: impl FnOnce(&dyn Fn(usize, bool) -> usize, &Self) -> Vec<Selection>,
-    ) {
+    fn apply(&mut self, mut edits: Vec<(Range<usize>, String)>, kind: EditKind, after: impl FnOnce(&dyn Fn(usize, bool) -> usize, &Self) -> Vec<Selection>) {
         if self.read_only {
             return;
         }
@@ -372,8 +367,7 @@ impl Buffer {
         let before = self.selections.clone();
 
         // Deltas for mapping old -> new positions.
-        let deltas: Vec<(Range<usize>, usize)> =
-            edits.iter().map(|(r, s)| (r.clone(), s.chars().count())).collect();
+        let deltas: Vec<(Range<usize>, usize)> = edits.iter().map(|(r, s)| (r.clone(), s.chars().count())).collect();
         let map = move |pos: usize, right_bias: bool| -> usize {
             let mut shift: isize = 0;
             for (r, ins) in &deltas {
@@ -518,7 +512,9 @@ impl Buffer {
         let len = self.len_chars();
         let edits = edits.into_iter().map(|(r, s)| (r.start.min(len)..r.end.min(len).max(r.start.min(len)), s)).collect();
         let sels = self.selections.clone();
-        self.apply(edits, EditKind::Other, |map, _| sels.iter().map(|s| Selection { anchor: map(s.anchor, false), head: map(s.head, false), goal_col: None }).collect());
+        self.apply(edits, EditKind::Other, |map, _| {
+            sels.iter().map(|s| Selection { anchor: map(s.anchor, false), head: map(s.head, false), goal_col: None }).collect()
+        });
     }
 
     // --- Typing --------------------------------------------------------------
@@ -528,9 +524,7 @@ impl Buffer {
         let edits: Vec<_> = self.selections.iter().map(|s| (s.range(), text.to_string())).collect();
         let starts: Vec<usize> = self.selections.iter().map(|s| s.range().start).collect();
         let kind = if text.contains('\n') { EditKind::Other } else { EditKind::Typing };
-        self.apply(edits, kind, |map, _| {
-            starts.iter().map(|&st| Selection::caret(map(st, false) + n)).collect()
-        });
+        self.apply(edits, kind, |map, _| starts.iter().map(|&st| Selection::caret(map(st, false) + n)).collect());
     }
 
     /// Paste with as many carets as pieces: the i-th caret in text order gets `texts[i]`
@@ -567,39 +561,25 @@ impl Buffer {
         };
         let closing = closing.filter(|_| self.auto_pairs);
         // Overtype a closing char that's already there.
-        if self.auto_pairs
-            && matches!(c, ')' | ']' | '}' | '"' | '\'')
-            && self.selections.iter().all(|s| s.is_empty() && self.char_at(s.head) == Some(c))
-        {
+        if self.auto_pairs && matches!(c, ')' | ']' | '}' | '"' | '\'') && self.selections.iter().all(|s| s.is_empty() && self.char_at(s.head) == Some(c)) {
             self.move_carets(Movement::Right, false);
             return;
         }
         if let Some(close) = closing {
             if self.selections.iter().all(|s| s.is_empty()) {
-                let next_ok = self.selections.iter().all(|s| {
-                    self.char_at(s.head).map_or(true, |n| n.is_whitespace() || ")]},:".contains(n))
-                });
+                let next_ok = self.selections.iter().all(|s| self.char_at(s.head).map_or(true, |n| n.is_whitespace() || ")]},:".contains(n)));
                 let quote_ok = !matches!(c, '"' | '\'')
-                    || self.selections.iter().all(|s| {
-                        s.head == 0
-                            || self.char_at(s.head - 1).map_or(true, |p| !p.is_alphanumeric() && p != c)
-                    });
+                    || self.selections.iter().all(|s| s.head == 0 || self.char_at(s.head - 1).map_or(true, |p| !p.is_alphanumeric() && p != c));
                 if next_ok && quote_ok {
                     let pair: String = [c, close].iter().collect();
                     let starts: Vec<usize> = self.selections.iter().map(|s| s.head).collect();
                     let edits = starts.iter().map(|&p| (p..p, pair.clone())).collect();
-                    self.apply(edits, EditKind::Typing, |map, _| {
-                        starts.iter().map(|&p| Selection::caret(map(p, false) + 1)).collect()
-                    });
+                    self.apply(edits, EditKind::Typing, |map, _| starts.iter().map(|&p| Selection::caret(map(p, false) + 1)).collect());
                     return;
                 }
             } else if self.selections.iter().all(|s| !s.is_empty()) {
                 // Wrap selection.
-                let edits: Vec<_> = self
-                    .selections
-                    .iter()
-                    .map(|s| (s.range(), format!("{c}{}{close}", self.slice(s.range()))))
-                    .collect();
+                let edits: Vec<_> = self.selections.iter().map(|s| (s.range(), format!("{c}{}{close}", self.slice(s.range())))).collect();
                 let ranges: Vec<_> = self.selections.iter().map(|s| s.range()).collect();
                 self.apply(edits, EditKind::Other, |map, _| {
                     ranges
@@ -657,9 +637,7 @@ impl Buffer {
             edits.push((r.clone(), ins));
             carets.push((r.start, caret_off));
         }
-        self.apply(edits, EditKind::Other, |map, _| {
-            carets.iter().map(|&(st, off)| Selection::caret(map(st, false) + off)).collect()
-        });
+        self.apply(edits, EditKind::Other, |map, _| carets.iter().map(|&(st, off)| Selection::caret(map(st, false) + off)).collect());
     }
 
     /// Shift+Enter: new line after the current one, regardless of caret column.
@@ -683,12 +661,7 @@ impl Buffer {
                 targets.push((p, n, true));
             }
         }
-        self.apply(edits, EditKind::Other, |map, _| {
-            targets
-                .iter()
-                .map(|&(p, n, _)| Selection::caret(map(p, false) + n))
-                .collect()
-        });
+        self.apply(edits, EditKind::Other, |map, _| targets.iter().map(|&(p, n, _)| Selection::caret(map(p, false) + n)).collect());
     }
 
     pub fn backspace(&mut self) {
@@ -730,12 +703,9 @@ impl Buffer {
             return self.delete_selections();
         }
         let len = self.len_chars();
-        let edits: Vec<_> =
-            self.selections.iter().filter(|s| s.head < len).map(|s| (s.head..s.head + 1, String::new())).collect();
+        let edits: Vec<_> = self.selections.iter().filter(|s| s.head < len).map(|s| (s.head..s.head + 1, String::new())).collect();
         let starts: Vec<usize> = self.selections.iter().map(|s| s.head).collect();
-        self.apply(edits, EditKind::Deleting, |map, _| {
-            starts.iter().map(|&p| Selection::caret(map(p, false))).collect()
-        });
+        self.apply(edits, EditKind::Deleting, |map, _| starts.iter().map(|&p| Selection::caret(map(p, false))).collect());
     }
 
     pub fn delete_word(&mut self, forward: bool) {
@@ -755,17 +725,13 @@ impl Buffer {
             })
             .collect();
         let edits = ranges.iter().map(|r| (r.clone(), String::new())).collect();
-        self.apply(edits, EditKind::Deleting, |map, _| {
-            ranges.iter().map(|r| Selection::caret(map(r.start, false))).collect()
-        });
+        self.apply(edits, EditKind::Deleting, |map, _| ranges.iter().map(|r| Selection::caret(map(r.start, false))).collect());
     }
 
     fn delete_selections(&mut self) {
         let ranges: Vec<_> = self.selections.iter().map(|s| s.range()).collect();
         let edits = ranges.iter().map(|r| (r.clone(), String::new())).collect();
-        self.apply(edits, EditKind::Other, |map, _| {
-            ranges.iter().map(|r| Selection::caret(map(r.start, false))).collect()
-        });
+        self.apply(edits, EditKind::Other, |map, _| ranges.iter().map(|r| Selection::caret(map(r.start, false))).collect());
     }
 
     // --- Line operations -----------------------------------------------------
@@ -876,9 +842,7 @@ impl Buffer {
         let other_len = other.chars().count() as isize + 1;
         let delta: isize = if up { -other_len } else { other_len };
         let (a, h) = (s.anchor as isize + delta, s.head as isize + delta);
-        self.apply(vec![(range, replacement)], EditKind::Other, |_, _| {
-            vec![Selection { anchor: a as usize, head: h as usize, goal_col: s.goal_col }]
-        });
+        self.apply(vec![(range, replacement)], EditKind::Other, |_, _| vec![Selection { anchor: a as usize, head: h as usize, goal_col: s.goal_col }]);
     }
 
     /// Ctrl+/: toggle line comment on selected lines, PyCharm style (comment at column 0).
@@ -910,7 +874,12 @@ impl Buffer {
         let at = if self.comment_first_column {
             0
         } else {
-            targets.iter().filter(|&&l| !self.line(l).trim().is_empty()).map(|&l| self.line(l).chars().take_while(|c| *c == ' ' || *c == '\t').count()).min().unwrap_or(0)
+            targets
+                .iter()
+                .filter(|&&l| !self.line(l).trim().is_empty())
+                .map(|&l| self.line(l).chars().take_while(|c| *c == ' ' || *c == '\t').count())
+                .min()
+                .unwrap_or(0)
         };
         let mut edits = Vec::new();
         for &l in &targets {
@@ -935,9 +904,7 @@ impl Buffer {
                 let next = (line + 1).min(b.len_lines().saturating_sub(1));
                 vec![Selection::caret(b.line_col_to_pos(next, col))]
             } else {
-                sels.iter()
-                    .map(|s| Selection { anchor: map(s.anchor, true), head: map(s.head, true), goal_col: None })
-                    .collect()
+                sels.iter().map(|s| Selection { anchor: map(s.anchor, true), head: map(s.head, true), goal_col: None }).collect()
             }
         });
     }
@@ -1208,7 +1175,11 @@ impl Buffer {
             self.line_start(l)..end
         } else {
             let r = self.word_range_at(pos);
-            if r.is_empty() { pos..pos } else { r }
+            if r.is_empty() {
+                pos..pos
+            } else {
+                r
+            }
         };
         let sel = if at.start < unit.start {
             Selection { anchor: unit.end, head: at.start, goal_col: None }
@@ -1257,10 +1228,7 @@ impl Buffer {
         let text = self.text();
         // Search in char space via byte offsets.
         let from_byte = self.rope.char_to_byte(p.range().end);
-        let found = text[from_byte..]
-            .find(&needle)
-            .map(|i| from_byte + i)
-            .or_else(|| text[..from_byte].find(&needle));
+        let found = text[from_byte..].find(&needle).map(|i| from_byte + i).or_else(|| text[..from_byte].find(&needle));
         if let Some(b) = found {
             let st = self.rope.byte_to_char(b);
             let sel = Selection { anchor: st, head: st + needle.chars().count(), goal_col: None };

@@ -9,7 +9,10 @@ use gpui::{Context, Window};
 impl Workspace {
     pub(super) fn test_runners_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
-        let _ = std::fs::write(root.join("test_p.py"), "import pytest\n\n\n@pytest.mark.parametrize('n', [1, 2, 3])\ndef test_x(n):\n    print('param', n)\n    assert n != 2\n");
+        let _ = std::fs::write(
+            root.join("test_p.py"),
+            "import pytest\n\n\n@pytest.mark.parametrize('n', [1, 2, 3])\ndef test_x(n):\n    print('param', n)\n    assert n != 2\n",
+        );
         let _ = std::fs::write(
             root.join("test_u.py"),
             "import unittest\n\n\nclass TestU(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n\n    def test_bad(self):\n        self.assertEqual(1, 2)\n",
@@ -27,7 +30,9 @@ impl Workspace {
             let finished = async |this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindowContext| {
                 for _ in 0..200 {
                     pause(100).await;
-                    let done = this.update(cx, |t, cx| t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default().contains("Process finished")).unwrap_or(false);
+                    let done = this
+                        .update(cx, |t, cx| t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default().contains("Process finished"))
+                        .unwrap_or(false);
                     if done {
                         return true;
                     }
@@ -42,7 +47,9 @@ impl Workspace {
                 format!("tabs {tabs:?}, {summary:?}, tree {tree:?}")
             };
             // pytest: the whole file, then ▶ on the [2] node (Ctrl+Shift+F10 in the tree).
-            let _ = this.update_in(cx, |this, window, cx| this.run_config(RunConfig { name: "params".into(), kind: RunKind::Pytest, target: "test_p.py".into(), ..Default::default() }, window, cx));
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.run_config(RunConfig { name: "params".into(), kind: RunKind::Pytest, target: "test_p.py".into(), ..Default::default() }, window, cx)
+            });
             finished(&this, cx).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 eprintln!("smoke-testrunners: params -> {}", state(this, cx));
@@ -85,10 +92,16 @@ impl Workspace {
             finished(&this, cx).await;
             let _ = this.update(cx, |this, cx| {
                 let first = this.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default().lines().next().unwrap_or("").to_string();
-                eprintln!("smoke-testrunners: ctrl+shift+f10 on test_u.py -> {}, command ends {:?}", state(this, cx), first.rsplit(".exe").next().unwrap_or(""));
+                eprintln!(
+                    "smoke-testrunners: ctrl+shift+f10 on test_u.py -> {}, command ends {:?}",
+                    state(this, cx),
+                    first.rsplit(".exe").next().unwrap_or("")
+                );
             });
             // Doctest.
-            let _ = this.update_in(cx, |this, window, cx| this.run_config(RunConfig { name: "doc".into(), kind: RunKind::Doctest, target: "mathx.py".into(), ..Default::default() }, window, cx));
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.run_config(RunConfig { name: "doc".into(), kind: RunKind::Doctest, target: "mathx.py".into(), ..Default::default() }, window, cx)
+            });
             finished(&this, cx).await;
             let _ = this.update(cx, |this, cx| {
                 eprintln!("smoke-testrunners: doctest -> {}", state(this, cx));

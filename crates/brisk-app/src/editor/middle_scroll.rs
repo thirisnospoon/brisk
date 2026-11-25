@@ -110,11 +110,6 @@ impl Editor {
     /// vertical thumb (top, height), and whether middle-button scrolling is armed / moving.
     pub fn mouse_state_for_smoke(&self) -> (Option<String>, bool, Option<(f32, f32)>, Option<bool>) {
         let vh = self.layout.as_ref().map(|l| f32::from(l.bounds.size.height)).unwrap_or(0.0);
-        (
-            self.bar_hover.map(|b| format!("{b:?}")),
-            self.bar_hot(super::scroll::Bar::Vertical),
-            self.v_thumb(vh),
-            self.middle.as_ref().map(|m| m.moved),
-        )
+        (self.bar_hover.map(|b| format!("{b:?}")), self.bar_hot(super::scroll::Bar::Vertical), self.v_thumb(vh), self.middle.as_ref().map(|m| m.moved))
     }
 }

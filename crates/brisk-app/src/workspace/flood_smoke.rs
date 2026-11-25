@@ -18,7 +18,14 @@ fn stats(mut v: Vec<f64>) -> String {
     }
     v.sort_by(|a, b| a.total_cmp(b));
     let p = |q: f64| v[((v.len() - 1) as f64 * q).round() as usize];
-    format!("n {}, median {:.1} ms, p99 {:.1} ms, max {:.1} ms, over 50 ms: {}", v.len(), p(0.5), p(0.99), v[v.len() - 1], v.iter().filter(|&&x| x > 50.0).count())
+    format!(
+        "n {}, median {:.1} ms, p99 {:.1} ms, max {:.1} ms, over 50 ms: {}",
+        v.len(),
+        p(0.5),
+        p(0.99),
+        v[v.len() - 1],
+        v.iter().filter(|&&x| x > 50.0).count()
+    )
 }
 
 impl Workspace {
@@ -91,7 +98,11 @@ impl Workspace {
                     }
                     if text.contains("Process finished") {
                         if done_at.is_none() {
-                            report = format!("lines written {:?}, console tail {:?}", std::fs::read_to_string(root.join("flood.out")).ok(), text.lines().rev().take(4).collect::<Vec<_>>());
+                            report = format!(
+                                "lines written {:?}, console tail {:?}",
+                                std::fs::read_to_string(root.join("flood.out")).ok(),
+                                text.lines().rev().take(4).collect::<Vec<_>>()
+                            );
                         }
                         break;
                     }
@@ -101,7 +112,11 @@ impl Workspace {
             let secs = started.elapsed().as_secs_f64();
             let (notifies, renders) = (PUMP_NOTIFIES.load(Relaxed) - counts0.0, PANEL_RENDERS.load(Relaxed) - counts0.1);
             let _ = this.update(cx, |this, cx| {
-                eprintln!("smoke-flood: output redraws {notifies} ({:.0}/s), Run panel renders {renders} ({:.0}/s)", notifies as f64 / secs, renders as f64 / secs);
+                eprintln!(
+                    "smoke-flood: output redraws {notifies} ({:.0}/s), Run panel renders {renders} ({:.0}/s)",
+                    notifies as f64 / secs,
+                    renders as f64 / secs
+                );
                 let typed = this.active_editor().map(|e| e.read(cx).text_string().matches('x').count()).unwrap_or(0);
                 eprintln!("smoke-flood: mode {}, script {report:?}, seen after {:?}, total {:?}", if pty { "pty" } else { "pipe" }, done_at, started.elapsed());
                 eprintln!("smoke-flood: ui ticker gaps (minus 5 ms): {}", stats(gaps));

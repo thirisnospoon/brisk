@@ -44,7 +44,14 @@ fn imported(text: &str, name: &str, file: &Path, root: &Path) -> Vec<(PathBuf, S
 
 /// Methods of `c`'s bases, nearest first (a name once), with the class each comes from.
 /// `located`: ty's (file, row) for each direct base, when ty answered.
-fn base_methods(c: &ClassInfo, file: &Path, root: &Path, text: &str, located: Vec<Option<(PathBuf, usize)>>, index: &[(String, PathBuf)]) -> Vec<(Method, String)> {
+fn base_methods(
+    c: &ClassInfo,
+    file: &Path,
+    root: &Path,
+    text: &str,
+    located: Vec<Option<(PathBuf, usize)>>,
+    index: &[(String, PathBuf)],
+) -> Vec<(Method, String)> {
     let load = |p: &Path| if p == file { Some(text.to_string()) } else { std::fs::read_to_string(p).ok() };
     let mut queue: std::collections::VecDeque<(String, Option<(PathBuf, usize)>, PathBuf)> =
         c.bases.iter().zip(located.into_iter().chain(std::iter::repeat(None))).map(|((b, _), loc)| (b.clone(), loc, file.to_path_buf())).collect();
@@ -123,11 +130,7 @@ impl Workspace {
         let asks: Vec<_> = c.bases.iter().map(|(_, b)| ty.as_ref().map(|(t, p)| t.definition(p, pos(*b)))).collect();
         self.ensure_symbols(cx);
         let index: Vec<(String, PathBuf)> = match (&self.symbols.list, &self.symbols.files) {
-            (Some(list), Some(files)) => list
-                .iter()
-                .filter(|s| s.kind == OutlineKind::Class)
-                .map(|s| (s.name.to_string(), files.abs(s.file)))
-                .collect(),
+            (Some(list), Some(files)) => list.iter().filter(|s| s.kind == OutlineKind::Class).map(|s| (s.name.to_string(), files.abs(s.file))).collect(),
             _ => Vec::new(),
         };
         let root = self.root.clone();
@@ -158,7 +161,10 @@ impl Workspace {
                     this.problems.intents.clear();
                     this.status = format!("{what}: nothing to {}", if implement { "implement" } else { "override" });
                 } else {
-                    this.problems.intents = found.iter().map(|(m, base)| item(format!("{}({})", m.name, m.params), base.clone(), Intent::Member(brisk_syntax::gen_override(m, base)))).collect();
+                    this.problems.intents = found
+                        .iter()
+                        .map(|(m, base)| item(format!("{}({})", m.name, m.params), base.clone(), Intent::Member(brisk_syntax::gen_override(m, base))))
+                        .collect();
                     this.problems.intents_title = Some(if implement { "Select Methods to Implement" } else { "Select Methods to Override" });
                     this.open_popup(PopupKind::Intentions);
                 }

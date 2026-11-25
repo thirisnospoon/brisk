@@ -89,8 +89,7 @@ pub fn project_tool(root: &Path, python: &Path) -> Option<ProjectTool> {
     let manager = brisk_run::pyproj::detect(root)?;
     let tool = brisk_run::pyproj::find_tool(manager, Some(python))?;
     let in_dot_venv = brisk_run::Interpreter::venv_dir_of(python).is_some_and(|d| same_path(&d, &root.join(".venv")));
-    let ours = in_dot_venv
-        || (manager == Manager::Poetry && brisk_run::pyproj::poetry_env_python(&tool, root).is_some_and(|p| same_path(&p, python)));
+    let ours = in_dot_venv || (manager == Manager::Poetry && brisk_run::pyproj::poetry_env_python(&tool, root).is_some_and(|p| same_path(&p, python)));
     ours.then(|| ProjectTool { manager, tool, root: root.to_path_buf() })
 }
 

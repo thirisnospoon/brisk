@@ -1,114 +1,114 @@
 //! Main window: tool window stripes, project tree, editor tabs, popups, status bar.
 //! All shortcuts go through brisk-keymap's PyCharm keymap.
 
-mod bookmarks_ui;
-mod console_ui;
-mod packages_ui;
-mod packages_smoke;
-mod pyproj_smoke;
-mod todo_ui;
-mod webnav_smoke;
-mod ssh_smoke;
-mod marks_smoke;
-mod keymap_smoke;
-mod tour_smoke;
-mod web_ui;
-mod ssh_ui;
-mod keymap_ui;
-mod db_ui;
-mod services_ui;
-mod pin_smoke;
-mod dataview_smoke;
-pub(crate) mod budget_probe;
-mod multi_smoke;
-mod pycon_smoke;
-mod run_tpl_smoke;
-mod run_term_smoke;
-mod test_view_smoke;
-mod ansi_smoke;
-mod latency_smoke;
 mod actions_smoke;
-mod flood_smoke;
-mod motion_smoke;
-mod stripe_smoke;
-mod squiggle_smoke;
-mod whitespace_smoke;
-mod test_runners_smoke;
+mod ansi_smoke;
+mod bookmarks_ui;
+pub(crate) mod budget_probe;
+mod console_ui;
+mod dataview_smoke;
+mod db_ui;
 mod debug_ui;
 mod disk_ui;
 mod edit2_smoke;
 mod edit_smoke;
 mod files_ui;
 mod find_ui;
+mod flood_smoke;
 mod git_annotate_ui;
 mod git_branch_ui;
-mod git_push_ui;
 mod git_compare_ui;
 mod git_history_ui;
 mod git_log_filter;
 mod git_log_menu;
 mod git_merge_ui;
-mod git_stash_ui;
+mod git_push_ui;
 mod git_smoke;
-mod vcs_smoke;
+mod git_stash_ui;
 mod git_ui;
+mod keymap_smoke;
+mod keymap_ui;
+mod latency_smoke;
+mod marks_smoke;
+mod motion_smoke;
+mod multi_smoke;
+mod packages_smoke;
+mod packages_ui;
+mod pin_smoke;
+mod pycon_smoke;
+mod pyproj_smoke;
+mod run_term_smoke;
+mod run_tpl_smoke;
+mod services_ui;
+mod squiggle_smoke;
+mod ssh_smoke;
+mod ssh_ui;
+mod stripe_smoke;
+mod test_runners_smoke;
+mod test_view_smoke;
+mod todo_ui;
+mod tour_smoke;
+mod vcs_smoke;
+mod web_ui;
+mod webnav_smoke;
+mod whitespace_smoke;
 pub(crate) use git_ui::fmt_time;
-mod history_ui;
-mod intel_smoke;
-mod complete_smoke;
-mod big_smoke;
-mod local_refs;
-mod mouse_smoke;
-mod gutter_smoke;
-mod splitter_ui;
 mod bars_smoke;
-mod scope_smoke;
-mod w7_smoke;
-mod w7_smoke2;
-mod scratch_ui;
-mod places_ui;
+mod before_launch_ui;
+mod big_smoke;
+mod complete_smoke;
+mod console_find_smoke;
+mod coverage_ui;
+mod generate_ui;
+mod gutter_smoke;
+mod hang_smoke;
+mod history_ui;
+mod install_offer_ui;
+mod intel_smoke;
+mod local_refs;
 mod lsp_ui;
 mod main_menu;
+mod membudget_smoke;
 mod menu_ui;
+mod mouse_smoke;
+mod open_smoke;
+mod places_ui;
 mod problems_ui;
-mod generate_ui;
+mod profile_ui;
 pub(crate) mod project_ui;
+mod run_anything_ui;
 mod run_config_ui;
 mod run_marks_ui;
 mod run_ui;
+mod scope_smoke;
+mod scratch_ui;
+mod scroll_smoke;
 mod settings_ui;
+mod splitter_ui;
 mod status_ui;
 mod tabs_ui;
-mod venv_ui;
-mod run_anything_ui;
-mod terminal_env_ui;
-mod coverage_ui;
-mod install_offer_ui;
-mod profile_ui;
-mod before_launch_ui;
-mod web_smoke;
-mod console_find_smoke;
-mod membudget_smoke;
-mod hang_smoke;
-mod open_smoke;
-mod scroll_smoke;
 mod templates_ui;
+mod terminal_env_ui;
+mod venv_ui;
+mod w7_smoke;
+mod w7_smoke2;
+mod web_smoke;
 mod win_input;
 
-use crate::theme::ui_px;
 use crate::diff_view::DiffView;
-use crate::merge_view::MergeView;
 use crate::editor::Editor;
 use crate::grid_view::GridView;
 use crate::keys;
+use crate::merge_view::MergeView;
 use crate::terminal_view::TerminalPanel;
-use crate::theme::{Theme, mono_font, ui_font};
+use crate::theme::ui_px;
+use crate::theme::{mono_font, ui_font, Theme};
 use brisk_keymap::{Action, KeyResolver, Resolution, ALL_ACTIONS};
 use brisk_project::{FileList, NodeId, ProjectTree};
 use gpui::prelude::*;
 use gpui::{
-    div, px, uniform_list, App, ClickEvent, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ModifiersChangedEvent,
-    MouseButton, SharedString, UniformListScrollHandle, Window,
+    div, px, uniform_list, App, ClickEvent, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ModifiersChangedEvent, MouseButton, SharedString,
+    UniformListScrollHandle, Window,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -873,7 +873,12 @@ impl Workspace {
                         }
                     }
                     let _ = this.update_in(cx, |this, window, cx| {
-                        eprintln!("smoke-find: {} (since start {:.1?}, files indexed {})", this.find.summary(), t0.elapsed(), this.files.as_ref().map_or(0, |f| f.files.len()));
+                        eprintln!(
+                            "smoke-find: {} (since start {:.1?}, files indexed {})",
+                            this.find.summary(),
+                            t0.elapsed(),
+                            this.files.as_ref().map_or(0, |f| f.files.len())
+                        );
                         this.dispatch_find_window_for_smoke(window, cx);
                     });
                 })
@@ -1121,7 +1126,8 @@ impl Workspace {
                 self.show_toast(format!("{}: {err}", ed.read(cx).title()), true, cx);
             }
             if ed.read(cx).is_big() {
-                let msg = format!("Large file ({} lines): inlay hints are off; fold markers and completion words update lazily", ed.read(cx).buffer.len_lines());
+                let msg =
+                    format!("Large file ({} lines): inlay hints are off; fold markers and completion words update lazily", ed.read(cx).buffer.len_lines());
                 self.status = msg.clone();
                 self.show_toast(msg, false, cx);
             }
@@ -1504,15 +1510,45 @@ impl Workspace {
     /// PyCharm's "Override IDE shortcuts" mode: the shell gets the keys, except a short list of
     /// IDE actions (tool windows, Find Action, run/debug). Esc returns to the editor unless a
     /// full-screen app (vim, less, htop) is running.
-    fn terminal_key(&mut self, term: Option<Entity<TerminalPanel>>, ctx: &[&str], e: &KeyDownEvent, stroke: brisk_keymap::Keystroke, window: &mut Window, cx: &mut Context<Self>) {
+    fn terminal_key(
+        &mut self,
+        term: Option<Entity<TerminalPanel>>,
+        ctx: &[&str],
+        e: &KeyDownEvent,
+        stroke: brisk_keymap::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         use Action as A;
         const IDE_ACTIONS: &[Action] = &[
-            A::ToggleProjectWindow, A::ToggleBookmarksWindow, A::ToggleFindWindow, A::ToggleRunWindow,
-            A::ToggleDebugWindow, A::ToggleProblemsWindow, A::ToggleStructureWindow, A::ToggleServicesWindow,
-            A::ToggleGitWindow, A::ToggleCommitWindow, A::ToggleTerminalWindow, A::HideAllToolWindows,
-            A::HideActiveToolWindow, A::FindAction, A::Settings, A::Run, A::Debug, A::RunContext,
-            A::DebugContext, A::Stop, A::FindInFiles, A::SaveAll, A::ToggleDatabaseWindow, A::Rerun,
-            A::SelectRunConfiguration, A::TogglePythonConsole, A::TogglePythonPackages, A::ToggleTodoWindow,
+            A::ToggleProjectWindow,
+            A::ToggleBookmarksWindow,
+            A::ToggleFindWindow,
+            A::ToggleRunWindow,
+            A::ToggleDebugWindow,
+            A::ToggleProblemsWindow,
+            A::ToggleStructureWindow,
+            A::ToggleServicesWindow,
+            A::ToggleGitWindow,
+            A::ToggleCommitWindow,
+            A::ToggleTerminalWindow,
+            A::HideAllToolWindows,
+            A::HideActiveToolWindow,
+            A::FindAction,
+            A::Settings,
+            A::Run,
+            A::Debug,
+            A::RunContext,
+            A::DebugContext,
+            A::Stop,
+            A::FindInFiles,
+            A::SaveAll,
+            A::ToggleDatabaseWindow,
+            A::Rerun,
+            A::SelectRunConfiguration,
+            A::TogglePythonConsole,
+            A::TogglePythonPackages,
+            A::ToggleTodoWindow,
             A::ToggleEndpointsWindow,
         ];
         let Some(term) = term else { return };
@@ -1595,9 +1631,20 @@ impl Workspace {
                     self.refresh_git(cx);
                 }
             }
-            A::Commit | A::Push | A::UpdateProject | A::VcsQuickList | A::Branches | A::ShowDiff | A::RollbackChanges | A::Annotate | A::ResolveConflicts | A::StashChanges | A::UnstashChanges | A::ShowFileHistory | A::CompareWithBranch | A::Fetch => {
-                self.git_action(action, window, cx)
-            }
+            A::Commit
+            | A::Push
+            | A::UpdateProject
+            | A::VcsQuickList
+            | A::Branches
+            | A::ShowDiff
+            | A::RollbackChanges
+            | A::Annotate
+            | A::ResolveConflicts
+            | A::StashChanges
+            | A::UnstashChanges
+            | A::ShowFileHistory
+            | A::CompareWithBranch
+            | A::Fetch => self.git_action(action, window, cx),
             A::ToggleStructureWindow => self.toggle_left(LeftTool::Structure, window, cx),
             A::ToggleBookmarksWindow => self.toggle_left(LeftTool::Bookmarks, window, cx),
             A::RunAnything => self.open_run_anything(),
@@ -1642,8 +1689,14 @@ impl Workspace {
             A::RefreshPythonPackages | A::InstallPythonPackage | A::UninstallPythonPackage => self.python_packages_action(action, window, cx),
             A::RerunPythonConsole | A::StopPythonConsole | A::ClearPythonConsole => self.python_console_action(action, window, cx),
             A::ToggleServicesWindow => self.toggle_services_window(window, cx),
-            A::ToggleDatabaseWindow | A::NewDataSource | A::DataSourceProperties | A::OpenQueryConsole | A::EditTableData
-            | A::RefreshDatabase | A::Disconnect | A::ExecuteQuery => self.db_action(action, window, cx),
+            A::ToggleDatabaseWindow
+            | A::NewDataSource
+            | A::DataSourceProperties
+            | A::OpenQueryConsole
+            | A::EditTableData
+            | A::RefreshDatabase
+            | A::Disconnect
+            | A::ExecuteQuery => self.db_action(action, window, cx),
             A::Stop if self.db.running.is_some() => {
                 if let Some(c) = &self.db.running {
                     c.cancel();
@@ -1666,15 +1719,39 @@ impl Workspace {
             A::NewScratchFile => self.start_new_scratch(cx),
             A::RecentLocations => self.recent_locations(cx),
             A::LastEditLocation => self.last_edit_location(window, cx),
-            A::ToggleBreakpoint | A::ViewBreakpoints | A::Debug | A::DebugContext | A::Resume | A::StepOver | A::StepInto | A::StepOut | A::RunToCursor | A::EvaluateExpression
-            | A::PauseProgram | A::RerunDebug | A::AddToWatches | A::MuteBreakpoints | A::SmartStepInto | A::AttachToProcess | A::SetNextStatement => {
+            A::ToggleBreakpoint
+            | A::ViewBreakpoints
+            | A::Debug
+            | A::DebugContext
+            | A::Resume
+            | A::StepOver
+            | A::StepInto
+            | A::StepOut
+            | A::RunToCursor
+            | A::EvaluateExpression
+            | A::PauseProgram
+            | A::RerunDebug
+            | A::AddToWatches
+            | A::MuteBreakpoints
+            | A::SmartStepInto
+            | A::AttachToProcess
+            | A::SetNextStatement => {
                 self.debug_action(action, window, cx);
             }
             A::ToggleBookmark | A::ToggleBookmarkWithMnemonic | A::ShowBookmarks | A::FileStructurePopup => {
                 self.bookmark_action(action, window, cx);
             }
-            A::CloseOtherTabs | A::CloseAllTabs | A::CloseTabsToRight | A::CloseTabsToLeft | A::ReopenClosedTab | A::PinTab | A::SplitVertically
-            | A::SplitHorizontally | A::Unsplit | A::MoveToOppositeGroup | A::NextSplitter => {
+            A::CloseOtherTabs
+            | A::CloseAllTabs
+            | A::CloseTabsToRight
+            | A::CloseTabsToLeft
+            | A::ReopenClosedTab
+            | A::PinTab
+            | A::SplitVertically
+            | A::SplitHorizontally
+            | A::Unsplit
+            | A::MoveToOppositeGroup
+            | A::NextSplitter => {
                 self.tab_action(action, window, cx);
             }
             A::ReformatCode | A::OptimizeImports | A::CodeCleanup => self.format_action(action, window, cx),
@@ -1695,7 +1772,10 @@ impl Workspace {
                     self.bottom = None;
                 } else if self.db.focus.is_focused(window) {
                     self.db.open = false;
-                } else if self.tree_focus.is_focused(window) || self.commit_focus.is_focused(window) || self.git.as_ref().is_some_and(|g| g.message.read(cx).focus_handle(cx).is_focused(window)) {
+                } else if self.tree_focus.is_focused(window)
+                    || self.commit_focus.is_focused(window)
+                    || self.git.as_ref().is_some_and(|g| g.message.read(cx).focus_handle(cx).is_focused(window))
+                {
                     self.left = None;
                 } else {
                     self.bottom = None;
@@ -1742,7 +1822,14 @@ impl Workspace {
                     });
                 }
             }
-            A::Settings | A::IncreaseFontSize | A::DecreaseFontSize | A::ResetFontSize | A::QuickSwitchTheme | A::ZoomInIde | A::ZoomOutIde | A::ResetIdeZoom => {
+            A::Settings
+            | A::IncreaseFontSize
+            | A::DecreaseFontSize
+            | A::ResetFontSize
+            | A::QuickSwitchTheme
+            | A::ZoomInIde
+            | A::ZoomOutIde
+            | A::ResetIdeZoom => {
                 self.settings_action(action, window, cx);
             }
             // Enter / F4 in the Project view are bound to this action, so the resolver takes
@@ -1927,7 +2014,9 @@ impl Workspace {
                 let mut v = self.symbol_items(&q, true, 5);
                 v.extend(self.file_items(&q, 30));
                 if !q.is_empty() {
-                    v.extend(self.symbol_items(&q, false, 8).into_iter().filter(|i| !matches!(i.target, Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Class))));
+                    v.extend(
+                        self.symbol_items(&q, false, 8).into_iter().filter(|i| !matches!(i.target, Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Class))),
+                    );
                     v.extend(self.action_items(&q, 8));
                 }
                 v
@@ -1962,9 +2051,19 @@ impl Workspace {
                             Some(l) => format!("Go to line {l}, column {c}"),
                             None => format!("Go to column {c}"),
                         };
-                        vec![PopupItem { label, detail: String::new(), hint: String::new(), target: Target::LineCol(l.map(|l| l.saturating_sub(1)), c.saturating_sub(1)) }]
+                        vec![PopupItem {
+                            label,
+                            detail: String::new(),
+                            hint: String::new(),
+                            target: Target::LineCol(l.map(|l| l.saturating_sub(1)), c.saturating_sub(1)),
+                        }]
                     }
-                    (Some(l), None) => vec![PopupItem { label: format!("Go to line {l}"), detail: String::new(), hint: String::new(), target: Target::Line(l.saturating_sub(1)) }],
+                    (Some(l), None) => vec![PopupItem {
+                        label: format!("Go to line {l}"),
+                        detail: String::new(),
+                        hint: String::new(),
+                        target: Target::Line(l.saturating_sub(1)),
+                    }],
                     _ => Vec::new(),
                 }
             }
@@ -2082,7 +2181,9 @@ impl Workspace {
                     Some(Target::Cancel) => self.focus_after_popup(window, cx),
                     Some(Target::Note) => {}
                     Some(Target::StopAndRerun(c)) => self.stop_and_rerun(*c, window, cx),
-                    Some(t @ (Target::RunConfig(..) | Target::EditRunConfigs | Target::SaveRunConfig(_) | Target::Interpreter(_))) => self.run_popup_pick(t, window, cx),
+                    Some(t @ (Target::RunConfig(..) | Target::EditRunConfigs | Target::SaveRunConfig(_) | Target::Interpreter(_))) => {
+                        self.run_popup_pick(t, window, cx)
+                    }
                     Some(Target::AddInterpreter) => {
                         self.open_popup(PopupKind::AddInterpreter);
                         cx.notify();
@@ -2094,7 +2195,14 @@ impl Workspace {
                     Some(Target::SshHost(h)) => self.ssh_pick_host(h, window, cx),
                     Some(Target::SshPython(h, p, v)) => self.ssh_pick_python(h, p, v, window, cx),
                     Some(Target::SshUse(uri)) => self.ssh_use(uri, window, cx),
-                    Some(t @ (Target::KeymapPick(_) | Target::KeymapAdd(_) | Target::KeymapRemove(..) | Target::KeymapReset(_) | Target::KeymapResetAll | Target::KeymapImport)) => self.keymap_pick(t, window, cx),
+                    Some(
+                        t @ (Target::KeymapPick(_)
+                        | Target::KeymapAdd(_)
+                        | Target::KeymapRemove(..)
+                        | Target::KeymapReset(_)
+                        | Target::KeymapResetAll
+                        | Target::KeymapImport),
+                    ) => self.keymap_pick(t, window, cx),
                     Some(Target::RunAnything(line)) => {
                         self.popup = None;
                         self.run_anything(line, window, cx);
@@ -2283,41 +2391,40 @@ impl Workspace {
                     .active(|s| s.bg(Theme::press()))
                     .tooltip(|_, cx| cx.new(|_| Tip("Main Menu".into())).into())
                     .child(crate::icons::ui_icon("menu", 16., Theme::text_muted()))
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, w, cx| {
-                        cx.stop_propagation();
-                        this.dispatch(Action::MainMenu, w, cx);
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, w, cx| {
+                            cx.stop_propagation();
+                            this.dispatch(Action::MainMenu, w, cx);
+                        }),
+                    ),
             )
             .child(
-                div().w(px(24.)).h(ui_px(24.)).rounded(px(5.)).bg(Theme::accent()).flex().items_center().justify_center().text_size(ui_px(11.)).font_weight(gpui::FontWeight::BOLD).child(
-                    self.project_name().chars().take(2).collect::<String>().to_uppercase(),
-                ),
+                div()
+                    .w(px(24.))
+                    .h(ui_px(24.))
+                    .rounded(px(5.))
+                    .bg(Theme::accent())
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(ui_px(11.))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .child(self.project_name().chars().take(2).collect::<String>().to_uppercase()),
             )
             .child(chip("tb-project", None, self.project_name()).on_click(cx.listener(|this, _, _, cx| {
                 this.open_popup(PopupKind::Projects);
                 cx.notify();
             })))
-            .child(
-                chip("tb-branch", Some("git-branch"), self.branch_label())
-                    .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Branches, w, cx))),
-            )
+            .child(chip("tb-branch", Some("git-branch"), self.branch_label()).on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Branches, w, cx))))
             .child(div().flex_1())
-            .child(
-                chip("tb-config", None, self.run_widget_label())
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.reload_runs();
-                        this.open_popup(PopupKind::RunConfigs(false));
-                        cx.notify();
-                    })),
-            )
-            .child(
-                title_button("tb-run", "play", Theme::run_icon(), "Run")
-                    .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Run, w, cx))),
-            )
-            .child(
-                title_button("tb-debug", "bug", Theme::run_icon(), "Debug")
-                    .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Debug, w, cx))),
-            )
+            .child(chip("tb-config", None, self.run_widget_label()).on_click(cx.listener(|this, _, _, cx| {
+                this.reload_runs();
+                this.open_popup(PopupKind::RunConfigs(false));
+                cx.notify();
+            })))
+            .child(title_button("tb-run", "play", Theme::run_icon(), "Run").on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Run, w, cx))))
+            .child(title_button("tb-debug", "bug", Theme::run_icon(), "Debug").on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Debug, w, cx))))
             .child(
                 title_button("tb-search", "search", Theme::text_muted(), "Search Everywhere  Double Shift")
                     .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::SearchEverywhere, w, cx))),
@@ -2340,15 +2447,42 @@ impl Workspace {
             .child(self.stripe_button("st-structure", "structure", "Structure", self.left == Some(LeftTool::Structure), Action::ToggleStructureWindow, cx))
             .child(self.stripe_button("st-bookmarks", "bookmarks", "Bookmarks", self.left == Some(LeftTool::Bookmarks), Action::ToggleBookmarksWindow, cx))
             .child(div().flex_1())
-            .child(self.stripe_button("st-pyconsole", "python-console", "Python Console", self.bottom == Some(BottomTool::PythonConsole), Action::TogglePythonConsole, cx))
-            .child(self.stripe_button("st-packages", "packages", "Python Packages", self.bottom == Some(BottomTool::Packages), Action::TogglePythonPackages, cx))
+            .child(self.stripe_button(
+                "st-pyconsole",
+                "python-console",
+                "Python Console",
+                self.bottom == Some(BottomTool::PythonConsole),
+                Action::TogglePythonConsole,
+                cx,
+            ))
+            .child(self.stripe_button(
+                "st-packages",
+                "packages",
+                "Python Packages",
+                self.bottom == Some(BottomTool::Packages),
+                Action::TogglePythonPackages,
+                cx,
+            ))
             .child(self.stripe_button("st-services", "services", "Services", self.bottom == Some(BottomTool::Services), Action::ToggleServicesWindow, cx))
             .child(self.stripe_button("st-run", "run", "Run", self.bottom == Some(BottomTool::Run), Action::ToggleRunWindow, cx))
             .child(self.stripe_button("st-terminal", "terminal", "Terminal", self.bottom == Some(BottomTool::Terminal), Action::ToggleTerminalWindow, cx))
             .child(self.stripe_button("st-todo", "todo", "TODO", self.bottom == Some(BottomTool::Todo), Action::ToggleTodoWindow, cx))
-            .when(self.web.index.as_ref().is_some_and(|i| !i.routes.is_empty()), |d| d.child(self.stripe_button("st-endpoints", "endpoints", "Endpoints", self.bottom == Some(BottomTool::Endpoints), Action::ToggleEndpointsWindow, cx)))
-            .when(self.coverage.is_some(), |d| d.child(self.stripe_button("st-coverage", "coverage", "Coverage", self.bottom == Some(BottomTool::Coverage), Action::ToggleCoverageWindow, cx)))
-            .when(self.profile.is_some(), |d| d.child(self.stripe_button("st-profiler", "profiler", "Profiler", self.bottom == Some(BottomTool::Profiler), Action::ToggleProfilerWindow, cx)))
+            .when(self.web.index.as_ref().is_some_and(|i| !i.routes.is_empty()), |d| {
+                d.child(self.stripe_button(
+                    "st-endpoints",
+                    "endpoints",
+                    "Endpoints",
+                    self.bottom == Some(BottomTool::Endpoints),
+                    Action::ToggleEndpointsWindow,
+                    cx,
+                ))
+            })
+            .when(self.coverage.is_some(), |d| {
+                d.child(self.stripe_button("st-coverage", "coverage", "Coverage", self.bottom == Some(BottomTool::Coverage), Action::ToggleCoverageWindow, cx))
+            })
+            .when(self.profile.is_some(), |d| {
+                d.child(self.stripe_button("st-profiler", "profiler", "Profiler", self.bottom == Some(BottomTool::Profiler), Action::ToggleProfilerWindow, cx))
+            })
             .child(self.stripe_button("st-problems", "problems", "Problems", self.bottom == Some(BottomTool::Problems), Action::ToggleProblemsWindow, cx))
             .child(self.stripe_button("st-git", "git", "Git", self.bottom == Some(BottomTool::Git), Action::ToggleGitWindow, cx))
     }
@@ -2381,81 +2515,106 @@ impl Workspace {
             .flex_col()
             .size_full()
             .child(Self::panel_header("Project"))
-            .child(div().relative().flex_1().min_h_0().flex().flex_col().child(
-                uniform_list(
-                    "project-tree",
-                    n,
-                    cx.processor(|this, range: std::ops::Range<usize>, window, cx| {
-                        let focused = this.tree_focus.is_focused(window);
-                        let rows: Vec<_> = this.tree.rows()[range].to_vec();
-                        rows.into_iter()
-                            .map(|r| {
-                                let node = &this.tree.nodes[r.id];
-                                let selected = this.tree_selected == Some(r.id);
-                                let chevron = crate::icons::tree_arrow(node.is_dir, node.expanded, Theme::text_muted());
-                                let (icon, icon_color) = match this.tree.mark(r.id) {
-                                    Some(brisk_project::Mark::Sources) => ("ft:dir-src", Theme::text_muted()),
-                                    Some(brisk_project::Mark::Tests) => ("ft:dir-test", Theme::text_muted()),
-                                    Some(brisk_project::Mark::Excluded) => ("ft:dir-ex", Theme::text_muted()),
-                                    None => file_icon(&node.name, node.is_dir),
-                                };
-                                let open = this.active_editor().is_some_and(|e| e.read(cx).path.as_deref() == Some(node.path.as_path()));
-                                let vcs = if node.is_dir { None } else { this.file_status(&node.path).map(git_ui::status_color) };
-                                let name_color = if node.excluded {
-                                    Theme::excluded()
-                                } else if let Some(c) = vcs {
-                                    c
-                                } else if open {
-                                    Theme::modified()
-                                } else {
-                                    Theme::text()
-                                };
-                                let id = r.id;
-                                // The root shows where the project lives, shortened; the full
-                                // path is in the tooltip.
-                                let place = (r.id == 0).then(|| (short_dir(node.path.parent().unwrap_or(&node.path)), node.path.display().to_string()));
-                                div()
-                                    .id(("row", r.id))
-                                    .h(ui_px(24.))
-                                    .flex()
-                                    .items_center()
-                                    .pl(px(8. + r.depth as f32 * 16.))
-                                    .gap(px(4.))
-                                    .text_size(ui_px(13.))
-                                    .w_full()
-                                    .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
-                                    .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
-                                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| this.tree_press(id, e.click_count, false, window, cx)))
-                                    .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
-                                        cx.stop_propagation();
-                                        this.tree_menu(id, e.position, window, cx);
-                                    }))
-                                    .child(
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        uniform_list(
+                            "project-tree",
+                            n,
+                            cx.processor(|this, range: std::ops::Range<usize>, window, cx| {
+                                let focused = this.tree_focus.is_focused(window);
+                                let rows: Vec<_> = this.tree.rows()[range].to_vec();
+                                rows.into_iter()
+                                    .map(|r| {
+                                        let node = &this.tree.nodes[r.id];
+                                        let selected = this.tree_selected == Some(r.id);
+                                        let chevron = crate::icons::tree_arrow(node.is_dir, node.expanded, Theme::text_muted());
+                                        let (icon, icon_color) = match this.tree.mark(r.id) {
+                                            Some(brisk_project::Mark::Sources) => ("ft:dir-src", Theme::text_muted()),
+                                            Some(brisk_project::Mark::Tests) => ("ft:dir-test", Theme::text_muted()),
+                                            Some(brisk_project::Mark::Excluded) => ("ft:dir-ex", Theme::text_muted()),
+                                            None => file_icon(&node.name, node.is_dir),
+                                        };
+                                        let open = this.active_editor().is_some_and(|e| e.read(cx).path.as_deref() == Some(node.path.as_path()));
+                                        let vcs = if node.is_dir { None } else { this.file_status(&node.path).map(git_ui::status_color) };
+                                        let name_color = if node.excluded {
+                                            Theme::excluded()
+                                        } else if let Some(c) = vcs {
+                                            c
+                                        } else if open {
+                                            Theme::modified()
+                                        } else {
+                                            Theme::text()
+                                        };
+                                        let id = r.id;
+                                        // The root shows where the project lives, shortened; the full
+                                        // path is in the tooltip.
+                                        let place = (r.id == 0).then(|| (short_dir(node.path.parent().unwrap_or(&node.path)), node.path.display().to_string()));
                                         div()
-                                            .w(px(12.))
-                                            .text_color(Theme::text_muted())
-                                            .hover(|s| s.text_color(Theme::text()))
-                                            .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
-                                                cx.stop_propagation();
-                                                this.tree_press(id, e.click_count, true, window, cx);
-                                            }))
-                                            .child(chevron),
-                                    )
-                                    .child(div().w(ui_px(16.)).flex().items_center().child(crate::icons::glyph(icon, 14., icon_color)))
-                                    .child(div().text_color(name_color).whitespace_nowrap().child(node.name.clone()))
-                                    .when_some(place, |d, (short, full)| {
-                                        d.child(div().pl(px(6.)).min_w_0().overflow_hidden().whitespace_nowrap().text_color(Theme::text_dim()).child(short))
-                                            .tooltip(move |_, cx| cx.new(|_| Tip(full.clone().into())).into())
+                                            .id(("row", r.id))
+                                            .h(ui_px(24.))
+                                            .flex()
+                                            .items_center()
+                                            .pl(px(8. + r.depth as f32 * 16.))
+                                            .gap(px(4.))
+                                            .text_size(ui_px(13.))
+                                            .w_full()
+                                            .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
+                                            .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
+                                            .on_mouse_down(
+                                                gpui::MouseButton::Left,
+                                                cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                                                    this.tree_press(id, e.click_count, false, window, cx)
+                                                }),
+                                            )
+                                            .on_mouse_down(
+                                                gpui::MouseButton::Right,
+                                                cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                                                    cx.stop_propagation();
+                                                    this.tree_menu(id, e.position, window, cx);
+                                                }),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(12.))
+                                                    .text_color(Theme::text_muted())
+                                                    .hover(|s| s.text_color(Theme::text()))
+                                                    .on_mouse_down(
+                                                        gpui::MouseButton::Left,
+                                                        cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                                                            cx.stop_propagation();
+                                                            this.tree_press(id, e.click_count, true, window, cx);
+                                                        }),
+                                                    )
+                                                    .child(chevron),
+                                            )
+                                            .child(div().w(ui_px(16.)).flex().items_center().child(crate::icons::glyph(icon, 14., icon_color)))
+                                            .child(div().text_color(name_color).whitespace_nowrap().child(node.name.clone()))
+                                            .when_some(place, |d, (short, full)| {
+                                                d.child(
+                                                    div().pl(px(6.)).min_w_0().overflow_hidden().whitespace_nowrap().text_color(Theme::text_dim()).child(short),
+                                                )
+                                                .tooltip(move |_, cx| cx.new(|_| Tip(full.clone().into())).into())
+                                            })
                                     })
-                            })
-                            .collect()
-                    }),
-                )
-                .track_scroll(self.tree_scroll.clone())
-                .flex_1()
-                // Below the last row: the project root's menu, as in PyCharm.
-                .on_mouse_down(gpui::MouseButton::Right, cx.listener(|this, e: &gpui::MouseDownEvent, window, cx| this.tree_menu(0, e.position, window, cx))),
-            ).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&self.tree_scroll), self.tree_bar.clone())))
+                                    .collect()
+                            }),
+                        )
+                        .track_scroll(self.tree_scroll.clone())
+                        .flex_1()
+                        // Below the last row: the project root's menu, as in PyCharm.
+                        .on_mouse_down(
+                            gpui::MouseButton::Right,
+                            cx.listener(|this, e: &gpui::MouseDownEvent, window, cx| this.tree_menu(0, e.position, window, cx)),
+                        ),
+                    )
+                    .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&self.tree_scroll), self.tree_bar.clone())),
+            )
     }
 
     /// The active editor notified: repaint Structure when its caret moved to another line, so
@@ -2499,20 +2658,14 @@ impl Workspace {
         )
         .size_full()
         .track_scroll(self.structure_view.scroll.clone());
-        div()
-            .id("structure")
-            .flex()
-            .flex_col()
-            .size_full()
-            .child(Self::panel_header("Structure"))
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .child(list)
-                    .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&self.structure_view.scroll), self.structure_view.bar.clone())),
-            )
+        div().id("structure").flex().flex_col().size_full().child(Self::panel_header("Structure")).child(
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .child(list)
+                .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&self.structure_view.scroll), self.structure_view.bar.clone())),
+        )
     }
 
     fn structure_row(i: usize, it: brisk_syntax::OutlineItem, current: Option<usize>, ed: Option<Entity<Editor>>, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -2543,7 +2696,19 @@ impl Workspace {
                     }
                     this.focus_editor(window, cx);
                 }))
-                .child(div().w(px(16.)).h(ui_px(16.)).rounded(px(8.)).bg(color).text_color(Theme::bg()).text_size(ui_px(10.)).flex().items_center().justify_center().child(glyph))
+                .child(
+                    div()
+                        .w(px(16.))
+                        .h(ui_px(16.))
+                        .rounded(px(8.))
+                        .bg(color)
+                        .text_color(Theme::bg())
+                        .text_size(ui_px(10.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(glyph),
+                )
                 .child(it.name)
                 .into_any_element()
         }
@@ -2555,10 +2720,12 @@ impl Workspace {
             .flex_col()
             .size_full()
             .child(Self::panel_header(title))
-            .map(|d| if crate::theme::islands() {
-                d.child(crate::ui_kit::empty_state("list-todo", body.to_string()))
-            } else {
-                d.child(div().px(px(12.)).text_size(ui_px(13.)).text_color(Theme::text_muted()).child(body.to_string()))
+            .map(|d| {
+                if crate::theme::islands() {
+                    d.child(crate::ui_kit::empty_state("list-todo", body.to_string()))
+                } else {
+                    d.child(div().px(px(12.)).text_size(ui_px(13.)).text_color(Theme::text_muted()).child(body.to_string()))
+                }
             })
             .into_any_element()
     }
@@ -2589,10 +2756,12 @@ impl Workspace {
             .flex_1()
             .min_w_0()
             .flex()
-            .map(|d| if rows {
-                d.flex_wrap().min_h(ui_px(36.)).when(islands, |d| d.py(px(4.)).gap_y(px(2.)))
-            } else {
-                d.h(ui_px(36.)).overflow_x_scroll().track_scroll(&scroll)
+            .map(|d| {
+                if rows {
+                    d.flex_wrap().min_h(ui_px(36.)).when(islands, |d| d.py(px(4.)).gap_y(px(2.)))
+                } else {
+                    d.h(ui_px(36.)).overflow_x_scroll().track_scroll(&scroll)
+                }
             })
             .items_end()
             // A plain mouse wheel scrolls the strip sideways, as in PyCharm.
@@ -2647,27 +2816,42 @@ impl Workspace {
                     // The active tab: a 2 px underline (accent while its group has focus); the
                     // others none, a background on hover.
                     .border_b_2()
-                    .border_color(if !active { gpui::transparent_black() } else if focused { Theme::accent() } else { Theme::text_dim() })
+                    .border_color(if !active {
+                        gpui::transparent_black()
+                    } else if focused {
+                        Theme::accent()
+                    } else {
+                        Theme::text_dim()
+                    })
                     .when(active && !islands, |d| d.bg(Theme::editor_bg()))
                     .when(!active, |d| d.hover(|s| s.bg(Theme::hover_row())))
                     .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
-                        this.focus_pane(second, window, cx);
-                        if this.active != Some(i) {
-                            this.save_all(cx);
-                            this.active = Some(i);
-                        }
-                        this.focus_editor(window, cx);
-                        cx.notify();
-                    }))
-                    .on_mouse_down(MouseButton::Middle, cx.listener(move |this, _, window, cx| {
-                        this.focus_pane(second, window, cx);
-                        this.close_tab(i, window, cx);
-                    }))
-                    .on_mouse_down(MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.tab_menu(second, i, e.position, window, cx);
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            this.focus_pane(second, window, cx);
+                            if this.active != Some(i) {
+                                this.save_all(cx);
+                                this.active = Some(i);
+                            }
+                            this.focus_editor(window, cx);
+                            cx.notify();
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Middle,
+                        cx.listener(move |this, _, window, cx| {
+                            this.focus_pane(second, window, cx);
+                            this.close_tab(i, window, cx);
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            this.tab_menu(second, i, e.position, window, cx);
+                        }),
+                    )
                     .child(div().flex_shrink_0().flex().items_center().child(crate::icons::glyph(icon, 14., color)))
                     .child(div().min_w_0().overflow_hidden().text_ellipsis().text_color(name_color).child(title))
                     .when(dirty, |d| d.child(crate::icons::dot(6., Theme::text_muted())))
@@ -2696,30 +2880,32 @@ impl Workspace {
                                 })),
                         )
                     })
-                    .when(!pinned, |d| d.child(
-                        div()
-                            .id(("tab-close", i))
-                            .flex_shrink_0()
-                            .w(px(16.))
-                            .h(ui_px(16.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(4.))
-                            .text_color(Theme::text_dim())
-                            .hover(|s| s.bg(Theme::press()))
-                            .group("close-x")
-                            // Shown on the active tab and under the pointer, as in PyCharm.
-                            .when(!active, |d| d.opacity(0.).group_hover("tab", |s| s.opacity(1.)))
-                            .child(crate::icons::close_x("close-x", 12.))
-                            // The press must not also activate the tab underneath.
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.focus_pane(second, window, cx);
-                                this.close_tab(i, window, cx);
-                            })),
-                    ));
+                    .when(!pinned, |d| {
+                        d.child(
+                            div()
+                                .id(("tab-close", i))
+                                .flex_shrink_0()
+                                .w(px(16.))
+                                .h(ui_px(16.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(4.))
+                                .text_color(Theme::text_dim())
+                                .hover(|s| s.bg(Theme::press()))
+                                .group("close-x")
+                                // Shown on the active tab and under the pointer, as in PyCharm.
+                                .when(!active, |d| d.opacity(0.).group_hover("tab", |s| s.opacity(1.)))
+                                .child(crate::icons::close_x("close-x", 12.))
+                                // The press must not also activate the tab underneath.
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.focus_pane(second, window, cx);
+                                    this.close_tab(i, window, cx);
+                                })),
+                        )
+                    });
                 // Drag to reorder. The drag lives on a wrapper: the pill's fade-in wraps an
                 // active tab in an animation element, which changes the tab's element id path
                 // on the press that activates it (GPUI would forget the pending drag).
@@ -2853,11 +3039,7 @@ impl Workspace {
             .child(div().flex_1())
             .child(div().px(px(8.)).min_w_0().child(self.status_message(cx)))
             .when(!pos.is_empty(), |d| {
-                d.child(item(pos))
-                    .child(item(eol.into()))
-                    .child(item(enc))
-                    .child(item(indent))
-                    .when(lang != "Python", |d| d.child(item(lang.into())))
+                d.child(item(pos)).child(item(eol.into())).child(item(enc)).child(item(indent)).when(lang != "Python", |d| d.child(item(lang.into())))
             })
             .child(
                 div()
@@ -2910,7 +3092,9 @@ impl Workspace {
             PopupKind::LocalHistory => ("Local History", "Enter: show diff · Ctrl+Enter: revert or restore"),
             PopupKind::PutLabel => ("Put Label", "Label name"),
             PopupKind::NewScratch => ("New Scratch File", "Type to filter languages"),
-            PopupKind::RecentLocations => (if self.places.changed_only { "Recent Locations (changed only)" } else { "Recent Locations" }, "Type to filter · Ctrl+Shift+E: changed only"),
+            PopupKind::RecentLocations => {
+                (if self.places.changed_only { "Recent Locations (changed only)" } else { "Recent Locations" }, "Type to filter · Ctrl+Shift+E: changed only")
+            }
             PopupKind::BreakpointCondition => ("Breakpoint Condition", "Python expression, e.g. i == 3"),
             PopupKind::FileName | PopupKind::FileDelete => match &self.file_op {
                 Some(op) => (op.title(), op.placeholder()),
@@ -3018,8 +3202,19 @@ impl Workspace {
                                     d.child(div().px(px(14.)).py(px(6.)).text_color(Theme::text_muted()).child("Nothing found"))
                                 })
                                 .when(
-                                    p.items.is_empty() && !indexing && p.query.is_empty() && matches!(p.kind, PopupKind::SearchEverywhere(SeTab::Classes | SeTab::Symbols)),
-                                    |d| d.child(div().px(px(14.)).py(px(6.)).text_color(Theme::text_dim()).child("Type a name: a prefix, or word starts like gcw for get_current_window")),
+                                    p.items.is_empty()
+                                        && !indexing
+                                        && p.query.is_empty()
+                                        && matches!(p.kind, PopupKind::SearchEverywhere(SeTab::Classes | SeTab::Symbols)),
+                                    |d| {
+                                        d.child(
+                                            div()
+                                                .px(px(14.))
+                                                .py(px(6.))
+                                                .text_color(Theme::text_dim())
+                                                .child("Type a name: a prefix, or word starts like gcw for get_current_window"),
+                                        )
+                                    },
                                 )
                                 .child(
                                     uniform_list(
@@ -3034,7 +3229,10 @@ impl Workspace {
                                             items
                                                 .into_iter()
                                                 .map(|(i, it)| {
-                                                    let look = RowLook { number: vcs.then(|| if i < 9 { format!("{}", i + 1) } else { String::new() }), group_start: vcs && VCS_GROUP_STARTS.contains(&i) };
+                                                    let look = RowLook {
+                                                        number: vcs.then(|| if i < 9 { format!("{}", i + 1) } else { String::new() }),
+                                                        group_start: vcs && VCS_GROUP_STARTS.contains(&i),
+                                                    };
                                                     Self::popup_row(i, &it, selected, look, cx)
                                                 })
                                                 .collect()
@@ -3072,7 +3270,12 @@ impl Workspace {
             Target::Interpreter(_) => ("◆", gpui::rgb(0x4b8bbe).into()),
             Target::AddInterpreter | Target::CreateVenv(_) | Target::SyncEnv(_) | Target::AddSsh => ("+", gpui::rgb(0x4b8bbe).into()),
             Target::SshUse(_) | Target::SshHost(_) | Target::SshPython(..) => ("◆", gpui::rgb(0x4b8bbe).into()),
-            Target::KeymapPick(_) | Target::KeymapAdd(_) | Target::KeymapRemove(..) | Target::KeymapReset(_) | Target::KeymapResetAll | Target::KeymapImport => ("⌨", Theme::text_muted()),
+            Target::KeymapPick(_)
+            | Target::KeymapAdd(_)
+            | Target::KeymapRemove(..)
+            | Target::KeymapReset(_)
+            | Target::KeymapResetAll
+            | Target::KeymapImport => ("⌨", Theme::text_muted()),
             Target::RunAnything(_) => ("▶", gpui::rgb(0x5fb865).into()),
             Target::Intention(_) => ("✦", gpui::rgb(0xe0b84a).into()),
             Target::Rename(_) => ("✎", gpui::rgb(0x4b8bbe).into()),
@@ -3103,8 +3306,20 @@ impl Workspace {
         let show_detail = !branch || text_width(cx, &it.label, 13.) + text_width(cx, &it.detail, 12.) <= room;
         let label = if branch { fit_text(cx, &it.label, 13., room) } else { it.label.to_string() };
         let tip: Option<SharedString> = if let Target::Interpreter(p) = &it.target { Some(p.display().to_string().into()) } else { None };
-        let tip: Option<SharedString> = tip.or_else(|| branch.then(|| if it.detail.is_empty() { it.label.to_string() } else { format!("{}
-{}", it.label, it.detail) }.into()));
+        let tip: Option<SharedString> = tip.or_else(|| {
+            branch.then(|| {
+                if it.detail.is_empty() {
+                    it.label.to_string()
+                } else {
+                    format!(
+                        "{}
+{}",
+                        it.label, it.detail
+                    )
+                }
+                .into()
+            })
+        });
         // uniform_list sizes an item to its content: the row spans the list's width through a
         // full-width wrapper (its padding is the row's side margin).
         let row = div()
@@ -3139,20 +3354,41 @@ impl Workspace {
                 this.popup_key(&ev, window, cx);
             }))
             .when_some(branch_target.clone(), |d, b| {
-                d.on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, _, _, cx| {
-                    this.open_branch_actions(&b);
-                    cx.notify();
-                }))
+                d.on_mouse_down(
+                    gpui::MouseButton::Right,
+                    cx.listener(move |this, _, _, cx| {
+                        this.open_branch_actions(&b);
+                        cx.notify();
+                    }),
+                )
             })
             // Fixed slots: the icon and the hint keep their size, the label
             // shrinks with an ellipsis, and the detail only takes what is
             // left (it goes first when the label is long).
             .child(match look.number {
-                Some(n) => div().w(ui_px(16.)).flex_shrink_0().flex().items_center().justify_center().font_family(crate::theme::mono_font()).text_size(ui_px(12.)).text_color(Theme::text_dim()).child(n),
+                Some(n) => div()
+                    .w(ui_px(16.))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .font_family(crate::theme::mono_font())
+                    .text_size(ui_px(12.))
+                    .text_color(Theme::text_dim())
+                    .child(n),
                 None => div().w(ui_px(16.)).flex_shrink_0().flex().items_center().justify_center().child(crate::icons::glyph(icon, 14., color)),
             })
             .child(div().min_w_0().flex_shrink().overflow_hidden().text_ellipsis().child(label))
-            .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().text_color(Theme::text_dim()).text_size(ui_px(12.)).when(show_detail, |d| d.child(it.detail.clone())))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .text_color(Theme::text_dim())
+                    .text_size(ui_px(12.))
+                    .when(show_detail, |d| d.child(it.detail.clone())),
+            )
             .child(
                 div()
                     .flex_shrink_0()
@@ -3166,19 +3402,13 @@ impl Workspace {
                     .child(it.hint.clone())
                     // A branch's → opens its actions (as the Right key does), not a checkout.
                     .when_some(branch_target, |d, b| {
-                        d.child(
-                            div()
-                                .id(("branch-actions", i))
-                                .px(px(3.))
-                                .rounded(px(3.))
-                                .hover(|s| s.bg(Theme::hover_row()))
-                                .child("→")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.open_branch_actions(&b);
-                                    cx.notify();
-                                })),
-                        )
+                        d.child(div().id(("branch-actions", i)).px(px(3.)).rounded(px(3.)).hover(|s| s.bg(Theme::hover_row())).child("→").on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.open_branch_actions(&b);
+                                cx.notify();
+                            }),
+                        ))
                     }),
             );
         // A group's first row gets a line above it, inside the row (uniform_list rows keep one
@@ -3332,27 +3562,41 @@ impl Render for Workspace {
                     .when(islands, |d| d.child(island_gap()))
                     // The gaps next to the editor are splitters (see `splitter_ui`).
                     .when_some(left, |d, panel| {
-                        let p = div().w(px(left_w)).h_full().flex_shrink_0().flex().bg(Theme::panel())
-                            .child(div().flex_1().min_w_0().h_full().child(panel_in(gpui::ElementId::Name(format!("panel-in-{left_tool:?}").into()), ToolSide::Left, panel)))
+                        let p = div()
+                            .w(px(left_w))
+                            .h_full()
+                            .flex_shrink_0()
+                            .flex()
+                            .bg(Theme::panel())
+                            .child(div().flex_1().min_w_0().h_full().child(panel_in(
+                                gpui::ElementId::Name(format!("panel-in-{left_tool:?}").into()),
+                                ToolSide::Left,
+                                panel,
+                            )))
                             .child(self.hide_column(ToolSide::Left, cx));
                         d.child(if islands { crate::ui_kit::island(p) } else { p }).child(split_l)
                     })
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
+                    .child(div().flex_1().min_w_0().flex().flex_col().child(center).when_some(bottom, |d, panel| {
+                        let p = div()
+                            .h(px(bottom_h))
+                            .flex_shrink_0()
                             .flex()
-                            .flex_col()
-                            .child(center)
-                            .when_some(bottom, |d, panel| {
-                                let p = div().h(px(bottom_h)).flex_shrink_0().flex().bg(Theme::panel())
-                                    .child(div().flex_1().min_w_0().h_full().child(panel_in(gpui::ElementId::Name(format!("panel-in-{bottom_tool:?}").into()), ToolSide::Bottom, panel)))
-                                    .child(self.hide_column(ToolSide::Bottom, cx));
-                                d.child(split_b).child(if islands { crate::ui_kit::island(p) } else { p })
-                            }),
-                    )
+                            .bg(Theme::panel())
+                            .child(div().flex_1().min_w_0().h_full().child(panel_in(
+                                gpui::ElementId::Name(format!("panel-in-{bottom_tool:?}").into()),
+                                ToolSide::Bottom,
+                                panel,
+                            )))
+                            .child(self.hide_column(ToolSide::Bottom, cx));
+                        d.child(split_b).child(if islands { crate::ui_kit::island(p) } else { p })
+                    }))
                     .when_some(right, |d, panel| {
-                        let p = div().w(px(right_w)).h_full().flex_shrink_0().flex().bg(Theme::panel())
+                        let p = div()
+                            .w(px(right_w))
+                            .h_full()
+                            .flex_shrink_0()
+                            .flex()
+                            .bg(Theme::panel())
                             .child(div().flex_1().min_w_0().h_full().child(panel_in("panel-in-database", ToolSide::Right, panel)))
                             .child(self.hide_column(ToolSide::Right, cx));
                         d.child(split_r).child(if islands { crate::ui_kit::island(p) } else { p })
@@ -3441,9 +3685,7 @@ pub(crate) fn short_dir(p: &std::path::Path) -> String {
     const SEP: char = '\\';
     let full = p.display().to_string();
     let home = std::env::var("USERPROFILE").unwrap_or_default();
-    let in_home = !home.is_empty()
-        && full.get(..home.len()).is_some_and(|h| h.eq_ignore_ascii_case(&home))
-        && full[home.len()..].starts_with(SEP);
+    let in_home = !home.is_empty() && full.get(..home.len()).is_some_and(|h| h.eq_ignore_ascii_case(&home)) && full[home.len()..].starts_with(SEP);
     let (head, rest) = if in_home {
         ("~".to_string(), full[home.len() + 1..].to_string())
     } else {
@@ -3522,8 +3764,10 @@ fn panel_in(id: impl Into<gpui::ElementId>, side: ToolSide, e: impl IntoElement)
     div()
         .size_full()
         .overflow_hidden()
-        .child(
-            div().relative().size_full().child(e).with_animation(id.into(), Animation::new(std::time::Duration::from_millis(180)).with_easing(gpui::ease_out_quint()), move |d, t| {
+        .child(div().relative().size_full().child(e).with_animation(
+            id.into(),
+            Animation::new(std::time::Duration::from_millis(180)).with_easing(gpui::ease_out_quint()),
+            move |d, t| {
                 let o = px((1. - t) * 14.);
                 let d = d.opacity(t);
                 match side {
@@ -3531,8 +3775,8 @@ fn panel_in(id: impl Into<gpui::ElementId>, side: ToolSide, e: impl IntoElement)
                     ToolSide::Right => d.left(o),
                     ToolSide::Bottom => d.top(o),
                 }
-            }),
-        )
+            },
+        ))
         .into_any_element()
 }
 
@@ -3583,4 +3827,3 @@ fn clip_items(q: &str) -> Vec<PopupItem> {
         })
         .collect()
 }
-

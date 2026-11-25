@@ -131,7 +131,10 @@ mod tests {
     fn finds_apps_and_builds_commands() {
         assert_eq!(app_in_source("from fastapi import FastAPI\n\napp = FastAPI(title='x')\n"), Some((RunKind::FastApi, "app".into())));
         assert_eq!(app_in_source("import flask\nserver: flask.Flask = flask.Flask(__name__)\n"), Some((RunKind::Flask, "server".into())));
-        assert_eq!(app_in_source("from flask import Flask\n\ndef create_app():\n    app = Flask(__name__)\n    return app\n"), Some((RunKind::Flask, "create_app()".into())));
+        assert_eq!(
+            app_in_source("from flask import Flask\n\ndef create_app():\n    app = Flask(__name__)\n    return app\n"),
+            Some((RunKind::Flask, "create_app()".into()))
+        );
         assert_eq!(app_in_source("def f():\n    app = FastAPI()\nx == FastAPI()\n"), None);
         let root = std::env::temp_dir().join(format!("brisk-web-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);

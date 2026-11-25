@@ -82,7 +82,9 @@ fn name_literals(arg: &str) -> Vec<&str> {
     arg.split('"')
         .skip(1)
         .step_by(2)
-        .filter(|l| !l.is_empty() && l.starts_with(|c: char| c.is_ascii_lowercase()) && l.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
+        .filter(|l| {
+            !l.is_empty() && l.starts_with(|c: char| c.is_ascii_lowercase()) && l.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        })
         .collect()
 }
 

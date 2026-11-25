@@ -3,9 +3,9 @@
 //! live in their editors (and follow edits); the rest are kept here. They are saved per
 //! project in the config folder.
 
-use crate::theme::ui_px;
 use super::{PopupItem, PopupKind, Target, Workspace};
 use crate::editor::Editor;
+use crate::theme::ui_px;
 use crate::theme::Theme;
 use brisk_keymap::Action;
 use gpui::prelude::*;
@@ -263,10 +263,13 @@ impl Workspace {
     /// The Bookmarks tool window (Alt+2).
     pub(super) fn render_bookmarks(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let all = self.all_bookmarks(cx);
-        let rows: Vec<(Stored, String)> = all.into_iter().map(|b| {
-            let t = self.line_text(&b.path, b.line, cx);
-            (b, t)
-        }).collect();
+        let rows: Vec<(Stored, String)> = all
+            .into_iter()
+            .map(|b| {
+                let t = self.line_text(&b.path, b.line, cx);
+                (b, t)
+            })
+            .collect();
         div()
             .id("bookmarks")
             .flex()
@@ -275,7 +278,13 @@ impl Workspace {
             .overflow_y_scroll()
             .child(Self::panel_header("Bookmarks"))
             .when(rows.is_empty(), |d| {
-                d.child(div().px(px(12.)).text_size(ui_px(13.)).text_color(Theme::text_muted()).child("No bookmarks. F11 sets one on the caret line, Ctrl+F11 with a letter or digit."))
+                d.child(
+                    div()
+                        .px(px(12.))
+                        .text_size(ui_px(13.))
+                        .text_color(Theme::text_muted())
+                        .child("No bookmarks. F11 sets one on the caret line, Ctrl+F11 with a letter or digit."),
+                )
             })
             .children(rows.into_iter().enumerate().map(|(i, (b, text))| {
                 let name = b.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -307,16 +316,12 @@ impl Workspace {
                     )
                     .child(format!("{name}:{}", b.line + 1))
                     .child(div().flex_1().min_w_0().overflow_hidden().text_color(Theme::text_muted()).child(text.trim().to_string()))
-                    .child(
-                        div()
-                            .id(("bookmark-rm", i))
-                            .group("close-x")
-                            .child(crate::icons::close_x("close-x", 12.))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.remove_bookmark(&rm_path, rm_line, cx);
-                            })),
-                    )
+                    .child(div().id(("bookmark-rm", i)).group("close-x").child(crate::icons::close_x("close-x", 12.)).on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.remove_bookmark(&rm_path, rm_line, cx);
+                        },
+                    )))
             }))
             .into_any_element()
     }

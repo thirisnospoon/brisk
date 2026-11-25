@@ -26,7 +26,10 @@ impl Virtualization {
             Virtualization::Ready => "Virtualization is ready.".into(),
             Virtualization::FeatureOff => "Containers need the Windows feature \"Windows Hypervisor Platform\", which is off.".into(),
             Virtualization::RestartPending => "Windows Hypervisor Platform is installed, but Windows has to restart before it works.".into(),
-            Virtualization::FirmwareOff => "Virtualization is turned off in this computer's BIOS / UEFI settings (Intel VT-x or AMD-V / SVM). Turn it on there, then start Windows again.".into(),
+            Virtualization::FirmwareOff => {
+                "Virtualization is turned off in this computer's BIOS / UEFI settings (Intel VT-x or AMD-V / SVM). Turn it on there, then start Windows again."
+                    .into()
+            }
             Virtualization::Unsupported(why) => format!("Containers cannot run here: {why}"),
         }
     }
@@ -63,7 +66,7 @@ fn outcome_of(code: u32) -> EnableOutcome {
 mod win {
     use super::*;
     use std::ffi::c_void;
-    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, FreeLibrary};
+    use windows_sys::Win32::Foundation::{CloseHandle, FreeLibrary, GetLastError};
     use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32};
     use windows_sys::Win32::System::Threading::{GetExitCodeProcess, IsProcessorFeaturePresent, WaitForSingleObject, INFINITE, PF_VIRT_FIRMWARE_ENABLED};
     use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};

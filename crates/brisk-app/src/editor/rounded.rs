@@ -20,9 +20,8 @@ fn snap(v: f32, scale: f32) -> f32 {
 /// Corner radii [top_left, top_right, bottom_right, bottom_left] for each row of a shape whose
 /// rows touch vertically: a corner is rounded unless the neighbor row covers it.
 pub(super) fn radii(rows: &[Row], r: f32) -> Vec<[f32; 4]> {
-    let covers = |n: Option<&Row>, x: f32, left: bool| {
-        n.is_some_and(|&(_, _, a, b)| if left { a <= x + 0.5 && b > x + 0.5 } else { a < x - 0.5 && b >= x - 0.5 })
-    };
+    let covers =
+        |n: Option<&Row>, x: f32, left: bool| n.is_some_and(|&(_, _, a, b)| if left { a <= x + 0.5 && b > x + 0.5 } else { a < x - 0.5 && b >= x - 0.5 });
     rows.iter()
         .enumerate()
         .map(|(i, row)| {

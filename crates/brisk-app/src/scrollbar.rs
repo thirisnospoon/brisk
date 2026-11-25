@@ -5,8 +5,8 @@
 
 use crate::theme::Theme;
 use gpui::{
-    canvas, div, fill, point, px, size, App, Bounds, CursorStyle, DispatchPhase, Hitbox, HitboxBehavior, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollHandle, Styled, Window,
+    canvas, div, fill, point, px, size, App, Bounds, CursorStyle, DispatchPhase, Hitbox, HitboxBehavior, IntoElement, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, ScrollHandle, Styled, Window,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -51,7 +51,10 @@ impl Bar {
 pub enum Source {
     /// A GPUI scroll container (`overflow_y_scroll`, or a `uniform_list`'s base handle).
     Handle(ScrollHandle),
-    Custom { metrics: Rc<dyn Fn(&App) -> Option<Metrics>>, set: Rc<dyn Fn(f32, &mut Window, &mut App)> },
+    Custom {
+        metrics: Rc<dyn Fn(&App) -> Option<Metrics>>,
+        set: Rc<dyn Fn(f32, &mut Window, &mut App)>,
+    },
 }
 
 impl Source {

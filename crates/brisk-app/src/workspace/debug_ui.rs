@@ -3,12 +3,12 @@
 //! step, F9 resume, Alt+F9 run to cursor, Ctrl+F2 stop, Alt+F8 evaluate. The Debug window
 //! shows frames, variables (expandable) and the console with an evaluate line.
 
-use crate::theme::ui_px;
 use super::{BottomTool, PopupItem, PopupKind, Tab, Target, Workspace};
 use crate::data_view::{viewable, DataView};
 use crate::editor::breakpoints::Breakpoint;
 use crate::editor::Editor;
-use crate::theme::{Theme, mono_font};
+use crate::theme::ui_px;
+use crate::theme::{mono_font, Theme};
 use brisk_dap::{Client, Event, Frame, Launch, SourceBreakpoint, Variable};
 use brisk_keymap::Action;
 use brisk_run::RunConfig;
@@ -457,7 +457,13 @@ fn load_exc(root: &Path) -> (bool, bool) {
 
 fn load_exc_classes(root: &Path) -> Vec<ExcClass> {
     let v = std::fs::read_to_string(exc_path()).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
-    let list = v.as_ref().and_then(|v| v.get(root.to_string_lossy().to_lowercase())).and_then(|p| p.get("classes")).and_then(Value::as_array).cloned().unwrap_or_default();
+    let list = v
+        .as_ref()
+        .and_then(|v| v.get(root.to_string_lossy().to_lowercase()))
+        .and_then(|p| p.get("classes"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     list.iter()
         .filter_map(|c| {
             let b = |k: &str, d: bool| c.get(k).and_then(Value::as_bool).unwrap_or(d);
@@ -538,7 +544,10 @@ fn watches_path() -> PathBuf {
 fn load_watches(root: &Path) -> Vec<String> {
     let Ok(s) = std::fs::read_to_string(watches_path()) else { return Vec::new() };
     let Ok(v) = serde_json::from_str::<Value>(&s) else { return Vec::new() };
-    v.get(root.to_string_lossy().to_lowercase()).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default()
+    v.get(root.to_string_lossy().to_lowercase())
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 fn save_watches(root: &Path, list: &[String]) {
@@ -753,11 +762,14 @@ fn statement_text(lines: &[String], line: usize) -> String {
         let code = l.split('#').next().unwrap_or("");
         out.push_str(code);
         out.push('\n');
-        depth += code.chars().map(|c| match c {
-            '(' | '[' | '{' => 1,
-            ')' | ']' | '}' => -1,
-            _ => 0,
-        }).sum::<i32>();
+        depth += code
+            .chars()
+            .map(|c| match c {
+                '(' | '[' | '{' => 1,
+                ')' | ']' | '}' => -1,
+                _ => 0,
+            })
+            .sum::<i32>();
         if depth <= 0 && !code.trim_end().ends_with('\\') {
             break;
         }
@@ -787,7 +799,11 @@ fn targets_on_statement(stmt: &str, targets: Vec<(i64, String)>) -> Vec<(i64, St
         })
     };
     let kept: Vec<(i64, String)> = targets.iter().filter(|t| on(&t.1)).cloned().collect();
-    if kept.is_empty() { targets } else { kept }
+    if kept.is_empty() {
+        targets
+    } else {
+        kept
+    }
 }
 
 /// debugpy (showReturnValue) names the value a call just returned "(return) f".
@@ -905,8 +921,7 @@ impl Workspace {
     /// A file was opened: its stored breakpoints move into the editor.
     pub(super) fn adopt_breakpoints(&mut self, ed: &Entity<Editor>, cx: &mut Context<Self>) {
         let Some(p) = ed.read(cx).path.clone() else { return };
-        let mine: Vec<(usize, Breakpoint)> =
-            self.debug.stored.iter().filter(|b| b.path == p).map(|b| (b.line, b.breakpoint())).collect();
+        let mine: Vec<(usize, Breakpoint)> = self.debug.stored.iter().filter(|b| b.path == p).map(|b| (b.line, b.breakpoint())).collect();
         if mine.is_empty() {
             return;
         }
@@ -1238,9 +1253,13 @@ impl Workspace {
             "backspace" if matches!(row, Some(BpRow::Class(..))) => {
                 if let Some(BpRow::Class(i, _)) = row {
                     d.editing = true;
-                    self.bp_update_class(i, |c| {
-                        c.name.pop();
-                    }, cx);
+                    self.bp_update_class(
+                        i,
+                        |c| {
+                            c.name.pop();
+                        },
+                        cx,
+                    );
                 }
             }
             "backspace" => {
@@ -1252,7 +1271,9 @@ impl Workspace {
             }
             _ => {
                 // Typing edits a class name (letters, digits, _ and .).
-                if let (Some(BpRow::Class(i, _)), Some(t)) = (&row, k.key_char.as_deref().filter(|t| t.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.'))) {
+                if let (Some(BpRow::Class(i, _)), Some(t)) =
+                    (&row, k.key_char.as_deref().filter(|t| t.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')))
+                {
                     d.editing = true;
                     let t = t.to_string();
                     self.bp_update_class(*i, |c| c.name.push_str(&t), cx);
@@ -1330,12 +1351,10 @@ impl Workspace {
                     .cursor_pointer()
                     .when(selected, |x| x.bg(Theme::selection_row()))
                     .when(!selected, |x| x.hover(|s| s.bg(Theme::hover_row())))
-                    .child(
-                        div().id(("bp-check", i)).child(check(on)).on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.bp_toggle_row(&row, cx);
-                        })),
-                    )
+                    .child(div().id(("bp-check", i)).child(check(on)).on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.bp_toggle_row(&row, cx);
+                    })))
                     .child(div().text_color(if on { Theme::text() } else { Theme::text_muted() }).whitespace_nowrap().child(label))
                     .child(div().text_color(Theme::text_dim()).whitespace_nowrap().overflow_hidden().child(detail))
                     .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, w, cx| {
@@ -1375,14 +1394,19 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .gap(px(10.))
-                    .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(format!("{}:{}", p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), l + 1)))
-                    .child(
-                        div().id("bp-enabled").flex().items_center().gap(px(8.)).cursor_pointer().child(check(b.enabled)).child("Enabled").on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(BpRow::Line(p, l, b)) = this.bp_rows(cx).into_iter().find(|r| matches!(r, BpRow::Line(p, l, _) if *p == p2 && *l == l2)) {
+                    .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(format!(
+                        "{}:{}",
+                        p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                        l + 1
+                    )))
+                    .child(div().id("bp-enabled").flex().items_center().gap(px(8.)).cursor_pointer().child(check(b.enabled)).child("Enabled").on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            if let Some(BpRow::Line(p, l, b)) = this.bp_rows(cx).into_iter().find(|r| matches!(r, BpRow::Line(p, l, _) if *p == p2 && *l == l2))
+                            {
                                 this.bp_set_enabled(&p, l, !b.enabled, cx);
                             }
-                        })),
-                    )
+                        }),
+                    ))
                     .child(div().text_color(Theme::text_muted()).child("Condition (type to edit):"))
                     .child(
                         div()
@@ -1407,13 +1431,26 @@ impl Workspace {
                                 cx.notify();
                             })),
                     )
-                    .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).child("A Python expression: the debugger stops only when it is true. Empty: always."))
+                    .child(
+                        div()
+                            .text_size(ui_px(12.))
+                            .text_color(Theme::text_dim())
+                            .child("A Python expression: the debugger stops only when it is true. Empty: always."),
+                    )
                     .into_any_element()
             }
             Some(BpRow::Class(i, c)) => {
                 let i = *i;
                 let flag = |id: &'static str, on: bool, label: &'static str, f: fn(&mut ExcClass)| {
-                    div().id(id).flex().items_center().gap(px(8.)).cursor_pointer().child(check(on)).child(label).on_click(cx.listener(move |this, _, _, cx| this.bp_update_class(i, f, cx)))
+                    div()
+                        .id(id)
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .cursor_pointer()
+                        .child(check(on))
+                        .child(label)
+                        .on_click(cx.listener(move |this, _, _, cx| this.bp_update_class(i, f, cx)))
                 };
                 div()
                     .flex()
@@ -1454,7 +1491,11 @@ impl Workspace {
                 .flex_col()
                 .gap(px(8.))
                 .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("On raised exceptions"))
-                .child(div().text_color(Theme::text_muted()).child("Stop wherever an exception is raised, even if a try block handles it (debugpy filter \"raised\")."))
+                .child(
+                    div()
+                        .text_color(Theme::text_muted())
+                        .child("Stop wherever an exception is raised, even if a try block handles it (debugpy filter \"raised\")."),
+                )
                 .into_any_element(),
             Some(BpRow::Uncaught) => div()
                 .flex()
@@ -1519,7 +1560,14 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                .child(div().flex_1().min_w_0().text_size(ui_px(12.)).text_color(Theme::text_dim()).child("Space: on/off · type: edit · Insert: + exception · Delete: remove · Enter: go to · Esc: close"))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_size(ui_px(12.))
+                                        .text_color(Theme::text_dim())
+                                        .child("Space: on/off · type: edit · Insert: + exception · Delete: remove · Enter: go to · Esc: close"),
+                                )
                                 .child(button("bp-add-class", "+ Exception", false, true).on_click(cx.listener(|this, _, _, cx| this.bp_add_class(cx))))
                                 .child(button("bp-remove", "Remove", false, removable).on_click(cx.listener(move |this, _, _, cx| match cur_rm.clone() {
                                     Some(BpRow::Line(p, l, _)) => this.bp_remove(&p, l, cx),
@@ -1773,10 +1821,13 @@ impl Workspace {
         self.debug.started = Some(std::time::Instant::now());
         let gen = self.debug.gen;
         cx.spawn_in(window, async move |this, cx| {
-            let adapter = cx.background_executor().spawn({
-                let python = python.clone();
-                async move { brisk_dap::adapter_command(&python) }
-            }).await;
+            let adapter = cx
+                .background_executor()
+                .spawn({
+                    let python = python.clone();
+                    async move { brisk_dap::adapter_command(&python) }
+                })
+                .await;
             let started = adapter.map(|a| Client::start(&a.program, &a.args, &root, &[]).map_err(|e| format!("cannot start debugpy: {e}")));
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.debug.gen != gen {
@@ -1803,7 +1854,15 @@ impl Workspace {
     }
 
     /// A started adapter becomes the session: initialize, then `req` (launch or attach).
-    fn attach_session(&mut self, client: Arc<Client>, mut events: futures::channel::mpsc::UnboundedReceiver<Event>, name: String, req: (&'static str, Value), window: &mut Window, cx: &mut Context<Self>) {
+    fn attach_session(
+        &mut self,
+        client: Arc<Client>,
+        mut events: futures::channel::mpsc::UnboundedReceiver<Event>,
+        name: String,
+        req: (&'static str, Value),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let task = cx.spawn_in(window, async move |this, cx| {
             while let Some(ev) = events.next().await {
                 if this.update_in(cx, |this, window, cx| this.debug_event(ev, window, cx)).is_err() {
@@ -2030,7 +2089,9 @@ impl Workspace {
                     Ok(Ok(v)) => v
                         .get("targets")
                         .and_then(Value::as_array)
-                        .map(|a| a.iter().filter_map(|t| Some((t.get("id")?.as_i64()?, t.get("label").and_then(Value::as_str).unwrap_or("?").to_string()))).collect())
+                        .map(|a| {
+                            a.iter().filter_map(|t| Some((t.get("id")?.as_i64()?, t.get("label").and_then(Value::as_str).unwrap_or("?").to_string()))).collect()
+                        })
                         .unwrap_or_default(),
                     _ => Vec::new(),
                 };
@@ -2219,10 +2280,13 @@ impl Workspace {
         self.debug.started = Some(std::time::Instant::now());
         let gen = self.debug.gen;
         cx.spawn_in(window, async move |this, cx| {
-            let adapter = cx.background_executor().spawn({
-                let python = python.clone();
-                async move { brisk_dap::adapter_command(&python) }
-            }).await;
+            let adapter = cx
+                .background_executor()
+                .spawn({
+                    let python = python.clone();
+                    async move { brisk_dap::adapter_command(&python) }
+                })
+                .await;
             let started = adapter.map(|a| Client::start(&a.program, &a.args, &root, &[]).map_err(|e| format!("cannot start debugpy: {e}")));
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.debug.gen != gen {
@@ -2299,10 +2363,13 @@ impl Workspace {
                 .items_start()
                 .pt(px(120.))
                 .occlude()
-                .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, _, cx| {
-                    this.debug.chooser = None;
-                    cx.notify();
-                }))
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.debug.chooser = None;
+                        cx.notify();
+                    }),
+                )
                 .child(
                     div()
                         .id("smart-step-popup")
@@ -2397,14 +2464,7 @@ impl Workspace {
                 .child(n.clone())
                 .on_click(cx.listener(move |this, _, w, cx| this.select_thread(id, w, cx)))
         });
-        Some(
-            div()
-                .flex()
-                .flex_col()
-                .child(head)
-                .when(d.threads_open, |x| x.children(list).child(div().h(ui_px(1.)).bg(Theme::divider())))
-                .into_any_element(),
-        )
+        Some(div().flex().flex_col().child(head).when(d.threads_open, |x| x.children(list).child(div().h(ui_px(1.)).bg(Theme::divider()))).into_any_element())
     }
 
     fn load_frames(&mut self, thread: i64, window: &mut Window, cx: &mut Context<Self>) {
@@ -2453,7 +2513,12 @@ impl Workspace {
             let scopes = brisk_dap::parse_scopes(&v);
             // The first scope (locals) opens right away, like PyCharm's flat list.
             let mut first = match scopes.first() {
-                Some(s) => client.request("variables", json!({"variablesReference": s.reference})).await.ok().and_then(Result::ok).map(|v| brisk_dap::parse_variables(&v)),
+                Some(s) => client
+                    .request("variables", json!({"variablesReference": s.reference}))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .map(|v| brisk_dap::parse_variables(&v)),
                 None => None,
             };
             // Values just returned by calls first.
@@ -2475,7 +2540,8 @@ impl Workspace {
                 this.debug.vars.extend(rows);
                 if let (Some(p), Some(vars)) = (frame_path.as_ref(), first.as_ref()) {
                     if let Some(ed) = this.editors().find(|e| e.read(cx).path.as_ref() == Some(p)).cloned() {
-                        let lines: Vec<String> = (0..=frame_line.min(ed.read(cx).buffer.len_lines().saturating_sub(1))).map(|l| ed.read(cx).buffer.line(l)).collect();
+                        let lines: Vec<String> =
+                            (0..=frame_line.min(ed.read(cx).buffer.len_lines().saturating_sub(1))).map(|l| ed.read(cx).buffer.line(l)).collect();
                         let values = inline_values(&lines, frame_line, vars);
                         ed.update(cx, |e, cx| {
                             e.set_inline_values(values);
@@ -2555,7 +2621,11 @@ impl Workspace {
                     let kids: Vec<Variable> = brisk_dap::parse_variables(&kids).into_iter().filter(|k| !k.name.contains(' ')).collect();
                     for k in kids.iter().take(30) {
                         let v: String = k.value.chars().take(120).collect();
-                        text.push_str(&if k.type_name.is_empty() { format!("\n    {} = {v}", k.name) } else { format!("\n    {} = {{{}}} {v}", k.name, k.type_name) });
+                        text.push_str(&if k.type_name.is_empty() {
+                            format!("\n    {} = {v}", k.name)
+                        } else {
+                            format!("\n    {} = {{{}}} {v}", k.name, k.type_name)
+                        });
                     }
                     if kids.len() > 30 {
                         text.push_str(&format!("\n    … {} more", kids.len() - 30));
@@ -2853,16 +2923,26 @@ impl Workspace {
         }
         let paused = self.debug.paused_thread().is_some();
         let has_expr = self.row_expression(i).is_some();
-        let item = |label: &str, shortcut: &str, enabled: bool, run: super::menu_ui::MenuFn| Entry::Item { label: label.into(), shortcut: shortcut.into(), enabled, run };
+        let item = |label: &str, shortcut: &str, enabled: bool, run: super::menu_ui::MenuFn| Entry::Item {
+            label: label.into(),
+            shortcut: shortcut.into(),
+            enabled,
+            run,
+        };
         let mut v = Vec::new();
         if let Some(label) = viewable(&r.var.type_name) {
             v.push(item(label, "", paused && has_expr, Rc::new(move |this, w, cx| this.view_as_data(i, w, cx))));
             v.push(Entry::Separator);
         }
-        v.push(item("Set Value…", "F2", paused && r.kind == RowKind::Var && r.parent > 0, Rc::new(move |this, _, cx| {
-            this.begin_edit(i);
-            cx.notify();
-        })));
+        v.push(item(
+            "Set Value…",
+            "F2",
+            paused && r.kind == RowKind::Var && r.parent > 0,
+            Rc::new(move |this, _, cx| {
+                this.begin_edit(i);
+                cx.notify();
+            }),
+        ));
         v.push(item("Copy Value", "Ctrl+C", true, Rc::new(move |this, _, cx| this.copy_value(i, cx))));
         v.push(item("Copy as Expression", "", has_expr, Rc::new(move |this, _, cx| this.copy_as_expression(i, cx))));
         v.push(item("View Value", "", paused && has_expr, Rc::new(move |this, _, cx| this.view_value(i, cx))));
@@ -3022,7 +3102,11 @@ impl Workspace {
                     Ok(Ok(v)) => v
                         .get("targets")
                         .and_then(Value::as_array)
-                        .map(|a| a.iter().filter_map(|t| Some((t.get("label")?.as_str()?.to_string(), t.get("type").and_then(Value::as_str).unwrap_or("").to_string()))).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|t| Some((t.get("label")?.as_str()?.to_string(), t.get("type").and_then(Value::as_str).unwrap_or("").to_string())))
+                                .collect()
+                        })
                         .unwrap_or_default(),
                     _ => Vec::new(),
                 };
@@ -3159,7 +3243,17 @@ impl Workspace {
         let title = match (&d.session, state) {
             _ if d.pending => format!("{} — starting debugpy…", d.last.as_ref().map(|c| c.name.as_str()).unwrap_or("")),
             (Some(s), Some(State::Paused(_))) => {
-                let at = d.frames.get(d.frame).map(|f| format!(" at {}:{}", f.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), f.line + 1)).unwrap_or_default();
+                let at = d
+                    .frames
+                    .get(d.frame)
+                    .map(|f| {
+                        format!(
+                            " at {}:{}",
+                            f.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                            f.line + 1
+                        )
+                    })
+                    .unwrap_or_default();
                 format!("{} — paused{at}", s.name)
             }
             (Some(s), Some(State::Running)) => format!("{} — running", s.name),
@@ -3190,7 +3284,8 @@ impl Workspace {
             .flex()
             .items_center()
             .gap(px(2.))
-            .pl(px(12.)).pr(px(6.))
+            .pl(px(12.))
+            .pr(px(6.))
             .h(px(crate::ui_kit::header_h()))
             .border_b_1()
             .border_color(Theme::divider())
@@ -3242,7 +3337,13 @@ impl Workspace {
                     cx.notify();
                 }))
         };
-        let tabs = div().flex().px(px(6.)).child(tab("dbg-tab-dbg", "Debugger", DebugTab::Debugger, d.tab, cx)).child(tab("dbg-tab-con", "Console", DebugTab::Console, d.tab, cx));
+        let tabs = div().flex().px(px(6.)).child(tab("dbg-tab-dbg", "Debugger", DebugTab::Debugger, d.tab, cx)).child(tab(
+            "dbg-tab-con",
+            "Console",
+            DebugTab::Console,
+            d.tab,
+            cx,
+        ));
         let body: gpui::AnyElement = match d.tab {
             DebugTab::Debugger => self.render_debugger_tab(window, cx),
             DebugTab::Console => self.render_console_tab(window, cx),
@@ -3257,10 +3358,13 @@ impl Workspace {
             .child(toolbar)
             .child(tabs)
             .child(div().flex_1().min_h_0().border_t_1().border_color(Theme::divider()).child(body))
-            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, w, cx| {
-                w.focus(&this.debug.focus.clone());
-                cx.notify();
-            }))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, w, cx| {
+                    w.focus(&this.debug.focus.clone());
+                    cx.notify();
+                }),
+            )
             .into_any_element()
     }
 
@@ -3293,78 +3397,89 @@ impl Workspace {
             div().text_color(Theme::text_dim()).child("not available: the program is not paused").into_any_element()
         } else {
             {
-            // One line: a DataFrame's or array's repr spans lines, and a row must not.
-            let flat: String = if r.var.value.contains('\n') { r.var.value.split_whitespace().collect::<Vec<_>>().join(" ") } else { r.var.value.clone() };
-            div().text_color(if error { Theme::error() } else { Theme::text() }).child(flat.chars().take(300).collect::<String>()).into_any_element()
-        }
+                // One line: a DataFrame's or array's repr spans lines, and a row must not.
+                let flat: String = if r.var.value.contains('\n') { r.var.value.split_whitespace().collect::<Vec<_>>().join(" ") } else { r.var.value.clone() };
+                div().text_color(if error { Theme::error() } else { Theme::text() }).child(flat.chars().take(300).collect::<String>()).into_any_element()
+            }
         };
         div()
-                .id(("dbg-var", i))
-                .w_full()
-                .h(ui_px(21.))
-                .pl(px(8. + 16. * r.depth as f32))
-                .pr(px(8.))
-                .flex()
-                .items_center()
-                .gap(px(4.))
-                .whitespace_nowrap()
-                .overflow_hidden()
-                .when(r.var.reference > 0, |x| x.cursor_pointer())
-                .when(d.sel == Some(i), |x| x.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
-                .when(d.sel != Some(i), |x| x.hover(|s| s.bg(Theme::hover_row())))
-                .child(arrow)
-                .child(if editing_name {
-                    input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
-                } else {
-                    div().text_color(name_color).child(returned.clone().unwrap_or_else(|| r.var.name.clone())).into_any_element()
-                })
-                .when(!header, |x| {
-                    x.child(div().text_color(Theme::text_dim()).child("="))
-                        .when(!r.var.type_name.is_empty(), |x| x.child(div().text_color(Theme::text_dim()).child(format!("{{{}}}", r.var.type_name))))
-                        .child(div().flex_1().min_w_0().overflow_hidden().child(value))
-                })
-                // PyCharm's "...View as DataFrame" link at the end of a frame or array row.
-                .when_some(viewable(&r.var.type_name).filter(|_| paused && !header), |x, label| {
-                    x.child(
-                        div()
-                            .id(("dbg-view-data", i))
-                            .flex_shrink_0()
-                            .ml(px(8.))
-                            .font_family(crate::theme::ui_font())
-                            .text_size(px(12.))
-                            .text_color(Theme::accent())
-                            .cursor_pointer()
-                            .hover(|s| s.underline())
-                            .child(label)
-                            .on_click(cx.listener(move |this, _, w, cx| {
-                                cx.stop_propagation();
-                                this.debug.sel = Some(i);
-                                this.view_as_data(i, w, cx);
-                            })),
-                    )
-                })
-                .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
+            .id(("dbg-var", i))
+            .w_full()
+            .h(ui_px(21.))
+            .pl(px(8. + 16. * r.depth as f32))
+            .pr(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .whitespace_nowrap()
+            .overflow_hidden()
+            .when(r.var.reference > 0, |x| x.cursor_pointer())
+            .when(d.sel == Some(i), |x| x.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
+            .when(d.sel != Some(i), |x| x.hover(|s| s.bg(Theme::hover_row())))
+            .child(arrow)
+            .child(if editing_name {
+                input(&edit.as_ref().map(|e| e.text.clone()).unwrap_or_default(), focused).into_any_element()
+            } else {
+                div().text_color(name_color).child(returned.clone().unwrap_or_else(|| r.var.name.clone())).into_any_element()
+            })
+            .when(!header, |x| {
+                x.child(div().text_color(Theme::text_dim()).child("="))
+                    .when(!r.var.type_name.is_empty(), |x| x.child(div().text_color(Theme::text_dim()).child(format!("{{{}}}", r.var.type_name))))
+                    .child(div().flex_1().min_w_0().overflow_hidden().child(value))
+            })
+            // PyCharm's "...View as DataFrame" link at the end of a frame or array row.
+            .when_some(viewable(&r.var.type_name).filter(|_| paused && !header), |x, label| {
+                x.child(
+                    div()
+                        .id(("dbg-view-data", i))
+                        .flex_shrink_0()
+                        .ml(px(8.))
+                        .font_family(crate::theme::ui_font())
+                        .text_size(px(12.))
+                        .text_color(Theme::accent())
+                        .cursor_pointer()
+                        .hover(|s| s.underline())
+                        .child(label)
+                        .on_click(cx.listener(move |this, _, w, cx| {
+                            cx.stop_propagation();
+                            this.debug.sel = Some(i);
+                            this.view_as_data(i, w, cx);
+                        })),
+                )
+            })
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
                     this.debug.sel = Some(i);
                     this.var_menu(i, e.position, cx);
-                }))
-                .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, _, cx| {
-                    if this.debug.edit.as_ref().is_some_and(|e| e.target != EditTarget::Value(i)) {
-                        this.commit_edit(cx);
-                    }
-                    if ev.click_count() >= 2 {
-                        this.begin_edit(i);
-                    } else {
-                        this.toggle_var(i, cx);
-                    }
-                    cx.notify();
-                }))
-                .into_any_element()
+                }),
+            )
+            .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, _, cx| {
+                if this.debug.edit.as_ref().is_some_and(|e| e.target != EditTarget::Value(i)) {
+                    this.commit_edit(cx);
+                }
+                if ev.click_count() >= 2 {
+                    this.begin_edit(i);
+                } else {
+                    this.toggle_var(i, cx);
+                }
+                cx.notify();
+            }))
+            .into_any_element()
     }
 
     /// The in-place editor of a watch name, a value or a new watch.
     fn var_input(text: &str, focused: bool) -> gpui::Div {
         let caret = || div().w(px(1.5)).h(ui_px(14.)).bg(Theme::caret());
-        div().flex().items_center().px(px(3.)).border_1().border_color(Theme::accent()).rounded(px(3.)).child(text.to_string()).when(focused, |x| x.child(caret()))
+        div()
+            .flex()
+            .items_center()
+            .px(px(3.))
+            .border_1()
+            .border_color(Theme::accent())
+            .rounded(px(3.))
+            .child(text.to_string())
+            .when(focused, |x| x.child(caret()))
     }
 
     /// The "+ new watch" row while it is being typed.
@@ -3393,7 +3508,13 @@ impl Workspace {
             .border_r_1()
             .border_color(Theme::divider())
             .children(threads)
-            .when(d.frames.is_empty(), |x| x.child(div().p(px(8.)).text_color(Theme::text_dim()).child(if d.paused_thread().is_some() { "Loading…" } else { "Frames appear when the program is paused" })))
+            .when(d.frames.is_empty(), |x| {
+                x.child(div().p(px(8.)).text_color(Theme::text_dim()).child(if d.paused_thread().is_some() {
+                    "Loading…"
+                } else {
+                    "Frames appear when the program is paused"
+                }))
+            })
             .children(d.frames.iter().enumerate().map(|(i, f)| {
                 let file = f.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                 let mine = f.path.as_ref().is_some_and(|p| p.starts_with(&self.root));
@@ -3425,27 +3546,28 @@ impl Workspace {
         let can_remove = matches!(sel_kind, Some((RowKind::Watch(_), _)));
         let can_set = matches!(sel_kind, Some((RowKind::Var, p)) if p > 0) && paused;
         let can_copy = matches!(sel_kind, Some((RowKind::Var | RowKind::Watch(_), _)));
-        let mini = |id: &'static str, label: &'static str, tip: &'static str, on: bool, f: fn(&mut Workspace, &mut Context<Workspace>), cx: &mut Context<Self>| {
-            div()
-                .id(id)
-                .px(px(6.))
-                .h(ui_px(20.))
-                .flex()
-                .items_center()
-                .rounded(px(4.))
-                .text_size(ui_px(12.))
-                .text_color(if on { Theme::text() } else { Theme::text_dim() })
-                .when(on, |x| x.cursor_pointer().hover(|s| s.bg(Theme::hover_row())).active(|s| s.bg(Theme::press())))
-                .child(label)
-                .tooltip(move |_, cx| cx.new(|_| super::Tip(tip.into())).into())
-                .on_click(cx.listener(move |this, _, w, cx| {
-                    if on {
-                        f(this, cx);
-                        w.focus(&this.debug.focus.clone());
-                        cx.notify();
-                    }
-                }))
-        };
+        let mini =
+            |id: &'static str, label: &'static str, tip: &'static str, on: bool, f: fn(&mut Workspace, &mut Context<Workspace>), cx: &mut Context<Self>| {
+                div()
+                    .id(id)
+                    .px(px(6.))
+                    .h(ui_px(20.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(4.))
+                    .text_size(ui_px(12.))
+                    .text_color(if on { Theme::text() } else { Theme::text_dim() })
+                    .when(on, |x| x.cursor_pointer().hover(|s| s.bg(Theme::hover_row())).active(|s| s.bg(Theme::press())))
+                    .child(label)
+                    .tooltip(move |_, cx| cx.new(|_| super::Tip(tip.into())).into())
+                    .on_click(cx.listener(move |this, _, w, cx| {
+                        if on {
+                            f(this, cx);
+                            w.focus(&this.debug.focus.clone());
+                            cx.notify();
+                        }
+                    }))
+            };
         let bar = div()
             .flex()
             .items_center()
@@ -3454,62 +3576,97 @@ impl Workspace {
             .h(ui_px(24.))
             .border_b_1()
             .border_color(Theme::divider())
-            .child(mini("dbg-watch-add", "+ Watch", "New Watch  Insert", true, |t, _| t.debug.edit = Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }), cx))
-            .child(mini("dbg-watch-remove", "− Watch", "Remove Watch  Delete", can_remove, |t, cx| {
-                if let Some(RowKind::Watch(w)) = t.debug.sel.and_then(|s| t.debug.vars.get(s)).map(|r| r.kind) {
-                    t.remove_watch(w, cx);
-                }
-            }, cx))
-            .child(mini("dbg-set-value", "Set Value", "Set Value  F2", can_set, |t, _| {
-                if let Some(s) = t.debug.sel {
-                    t.begin_edit(s);
-                }
-            }, cx))
-            .child(mini("dbg-copy-value", "Copy Value", "Copy Value  Ctrl+C", can_copy, |t, cx| {
-                if let Some(s) = t.debug.sel {
-                    t.copy_value(s, cx);
-                }
-            }, cx));
-        let vars = div()
-            .id("dbg-vars")
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .flex()
-            .flex_col()
-            .child(bar)
-            .child(if n_rows == 0 {
-                div().flex_1().min_h_0().font_family(mono_font()).text_size(ui_px(12.5)).child(div().p(px(8.)).text_color(Theme::text_dim()).child(if paused { "Loading…" } else { "Variables appear when the program is paused. Insert adds a watch." })).into_any_element()
-            } else {
-                div()
-                    .id("dbg-vars-list")
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .font_family(mono_font())
-                    .text_size(ui_px(12.5))
-                    .child(
-                        uniform_list(
-                            "dbg-vars-rows",
-                            n_rows,
-                            cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
-                                let focused = this.debug.focus.is_focused(window);
-                                let nw = this.debug.edit.as_ref().filter(|e| e.target == EditTarget::NewWatch).map(|e| (this.debug.watch_len().min(this.debug.vars.len()), e.text.clone()));
-                                range
-                                    .map(|j| match &nw {
-                                        Some((at, text)) if j == *at => Self::new_watch_row(text, focused),
-                                        Some((at, _)) if j > *at => this.debug_var_row(j - 1, focused, cx),
-                                        _ => this.debug_var_row(j, focused, cx),
-                                    })
-                                    .collect()
-                            }),
-                        )
-                        .size_full()
-                        .track_scroll(d.vars_scroll.clone()),
+            .child(mini(
+                "dbg-watch-add",
+                "+ Watch",
+                "New Watch  Insert",
+                true,
+                |t, _| t.debug.edit = Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }),
+                cx,
+            ))
+            .child(mini(
+                "dbg-watch-remove",
+                "− Watch",
+                "Remove Watch  Delete",
+                can_remove,
+                |t, cx| {
+                    if let Some(RowKind::Watch(w)) = t.debug.sel.and_then(|s| t.debug.vars.get(s)).map(|r| r.kind) {
+                        t.remove_watch(w, cx);
+                    }
+                },
+                cx,
+            ))
+            .child(mini(
+                "dbg-set-value",
+                "Set Value",
+                "Set Value  F2",
+                can_set,
+                |t, _| {
+                    if let Some(s) = t.debug.sel {
+                        t.begin_edit(s);
+                    }
+                },
+                cx,
+            ))
+            .child(mini(
+                "dbg-copy-value",
+                "Copy Value",
+                "Copy Value  Ctrl+C",
+                can_copy,
+                |t, cx| {
+                    if let Some(s) = t.debug.sel {
+                        t.copy_value(s, cx);
+                    }
+                },
+                cx,
+            ));
+        let vars = div().id("dbg-vars").flex_1().min_w_0().h_full().flex().flex_col().child(bar).child(if n_rows == 0 {
+            div()
+                .flex_1()
+                .min_h_0()
+                .font_family(mono_font())
+                .text_size(ui_px(12.5))
+                .child(div().p(px(8.)).text_color(Theme::text_dim()).child(if paused {
+                    "Loading…"
+                } else {
+                    "Variables appear when the program is paused. Insert adds a watch."
+                }))
+                .into_any_element()
+        } else {
+            div()
+                .id("dbg-vars-list")
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .font_family(mono_font())
+                .text_size(ui_px(12.5))
+                .child(
+                    uniform_list(
+                        "dbg-vars-rows",
+                        n_rows,
+                        cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
+                            let focused = this.debug.focus.is_focused(window);
+                            let nw = this
+                                .debug
+                                .edit
+                                .as_ref()
+                                .filter(|e| e.target == EditTarget::NewWatch)
+                                .map(|e| (this.debug.watch_len().min(this.debug.vars.len()), e.text.clone()));
+                            range
+                                .map(|j| match &nw {
+                                    Some((at, text)) if j == *at => Self::new_watch_row(text, focused),
+                                    Some((at, _)) if j > *at => this.debug_var_row(j - 1, focused, cx),
+                                    _ => this.debug_var_row(j, focused, cx),
+                                })
+                                .collect()
+                        }),
                     )
-                    .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&d.vars_scroll), d.vars_bar.clone()))
-                    .into_any_element()
-            });
+                    .size_full()
+                    .track_scroll(d.vars_scroll.clone()),
+                )
+                .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&d.vars_scroll), d.vars_bar.clone()))
+                .into_any_element()
+        });
         let banner = d.exception.clone().map(|e| {
             div()
                 .flex_shrink_0()
@@ -3592,9 +3749,21 @@ impl Workspace {
             .text_size(ui_px(12.5))
             .child(div().text_color(Theme::accent()).child(">>>"))
             .child(if d.input.is_empty() && !focused {
-                div().text_color(Theme::text_dim()).child(if can_eval { "Evaluate an expression in the selected frame (Alt+F8)" } else { "Expressions can be evaluated while the program is paused" }).into_any_element()
+                div()
+                    .text_color(Theme::text_dim())
+                    .child(if can_eval {
+                        "Evaluate an expression in the selected frame (Alt+F8)"
+                    } else {
+                        "Expressions can be evaluated while the program is paused"
+                    })
+                    .into_any_element()
             } else {
-                div().flex().items_center().child(d.input.clone()).when(focused, |x| x.child(div().w(px(1.5)).h(ui_px(15.)).bg(Theme::caret()))).into_any_element()
+                div()
+                    .flex()
+                    .items_center()
+                    .child(d.input.clone())
+                    .when(focused, |x| x.child(div().w(px(1.5)).h(ui_px(15.)).bg(Theme::caret())))
+                    .into_any_element()
             });
         let popup = d.completion.as_ref().map(|c| {
             let shown = c.shown(&d.input);
@@ -4317,7 +4486,8 @@ mod tests {
 
     #[test]
     fn inline_values_of_a_function() {
-        let lines: Vec<String> = ["x = 1", "def main(n):", "    items = [n, 2]  # n", "    s = \"items\"", "    total = add(items[0], obj.items)"].map(String::from).to_vec();
+        let lines: Vec<String> =
+            ["x = 1", "def main(n):", "    items = [n, 2]  # n", "    s = \"items\"", "    total = add(items[0], obj.items)"].map(String::from).to_vec();
         let var = |n: &str, v: &str| Variable { name: n.into(), value: v.into(), type_name: String::new(), reference: 0, evaluate_name: String::new() };
         let vars = [var("n", "5"), var("items", "[5, 2]"), var("x", "1")];
         let v = inline_values(&lines, 4, &vars);
@@ -4411,7 +4581,12 @@ mod tests {
 
     #[test]
     fn launch_from_command() {
-        let cmd = brisk_run::Command { program: "py".into(), args: vec!["-X".into(), "utf8".into(), "-m".into(), "pkg.main".into(), "--n".into(), "3".into()], cwd: "c".into(), env: HashMap::new() };
+        let cmd = brisk_run::Command {
+            program: "py".into(),
+            args: vec!["-X".into(), "utf8".into(), "-m".into(), "pkg.main".into(), "--n".into(), "3".into()],
+            cwd: "c".into(),
+            env: HashMap::new(),
+        };
         let l = launch_for(&cmd);
         // "-X utf8": the value of an option is not the target.
         assert!(l.module);

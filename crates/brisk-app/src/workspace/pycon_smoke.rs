@@ -34,14 +34,20 @@ impl Workspace {
                 false
             };
             // Run with Python Console: type at the prompt.
-            let _ = this.update_in(cx, |this, window, cx| this.run_config(RunConfig { name: "con".into(), target: "con.py".into(), python_console: true, ..Default::default() }, window, cx));
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.run_config(RunConfig { name: "con".into(), target: "con.py".into(), python_console: true, ..Default::default() }, window, cx)
+            });
             let prompt = wait_for(&this, cx, ">>>").await;
             let _ = this.update_in(cx, |this, window, cx| {
                 let Some(p) = this.runs.panel.clone() else { return };
                 window.focus(&p.read(cx).focus_handle(cx));
                 for line in ["x + 1", "exit()"] {
                     for ch in line.chars() {
-                        let k = gpui::Keystroke { modifiers: gpui::Modifiers::default(), key: if ch == ' ' { "space".into() } else { ch.to_string() }, key_char: Some(ch.to_string()) };
+                        let k = gpui::Keystroke {
+                            modifiers: gpui::Modifiers::default(),
+                            key: if ch == ' ' { "space".into() } else { ch.to_string() },
+                            key_char: Some(ch.to_string()),
+                        };
                         p.update(cx, |p, cx| p.key(&k, cx));
                     }
                     let k = gpui::Keystroke { modifiers: gpui::Modifiers::default(), key: "enter".into(), key_char: Some("\r".into()) };
@@ -51,12 +57,18 @@ impl Workspace {
             let finished = wait_for(&this, cx, "Process finished").await;
             let _ = this.update(cx, |this, cx| {
                 let t = text(this, cx);
-                eprintln!("smoke-pycon: python console -> prompt {prompt}, finished {finished}, args -i {}, lines {:?}", t.lines().next().unwrap_or("").contains(" -i "), t.lines().skip(1).collect::<Vec<_>>());
+                eprintln!(
+                    "smoke-pycon: python console -> prompt {prompt}, finished {finished}, args -i {}, lines {:?}",
+                    t.lines().next().unwrap_or("").contains(" -i "),
+                    t.lines().skip(1).collect::<Vec<_>>()
+                );
             });
             // Emulate terminal vs pipes.
             for emulate in [false, true] {
                 let name = if emulate { "tty" } else { "pipe" };
-                let _ = this.update_in(cx, |this, window, cx| this.run_config(RunConfig { name: name.into(), target: "tty.py".into(), emulate_terminal: emulate, ..Default::default() }, window, cx));
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.run_config(RunConfig { name: name.into(), target: "tty.py".into(), emulate_terminal: emulate, ..Default::default() }, window, cx)
+                });
                 let done = wait_for(&this, cx, "Process finished").await;
                 let _ = this.update(cx, |this, cx| {
                     let t = text(this, cx);

@@ -2,10 +2,10 @@
 //! the selected one (double click: its diff), then Push. A branch without an upstream is
 //! pushed as a new remote branch and starts tracking it.
 
-use crate::theme::ui_px;
 use super::git_merge_ui::{button, dialog_frame, GitDialog};
 use super::git_ui::{dir_name, file_name, fmt_time, status_color};
 use super::Workspace;
+use crate::theme::ui_px;
 use crate::theme::Theme;
 use brisk_git::{FileChange, Outgoing};
 use gpui::prelude::*;
@@ -157,19 +157,45 @@ impl Workspace {
                         }))
                 });
                 body = body
-                    .child(div().id("push-commits").flex_1().min_w_0().overflow_y_scroll().border_1().border_color(Theme::divider()).rounded(px(5.)).p(px(4.)).children(rows))
-                    .child(div().id("push-files").w(px(300.)).overflow_y_scroll().border_1().border_color(Theme::divider()).rounded(px(5.)).p(px(4.)).children(files));
+                    .child(
+                        div()
+                            .id("push-commits")
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_y_scroll()
+                            .border_1()
+                            .border_color(Theme::divider())
+                            .rounded(px(5.))
+                            .p(px(4.))
+                            .children(rows),
+                    )
+                    .child(
+                        div()
+                            .id("push-files")
+                            .w(px(300.))
+                            .overflow_y_scroll()
+                            .border_1()
+                            .border_color(Theme::divider())
+                            .rounded(px(5.))
+                            .p(px(4.))
+                            .children(files),
+                    );
                 let what = if o.commits.is_empty() {
                     "Nothing to push: the remote branch has all commits".to_string()
                 } else {
                     format!("{} commit(s) from {}", o.commits.len(), o.branch)
                 };
-                div()
-                    .flex()
-                    .gap(px(8.))
-                    .text_color(Theme::text_muted())
-                    .child(what)
-                    .when(o.new_branch, |x| x.child(div().px(px(6.)).rounded(px(3.)).bg(Theme::diff_added_bg()).text_color(Theme::text()).text_size(ui_px(12.)).child("New branch, upstream will be set")))
+                div().flex().gap(px(8.)).text_color(Theme::text_muted()).child(what).when(o.new_branch, |x| {
+                    x.child(
+                        div()
+                            .px(px(6.))
+                            .rounded(px(3.))
+                            .bg(Theme::diff_added_bg())
+                            .text_color(Theme::text())
+                            .text_size(ui_px(12.))
+                            .child("New branch, upstream will be set"),
+                    )
+                })
             }
         };
         Some(
@@ -183,7 +209,13 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap(px(8.))
-                        .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("↑↓ commits · double click a file: diff · Enter Push · Esc cancel"))
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(ui_px(11.))
+                                .text_color(Theme::text_dim())
+                                .child("↑↓ commits · double click a file: diff · Enter Push · Esc cancel"),
+                        )
                         .child(button("push-cancel", "Cancel", false).on_click(cx.listener(|this, _, w, cx| {
                             if let Some(g) = this.git.as_mut() {
                                 g.dialog = None;

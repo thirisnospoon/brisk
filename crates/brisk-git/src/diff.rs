@@ -90,7 +90,15 @@ pub fn line_ops(old: &str, new: &str) -> Vec<(Range<usize>, Range<usize>, bool)>
 pub(crate) fn tokens(s: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0;
-    let class = |c: char| if c.is_alphanumeric() || c == '_' { 0 } else if c.is_whitespace() { 1 } else { 2 };
+    let class = |c: char| {
+        if c.is_alphanumeric() || c == '_' {
+            0
+        } else if c.is_whitespace() {
+            1
+        } else {
+            2
+        }
+    };
     let mut prev: Option<u8> = None;
     for (i, c) in s.char_indices() {
         let k = class(c);
@@ -128,12 +136,7 @@ pub fn inline_diff(old: &str, new: &str) -> (Vec<Range<usize>>, Vec<Range<usize>
         v
     };
     let (oa, ob) = (offs(&a), offs(&b));
-    let ops = similar::capture_diff_slices_deadline(
-        similar::Algorithm::Myers,
-        &a,
-        &b,
-        Some(std::time::Instant::now() + std::time::Duration::from_millis(20)),
-    );
+    let ops = similar::capture_diff_slices_deadline(similar::Algorithm::Myers, &a, &b, Some(std::time::Instant::now() + std::time::Duration::from_millis(20)));
     let (mut l, mut r): (Vec<Range<usize>>, Vec<Range<usize>>) = (Vec::new(), Vec::new());
     let push = |v: &mut Vec<Range<usize>>, rg: Range<usize>, text: &str| {
         if rg.is_empty() {
@@ -268,10 +271,7 @@ mod tests {
         let ch = line_changes(base, cur);
         assert_eq!(
             ch,
-            vec![
-                LineChange { kind: LineChangeKind::Modified, lines: 1..2, base: 1..2 },
-                LineChange { kind: LineChangeKind::Added, lines: 3..4, base: 3..3 },
-            ]
+            vec![LineChange { kind: LineChangeKind::Modified, lines: 1..2, base: 1..2 }, LineChange { kind: LineChangeKind::Added, lines: 3..4, base: 3..3 },]
         );
         let ch = line_changes("a\nb\nc\n", "a\nc\n");
         assert_eq!(ch, vec![LineChange { kind: LineChangeKind::Deleted, lines: 1..1, base: 1..2 }]);

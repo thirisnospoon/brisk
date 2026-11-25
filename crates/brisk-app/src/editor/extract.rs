@@ -43,7 +43,11 @@ pub fn suggest_name(expr: &str) -> String {
             snake.push(c);
         }
     }
-    if snake.is_empty() { "value".into() } else { snake }
+    if snake.is_empty() {
+        "value".into()
+    } else {
+        snake
+    }
 }
 
 /// Char ranges of `expr` in `text` between chars `scope`, not inside a longer name.
@@ -227,7 +231,10 @@ impl Editor {
     pub fn apply_byte_edits(&mut self, edits: Vec<(Range<usize>, String)>, cx: &mut Context<Self>) {
         let rope = self.buffer.rope();
         // Edits computed on an older text (a stale popup) are dropped, not applied.
-        if edits.iter().any(|(r, _)| r.start > r.end || r.end > rope.len_bytes() || rope.try_byte_to_char(r.start).is_err() || rope.try_byte_to_char(r.end).is_err()) {
+        if edits
+            .iter()
+            .any(|(r, _)| r.start > r.end || r.end > rope.len_bytes() || rope.try_byte_to_char(r.start).is_err() || rope.try_byte_to_char(r.end).is_err())
+        {
             return;
         }
         let edits: Vec<(Range<usize>, String)> = edits.into_iter().map(|(r, s)| (rope.byte_to_char(r.start)..rope.byte_to_char(r.end), s)).collect();
@@ -281,14 +288,19 @@ impl Editor {
         // Select the new name at the definition and the call.
         let chars: Vec<char> = self.text_string().chars().collect();
         let n: Vec<char> = name.chars().collect();
-        let sels: Vec<Selection> = occurrences(&chars, &n, 0..chars.len()).into_iter().map(|o| Selection { anchor: o.start, head: o.end, goal_col: None }).collect();
+        let sels: Vec<Selection> =
+            occurrences(&chars, &n, 0..chars.len()).into_iter().map(|o| Selection { anchor: o.start, head: o.end, goal_col: None }).collect();
         if !sels.is_empty() {
             self.buffer.selections = sels;
         }
         self.ensure_caret_visible();
         cx.notify();
         let what = if plan.call.contains(&format!(".{name}(")) { "method" } else { "function" };
-        Ok(format!("Extracted {what} '{name}' ({}{}): type to rename", if plan.params.is_empty() { "no parameters".to_string() } else { format!("parameters {}", plan.params.join(", ")) }, if plan.returns.is_empty() { String::new() } else { format!(", returns {}", plan.returns.join(", ")) }))
+        Ok(format!(
+            "Extracted {what} '{name}' ({}{}): type to rename",
+            if plan.params.is_empty() { "no parameters".to_string() } else { format!("parameters {}", plan.params.join(", ")) },
+            if plan.returns.is_empty() { String::new() } else { format!(", returns {}", plan.returns.join(", ")) }
+        ))
     }
 
     /// Inline (Ctrl+Alt+N) at the caret: what can be inlined there.

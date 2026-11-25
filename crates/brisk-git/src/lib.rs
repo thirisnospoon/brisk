@@ -7,8 +7,8 @@ mod blame;
 mod branch_ops;
 mod diff;
 mod graph;
-mod log_query;
 mod log_ops;
+mod log_query;
 mod merge;
 mod partial;
 mod remote;
@@ -16,13 +16,13 @@ mod stash;
 
 pub use blame::{parse_blame, BlameLine};
 pub use diff::{align, foldable, inline_diff, line_changes, line_ops, unified, AlignedRow, LineChange, LineChangeKind, RowKind, UnifiedRow};
-pub use stash::StashEntry;
+pub use graph::{layout, GraphRow, Segment};
 pub use log_ops::ResetMode;
-pub use partial::{compose, hunk_key, hunks};
-pub use remote::Outgoing;
 pub use log_query::LogQuery;
 pub use merge::{lines_of, merge3, resolve_simple, Chunk, ConflictVersions};
-pub use graph::{layout, GraphRow, Segment};
+pub use partial::{compose, hunk_key, hunks};
+pub use remote::Outgoing;
+pub use stash::StashEntry;
 
 use std::collections::HashMap;
 use std::io;
@@ -196,12 +196,7 @@ impl Repo {
     }
 
     pub fn branches(&self) -> Result<Vec<Branch>> {
-        let out = self.git(&[
-            "for-each-ref",
-            "--format=%(refname)%1f%(HEAD)%1f%(upstream:short)%1f%(objectname)",
-            "refs/heads",
-            "refs/remotes",
-        ])?;
+        let out = self.git(&["for-each-ref", "--format=%(refname)%1f%(HEAD)%1f%(upstream:short)%1f%(objectname)", "refs/heads", "refs/remotes"])?;
         let mut v: Vec<Branch> = out
             .lines()
             .filter_map(|l| {
@@ -209,11 +204,7 @@ impl Repo {
                 if f.len() < 4 {
                     return None;
                 }
-                let (remote, name) = if let Some(n) = f[0].strip_prefix("refs/heads/") {
-                    (false, n)
-                } else {
-                    (true, f[0].strip_prefix("refs/remotes/")?)
-                };
+                let (remote, name) = if let Some(n) = f[0].strip_prefix("refs/heads/") { (false, n) } else { (true, f[0].strip_prefix("refs/remotes/")?) };
                 if remote && name.ends_with("/HEAD") {
                     return None;
                 }
@@ -233,16 +224,7 @@ impl Repo {
     /// Commits of all branches, newest first (like PyCharm's Log tab).
     pub fn log(&self, limit: usize) -> Result<Vec<Commit>> {
         let n = format!("-n{limit}");
-        let out = match self.git(&[
-            "log",
-            "--date-order",
-            "--branches",
-            "--remotes",
-            "--tags",
-            "HEAD",
-            &n,
-            LOG_FORMAT,
-        ]) {
+        let out = match self.git(&["log", "--date-order", "--branches", "--remotes", "--tags", "HEAD", &n, LOG_FORMAT]) {
             Ok(o) => o,
             Err(e) if e.0.contains("does not have any commits") || e.0.contains("unknown revision") => return Ok(Vec::new()),
             Err(e) => return Err(e),

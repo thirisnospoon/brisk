@@ -2,8 +2,8 @@
 //! notifications. All git calls run on the background executor; the UI never blocks on git
 //! except for reading one file revision when a diff is opened.
 
-use crate::theme::ui_px;
 use super::*;
+use crate::theme::ui_px;
 use brisk_git::{Branch, Commit, FileChange, FileStatus, GraphRow, Repo, Status};
 use gpui::{canvas, fill, point, size, Bounds, Hsla, PathBuilder};
 use std::cell::RefCell;
@@ -576,12 +576,7 @@ impl Workspace {
             A::Fetch => self.git_op("Fetch", |r| r.fetch_summary(), |_, _| {}, cx),
             A::UpdateProject => {
                 self.save_all(cx);
-                self.git_op(
-                    "Update Project",
-                    |r| r.update_project(),
-                    |_, _| {},
-                    cx,
-                );
+                self.git_op("Update Project", |r| r.update_project(), |_, _| {}, cx);
             }
             A::VcsQuickList => self.open_popup(PopupKind::VcsOperations),
             A::Branches => {
@@ -612,7 +607,9 @@ impl Workspace {
                 None => self.status = "Annotate: open a file first".into(),
             },
             // Ctrl+Alt+Z with the caret in a changed block of the editor: Rollback Lines.
-            A::RollbackChanges if !self.commit_focus.is_focused(window) && self.focused_editor(window, cx).is_some_and(|e| e.read(cx).vcs_change_at_caret().is_some()) => {
+            A::RollbackChanges
+                if !self.commit_focus.is_focused(window) && self.focused_editor(window, cx).is_some_and(|e| e.read(cx).vcs_change_at_caret().is_some()) =>
+            {
                 if let Some(e) = self.focused_editor(window, cx) {
                     e.update(cx, |e, cx| {
                         if let Some(i) = e.vcs_change_at_caret() {
@@ -623,7 +620,11 @@ impl Workspace {
             }
             A::RollbackChanges => {
                 let files: Vec<FileChange> = if self.commit_focus.is_focused(window) {
-                    let checked: Vec<FileChange> = self.git.as_ref().map(|g| g.rows().into_iter().filter(|c| c.status != FileStatus::Untracked && g.included(c)).collect()).unwrap_or_default();
+                    let checked: Vec<FileChange> = self
+                        .git
+                        .as_ref()
+                        .map(|g| g.rows().into_iter().filter(|c| c.status != FileStatus::Untracked && g.included(c)).collect())
+                        .unwrap_or_default();
                     if checked.is_empty() {
                         self.selected_change().into_iter().collect()
                     } else {
@@ -745,7 +746,8 @@ impl Workspace {
         let left_label = if c.status == FileStatus::Added { String::new() } else { format!("{short}^") };
         // Two `git show` calls off the UI thread.
         let task = cx.background_executor().spawn(async move {
-            let left = if c.status == FileStatus::Added { String::new() } else { repo.file_at(&format!("{hash}^"), &base_path).ok().flatten().unwrap_or_default() };
+            let left =
+                if c.status == FileStatus::Added { String::new() } else { repo.file_at(&format!("{hash}^"), &base_path).ok().flatten().unwrap_or_default() };
             let right = if c.status == FileStatus::Deleted { String::new() } else { repo.file_at(&hash, &c.path).ok().flatten().unwrap_or_default() };
             (left, right)
         });
@@ -795,7 +797,8 @@ impl Workspace {
         let files: Vec<FileChange> = g.rows().into_iter().filter(|c| g.included(c)).collect();
         let amend = g.amend;
         // Files with hunks left out: committed as HEAD plus their included hunks.
-        let partial: Vec<(String, HashSet<String>)> = files.iter().filter(|c| c.status == FileStatus::Modified && g.partial(c)).map(|c| (c.path.clone(), g.hunks[&c.path].borrow().clone())).collect();
+        let partial: Vec<(String, HashSet<String>)> =
+            files.iter().filter(|c| c.status == FileStatus::Modified && g.partial(c)).map(|c| (c.path.clone(), g.hunks[&c.path].borrow().clone())).collect();
         if files.is_empty() && !amend {
             return self.show_toast("No changes selected for commit".into(), true, cx);
         }
@@ -924,20 +927,36 @@ impl Workspace {
             }
             PopupKind::VcsOperations => {
                 use Action as A;
-                [A::Commit, A::Push, A::UpdateProject, A::Fetch, A::Branches, A::ShowDiff, A::RollbackChanges, A::Annotate, A::ShowFileHistory, A::CompareWithBranch, A::ResolveConflicts, A::StashChanges, A::UnstashChanges, A::ToggleGitWindow, A::ToggleCommitWindow]
-                    .into_iter()
-                    .filter(|a| a.info().title.to_lowercase().contains(&ql))
-                    .map(|a| PopupItem {
-                        label: match a {
-                            A::ToggleGitWindow => "Show Git Log".into(),
-                            A::ToggleCommitWindow => "Commit Tool Window".into(),
-                            _ => a.info().title.to_string(),
-                        },
-                        detail: String::new(),
-                        hint: self.resolver.keymap().shortcut_label(a).unwrap_or_default(),
-                        target: Target::Action(a),
-                    })
-                    .collect()
+                [
+                    A::Commit,
+                    A::Push,
+                    A::UpdateProject,
+                    A::Fetch,
+                    A::Branches,
+                    A::ShowDiff,
+                    A::RollbackChanges,
+                    A::Annotate,
+                    A::ShowFileHistory,
+                    A::CompareWithBranch,
+                    A::ResolveConflicts,
+                    A::StashChanges,
+                    A::UnstashChanges,
+                    A::ToggleGitWindow,
+                    A::ToggleCommitWindow,
+                ]
+                .into_iter()
+                .filter(|a| a.info().title.to_lowercase().contains(&ql))
+                .map(|a| PopupItem {
+                    label: match a {
+                        A::ToggleGitWindow => "Show Git Log".into(),
+                        A::ToggleCommitWindow => "Commit Tool Window".into(),
+                        _ => a.info().title.to_string(),
+                    },
+                    detail: String::new(),
+                    hint: self.resolver.keymap().shortcut_label(a).unwrap_or_default(),
+                    target: Target::Action(a),
+                })
+                .collect()
             }
             PopupKind::Confirm => self.popup.as_ref().map(|p| p.items.clone()).unwrap_or_default(),
             _ => Vec::new(),
@@ -1096,7 +1115,11 @@ impl Workspace {
                 .map(crate::ui_kit::floating)
                 .text_size(ui_px(13.))
                 .text_color(Theme::text())
-                .child(div().flex_none().pt(px(1.)).child(crate::icons::ui_icon(if *err { "triangle-alert" } else { "circle-check" }, 16., if *err { Theme::error() } else { Theme::file_added() })))
+                .child(div().flex_none().pt(px(1.)).child(crate::icons::ui_icon(
+                    if *err { "triangle-alert" } else { "circle-check" },
+                    16.,
+                    if *err { Theme::error() } else { Theme::file_added() },
+                )))
                 .child(div().flex_1().min_w_0().whitespace_normal().child(msg.clone())),
         )
     }
@@ -1138,7 +1161,14 @@ impl Workspace {
             .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).whitespace_nowrap().child(dir_name(&c.path).to_string()))
     }
 
-    fn commit_group_row(id: &'static str, title: &'static str, state: Option<bool>, n: usize, untracked: bool, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    fn commit_group_row(
+        id: &'static str,
+        title: &'static str,
+        state: Option<bool>,
+        n: usize,
+        untracked: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
         div()
             .id(id)
             .w_full()
@@ -1198,16 +1228,13 @@ impl Workspace {
         // [Changes header, tracked…, Unversioned Files header, unversioned…]; empty groups left out.
         let n_rows = if n_t > 0 { n_t + 1 } else { 0 } + if n_u > 0 { n_u + 1 } else { 0 };
 
-        let mut list = div()
-            .id("commit-list")
-            .track_focus(&focused_list)
-            .key_context("CommitView")
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0();
+        let mut list = div().id("commit-list").track_focus(&focused_list).key_context("CommitView").flex().flex_col().flex_1().min_h_0();
         if n_rows == 0 {
-            list = list.child(div().px(px(12.)).py(px(8.)).text_size(ui_px(13.)).text_color(Theme::text_muted()).child(if g.loaded { "No changes" } else { "Loading…" }));
+            list = list.child(div().px(px(12.)).py(px(8.)).text_size(ui_px(13.)).text_color(Theme::text_muted()).child(if g.loaded {
+                "No changes"
+            } else {
+                "Loading…"
+            }));
         } else {
             // Only the visible rows are built: 50k unversioned files cost the same as 50.
             list = list.child(
@@ -1217,7 +1244,15 @@ impl Workspace {
                     cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                         let Some(g) = this.git.as_ref() else { return Vec::new() };
                         let (inc_t, inc_u) = g.included_counts();
-                        let state = |on: usize, n: usize| if on == 0 { Some(false) } else if on >= n { Some(true) } else { None };
+                        let state = |on: usize, n: usize| {
+                            if on == 0 {
+                                Some(false)
+                            } else if on >= n {
+                                Some(true)
+                            } else {
+                                None
+                            }
+                        };
                         let sel = g.commit_sel;
                         let rows: Vec<Result<(usize, FileChange, Option<bool>), bool>> = range
                             .map(|r| match g.list_item(r) {
@@ -1229,7 +1264,9 @@ impl Workspace {
                             .map(|r| match r {
                                 Ok((i, c, state)) => Self::commit_file_row(i, &c, state, sel == Some(i), cx).into_any_element(),
                                 Err(false) => Self::commit_group_row("grp-changes", "Changes", state(inc_t, n_t), n_t, false, cx).into_any_element(),
-                                Err(true) => Self::commit_group_row("grp-unversioned", "Unversioned Files", state(inc_u, n_u), n_u, true, cx).into_any_element(),
+                                Err(true) => {
+                                    Self::commit_group_row("grp-unversioned", "Unversioned Files", state(inc_u, n_u), n_u, true, cx).into_any_element()
+                                }
                             })
                             .collect()
                     }),
@@ -1241,9 +1278,11 @@ impl Workspace {
 
         let tool = |id: &'static str, glyph: &'static str, tip: &'static str| {
             let tip: SharedString = tip.into();
-            crate::ui_kit::header_action(id)
-                .tooltip(move |_, cx| cx.new(|_| Tip(tip.clone())).into())
-                .child(crate::icons::glyph(glyph, 14., Theme::text_muted()))
+            crate::ui_kit::header_action(id).tooltip(move |_, cx| cx.new(|_| Tip(tip.clone())).into()).child(crate::icons::glyph(
+                glyph,
+                14.,
+                Theme::text_muted(),
+            ))
         };
         let shortcut = |a: Action| self.resolver.keymap().shortcut_label(a).unwrap_or_default();
         let header = crate::ui_kit::tool_header()
@@ -1311,10 +1350,19 @@ impl Workspace {
                                     .on_click(cx.listener(|this, _, _, cx| this.toggle_amend(cx))),
                             )
                             .child(div().flex_1())
-                            .child(div().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().text_size(ui_px(11.)).text_color(Theme::text_dim()).child(match busy {
-                                Some(b) => format!("{b}…"),
-                                None => format!("Ctrl+Enter · {}", shortcut(Action::Commit)),
-                            })),
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .text_size(ui_px(11.))
+                                    .text_color(Theme::text_dim())
+                                    .child(match busy {
+                                        Some(b) => format!("{b}…"),
+                                        None => format!("Ctrl+Enter · {}", shortcut(Action::Commit)),
+                                    }),
+                            ),
                     )
                     .child(
                         div()
@@ -1341,7 +1389,10 @@ impl Workspace {
 
     pub(super) fn render_git_log(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let Some(g) = &self.git else {
-            return Self::render_placeholder("Git", "Version control is not enabled for this project. Use “Create Git Repository” in the Commit window (Alt+0).");
+            return Self::render_placeholder(
+                "Git",
+                "Version control is not enabled for this project. Use “Create Git Repository” in the Commit window (Alt+0).",
+            );
         };
         let log_focused = g.log_focus.clone();
 
@@ -1375,15 +1426,47 @@ impl Workspace {
                         this.select_log(i, cx);
                     }
                 }))
-                .child(crate::icons::ui_icon(if b.current { "star" } else { "git-branch" }, 14., if b.current { gpui::rgb(0xe0a85a).into() } else { Theme::text_muted() }))
+                .child(crate::icons::ui_icon(
+                    if b.current { "star" } else { "git-branch" },
+                    14.,
+                    if b.current { gpui::rgb(0xe0a85a).into() } else { Theme::text_muted() },
+                ))
                 .child(div().whitespace_nowrap().child(b.name.clone()))
         };
-        let mut branches = div().id("git-branches").w(px(200.)).flex_shrink_0().h_full().flex().flex_col().overflow_y_scroll().border_r_1().border_color(Theme::divider()).py(px(4.));
-        let head = div().h(ui_px(22.)).flex().items_center().pl(px(10.)).text_size(ui_px(13.)).text_color(Theme::text()).child(format!("HEAD ({})", self.branch_label()));
+        let mut branches = div()
+            .id("git-branches")
+            .w(px(200.))
+            .flex_shrink_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .overflow_y_scroll()
+            .border_r_1()
+            .border_color(Theme::divider())
+            .py(px(4.));
+        let head = div()
+            .h(ui_px(22.))
+            .flex()
+            .items_center()
+            .pl(px(10.))
+            .text_size(ui_px(13.))
+            .text_color(Theme::text())
+            .child(format!("HEAD ({})", self.branch_label()));
         branches = branches.child(head);
         let local: Vec<Branch> = g.branches.iter().filter(|b| !b.remote).cloned().collect();
         let remote: Vec<Branch> = g.branches.iter().filter(|b| b.remote).cloned().collect();
-        let section = |t: &'static str| div().h(ui_px(22.)).flex().items_center().gap(px(4.)).pl(px(10.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(crate::icons::tree_arrow(true, true, Theme::text_muted())).child(t);
+        let section = |t: &'static str| {
+            div()
+                .h(ui_px(22.))
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .pl(px(10.))
+                .text_size(ui_px(12.))
+                .text_color(Theme::text_muted())
+                .child(crate::icons::tree_arrow(true, true, Theme::text_muted()))
+                .child(t)
+        };
         if !local.is_empty() {
             branches = branches.child(section("Local"));
             for b in &local {
@@ -1434,7 +1517,8 @@ impl Workspace {
                                 }
                                 let cx_ = x(row.node);
                                 window.paint_quad(
-                                    fill(Bounds::new(point(cx_ - px(4.), mid - px(4.)), size(px(8.), px(8.))), Theme::graph_lane(row.node_color)).corner_radii(px(4.)),
+                                    fill(Bounds::new(point(cx_ - px(4.), mid - px(4.)), size(px(8.), px(8.))), Theme::graph_lane(row.node_color))
+                                        .corner_radii(px(4.)),
                                 );
                             },
                         )
@@ -1451,7 +1535,19 @@ impl Workspace {
                             } else {
                                 (r.clone(), gpui::rgb(0x6c9be8))
                             };
-                            div().px(px(5.)).min_w_0().flex_shrink().overflow_hidden().text_ellipsis().rounded(px(3.)).border_1().border_color(color).text_color(color).text_size(ui_px(11.)).whitespace_nowrap().child(label)
+                            div()
+                                .px(px(5.))
+                                .min_w_0()
+                                .flex_shrink()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .rounded(px(3.))
+                                .border_1()
+                                .border_color(color)
+                                .text_color(color)
+                                .text_size(ui_px(11.))
+                                .whitespace_nowrap()
+                                .child(label)
                         });
                         div()
                             .id(("commit", i))
@@ -1468,19 +1564,50 @@ impl Workspace {
                                 }
                                 this.select_log(i, cx);
                             }))
-                            .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
-                                let Some(g) = this.git.as_ref() else { return };
-                                window.focus(&g.log_focus.clone());
-                                let Some(c) = g.log.get(i).cloned() else { return };
-                                this.select_log(i, cx);
-                                this.log_commit_menu(c, e.position, cx);
-                            }))
+                            .on_mouse_down(
+                                gpui::MouseButton::Right,
+                                cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                                    let Some(g) = this.git.as_ref() else { return };
+                                    window.focus(&g.log_focus.clone());
+                                    let Some(c) = g.log.get(i).cloned() else { return };
+                                    this.select_log(i, cx);
+                                    this.log_commit_menu(c, e.position, cx);
+                                }),
+                            )
                             .child(graph)
                             // Branch labels give way before the subject does: at most 40% of the row.
                             .child(div().flex().gap(px(4.)).min_w_0().max_w(gpui::relative(0.4)).overflow_hidden().children(refs))
-                            .child(div().pl(px(6.)).mr(px(10.)).flex_1().min_w(px(80.)).overflow_hidden().text_ellipsis().whitespace_nowrap().child(c.subject.clone()))
-                            .child(div().w(px(102.)).mr(px(8.)).flex_shrink_0().overflow_hidden().text_ellipsis().whitespace_nowrap().text_color(Theme::text_muted()).child(c.author.clone()))
-                            .child(div().w(px(130.)).flex_shrink_0().whitespace_nowrap().text_color(Theme::text_muted()).text_size(ui_px(12.)).child(fmt_time(c.time)))
+                            .child(
+                                div()
+                                    .pl(px(6.))
+                                    .mr(px(10.))
+                                    .flex_1()
+                                    .min_w(px(80.))
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .child(c.subject.clone()),
+                            )
+                            .child(
+                                div()
+                                    .w(px(102.))
+                                    .mr(px(8.))
+                                    .flex_shrink_0()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .text_color(Theme::text_muted())
+                                    .child(c.author.clone()),
+                            )
+                            .child(
+                                div()
+                                    .w(px(130.))
+                                    .flex_shrink_0()
+                                    .whitespace_nowrap()
+                                    .text_color(Theme::text_muted())
+                                    .text_size(ui_px(12.))
+                                    .child(fmt_time(c.time)),
+                            )
                     })
                     .collect()
             }),
@@ -1508,13 +1635,35 @@ impl Workspace {
             .child(commits);
 
         // Details pane.
-        let mut details = div().id("git-details").w(px(340.)).flex_shrink_0().h_full().flex().flex_col().overflow_y_scroll().border_l_1().border_color(Theme::divider()).p(px(10.)).gap(px(6.)).text_size(ui_px(13.));
+        let mut details = div()
+            .id("git-details")
+            .w(px(340.))
+            .flex_shrink_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .overflow_y_scroll()
+            .border_l_1()
+            .border_color(Theme::divider())
+            .p(px(10.))
+            .gap(px(6.))
+            .text_size(ui_px(13.));
         if let (Some(d), Some(c)) = (&g.details, g.log_selected.and_then(|i| g.log.get(i))) {
             let hash = d.hash.clone();
             details = details
                 .child(div().text_color(Theme::text()).child(d.message.clone()))
-                .child(div().text_color(Theme::text_muted()).text_size(ui_px(12.)).child(format!("{} · {} <{}> · {}", &c.hash[..8.min(c.hash.len())], c.author, c.email, fmt_time(c.time))))
-                .child(div().pt(px(6.)).text_color(Theme::text_muted()).text_size(ui_px(12.)).child(format!("{} file{} changed", d.files.len(), if d.files.len() == 1 { "" } else { "s" })));
+                .child(div().text_color(Theme::text_muted()).text_size(ui_px(12.)).child(format!(
+                    "{} · {} <{}> · {}",
+                    &c.hash[..8.min(c.hash.len())],
+                    c.author,
+                    c.email,
+                    fmt_time(c.time)
+                )))
+                .child(div().pt(px(6.)).text_color(Theme::text_muted()).text_size(ui_px(12.)).child(format!(
+                    "{} file{} changed",
+                    d.files.len(),
+                    if d.files.len() == 1 { "" } else { "s" }
+                )));
             let dsel = g.details_sel;
             for (fi, f) in d.files.iter().enumerate() {
                 let f2 = f.clone();
@@ -1572,7 +1721,13 @@ impl Workspace {
                     .child(div().flex_1())
                     .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(format!("{n} commits")))
                     .child(
-                        div().id("log-refresh").px(px(5.)).rounded(px(4.)).cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(crate::icons::ui_icon("rotate-cw", 14., Theme::text_muted()))
+                        div()
+                            .id("log-refresh")
+                            .px(px(5.))
+                            .rounded(px(4.))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(Theme::hover_row()))
+                            .child(crate::icons::ui_icon("rotate-cw", 14., Theme::text_muted()))
                             .on_click(cx.listener(|this, _, _, cx| this.refresh_git(cx))),
                     ),
             )

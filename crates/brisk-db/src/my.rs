@@ -92,7 +92,11 @@ fn cell(v: Value) -> Option<String> {
         Value::Time(neg, d, h, mi, s, us) => {
             let sign = if neg { "-" } else { "" };
             let h = d * 24 + h as u32;
-            if us == 0 { format!("{sign}{h:02}:{mi:02}:{s:02}") } else { format!("{sign}{h:02}:{mi:02}:{s:02}.{us:06}") }
+            if us == 0 {
+                format!("{sign}{h:02}:{mi:02}:{s:02}")
+            } else {
+                format!("{sign}{h:02}:{mi:02}:{s:02}.{us:06}")
+            }
         }
     })
 }

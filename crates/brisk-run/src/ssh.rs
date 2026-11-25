@@ -283,7 +283,11 @@ fn tar_entry(out: &mut Vec<u8>, path: &str, data: &[u8], mtime: u64) -> Result<(
         (&b""[..], bytes)
     } else {
         // On bytes: a multi-byte name may straddle byte 156, and `/` is never part of one.
-        let split = bytes[..bytes.len().min(156)].iter().rposition(|&b| b == b'/').filter(|&i| path.len() - i - 1 <= 100).ok_or_else(|| format!("path too long to upload: {path}"))?;
+        let split = bytes[..bytes.len().min(156)]
+            .iter()
+            .rposition(|&b| b == b'/')
+            .filter(|&i| path.len() - i - 1 <= 100)
+            .ok_or_else(|| format!("path too long to upload: {path}"))?;
         (&bytes[..split], &bytes[split + 1..])
     };
     h[..name.len()].copy_from_slice(name);
@@ -361,14 +365,12 @@ pub fn server_port(kind: RunKind, args: &[String]) -> Option<u16> {
 pub fn wrap(root: &Path, remote: &SshInterpreter, cfg: &RunConfig, cmd: &Command) -> Command {
     let map = |s: &str| to_remote(root, &remote.remote_root, s);
     let cwd = map(&cmd.cwd.display().to_string());
-    let mut env: Vec<(String, String)> = cmd
-        .env
-        .iter()
-        .filter(|(k, _)| !matches!(k.as_str(), "PATH" | "VIRTUAL_ENV" | "PYTHONPATH"))
-        .map(|(k, v)| (k.clone(), map(v)))
-        .collect();
+    let mut env: Vec<(String, String)> =
+        cmd.env.iter().filter(|(k, _)| !matches!(k.as_str(), "PATH" | "VIRTUAL_ENV" | "PYTHONPATH")).map(|(k, v)| (k.clone(), map(v))).collect();
     let roots = brisk_project::Structure::load(root);
-    let pp: Vec<String> = std::iter::once(remote.remote_root.clone()).chain(roots.sources.iter().chain(&roots.tests).filter(|d| !d.is_empty()).map(|d| format!("{}/{d}", remote.remote_root))).collect();
+    let pp: Vec<String> = std::iter::once(remote.remote_root.clone())
+        .chain(roots.sources.iter().chain(&roots.tests).filter(|d| !d.is_empty()).map(|d| format!("{}/{d}", remote.remote_root)))
+        .collect();
     env.push(("PYTHONPATH".into(), pp.join(":")));
     if let Some(bin) = remote.python.rsplit_once('/').map(|(d, _)| d).filter(|d| d.ends_with("/bin")) {
         let venv = bin.trim_end_matches("/bin");
@@ -422,7 +424,12 @@ mod tests {
 
     #[test]
     fn uri_round_trip_and_label() {
-        let s = SshInterpreter { host: "dev-server".into(), python: "/usr/bin/python3".into(), version: "3.12.3".into(), remote_root: "/home/dev/brisk-projects/app".into() };
+        let s = SshInterpreter {
+            host: "dev-server".into(),
+            python: "/usr/bin/python3".into(),
+            version: "3.12.3".into(),
+            remote_root: "/home/dev/brisk-projects/app".into(),
+        };
         assert_eq!(s.uri(), "ssh://dev-server/usr/bin/python3");
         assert_eq!(parse_uri(&s.uri()), Some(("dev-server".into(), "/usr/bin/python3".into())));
         assert_eq!(s.label(), "Remote Python 3.12 (dev-server)");
@@ -488,19 +495,34 @@ mod tests {
     #[test]
     fn wrapped_command() {
         let root = Path::new(r"C:\work\app");
-        let remote = SshInterpreter { host: "dev-server".into(), python: "/home/dev/.venv/bin/python".into(), version: String::new(), remote_root: "/home/dev/brisk-projects/app".into() };
+        let remote = SshInterpreter {
+            host: "dev-server".into(),
+            python: "/home/dev/.venv/bin/python".into(),
+            version: String::new(),
+            remote_root: "/home/dev/brisk-projects/app".into(),
+        };
         let cfg = RunConfig { kind: RunKind::FastApi, ..Default::default() };
         let mut env = HashMap::new();
         env.insert("PYTHONUNBUFFERED".to_string(), "1".to_string());
         env.insert("PATH".to_string(), r"C:\Windows".to_string());
         env.insert("PYTHONPATH".to_string(), r"C:\work\app".to_string());
         env.insert("DATA".to_string(), r"C:\work\app\data".to_string());
-        let cmd = Command { program: "/home/dev/.venv/bin/python".into(), args: vec!["-m".into(), "uvicorn".into(), "main:app".into(), "--port".into(), "8001".into()], cwd: root.to_path_buf(), env };
+        let cmd = Command {
+            program: "/home/dev/.venv/bin/python".into(),
+            args: vec!["-m".into(), "uvicorn".into(), "main:app".into(), "--port".into(), "8001".into()],
+            cwd: root.to_path_buf(),
+            env,
+        };
         let w = wrap(root, &remote, &cfg, &cmd);
         assert!(is_remote(&w));
         let script = w.args.last().unwrap();
         assert!(script.starts_with("cd /home/dev/brisk-projects/app && export PATH=/home/dev/.venv/bin:\"$PATH\" && exec env"), "{script}");
-        assert!(script.contains("DATA=/home/dev/brisk-projects/app/data") && script.contains("PYTHONPATH=/home/dev/brisk-projects/app") && !script.contains("Windows"), "{script}");
+        assert!(
+            script.contains("DATA=/home/dev/brisk-projects/app/data")
+                && script.contains("PYTHONPATH=/home/dev/brisk-projects/app")
+                && !script.contains("Windows"),
+            "{script}"
+        );
         assert!(script.ends_with("/home/dev/.venv/bin/python -m uvicorn main:app --port 8001"), "{script}");
         assert!(w.args.windows(2).any(|a| a[0] == "-L" && a[1] == "8001:127.0.0.1:8001"));
         assert_eq!(server_port(RunKind::Django, &["manage.py".into(), "runserver".into(), "0.0.0.0:8005".into()]), Some(8005));
@@ -519,21 +541,33 @@ mod tests {
         let root = std::env::temp_dir().join(format!("brisk-ssh-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("pkg")).unwrap();
-        std::fs::write(root.join("main.py"), "import pkg.util
+        std::fs::write(
+            root.join("main.py"),
+            "import pkg.util
 print('sum', pkg.util.add(2, 3))
-").unwrap();
+",
+        )
+        .unwrap();
         std::fs::write(root.join("pkg/__init__.py"), "").unwrap();
-        std::fs::write(root.join("pkg/util.py"), "def add(a, b):
+        std::fs::write(
+            root.join("pkg/util.py"),
+            "def add(a, b):
     return a + b
-").unwrap();
+",
+        )
+        .unwrap();
         std::fs::write(root.join("old.txt"), "x").unwrap();
         let rr = default_remote_root(&info.home, &root);
         let first = sync(&host, &root, &rr).unwrap();
         assert_eq!((first.uploaded, first.deleted), (4, 0));
         std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::write(root.join("pkg/util.py"), "def add(a, b):
+        std::fs::write(
+            root.join("pkg/util.py"),
+            "def add(a, b):
     return a + b + 100
-").unwrap();
+",
+        )
+        .unwrap();
         std::fs::remove_file(root.join("old.txt")).unwrap();
         let second = sync(&host, &root, &rr).unwrap();
         assert_eq!((second.uploaded, second.deleted), (1, 1));

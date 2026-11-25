@@ -43,7 +43,11 @@ fn free_name(dir: &Path, ext: &str) -> PathBuf {
     let ext = ext.trim();
     let name = |i: usize| {
         let stem = if i == 0 { "scratch".to_string() } else { format!("scratch_{i}") };
-        if ext == "dockerfile" { dir.join(format!("{stem}.Dockerfile")) } else { dir.join(format!("{stem}.{ext}")) }
+        if ext == "dockerfile" {
+            dir.join(format!("{stem}.Dockerfile"))
+        } else {
+            dir.join(format!("{stem}.{ext}"))
+        }
     };
     (0..).map(name).find(|p| !p.exists()).unwrap()
 }

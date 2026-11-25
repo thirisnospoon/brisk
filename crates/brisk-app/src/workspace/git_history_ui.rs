@@ -2,12 +2,12 @@
 //! that touched it, newest first, with the selected commit's patch on the right. Enter or a
 //! double click opens the whole file's diff for that commit.
 
-use crate::theme::ui_px;
 use super::git_merge_ui::{button, dialog_frame, GitDialog};
 use super::git_ui::{file_name, fmt_time};
 use super::menu_ui::Entry;
 use super::Workspace;
 use crate::editor::Editor;
+use crate::theme::ui_px;
 use crate::theme::Theme;
 use brisk_git::{Commit, FileChange, FileStatus};
 use gpui::prelude::*;
@@ -107,7 +107,15 @@ impl Workspace {
         let Some(rel) = g.repo.rel(path) else {
             return self.show_toast(format!("{} is not in the repository", path.display()), true, cx);
         };
-        g.dialog = Some(GitDialog::History(HistoryDialog { rel: rel.clone(), lines, commits: Vec::new(), line_patches: Vec::new(), selected: 0, patch: String::new(), loading: true }));
+        g.dialog = Some(GitDialog::History(HistoryDialog {
+            rel: rel.clone(),
+            lines,
+            commits: Vec::new(),
+            line_patches: Vec::new(),
+            selected: 0,
+            patch: String::new(),
+            loading: true,
+        }));
         let repo = g.repo.clone();
         let task = cx.background_executor().spawn(async move {
             match lines {
@@ -256,18 +264,28 @@ impl Workspace {
                     }),
                 )
         });
-        let patch_lines = d.patch.lines().filter(|l| !(l.starts_with("diff --git") || l.starts_with("index ") || l.starts_with("--- ") || l.starts_with("+++ "))).take(PATCH_LINES).enumerate().map(|(i, l)| {
-            let (bg, fg) = if l.starts_with('+') {
-                (Some(Theme::diff_added_bg()), Theme::text())
-            } else if l.starts_with('-') {
-                (Some(Theme::diff_deleted_bg()), Theme::text())
-            } else if l.starts_with("@@") {
-                (None, Theme::accent())
-            } else {
-                (None, Theme::text_muted())
-            };
-            div().id(("hist-patch", i)).px(px(6.)).h(ui_px(19.)).whitespace_nowrap().when_some(bg, |x, c| x.bg(c)).text_color(fg).child(if l.is_empty() { " ".to_string() } else { l.to_string() })
-        });
+        let patch_lines = d
+            .patch
+            .lines()
+            .filter(|l| !(l.starts_with("diff --git") || l.starts_with("index ") || l.starts_with("--- ") || l.starts_with("+++ ")))
+            .take(PATCH_LINES)
+            .enumerate()
+            .map(|(i, l)| {
+                let (bg, fg) = if l.starts_with('+') {
+                    (Some(Theme::diff_added_bg()), Theme::text())
+                } else if l.starts_with('-') {
+                    (Some(Theme::diff_deleted_bg()), Theme::text())
+                } else if l.starts_with("@@") {
+                    (None, Theme::accent())
+                } else {
+                    (None, Theme::text_muted())
+                };
+                div().id(("hist-patch", i)).px(px(6.)).h(ui_px(19.)).whitespace_nowrap().when_some(bg, |x, c| x.bg(c)).text_color(fg).child(if l.is_empty() {
+                    " ".to_string()
+                } else {
+                    l.to_string()
+                })
+            });
         let selected = d.commits.get(d.selected);
         let what = match d.lines {
             Some((a, b)) => format!("History for {} lines {a}–{b}", file_name(&d.rel)),
@@ -285,39 +303,35 @@ impl Workspace {
                 .h(ui_px(620.))
                 .child(div().pb(px(8.)).text_color(Theme::text_muted()).child(info))
                 .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .flex()
-                        .gap(px(10.))
-                        .child(div().id("hist-list").w(px(430.)).overflow_y_scroll().children(rows))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .children(selected.map(|c| {
-                                    div()
-                                        .pb(px(6.))
-                                        .text_size(ui_px(12.))
-                                        .text_color(Theme::text_muted())
-                                        .child(format!("{} · {} <{}> · {}", c.short(), c.author, c.email, fmt_time(c.time)))
-                                }))
-                                .child(
-                                    div()
-                                        .id("hist-patch")
-                                        .flex_1()
-                                        .min_h_0()
-                                        .overflow_scroll()
-                                        .border_1()
-                                        .border_color(Theme::divider())
-                                        .bg(Theme::editor_bg())
-                                        .font_family(crate::settings::editor_font())
-                                        .text_size(ui_px(12.5))
-                                        .children(patch_lines),
-                                ),
-                        ),
+                    div().flex_1().min_h_0().flex().gap(px(10.)).child(div().id("hist-list").w(px(430.)).overflow_y_scroll().children(rows)).child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .children(selected.map(|c| {
+                                div().pb(px(6.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(format!(
+                                    "{} · {} <{}> · {}",
+                                    c.short(),
+                                    c.author,
+                                    c.email,
+                                    fmt_time(c.time)
+                                ))
+                            }))
+                            .child(
+                                div()
+                                    .id("hist-patch")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_scroll()
+                                    .border_1()
+                                    .border_color(Theme::divider())
+                                    .bg(Theme::editor_bg())
+                                    .font_family(crate::settings::editor_font())
+                                    .text_size(ui_px(12.5))
+                                    .children(patch_lines),
+                            ),
+                    ),
                 )
                 .child(
                     div()
@@ -325,7 +339,13 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap(px(8.))
-                        .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("↑↓ select · Enter, Ctrl+D or double click: full diff · Esc close"))
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(ui_px(11.))
+                                .text_color(Theme::text_dim())
+                                .child("↑↓ select · Enter, Ctrl+D or double click: full diff · Esc close"),
+                        )
                         .child(button("hist-local", "Compare with Local", false).on_click(cx.listener(|this, _, w, cx| this.history_compare_local(w, cx))))
                         .child(button("hist-diff", "Show Diff", false).on_click(cx.listener(|this, _, w, cx| this.history_open_diff(w, cx))))
                         .child(button("hist-close", "Close", true).on_click(cx.listener(|this, _, w, cx| {

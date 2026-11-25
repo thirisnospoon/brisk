@@ -16,7 +16,8 @@ impl Workspace {
     pub(super) fn run_anything_items(&self, q: &str) -> Vec<PopupItem> {
         let q = q.trim();
         let ql = q.to_lowercase();
-        let item = |label: &str, detail: String| PopupItem { label: label.to_string(), detail, hint: String::new(), target: Target::RunAnything(label.to_string()) };
+        let item =
+            |label: &str, detail: String| PopupItem { label: label.to_string(), detail, hint: String::new(), target: Target::RunAnything(label.to_string()) };
         let mut v = Vec::new();
         if !q.is_empty() {
             if self.runs.file.get(q).is_some() {
@@ -79,7 +80,10 @@ impl Workspace {
         let _ = std::fs::write(root.join("hello.py"), "import sys\nprint('argv:', sys.argv[1:])\n");
         let _ = std::fs::write(root.join("test_ra.py"), "def test_one():\n    assert True\n\ndef test_two():\n    assert 1 == 2\n");
         let _ = std::fs::create_dir_all(root.join(".brisk"));
-        let _ = std::fs::write(root.join(brisk_run::CONFIG_FILE), "{\n  \"configurations\": [{\"name\": \"Hello cfg\", \"target\": \"hello.py\", \"parameters\": \"cfg\"}]\n}\n");
+        let _ = std::fs::write(
+            root.join(brisk_run::CONFIG_FILE),
+            "{\n  \"configurations\": [{\"name\": \"Hello cfg\", \"target\": \"hello.py\", \"parameters\": \"cfg\"}]\n}\n",
+        );
         let _ = std::fs::remove_file(root.join(run_anything::HISTORY_FILE));
         self.reload_runs();
         self.open_file(&root.join("hello.py"), window, cx);
@@ -107,7 +111,8 @@ impl Workspace {
                     }
                     let open = this.popup.as_ref().map(|p| p.kind) == Some(PopupKind::RunAnything);
                     if i == 0 || i == 4 {
-                        let labels: Vec<String> = this.popup.as_ref().map(|p| p.items.iter().map(|i| format!("{} | {}", i.label, i.detail)).collect()).unwrap_or_default();
+                        let labels: Vec<String> =
+                            this.popup.as_ref().map(|p| p.items.iter().map(|i| format!("{} | {}", i.label, i.detail)).collect()).unwrap_or_default();
                         eprintln!("smoke-runanything: double ctrl -> open {open}, items {labels:?}");
                     }
                     if let Some(p) = this.popup.as_mut() {

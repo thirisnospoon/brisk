@@ -54,11 +54,8 @@ pub fn find_links(line: &str) -> Vec<Link> {
             let before = &line[..i];
             if let Some(ext) = EXTS.iter().find(|x| before.ends_with(*x)) {
                 // Just after the separator, whatever its width (a no-break space is two bytes).
-                let start = before
-                    .char_indices()
-                    .rev()
-                    .find(|&(_, c)| c.is_whitespace() || c == '"' || c == '\'' || c == '(')
-                    .map_or(0, |(p, c)| p + c.len_utf8());
+                let start =
+                    before.char_indices().rev().find(|&(_, c)| c.is_whitespace() || c == '"' || c == '\'' || c == '(').map_or(0, |(p, c)| p + c.len_utf8());
                 // A Windows drive letter "C:" is part of the path, not a separator.
                 let path = &line[start..i];
                 if path.len() > ext.len() {

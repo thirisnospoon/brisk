@@ -150,7 +150,13 @@ impl Editor {
                 .shadow_md()
                 .text_size(ui_px(12.5))
                 .text_color(Theme::text())
-                .child(gpui::div().text_color(Theme::text_muted()).child(format!("{}  {} <{}>  {}", &a.hash[..a.hash.len().min(8)], a.author, a.email, date(a.time))))
+                .child(gpui::div().text_color(Theme::text_muted()).child(format!(
+                    "{}  {} <{}>  {}",
+                    &a.hash[..a.hash.len().min(8)],
+                    a.author,
+                    a.email,
+                    date(a.time)
+                )))
                 .child(gpui::div().pt(px(4.)).child(a.summary.clone()))
                 .child(gpui::div().pt(px(4.)).text_size(ui_px(11.)).text_color(Theme::text_dim()).child("Click to show the diff of this commit"))
                 .into_any_element(),

@@ -10,8 +10,10 @@ use brisk_run::pyproj::Manager;
 use gpui::{Context, Window};
 use std::path::Path;
 
-const UV_PYPROJECT: &str = "[project]\nname = \"smokeproj\"\nversion = \"0.1.0\"\nrequires-python = \">=3.9\"\ndependencies = []\n\n[tool.uv]\npackage = false\n";
-const POETRY_PYPROJECT: &str = "[project]\nname = \"smokepoetry\"\nversion = \"0.1.0\"\nrequires-python = \">=3.9\"\ndependencies = []\n\n[tool.poetry]\npackage-mode = false\n";
+const UV_PYPROJECT: &str =
+    "[project]\nname = \"smokeproj\"\nversion = \"0.1.0\"\nrequires-python = \">=3.9\"\ndependencies = []\n\n[tool.uv]\npackage = false\n";
+const POETRY_PYPROJECT: &str =
+    "[project]\nname = \"smokepoetry\"\nversion = \"0.1.0\"\nrequires-python = \">=3.9\"\ndependencies = []\n\n[tool.poetry]\npackage-mode = false\n";
 
 /// Local wheels in `wheels/` and the environment that keeps uv and Poetry offline and their
 /// files inside the smoke folder.
@@ -78,9 +80,8 @@ impl Workspace {
                 }
             };
             wait_env(&this, cx).await;
-            let (status, label, python) = this
-                .update(cx, |t, _| (t.status.clone(), t.interpreter_label(), t.runs.interpreter(&t.root).map(|i| i.path)))
-                .unwrap_or_default();
+            let (status, label, python) =
+                this.update(cx, |t, _| (t.status.clone(), t.interpreter_label(), t.runs.interpreter(&t.root).map(|i| i.path))).unwrap_or_default();
             let inside = python.as_ref().is_some_and(|p| p.starts_with(&root));
             eprintln!("smoke-pyproj: sync in {:.1?} -> {status:?}", t0.elapsed());
             eprintln!("smoke-pyproj: interpreter {label:?}, inside the project {inside}, lock file {}", root.join(manager.lock_file()).is_file());
@@ -90,7 +91,10 @@ impl Workspace {
             let wait_idle = async |this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindowContext| {
                 for _ in 0..1200 {
                     pause(100).await;
-                    if this.update(cx, |t, _| t.packages.as_ref().is_some_and(|p| !p.loading && p.busy.is_none() && p.queue.is_empty() && p.project.is_some())).unwrap_or(false) {
+                    if this
+                        .update(cx, |t, _| t.packages.as_ref().is_some_and(|p| !p.loading && p.busy.is_none() && p.queue.is_empty() && p.project.is_some()))
+                        .unwrap_or(false)
+                    {
                         break;
                     }
                 }
@@ -105,11 +109,16 @@ impl Workspace {
             }
 
             let pyproject = || std::fs::read_to_string(root.join("pyproject.toml")).unwrap_or_default();
-            let names = |this: &mut Workspace| this.packages.as_ref().map(|p| p.list.iter().map(|x| x.name.to_lowercase()).collect::<Vec<_>>()).unwrap_or_default();
+            let names =
+                |this: &mut Workspace| this.packages.as_ref().map(|p| p.list.iter().map(|x| x.name.to_lowercase()).collect::<Vec<_>>()).unwrap_or_default();
             let _ = this.update(cx, |this, cx| this.package_op(Op::Install("briskdemo".into(), String::new()), cx));
             wait_idle(&this, cx).await;
             let listed = this.update(cx, |t, _| names(t).contains(&"briskdemo".to_string())).unwrap_or(false);
-            eprintln!("smoke-pyproj: add briskdemo -> in pyproject.toml {}, installed {listed}, status {:?}", pyproject().contains("briskdemo"), this.update(cx, |t, _| t.status.clone()).unwrap_or_default());
+            eprintln!(
+                "smoke-pyproj: add briskdemo -> in pyproject.toml {}, installed {listed}, status {:?}",
+                pyproject().contains("briskdemo"),
+                this.update(cx, |t, _| t.status.clone()).unwrap_or_default()
+            );
             let _ = this.update(cx, |this, cx| this.package_op(Op::Uninstall(Package { name: "briskdemo".into(), version: "1.0".into() }), cx));
             wait_idle(&this, cx).await;
             let listed = this.update(cx, |t, _| names(t).contains(&"briskdemo".to_string())).unwrap_or(true);

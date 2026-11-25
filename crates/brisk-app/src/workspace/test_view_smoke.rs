@@ -51,7 +51,9 @@ impl Workspace {
             let finished = async |this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindowContext| {
                 for _ in 0..200 {
                     pause(100).await;
-                    let done = this.update(cx, |t, cx| t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default().contains("Process finished")).unwrap_or(false);
+                    let done = this
+                        .update(cx, |t, cx| t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default().contains("Process finished"))
+                        .unwrap_or(false);
                     if done {
                         return true;
                     }
@@ -118,7 +120,11 @@ impl Workspace {
                 if let Some(e) = h.last() {
                     let r = p.update(cx, |p, _| p.open_history(e));
                     let tabs = p.read(cx).run_tabs();
-                    eprintln!("smoke-testview: open history {r:?} -> tabs {tabs:?}, summary {:?}, selected {:?}", p.read(cx).tests_summary(), p.read(cx).selected_test().map(|s| s.0));
+                    eprintln!(
+                        "smoke-testview: open history {r:?} -> tabs {tabs:?}, summary {:?}, selected {:?}",
+                        p.read(cx).tests_summary(),
+                        p.read(cx).selected_test().map(|s| s.0)
+                    );
                     eprintln!("smoke-testview: history console {:?}", p.read(cx).active_text().map(|t| t.lines().take(2).collect::<Vec<_>>().join(" | ")));
                 }
                 cx.quit();

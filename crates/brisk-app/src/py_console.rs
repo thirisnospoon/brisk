@@ -26,7 +26,10 @@ pub enum Event {
     /// `input(prompt)` waits for a line.
     Input(String),
     /// A `run` finished; `exit`: the code called `exit()`.
-    Done { vars: Vec<Var>, exit: bool },
+    Done {
+        vars: Vec<Var>,
+        exit: bool,
+    },
     /// The process ended (exit code).
     Exited(Option<i32>),
 }

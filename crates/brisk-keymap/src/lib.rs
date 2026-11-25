@@ -157,10 +157,8 @@ pub struct Keymap {
 
 impl Keymap {
     pub fn bind(&mut self, keys: &str, action: Action, context: Option<&'static str>) {
-        let strokes: Vec<Keystroke> = keys
-            .split_whitespace()
-            .map(|k| Keystroke::parse(k).unwrap_or_else(|| panic!("bad keystroke {k:?} in {keys:?}")))
-            .collect();
+        let strokes: Vec<Keystroke> =
+            keys.split_whitespace().map(|k| Keystroke::parse(k).unwrap_or_else(|| panic!("bad keystroke {k:?} in {keys:?}"))).collect();
         self.bindings.push(Binding { trigger: Trigger::Keys(strokes), action, context });
     }
 
@@ -204,12 +202,7 @@ pub struct KeyResolver {
 
 impl KeyResolver {
     pub fn new(keymap: Keymap) -> Self {
-        Self {
-            keymap,
-            pending: Vec::new(),
-            last_modifier_tap: None,
-            double_tap_window: Duration::from_millis(350),
-        }
+        Self { keymap, pending: Vec::new(), last_modifier_tap: None, double_tap_window: Duration::from_millis(350) }
     }
 
     pub fn keymap(&self) -> &Keymap {
@@ -227,7 +220,7 @@ impl KeyResolver {
         self.pending.push(stroke);
 
         let mut best: Option<(usize, Action)> = None; // (context rank, action)
-        // The most specific context of a longer chord that starts with these strokes.
+                                                      // The most specific context of a longer chord that starts with these strokes.
         let mut prefix_rank: Option<usize> = None;
         for b in &self.keymap.bindings {
             let Trigger::Keys(ks) = &b.trigger else { continue };
@@ -318,10 +311,7 @@ mod tests {
         let mut r = KeyResolver::new(pycharm_keymap());
         let t0 = Instant::now();
         assert_eq!(r.modifier_tapped("shift", t0), Resolution::Unhandled);
-        assert_eq!(
-            r.modifier_tapped("shift", t0 + Duration::from_millis(200)),
-            Resolution::Action(Action::SearchEverywhere)
-        );
+        assert_eq!(r.modifier_tapped("shift", t0 + Duration::from_millis(200)), Resolution::Action(Action::SearchEverywhere));
         // Too slow: no action.
         let t1 = t0 + Duration::from_secs(5);
         r.modifier_tapped("shift", t1);

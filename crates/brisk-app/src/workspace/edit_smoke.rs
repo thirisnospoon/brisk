@@ -101,11 +101,16 @@ impl Workspace {
         let mut text = String::new();
         for i in 0..400 {
             if i == 9 {
-                text.push_str(&format!("x = '{}'
-", "abcdefghij".repeat(50)));
+                text.push_str(&format!(
+                    "x = '{}'
+",
+                    "abcdefghij".repeat(50)
+                ));
             } else {
-                text.push_str(&format!("line_{i} = {i}
-"));
+                text.push_str(&format!(
+                    "line_{i} = {i}
+"
+                ));
             }
         }
         let _ = std::fs::write(&long, text);
@@ -178,11 +183,18 @@ impl Workspace {
             super::win_input::right_click(sx(rx), sx(ry));
             pause(250).await;
             let labels = this
-                .read_with(cx, |this, _| this.menu.as_ref().map(|m| m.entries.iter().map(|e| match e {
-                    super::menu_ui::Entry::Item { label, enabled, .. } => format!("{label}{}", if *enabled { "" } else { " (off)" }),
-                    super::menu_ui::Entry::Separator => "—".into(),
-                    super::menu_ui::Entry::Submenu { label, .. } => format!("{label} ›"),
-                }).collect::<Vec<_>>()))
+                .read_with(cx, |this, _| {
+                    this.menu.as_ref().map(|m| {
+                        m.entries
+                            .iter()
+                            .map(|e| match e {
+                                super::menu_ui::Entry::Item { label, enabled, .. } => format!("{label}{}", if *enabled { "" } else { " (off)" }),
+                                super::menu_ui::Entry::Separator => "—".into(),
+                                super::menu_ui::Entry::Submenu { label, .. } => format!("{label} ›"),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
                 .ok()
                 .flatten();
             eprintln!("smoke-edit: right click -> menu {labels:?}");
@@ -291,7 +303,11 @@ impl Workspace {
         eprintln!("smoke-edit: new python file popup -> {}", self.smoke_popup());
         self.smoke_press("enter", window, cx);
         let tab = self.active_editor().and_then(|e| e.read(cx).path.clone());
-        eprintln!("smoke-edit: created pkg/helper.py={} open tab={:?}", exists("pkg/helper.py"), tab.as_ref().map(|p| p.strip_prefix(&root).unwrap_or(p).to_path_buf()));
+        eprintln!(
+            "smoke-edit: created pkg/helper.py={} open tab={:?}",
+            exists("pkg/helper.py"),
+            tab.as_ref().map(|p| p.strip_prefix(&root).unwrap_or(p).to_path_buf())
+        );
         if let Some(e) = self.active_editor().cloned() {
             e.update(cx, |e, cx| e.replace_text_in_range(None, "x = 1", window, cx));
         }
@@ -308,7 +324,12 @@ impl Workspace {
         let exists = |p: &str| root.join(p).exists();
         let tab = self.active_editor().and_then(|e| e.read(cx).path.clone());
         let saved = std::fs::read_to_string(root.join("pkg/util.py")).unwrap_or_default();
-        eprintln!("smoke-edit: renamed -> helper.py={} util.py={} (content {saved:?}) tab now {:?}", exists("pkg/helper.py"), exists("pkg/util.py"), tab.as_ref().map(|p| p.strip_prefix(&root).unwrap_or(p).to_path_buf()));
+        eprintln!(
+            "smoke-edit: renamed -> helper.py={} util.py={} (content {saved:?}) tab now {:?}",
+            exists("pkg/helper.py"),
+            exists("pkg/util.py"),
+            tab.as_ref().map(|p| p.strip_prefix(&root).unwrap_or(p).to_path_buf())
+        );
         self.smoke_select(&root.join("pkg/util.py"), window);
         self.smoke_press("f5", window, cx);
         self.smoke_query("pkg/util.py");

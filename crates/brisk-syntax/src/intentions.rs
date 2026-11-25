@@ -16,9 +16,18 @@ pub struct Intention {
 /// parameters (`)` → `) -> T`). `name` is the byte where ty is asked about the type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HintTarget {
-    Variable { name: String, at: usize, insert: usize },
+    Variable {
+        name: String,
+        at: usize,
+        insert: usize,
+    },
     /// `returns`: what each `return` gives, for when ty has not inferred the return type.
-    Return { name: String, at: usize, insert: usize, returns: Vec<Returned> },
+    Return {
+        name: String,
+        at: usize,
+        insert: usize,
+        returns: Vec<Returned>,
+    },
 }
 
 /// A `return` value's type: known from the literal, to ask ty about (hover at the byte of
@@ -88,7 +97,23 @@ fn alternatives(i: Node) -> Vec<Node> {
     i.children_by_field_name("alternative", &mut c).collect()
 }
 
-const ATOMS: &[&str] = &["identifier", "attribute", "call", "subscript", "parenthesized_expression", "string", "integer", "float", "true", "false", "none", "list", "dictionary", "tuple", "set"];
+const ATOMS: &[&str] = &[
+    "identifier",
+    "attribute",
+    "call",
+    "subscript",
+    "parenthesized_expression",
+    "string",
+    "integer",
+    "float",
+    "true",
+    "false",
+    "none",
+    "list",
+    "dictionary",
+    "tuple",
+    "set",
+];
 
 /// `cond` negated the way PyCharm writes it: `a == b` → `a != b`, `not x` → `x`, else `not x`.
 pub fn negate(cond: Node, text: &str) -> String {
@@ -130,11 +155,8 @@ fn invert_if(i: Node, text: &str) -> Option<Intention> {
         return None;
     }
     let other = els.child_by_field_name("body")?;
-    let edits = vec![
-        (cond.byte_range(), negate(cond, text)),
-        (body.byte_range(), src(other, text).to_string()),
-        (other.byte_range(), src(body, text).to_string()),
-    ];
+    let edits =
+        vec![(cond.byte_range(), negate(cond, text)), (body.byte_range(), src(other, text).to_string()), (other.byte_range(), src(body, text).to_string())];
     Some(Intention { label: "Invert 'if' condition".into(), edits })
 }
 
@@ -147,7 +169,11 @@ fn unit(text: &str, stmt: Node, body: Node) -> String {
 
 /// The lines of `body` (from its first line's start), each with `f` applied.
 fn body_lines(text: &str, body: Node, f: impl Fn(&str) -> String) -> String {
-    text[line_start(text, body.start_byte())..body.end_byte()].split('\n').map(|l| if l.trim().is_empty() { String::new() } else { f(l) }).collect::<Vec<_>>().join("\n")
+    text[line_start(text, body.start_byte())..body.end_byte()]
+        .split('\n')
+        .map(|l| if l.trim().is_empty() { String::new() } else { f(l) })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// `if a and b: X` → `if a:` / `if b: X` nested.
@@ -180,7 +206,11 @@ fn merge_ifs(i: Node, text: &str) -> Option<Intention> {
     }
     let wrap = |c: Node| {
         let s = src(c, text);
-        if matches!(c.kind(), "boolean_operator" | "conditional_expression" | "lambda" | "named_expression") && !(c.kind() == "boolean_operator" && text[c.child_by_field_name("left").map_or(0, |n| n.end_byte())..c.child_by_field_name("right").map_or(0, |n| n.start_byte())].trim() == "and") {
+        if matches!(c.kind(), "boolean_operator" | "conditional_expression" | "lambda" | "named_expression")
+            && !(c.kind() == "boolean_operator"
+                && text[c.child_by_field_name("left").map_or(0, |n| n.end_byte())..c.child_by_field_name("right").map_or(0, |n| n.start_byte())].trim()
+                    == "and")
+        {
             format!("({s})")
         } else {
             s.to_string()
@@ -221,7 +251,11 @@ fn fits(arg: &str, quote: &str) -> bool {
 fn to_fstring(n: Node, text: &str) -> Option<Intention> {
     let e = ancestor(n, &["call", "binary_operator"]).filter(|e| {
         if e.kind() == "call" {
-            e.child_by_field_name("function").is_some_and(|f| f.kind() == "attribute" && f.child_by_field_name("object").is_some_and(|o| o.kind() == "string") && f.child_by_field_name("attribute").is_some_and(|a| src(a, text) == "format"))
+            e.child_by_field_name("function").is_some_and(|f| {
+                f.kind() == "attribute"
+                    && f.child_by_field_name("object").is_some_and(|o| o.kind() == "string")
+                    && f.child_by_field_name("attribute").is_some_and(|a| src(a, text) == "format")
+            })
         } else {
             e.child_by_field_name("left").is_some_and(|l| l.kind() == "string") && e.child_by_field_name("operator").is_some_and(|o| src(o, text) == "%")
         }
@@ -276,7 +310,11 @@ fn from_format(call: Node, text: &str) -> Option<String> {
                 if !fits(value, &quote) || rest.contains('{') {
                     return None;
                 }
-                let value = if tail.is_empty() || value.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') { value.to_string() } else { format!("({value})") };
+                let value = if tail.is_empty() || value.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+                    value.to_string()
+                } else {
+                    format!("({value})")
+                };
                 out.push_str(&format!("{{{value}{tail}{rest}}}"));
                 while chars.peek().is_some_and(|(j, _)| *j <= end) {
                     chars.next();
@@ -424,7 +462,10 @@ fn returns_of(n: Node, text: &str, out: &mut Vec<Returned>) {
                         let prefix = &s[..s.find(['"', '\'']).unwrap_or(0)];
                         Returned::Known(if prefix.contains(['b', 'B']) { "bytes" } else { "str" }.into())
                     }
-                    "identifier" | "call" | "attribute" | "subscript" => Returned::Ask(v.start_byte(), if v.kind() == "call" { v.child_by_field_name("function").map_or(v.start_byte(), |f| f.end_byte() - 1) } else { v.end_byte() - 1 }),
+                    "identifier" | "call" | "attribute" | "subscript" => Returned::Ask(
+                        v.start_byte(),
+                        if v.kind() == "call" { v.child_by_field_name("function").map_or(v.start_byte(), |f| f.end_byte() - 1) } else { v.end_byte() - 1 },
+                    ),
                     _ => Returned::Unknown,
                 },
             }),
@@ -526,8 +567,14 @@ mod tests {
         assert_eq!(hint_target(&tr, t, 4), Some(HintTarget::Return { name: "f".into(), at: 4, insert: 8, returns: vec![Returned::Unknown] }));
         let t2 = "def g(x):\n    if x:\n        return 'a'\n    return name\n";
         let at = t2.find("name").unwrap();
-        assert_eq!(hint_target(&tree(t2), t2, 4), Some(HintTarget::Return { name: "g".into(), at: 4, insert: 8, returns: vec![Returned::Known("str".into()), Returned::Ask(at, at + 3)] }));
-        assert_eq!(hint_target(&tr, t, t.find("x =").unwrap()), Some(HintTarget::Variable { name: "x".into(), at: t.find("x =").unwrap(), insert: t.find("x =").unwrap() + 1 }));
+        assert_eq!(
+            hint_target(&tree(t2), t2, 4),
+            Some(HintTarget::Return { name: "g".into(), at: 4, insert: 8, returns: vec![Returned::Known("str".into()), Returned::Ask(at, at + 3)] })
+        );
+        assert_eq!(
+            hint_target(&tr, t, t.find("x =").unwrap()),
+            Some(HintTarget::Variable { name: "x".into(), at: t.find("x =").unwrap(), insert: t.find("x =").unwrap() + 1 })
+        );
         assert_eq!(hint_target(&tr, t, t.find("y:").unwrap()), None);
     }
 }

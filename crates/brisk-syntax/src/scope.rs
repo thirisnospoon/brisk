@@ -42,8 +42,16 @@ pub(crate) fn is_binding(n: Node) -> bool {
     let mut cur = n;
     while let Some(p) = cur.parent() {
         match p.kind() {
-            "pattern_list" | "tuple_pattern" | "list_pattern" | "list_splat_pattern" | "dictionary_splat_pattern" | "tuple" | "list"
-            | "parenthesized_expression" | "as_pattern_target" | "expression_list" => cur = p,
+            "pattern_list"
+            | "tuple_pattern"
+            | "list_pattern"
+            | "list_splat_pattern"
+            | "dictionary_splat_pattern"
+            | "tuple"
+            | "list"
+            | "parenthesized_expression"
+            | "as_pattern_target"
+            | "expression_list" => cur = p,
             "parameters" | "lambda_parameters" => return true,
             "typed_parameter" => return same(p.named_child(0), cur),
             "default_parameter" | "typed_default_parameter" => return same(p.child_by_field_name("name"), cur),

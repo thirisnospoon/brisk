@@ -89,7 +89,13 @@ impl Editor {
     /// The line as drawn: hints spliced in before their positions, each in a run made by
     /// `hint_run(len)`; the text's own runs are split around them. Also returns the byte
     /// ranges of the hints in the drawn line (their chips).
-    pub(super) fn line_with_inlays(&self, line: usize, text: String, runs: Vec<TextRun>, hint_run: impl Fn(usize) -> TextRun) -> (String, Vec<TextRun>, Vec<Range<usize>>) {
+    pub(super) fn line_with_inlays(
+        &self,
+        line: usize,
+        text: String,
+        runs: Vec<TextRun>,
+        hint_run: impl Fn(usize) -> TextRun,
+    ) -> (String, Vec<TextRun>, Vec<Range<usize>>) {
         let hints = self.hints_on(line, &text);
         if hints.is_empty() {
             return (text, runs, Vec::new());
@@ -208,7 +214,8 @@ fn useful_type(label: &str, rest: &str) -> bool {
     let (word, after) = v.split_at(word_end);
     let first = v.chars().next().unwrap_or(' ');
     // Literals: numbers, strings (also with prefixes), lists, dicts, sets, True / False / None.
-    let string_prefix = !word.is_empty() && word.len() <= 2 && word.chars().all(|c| "rbfuRBFU".contains(c)) && (after.starts_with('"') || after.starts_with('\''));
+    let string_prefix =
+        !word.is_empty() && word.len() <= 2 && word.chars().all(|c| "rbfuRBFU".contains(c)) && (after.starts_with('"') || after.starts_with('\''));
     if first.is_ascii_digit()
         || (first == '-' && v[1..].starts_with(|c: char| c.is_ascii_digit()))
         || matches!(first, '"' | '\'' | '[' | '{')

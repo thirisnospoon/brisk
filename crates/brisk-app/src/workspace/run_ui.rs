@@ -1,8 +1,8 @@
 //! Run: interpreter selection, run configurations (toolbar widget, Alt+Shift+F10), the Run
 //! tool window (Alt+4) and PyCharm's Shift+F10 / Ctrl+Shift+F10 / Ctrl+F5 / Ctrl+F2.
 
-use super::{BottomTool, PopupItem, PopupKind, Target, Workspace};
 use super::before_launch_ui;
+use super::{BottomTool, PopupItem, PopupKind, Target, Workspace};
 use crate::terminal_view::{RunEvent, TerminalPanel};
 use brisk_keymap::Action;
 use brisk_run::{InterpKind, Interpreter, RunConfig, RunFile, RunKind};
@@ -46,7 +46,10 @@ impl Runs {
         if imported > 0 {
             let _ = brisk_run::save(root, &file);
         }
-        (Runs { file, venvs: brisk_run::project_venvs(root), all: None, panel: None, dialog: None, stop_confirmed: None, stamp: run_file_stamp(root) }, imported)
+        (
+            Runs { file, venvs: brisk_run::project_venvs(root), all: None, panel: None, dialog: None, stop_confirmed: None, stamp: run_file_stamp(root) },
+            imported,
+        )
     }
 
     fn known(&self) -> impl Iterator<Item = &Interpreter> {
@@ -291,7 +294,11 @@ impl Workspace {
             None => self.runs.interpreter(&self.root).map(|i| i.path),
         };
         let Some(python) = python else {
-            let msg = if self.runs.all.is_none() { "Still looking for Python interpreters, try again in a moment" } else { "No Python interpreter configured: create a .venv or install Python" };
+            let msg = if self.runs.all.is_none() {
+                "Still looking for Python interpreters, try again in a moment"
+            } else {
+                "No Python interpreter configured: create a .venv or install Python"
+            };
             self.show_toast(msg.into(), true, cx);
             return;
         };
@@ -337,7 +344,12 @@ impl Workspace {
             return false;
         }
         let items = vec![
-            PopupItem { label: format!("Stop and Rerun '{}'", cfg.name), detail: "it is still running; allow multiple instances in its configuration to run both".into(), hint: "Enter".into(), target: Target::StopAndRerun(Box::new(cfg.clone())) },
+            PopupItem {
+                label: format!("Stop and Rerun '{}'", cfg.name),
+                detail: "it is still running; allow multiple instances in its configuration to run both".into(),
+                hint: "Enter".into(),
+                target: Target::StopAndRerun(Box::new(cfg.clone())),
+            },
             PopupItem { label: "Cancel".into(), detail: String::new(), hint: "Esc".into(), target: Target::Cancel },
         ];
         self.popup = Some(super::Popup { kind: super::PopupKind::Confirm, query: String::new(), selected: 0, items });
@@ -485,10 +497,12 @@ impl Workspace {
             }
             A::Rerun => self.rerun_active(window, cx),
             A::Stop => {
-                let stopped = self.runs.panel.as_ref().is_some_and(|p| p.update(cx, |p, cx| {
-                    cx.notify();
-                    p.stop()
-                }));
+                let stopped = self.runs.panel.as_ref().is_some_and(|p| {
+                    p.update(cx, |p, cx| {
+                        cx.notify();
+                        p.stop()
+                    })
+                });
                 if !stopped {
                     self.status = "Nothing to stop".into();
                 }
@@ -527,7 +541,12 @@ impl Workspace {
                 let sel = self.runs.file.selected.clone();
                 let hint = |on: bool| if on { "✓".to_string() } else { String::new() };
                 if "current file".contains(&ql) {
-                    v.push(PopupItem { label: "Current File".into(), detail: "runs the file in the editor".into(), hint: hint(sel.is_none()), target: Target::RunConfig(None, run) });
+                    v.push(PopupItem {
+                        label: "Current File".into(),
+                        detail: "runs the file in the editor".into(),
+                        hint: hint(sel.is_none()),
+                        target: Target::RunConfig(None, run),
+                    });
                 }
                 for c in self.runs.file.configurations.iter().filter(|c| c.name.to_lowercase().contains(&ql)) {
                     let mut detail = match (c.kind, c.module) {
@@ -548,17 +567,32 @@ impl Workspace {
                     if c.temporary {
                         detail = format!("{detail} · temporary");
                     }
-                    v.push(PopupItem { label: c.name.clone(), detail, hint: hint(sel.as_deref() == Some(c.name.as_str())), target: Target::RunConfig(Some(c.name.clone()), run) });
+                    v.push(PopupItem {
+                        label: c.name.clone(),
+                        detail,
+                        hint: hint(sel.as_deref() == Some(c.name.as_str())),
+                        target: Target::RunConfig(Some(c.name.clone()), run),
+                    });
                 }
                 // PyCharm: "Save 'x' Configuration" for the selected temporary one.
                 if let Some(c) = self.runs.file.selected_config().filter(|c| c.temporary) {
                     let label = format!("Save '{}' Configuration", c.name);
                     if label.to_lowercase().contains(&ql) {
-                        v.push(PopupItem { label, detail: "keep it: temporary ones are replaced after five newer".into(), hint: String::new(), target: Target::SaveRunConfig(c.name.clone()) });
+                        v.push(PopupItem {
+                            label,
+                            detail: "keep it: temporary ones are replaced after five newer".into(),
+                            hint: String::new(),
+                            target: Target::SaveRunConfig(c.name.clone()),
+                        });
                     }
                 }
                 if "edit configurations".contains(&ql) {
-                    v.push(PopupItem { label: "Edit Configurations…".into(), detail: brisk_run::CONFIG_FILE.into(), hint: String::new(), target: Target::EditRunConfigs });
+                    v.push(PopupItem {
+                        label: "Edit Configurations…".into(),
+                        detail: brisk_run::CONFIG_FILE.into(),
+                        hint: String::new(),
+                        target: Target::EditRunConfigs,
+                    });
                 }
                 v
             }
@@ -575,7 +609,9 @@ impl Workspace {
                             let kind = match i.kind {
                                 brisk_run::InterpKind::System => "system",
                                 brisk_run::InterpKind::Conda => "conda",
-                                brisk_run::InterpKind::Venv if brisk_run::Interpreter::venv_dir_of(&i.path).is_some_and(|d| d.starts_with(&self.root)) => "project venv",
+                                brisk_run::InterpKind::Venv if brisk_run::Interpreter::venv_dir_of(&i.path).is_some_and(|d| d.starts_with(&self.root)) => {
+                                    "project venv"
+                                }
                                 brisk_run::InterpKind::Venv => "venv",
                             };
                             format!("{kind} · {}", super::short_dir(i.path.parent().unwrap_or(&i.path)))
@@ -596,7 +632,12 @@ impl Workspace {
                 }
                 v.extend(self.ssh_interpreter_items(&ql));
                 if "add interpreter".contains(&ql) && !self.venv_busy {
-                    v.push(PopupItem { label: "Add Interpreter…".into(), detail: "a new .venv in the project".into(), hint: String::new(), target: Target::AddInterpreter });
+                    v.push(PopupItem {
+                        label: "Add Interpreter…".into(),
+                        detail: "a new .venv in the project".into(),
+                        hint: String::new(),
+                        target: Target::AddInterpreter,
+                    });
                 }
                 v
             }
@@ -723,7 +764,9 @@ impl Workspace {
             let wait_idle = async |this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindowContext, what: &str| {
                 for _ in 0..200 {
                     bg.timer(std::time::Duration::from_millis(100)).await;
-                    let ok = this.update(cx, |this, cx| this.runs.panel.as_ref().is_some_and(|p| !p.read(cx).run_tabs().iter().any(|(n, r)| *r && n != "sleep"))).unwrap_or(true);
+                    let ok = this
+                        .update(cx, |this, cx| this.runs.panel.as_ref().is_some_and(|p| !p.read(cx).run_tabs().iter().any(|(n, r)| *r && n != "sleep")))
+                        .unwrap_or(true);
                     if ok {
                         return;
                     }

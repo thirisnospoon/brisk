@@ -104,17 +104,29 @@ impl Workspace {
 
     /// V6: the change marker popup, Rollback Lines from it and with Ctrl+Alt+Z, Show Diff.
     async fn smoke_vcs_hunks(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
-        let base: String = (1..=10).map(|i| format!("v{i} = compute({i}, 'x')
-")).collect();
+        let base: String = (1..=10)
+            .map(|i| {
+                format!(
+                    "v{i} = compute({i}, 'x')
+"
+                )
+            })
+            .collect();
         let _ = std::fs::write(root.join("hunks.py"), &base);
         commit_as(root, "Alice", "2024-03-01T10:00:00", "Add hunks.py");
         // Line 2 changes a word, a line is added after 5, line 8 is deleted.
-        let mut cur = base.replace("v2 = compute(2, 'x')", "v2 = compute(2, 'y')").replace("v5 = compute(5, 'x')
-", "v5 = compute(5, 'x')
+        let mut cur = base.replace("v2 = compute(2, 'x')", "v2 = compute(2, 'y')").replace(
+            "v5 = compute(5, 'x')
+",
+            "v5 = compute(5, 'x')
 added = True
-");
-        cur = cur.replace("v8 = compute(8, 'x')
-", "");
+",
+        );
+        cur = cur.replace(
+            "v8 = compute(8, 'x')
+",
+            "",
+        );
         let _ = std::fs::write(root.join("hunks.py"), &cur);
         let _ = this.update_in(cx, |this, window, cx| {
             this.refresh_git(cx);
@@ -138,11 +150,21 @@ added = True
             ed.update(cx, |e, cx| {
                 e.rollback_change(0, cx);
             });
-            eprintln!("smoke-vcs: rollback -> line 2 {:?}, changes {}, popup {:?}", ed.read(cx).buffer.line(1), ed.read(cx).vcs_change_count(), ed.read(cx).vcs_popup_change());
+            eprintln!(
+                "smoke-vcs: rollback -> line 2 {:?}, changes {}, popup {:?}",
+                ed.read(cx).buffer.line(1),
+                ed.read(cx).vcs_change_count(),
+                ed.read(cx).vcs_popup_change()
+            );
             // Ctrl+Alt+Z with the caret on the added line rolls just it back.
             ed.update(cx, |e, cx| e.go_to_line(5, cx));
             this.smoke_press("ctrl-alt-z", window, cx);
-            eprintln!("smoke-vcs: ctrl-alt-z on the added line -> line 6 {:?}, changes {}, confirm dialog {}", ed.read(cx).buffer.line(5), ed.read(cx).vcs_change_count(), this.popup.is_some());
+            eprintln!(
+                "smoke-vcs: ctrl-alt-z on the added line -> line 6 {:?}, changes {}, confirm dialog {}",
+                ed.read(cx).buffer.line(5),
+                ed.read(cx).vcs_change_count(),
+                this.popup.is_some()
+            );
             // The deleted line: open its popup (old text), roll it back too; the file equals HEAD.
             ed.update(cx, |e, cx| e.open_vcs_popup(0, cx));
             ed.update(cx, |e, cx| {
@@ -201,7 +223,9 @@ added = True
         let repo = brisk_git::Repo::discover(root);
         let head = repo.as_ref().and_then(|r| r.file_at("HEAD", "partial.py").ok().flatten()).unwrap_or_default();
         let disk = std::fs::read_to_string(root.join("partial.py")).unwrap_or_default();
-        let modified = repo.and_then(|r| r.status().ok()).is_some_and(|st| st.changes.iter().any(|c| c.path == "partial.py" && c.status == brisk_git::FileStatus::Modified));
+        let modified = repo
+            .and_then(|r| r.status().ok())
+            .is_some_and(|st| st.changes.iter().any(|c| c.path == "partial.py" && c.status == brisk_git::FileStatus::Modified));
         eprintln!(
             "smoke-vcs: partial commit -> HEAD has only the first block {}, disk keeps both {}, still modified {modified}",
             head == base.replace("p2 = 2\n", "p2 = 20\n"),
@@ -219,8 +243,11 @@ added = True
     async fn smoke_vcs_log(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
         let _ = this.update(cx, |this, cx| this.save_all(cx));
         sh(root, &["checkout", "-q", "-b", "pick"]);
-        let _ = std::fs::write(root.join("pick.py"), "picked = True
-");
+        let _ = std::fs::write(
+            root.join("pick.py"),
+            "picked = True
+",
+        );
         sh(root, &["add", "pick.py"]);
         commit_as(root, "Bob", "2024-05-01T10:00:00", "Add pick.py");
         sh(root, &["checkout", "-q", "main"]);
@@ -261,9 +288,16 @@ added = True
             this.cherry_pick(pick.clone(), cx);
         });
         pause(bg, 2000).await;
-        let message = |this: &WeakEntity<Self>, cx: &mut AsyncWindowContext| this.update(cx, |this, cx| this.git.as_ref().map(|g| g.message.read(cx).text_string())).ok().flatten().unwrap_or_default();
+        let message = |this: &WeakEntity<Self>, cx: &mut AsyncWindowContext| {
+            this.update(cx, |this, cx| this.git.as_ref().map(|g| g.message.read(cx).text_string())).ok().flatten().unwrap_or_default()
+        };
         let picked = head();
-        eprintln!("smoke-vcs: cherry-pick -> pick.py {}, new commit {}, message box kept {:?}", root.join("pick.py").exists(), picked != orig, message(this, cx));
+        eprintln!(
+            "smoke-vcs: cherry-pick -> pick.py {}, new commit {}, message box kept {:?}",
+            root.join("pick.py").exists(),
+            picked != orig,
+            message(this, cx)
+        );
         let c = repo.log(1).ok().and_then(|l| l.into_iter().next());
         let _ = this.update(cx, |this, cx| {
             if let Some(c) = c {
@@ -300,30 +334,39 @@ added = True
     /// V5: Annotate with Git Blame through a rename; the annotation menu; Annotate Previous
     /// Revision (twice, following the rename) in read-only tabs.
     async fn smoke_vcs_annotate(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
-        let _ = std::fs::write(root.join("old_name.py"), "a = 1
+        let _ = std::fs::write(
+            root.join("old_name.py"),
+            "a = 1
 b = 1
 c = 1
 d = 1
 e = 1
 f = 1
-");
+",
+        );
         commit_as(root, "Alice", "2024-02-01T10:00:00", "Add old_name.py");
         sh(root, &["mv", "old_name.py", "ann.py"]);
-        let _ = std::fs::write(root.join("ann.py"), "a = 1
+        let _ = std::fs::write(
+            root.join("ann.py"),
+            "a = 1
 b = 2
 c = 1
 d = 1
 e = 1
 f = 1
-");
+",
+        );
         commit_as(root, "Bob", "2024-02-02T10:00:00", "Rename to ann.py, b = 2");
-        let _ = std::fs::write(root.join("ann.py"), "a = 1
+        let _ = std::fs::write(
+            root.join("ann.py"),
+            "a = 1
 b = 2
 c = 3
 d = 1
 e = 1
 f = 1
-");
+",
+        );
         commit_as(root, "Carol", "2024-02-03T10:00:00", "c = 3");
         let _ = this.update_in(cx, |this, window, cx| {
             this.refresh_git(cx);
@@ -360,10 +403,20 @@ f = 1
         let _ = this.update_in(cx, |this, window, cx| {
             let Some(ed) = this.active_editor().cloned() else { return };
             let e = ed.read(cx);
-            eprintln!("smoke-vcs: previous revision tab '{}' {:?} -> line 3 {:?}, {:?}", e.title(), e.revision.as_ref().map(|r| r.0.clone()), e.buffer.line(2), labels(&ed, cx));
+            eprintln!(
+                "smoke-vcs: previous revision tab '{}' {:?} -> line 3 {:?}, {:?}",
+                e.title(),
+                e.revision.as_ref().map(|r| r.0.clone()),
+                e.buffer.line(2),
+                labels(&ed, cx)
+            );
             // Read-only: typing does nothing.
-            ed.update(cx, |e, cx| e.replace_all_text("changed
-", cx));
+            ed.update(cx, |e, cx| {
+                e.replace_all_text(
+                    "changed
+", cx,
+                )
+            });
             eprintln!("smoke-vcs: typing in it -> unchanged {}", ed.read(cx).buffer.line(2) == "c = 1");
             // Again on Bob's line 2: before the rename, as old_name.py.
             if let Some(h) = ed.read(cx).annotation_hash(1) {
@@ -373,7 +426,12 @@ f = 1
         pause(bg, 1500).await;
         let _ = this.update_in(cx, |this, window, cx| {
             let Some(ed) = this.active_editor().cloned() else { return };
-            eprintln!("smoke-vcs: and its previous revision '{}' {:?} -> {:?}", ed.read(cx).title(), ed.read(cx).revision.as_ref().map(|r| r.0.clone()), labels(&ed, cx));
+            eprintln!(
+                "smoke-vcs: and its previous revision '{}' {:?} -> {:?}",
+                ed.read(cx).title(),
+                ed.read(cx).revision.as_ref().map(|r| r.0.clone()),
+                labels(&ed, cx)
+            );
             if hold("previous") {
                 return;
             }
@@ -404,8 +462,12 @@ tail = 0
         let _ = std::fs::write(root.join("merge2.py"), base);
         commit_as(root, "Alice", "2024-01-12T10:00:00", "Add merge2.py");
         sh(root, &["switch", "-q", "-c", "feature"]);
-        let _ = std::fs::write(root.join("merge2.py"), base.replace("f(1, 2)", "f(1, 20)").replace("\"base\"", "\"theirs\"") + "extra = 1
-");
+        let _ = std::fs::write(
+            root.join("merge2.py"),
+            base.replace("f(1, 2)", "f(1, 20)").replace("\"base\"", "\"theirs\"")
+                + "extra = 1
+",
+        );
         commit_as(root, "Bob", "2024-01-13T10:00:00", "Feature");
         sh(root, &["switch", "-q", "main"]);
         let _ = std::fs::write(root.join("merge2.py"), base.replace("f(1, 2)", "f(10, 2)").replace("\"base\"", "\"ours\""));
@@ -426,7 +488,14 @@ tail = 0
                 return;
             };
             let v = m.read(cx);
-            eprintln!("smoke-vcs: merge window '{}' | '{}' -> {} changes, {} conflicts, current {:?}", v.title, v.theirs_label, v.model.changes(), v.model.unresolved_conflicts(), v.current);
+            eprintln!(
+                "smoke-vcs: merge window '{}' | '{}' -> {} changes, {} conflicts, current {:?}",
+                v.title,
+                v.theirs_label,
+                v.model.changes(),
+                v.model.unresolved_conflicts(),
+                v.current
+            );
         });
         if hold("merge") {
             return;
@@ -438,8 +507,11 @@ tail = 0
             // Typing: a header line on top (the changes below move down), and the last conflict by hand.
             let ed = m.read(cx).editor();
             ed.update(cx, |e, cx| {
-                let t = format!("# header
-{}", e.text_string());
+                let t = format!(
+                    "# header
+{}",
+                    e.text_string()
+                );
                 e.replace_all_text(&t, cx);
             });
         });
@@ -455,7 +527,11 @@ tail = 0
         pause(bg, 200).await;
         let _ = this.update_in(cx, |this, _, cx| {
             let Some(m) = this.active_merge_view() else { return };
-            eprintln!("smoke-vcs: typed in the conflict -> unresolved {}, conflicts {}", m.read(cx).model.unresolved(), m.read(cx).model.unresolved_conflicts());
+            eprintln!(
+                "smoke-vcs: typed in the conflict -> unresolved {}, conflicts {}",
+                m.read(cx).model.unresolved(),
+                m.read(cx).model.unresolved_conflicts()
+            );
             m.update(cx, |v, cx| v.apply_non_conflicting(None, cx));
             eprintln!("smoke-vcs: non-conflicting applied -> unresolved {}, result {:?}", m.read(cx).model.unresolved(), m.read(cx).text());
         });
@@ -479,7 +555,12 @@ name = \"mine\"
 tail = 0
 extra = 1
 ";
-            eprintln!("smoke-vcs: applied -> disk as expected {}, merge tab open {}, conflicts {:?}", disk == want, this.active_merge_view().is_some(), sh(root, &["diff", "--name-only", "--diff-filter=U"]));
+            eprintln!(
+                "smoke-vcs: applied -> disk as expected {}, merge tab open {}, conflicts {:?}",
+                disk == want,
+                this.active_merge_view().is_some(),
+                sh(root, &["diff", "--name-only", "--diff-filter=U"])
+            );
             if disk != want {
                 eprintln!("smoke-vcs: FAIL disk {disk:?}");
             }

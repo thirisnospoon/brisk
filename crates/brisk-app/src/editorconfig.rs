@@ -35,12 +35,8 @@ impl EditorConfig {
     pub fn fix_on_save(&self, text: &str, keep_line: Option<usize>) -> String {
         let mut out = text.to_string();
         if self.trim_trailing_whitespace == Some(true) {
-            out = out
-                .split('\n')
-                .enumerate()
-                .map(|(i, l)| if Some(i) == keep_line { l } else { l.trim_end_matches([' ', '\t']) })
-                .collect::<Vec<_>>()
-                .join("\n");
+            out =
+                out.split('\n').enumerate().map(|(i, l)| if Some(i) == keep_line { l } else { l.trim_end_matches([' ', '\t']) }).collect::<Vec<_>>().join("\n");
         }
         match self.insert_final_newline {
             Some(true) if !out.is_empty() && !out.ends_with('\n') => out.push('\n'),
@@ -96,13 +92,49 @@ fn apply(c: &mut EditorConfig, k: &str, v: &str) {
         _ => None,
     };
     match k {
-        "indent_style" => c.indent_tabs = if unset { None } else { match v { "tab" => Some(true), "space" => Some(false), _ => c.indent_tabs } },
-        "indent_size" => c.indent_size = if unset { None } else if v == "tab" { c.tab_width.or(c.indent_size) } else { num.or(c.indent_size) },
+        "indent_style" => {
+            c.indent_tabs = if unset {
+                None
+            } else {
+                match v {
+                    "tab" => Some(true),
+                    "space" => Some(false),
+                    _ => c.indent_tabs,
+                }
+            }
+        }
+        "indent_size" => {
+            c.indent_size = if unset {
+                None
+            } else if v == "tab" {
+                c.tab_width.or(c.indent_size)
+            } else {
+                num.or(c.indent_size)
+            }
+        }
         "tab_width" => c.tab_width = if unset { None } else { num.or(c.tab_width) },
-        "end_of_line" => c.crlf = if unset { None } else { match v { "crlf" => Some(true), "lf" => Some(false), _ => c.crlf } },
+        "end_of_line" => {
+            c.crlf = if unset {
+                None
+            } else {
+                match v {
+                    "crlf" => Some(true),
+                    "lf" => Some(false),
+                    _ => c.crlf,
+                }
+            }
+        }
         "trim_trailing_whitespace" => c.trim_trailing_whitespace = if unset { None } else { flag.or(c.trim_trailing_whitespace) },
         "insert_final_newline" => c.insert_final_newline = if unset { None } else { flag.or(c.insert_final_newline) },
-        "max_line_length" => c.max_line_length = if unset { None } else if v == "off" { Some(None) } else { num.map(Some).or(c.max_line_length) },
+        "max_line_length" => {
+            c.max_line_length = if unset {
+                None
+            } else if v == "off" {
+                Some(None)
+            } else {
+                num.map(Some).or(c.max_line_length)
+            }
+        }
         "charset" => c.charset = if unset { None } else { Some(v.to_string()) },
         _ => {}
     }
@@ -135,9 +167,7 @@ fn parse(text: &str) -> (bool, Vec<(String, Vec<(String, String)>)>) {
 /// EditorConfig globs: `*`, `**`, `?`, `[abc]`, `[!abc]`, `{a,b}`, `{1..3}`. A glob without
 /// '/' matches the file name in any folder.
 pub fn glob_matches(glob: &str, rel: &str) -> bool {
-    let glob = glob.strip_prefix('/').map(str::to_string).unwrap_or_else(|| {
-        if glob.contains('/') { glob.to_string() } else { format!("**/{glob}") }
-    });
+    let glob = glob.strip_prefix('/').map(str::to_string).unwrap_or_else(|| if glob.contains('/') { glob.to_string() } else { format!("**/{glob}") });
     expand_braces(&glob).iter().any(|g| matches(g.as_bytes(), rel.as_bytes()))
 }
 

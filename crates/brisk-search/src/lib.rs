@@ -62,15 +62,10 @@ impl Query {
         if o.whole_words {
             pat = format!(r"\b(?:{pat})\b");
         }
-        let re = RegexBuilder::new(&pat)
-            .case_insensitive(!o.case_sensitive)
-            .multi_line(true)
-            .size_limit(1 << 22)
-            .build()
-            .map_err(|e| match e {
-                regex::Error::Syntax(s) => s.lines().last().unwrap_or("bad regex").trim().to_string(),
-                e => e.to_string(),
-            })?;
+        let re = RegexBuilder::new(&pat).case_insensitive(!o.case_sensitive).multi_line(true).size_limit(1 << 22).build().map_err(|e| match e {
+            regex::Error::Syntax(s) => s.lines().last().unwrap_or("bad regex").trim().to_string(),
+            e => e.to_string(),
+        })?;
         let (include, exclude) = parse_mask(&o.file_mask)?;
         Ok(Query { re, include, exclude, regex_mode: o.regex })
     }
@@ -86,8 +81,8 @@ impl Query {
         let bytes = text.as_bytes();
         let mut line = 0usize;
         let mut scanned = 0usize; // byte up to which newlines are counted
-        // The last match's line (start, and end at its `\n`) and a known char column in it:
-        // many matches on one long line must not rescan it from its start each time.
+                                  // The last match's line (start, and end at its `\n`) and a known char column in it:
+                                  // many matches on one long line must not rescan it from its start each time.
         let (mut ls, mut le): (usize, Option<usize>) = (0, None);
         let (mut col_at, mut col) = (0usize, 0usize);
         for m in self.re.find_iter(text) {
@@ -156,11 +151,7 @@ impl Query {
         if n == 0 {
             return (text.to_string(), 0);
         }
-        let out = if self.regex_mode {
-            self.re.replace_all(text, with).into_owned()
-        } else {
-            self.re.replace_all(text, regex::NoExpand(with)).into_owned()
-        };
+        let out = if self.regex_mode { self.re.replace_all(text, with).into_owned() } else { self.re.replace_all(text, regex::NoExpand(with)).into_owned() };
         (out, n)
     }
 }

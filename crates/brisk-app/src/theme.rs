@@ -13,116 +13,260 @@ fn pick(dark: u32, light: u32) -> Hsla {
 
 #[allow(dead_code)]
 impl Theme {
-    pub fn is_light() -> bool { crate::settings::is_light() }
-    pub fn bg() -> Hsla { ui("bg", 0x1e1f22, 0xf7f8fa) }
+    pub fn is_light() -> bool {
+        crate::settings::is_light()
+    }
+    pub fn bg() -> Hsla {
+        ui("bg", 0x1e1f22, 0xf7f8fa)
+    }
     /// The window frame around the islands: a little darker than everything on it.
     pub fn frame() -> Hsla {
         let mut c = Self::bg();
         c.l = if crate::settings::is_light() { (c.l - 0.06).max(0.) } else { c.l * 0.66 };
         c
     }
-    pub fn panel() -> Hsla { ui("panel", 0x2b2d30, 0xf7f8fa) }
-    pub fn panel_alt() -> Hsla { ui("panel_alt", 0x252629, 0xffffff) }
-    pub fn border() -> Hsla { ui("border", 0x1e1f22, 0xdfe1e5) }
-    pub fn divider() -> Hsla { ui("divider", 0x393b40, 0xdfe1e5) }
-    pub fn text() -> Hsla { ui("text", 0xdfe1e5, 0x1e1f22) }
-    pub fn text_muted() -> Hsla { ui("text_muted", 0x8c8f96, 0x5e6370) }
-    pub fn text_dim() -> Hsla { ui("text_dim", 0x6f737a, 0x8c909c) }
-    pub fn accent() -> Hsla { ui("accent", 0x3574f0, 0x3574f0) }
-    pub fn selection_row() -> Hsla { ui("selection_row", 0x2e436e, 0xd5e1ff) }
-    pub fn hover_row() -> Hsla { ui("hover_row", 0x35373b, 0xe6e8ed) }
+    pub fn panel() -> Hsla {
+        ui("panel", 0x2b2d30, 0xf7f8fa)
+    }
+    pub fn panel_alt() -> Hsla {
+        ui("panel_alt", 0x252629, 0xffffff)
+    }
+    pub fn border() -> Hsla {
+        ui("border", 0x1e1f22, 0xdfe1e5)
+    }
+    pub fn divider() -> Hsla {
+        ui("divider", 0x393b40, 0xdfe1e5)
+    }
+    pub fn text() -> Hsla {
+        ui("text", 0xdfe1e5, 0x1e1f22)
+    }
+    pub fn text_muted() -> Hsla {
+        ui("text_muted", 0x8c8f96, 0x5e6370)
+    }
+    pub fn text_dim() -> Hsla {
+        ui("text_dim", 0x6f737a, 0x8c909c)
+    }
+    pub fn accent() -> Hsla {
+        ui("accent", 0x3574f0, 0x3574f0)
+    }
+    pub fn selection_row() -> Hsla {
+        ui("selection_row", 0x2e436e, 0xd5e1ff)
+    }
+    pub fn hover_row() -> Hsla {
+        ui("hover_row", 0x35373b, 0xe6e8ed)
+    }
     /// Inlay hint chip (a little lighter than the editor) and its text (cool grey).
-    pub fn inlay_bg() -> Hsla { ui("inlay_bg", 0x2a2c30, 0xf2f3f5) }
-    pub fn inlay_fg() -> Hsla { ui("inlay_fg", 0x7e828b, 0x8a8e99) }
+    pub fn inlay_bg() -> Hsla {
+        ui("inlay_bg", 0x2a2c30, 0xf2f3f5)
+    }
+    pub fn inlay_fg() -> Hsla {
+        ui("inlay_fg", 0x7e828b, 0x8a8e99)
+    }
     /// A button while the mouse is pressed on it.
-    pub fn press() -> Hsla { ui("press", 0x43454a, 0xd3d5db) }
+    pub fn press() -> Hsla {
+        ui("press", 0x43454a, 0xd3d5db)
+    }
     /// The keyboard focus ring around a field, button or checkbox (2 px).
-    pub fn focus_ring() -> Hsla { ui("focus_ring", 0x3574f0, 0x3574f0) }
+    pub fn focus_ring() -> Hsla {
+        ui("focus_ring", 0x3574f0, 0x3574f0)
+    }
     /// A filled (default) button under the pointer and while pressed.
-    pub fn accent_hover() -> Hsla { ui("accent_hover", 0x3369d6, 0x315fbd) }
-    pub fn accent_press() -> Hsla { ui("accent_press", 0x2f5fc4, 0x2b55a8) }
-    pub fn excluded() -> Hsla { pick(0xc77c32, 0xb35f00) }
-    pub fn modified() -> Hsla { ui("modified", 0x6c9be8, 0x0a50a1) }
+    pub fn accent_hover() -> Hsla {
+        ui("accent_hover", 0x3369d6, 0x315fbd)
+    }
+    pub fn accent_press() -> Hsla {
+        ui("accent_press", 0x2f5fc4, 0x2b55a8)
+    }
+    pub fn excluded() -> Hsla {
+        pick(0xc77c32, 0xb35f00)
+    }
+    pub fn modified() -> Hsla {
+        ui("modified", 0x6c9be8, 0x0a50a1)
+    }
     /// The background of warning banners (file changed on disk).
-    pub fn warning_bg() -> Hsla { pick(0x3d3423, 0xfff4d6) }
-    pub fn warning() -> Hsla { pick(0xe0b84a, 0xa86f00) }
+    pub fn warning_bg() -> Hsla {
+        pick(0x3d3423, 0xfff4d6)
+    }
+    pub fn warning() -> Hsla {
+        pick(0xe0b84a, 0xa86f00)
+    }
     /// Scrollbar thumb.
     pub fn scroll_thumb() -> Hsla {
-        if Self::is_light() { gpui::hsla(0., 0., 0., 0.18) } else { gpui::hsla(0., 0., 1., 0.13) }
+        if Self::is_light() {
+            gpui::hsla(0., 0., 0., 0.18)
+        } else {
+            gpui::hsla(0., 0., 1., 0.13)
+        }
     }
     /// Scrollbar thumb under the pointer or being dragged.
     pub fn scroll_thumb_hot() -> Hsla {
-        if Self::is_light() { gpui::hsla(0., 0., 0., 0.34) } else { gpui::hsla(0., 0., 1., 0.28) }
+        if Self::is_light() {
+            gpui::hsla(0., 0., 0., 0.34)
+        } else {
+            gpui::hsla(0., 0., 1., 0.28)
+        }
     }
     /// Scrollbar track under the pointer.
     pub fn scroll_track_hot() -> Hsla {
-        if Self::is_light() { gpui::hsla(0., 0., 0., 0.05) } else { gpui::hsla(0., 0., 1., 0.05) }
+        if Self::is_light() {
+            gpui::hsla(0., 0., 0., 0.05)
+        } else {
+            gpui::hsla(0., 0., 1., 0.05)
+        }
     }
 
     // Editor
-    pub fn editor_bg() -> Hsla { ui("editor_bg", 0x1e1f22, 0xffffff) }
-    pub fn gutter_fg() -> Hsla { ui("gutter_fg", 0x4b5059, 0xaeb3c2) }
-    pub fn gutter_fg_active() -> Hsla { ui("gutter_fg_active", 0xa1a3ab, 0x5e6370) }
-    pub fn current_line() -> Hsla { ui("current_line", 0x26282e, 0xf5f8fe) }
-    pub fn caret() -> Hsla { ui("caret", 0xced0d6, 0x000000) }
-    pub fn selection() -> Hsla { ui("selection", 0x214283, 0xa6d2ff) }
-    pub fn indent_guide() -> Hsla { ui("indent_guide", 0x313438, 0xebecf0) }
-    pub fn right_margin() -> Hsla { ui("right_margin", 0x393b40, 0xdfe1e5) }
+    pub fn editor_bg() -> Hsla {
+        ui("editor_bg", 0x1e1f22, 0xffffff)
+    }
+    pub fn gutter_fg() -> Hsla {
+        ui("gutter_fg", 0x4b5059, 0xaeb3c2)
+    }
+    pub fn gutter_fg_active() -> Hsla {
+        ui("gutter_fg_active", 0xa1a3ab, 0x5e6370)
+    }
+    pub fn current_line() -> Hsla {
+        ui("current_line", 0x26282e, 0xf5f8fe)
+    }
+    pub fn caret() -> Hsla {
+        ui("caret", 0xced0d6, 0x000000)
+    }
+    pub fn selection() -> Hsla {
+        ui("selection", 0x214283, 0xa6d2ff)
+    }
+    pub fn indent_guide() -> Hsla {
+        ui("indent_guide", 0x313438, 0xebecf0)
+    }
+    pub fn right_margin() -> Hsla {
+        ui("right_margin", 0x393b40, 0xdfe1e5)
+    }
     /// The guide of the block holding the caret.
     /// Show Whitespaces: the dots and arrows.
-    pub fn whitespace() -> Hsla { ui("whitespace", 0x55585e, 0xc2c4ca) }
-    pub fn indent_guide_active() -> Hsla { ui("indent_guide_active", 0x505359, 0xc9ccd6) }
+    pub fn whitespace() -> Hsla {
+        ui("whitespace", 0x55585e, 0xc2c4ca)
+    }
+    pub fn indent_guide_active() -> Hsla {
+        ui("indent_guide_active", 0x505359, 0xc9ccd6)
+    }
 
     // VCS
-    pub fn vcs_added() -> Hsla { pick(0x549159, 0x9fd09c) }
-    pub fn vcs_modified() -> Hsla { pick(0x375fad, 0x8caee0) }
-    pub fn vcs_deleted() -> Hsla { pick(0x868a91, 0xb4b8bf) }
+    pub fn vcs_added() -> Hsla {
+        pick(0x549159, 0x9fd09c)
+    }
+    pub fn vcs_modified() -> Hsla {
+        pick(0x375fad, 0x8caee0)
+    }
+    pub fn vcs_deleted() -> Hsla {
+        pick(0x868a91, 0xb4b8bf)
+    }
     /// Run with Coverage gutter bars: executed and missed lines.
-    pub fn coverage_hit() -> Hsla { pick(0x4f9a52, 0x86c98a) }
-    pub fn coverage_miss() -> Hsla { pick(0xb5473f, 0xe3867f) }
+    pub fn coverage_hit() -> Hsla {
+        pick(0x4f9a52, 0x86c98a)
+    }
+    pub fn coverage_miss() -> Hsla {
+        pick(0xb5473f, 0xe3867f)
+    }
     /// File name colors in the project tree, tabs and the commit window.
-    pub fn file_added() -> Hsla { pick(0x73bd79, 0x2f7d36) }
-    pub fn file_modified() -> Hsla { pick(0x6c9be8, 0x0a50a1) }
-    pub fn file_untracked() -> Hsla { pick(0xd1675a, 0xb83b2c) }
-    pub fn file_deleted() -> Hsla { pick(0x8c8f96, 0x6c707e) }
-    pub fn file_conflict() -> Hsla { pick(0xe55765, 0xd5301f) }
-    pub fn diff_added_bg() -> Hsla { pick(0x2b3d2e, 0xe0f5e3) }
-    pub fn diff_deleted_bg() -> Hsla { pick(0x3e3a3a, 0xf6e1e1) }
-    pub fn diff_modified_bg() -> Hsla { pick(0x283850, 0xdde8fa) }
-    pub fn diff_filler_bg() -> Hsla { pick(0x232427, 0xf2f3f5) }
+    pub fn file_added() -> Hsla {
+        pick(0x73bd79, 0x2f7d36)
+    }
+    pub fn file_modified() -> Hsla {
+        pick(0x6c9be8, 0x0a50a1)
+    }
+    pub fn file_untracked() -> Hsla {
+        pick(0xd1675a, 0xb83b2c)
+    }
+    pub fn file_deleted() -> Hsla {
+        pick(0x8c8f96, 0x6c707e)
+    }
+    pub fn file_conflict() -> Hsla {
+        pick(0xe55765, 0xd5301f)
+    }
+    pub fn diff_added_bg() -> Hsla {
+        pick(0x2b3d2e, 0xe0f5e3)
+    }
+    pub fn diff_deleted_bg() -> Hsla {
+        pick(0x3e3a3a, 0xf6e1e1)
+    }
+    pub fn diff_modified_bg() -> Hsla {
+        pick(0x283850, 0xdde8fa)
+    }
+    pub fn diff_filler_bg() -> Hsla {
+        pick(0x232427, 0xf2f3f5)
+    }
     /// Changed words inside a changed line (stronger than the line's own background).
-    pub fn diff_added_word_bg() -> Hsla { pick(0x3d6b43, 0xb6e7bf) }
-    pub fn diff_deleted_word_bg() -> Hsla { pick(0x6b4545, 0xf2bcbc) }
-    pub fn diff_modified_word_bg() -> Hsla { pick(0x35588c, 0xb5cdf5) }
+    pub fn diff_added_word_bg() -> Hsla {
+        pick(0x3d6b43, 0xb6e7bf)
+    }
+    pub fn diff_deleted_word_bg() -> Hsla {
+        pick(0x6b4545, 0xf2bcbc)
+    }
+    pub fn diff_modified_word_bg() -> Hsla {
+        pick(0x35588c, 0xb5cdf5)
+    }
     /// The folded "N unchanged lines" row of a diff.
-    pub fn diff_fold_bg() -> Hsla { pick(0x26282c, 0xeef0f3) }
+    pub fn diff_fold_bg() -> Hsla {
+        pick(0x26282c, 0xeef0f3)
+    }
     /// A merge conflict (both sides changed the same lines), and its changed words.
-    pub fn diff_conflict_bg() -> Hsla { pick(0x4a3131, 0xfbd8d2) }
-    pub fn diff_conflict_word_bg() -> Hsla { pick(0x7a4444, 0xf3b0a4) }
+    pub fn diff_conflict_bg() -> Hsla {
+        pick(0x4a3131, 0xfbd8d2)
+    }
+    pub fn diff_conflict_word_bg() -> Hsla {
+        pick(0x7a4444, 0xf3b0a4)
+    }
     /// Search match highlight.
-    pub fn search_hit() -> Hsla { ui("search_hit", 0x32593d, 0xfbe8a8) }
-    pub fn search_current() -> Hsla { ui("search_current", 0x2e7d4a, 0xf3c85a) }
+    pub fn search_hit() -> Hsla {
+        ui("search_hit", 0x32593d, 0xfbe8a8)
+    }
+    pub fn search_current() -> Hsla {
+        ui("search_current", 0x2e7d4a, 0xf3c85a)
+    }
     /// The bracket next to the caret and its partner.
-    pub fn bracket_match() -> Hsla { ui("bracket_match", 0x3b514d, 0xbfe3e3) }
+    pub fn bracket_match() -> Hsla {
+        ui("bracket_match", 0x3b514d, 0xbfe3e3)
+    }
     /// Other occurrences of the identifier under the caret (and their scrollbar marks).
-    pub fn occurrence() -> Hsla { ui("occurrence", 0x344134, 0xedebfc) }
-    pub fn occurrence_mark() -> Hsla { pick(0xa7a77c, 0x9b8fe0) }
+    pub fn occurrence() -> Hsla {
+        ui("occurrence", 0x344134, 0xedebfc)
+    }
+    pub fn occurrence_mark() -> Hsla {
+        pick(0xa7a77c, 0x9b8fe0)
+    }
     /// Bookmark marks in the gutter.
-    pub fn bookmark() -> Hsla { ui("bookmark", 0x5f8dd3, 0x3574f0) }
+    pub fn bookmark() -> Hsla {
+        ui("bookmark", 0x5f8dd3, 0x3574f0)
+    }
     /// TODO comments (marks on the error stripe).
-    pub fn todo() -> Hsla { ui("todo", 0x8bb33d, 0x008dde) }
-    pub fn error() -> Hsla { pick(0xe55765, 0xd5301f) }
+    pub fn todo() -> Hsla {
+        ui("todo", 0x8bb33d, 0x008dde)
+    }
+    pub fn error() -> Hsla {
+        pick(0xe55765, 0xd5301f)
+    }
     /// Warning underlines and marks (PyCharm's "Warning" effect color).
-    pub fn warning_wave() -> Hsla { ui("warning_wave", 0xc9a032, 0xc98a00) }
+    pub fn warning_wave() -> Hsla {
+        ui("warning_wave", 0xc9a032, 0xc98a00)
+    }
     /// Unused code ("Unused symbol": the text greyed out).
-    pub fn unused() -> Hsla { ui("unused", 0x6f737a, 0x8c8c8c) }
+    pub fn unused() -> Hsla {
+        ui("unused", 0x6f737a, 0x8c8c8c)
+    }
     /// Breakpoint circles in the gutter.
-    pub fn breakpoint() -> Hsla { pick(0xdb5c5c, 0xe55765) }
+    pub fn breakpoint() -> Hsla {
+        pick(0xdb5c5c, 0xe55765)
+    }
     /// Run icons in the gutter and toolbars: a calm green.
-    pub fn run_icon() -> Hsla { pick(0x5a9e60, 0x3f8f4c) }
-    pub fn run_passed() -> Hsla { pick(0x5fb865, 0x369650) }
+    pub fn run_icon() -> Hsla {
+        pick(0x5a9e60, 0x3f8f4c)
+    }
+    pub fn run_passed() -> Hsla {
+        pick(0x5fb865, 0x369650)
+    }
     /// The line where the debugger is paused.
-    pub fn exec_line() -> Hsla { ui("exec_line", 0x2d4670, 0xc7dbff) }
+    pub fn exec_line() -> Hsla {
+        ui("exec_line", 0x2d4670, 0xc7dbff)
+    }
     /// Lane colors in the Git log graph.
     pub fn graph_lane(i: usize) -> Hsla {
         const C: [u32; 8] = [0x6c9be8, 0x5fb865, 0xe0a85a, 0xc77dbb, 0x2aacb8, 0xe55765, 0xb3ae60, 0x9876aa];

@@ -140,8 +140,7 @@ impl Editor {
 
     /// A scrollbar is hovered or dragged: drawn lighter and wider.
     pub(super) fn bar_hot(&self, bar: Bar) -> bool {
-        self.bar_hover == Some(bar)
-            || matches!((self.drag, bar), (Some(Drag::Vertical(_)), Bar::Vertical) | (Some(Drag::Horizontal(_)), Bar::Horizontal))
+        self.bar_hover == Some(bar) || matches!((self.drag, bar), (Some(Drag::Vertical(_)), Bar::Vertical) | (Some(Drag::Horizontal(_)), Bar::Horizontal))
     }
 
     /// A press on a scrollbar: on the thumb start dragging it; beside it scroll a page that way.
@@ -238,10 +237,20 @@ impl Editor {
 
     /// Smoke checks: a left press at `at` (line, column) with these modifiers and click count,
     /// a drag to `to`, and the release, through the same handlers as the mouse.
-    pub fn smoke_mouse(&mut self, at: (usize, usize), mods: gpui::Modifiers, clicks: usize, to: Option<(usize, usize)>, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn smoke_mouse(
+        &mut self,
+        at: (usize, usize),
+        mods: gpui::Modifiers,
+        clicks: usize,
+        to: Option<(usize, usize)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(l) = self.layout.as_ref() else { return };
         let (top, text_x, cw) = (l.bounds.top(), l.text_x, l.char_w);
-        let point_of = |ed: &Self, (line, col): (usize, usize)| gpui::point(text_x + cw * (col as f32 + 0.3), top + gpui::px((ed.row_of(line) as f32 + 0.5) * super::line_height() - ed.scroll_y));
+        let point_of = |ed: &Self, (line, col): (usize, usize)| {
+            gpui::point(text_x + cw * (col as f32 + 0.3), top + gpui::px((ed.row_of(line) as f32 + 0.5) * super::line_height() - ed.scroll_y))
+        };
         let p = point_of(self, at);
         let down = gpui::MouseDownEvent { button: gpui::MouseButton::Left, position: p, modifiers: mods, click_count: clicks, first_mouse: false };
         self.on_mouse_down(&down, window, cx);
@@ -285,8 +294,20 @@ impl Editor {
                         }
                         let b = l.bounds;
                         let text_left = l.text_left;
-                        let dy = if p.y < b.top() { f32::from(p.y - b.top()) } else if p.y > b.bottom() { f32::from(p.y - b.bottom()) } else { 0.0 };
-                        let dx = if p.x < text_left { f32::from(p.x - text_left) } else if p.x > b.right() { f32::from(p.x - b.right()) } else { 0.0 };
+                        let dy = if p.y < b.top() {
+                            f32::from(p.y - b.top())
+                        } else if p.y > b.bottom() {
+                            f32::from(p.y - b.bottom())
+                        } else {
+                            0.0
+                        };
+                        let dx = if p.x < text_left {
+                            f32::from(p.x - text_left)
+                        } else if p.x > b.right() {
+                            f32::from(p.x - b.right())
+                        } else {
+                            0.0
+                        };
                         if dy == 0.0 && dx == 0.0 {
                             return false;
                         }

@@ -488,7 +488,8 @@ fn parse_node(root: &Path, node: roxmltree::Node, template: bool) -> Option<RunC
                     "_new_target" => test_target = unquote(&v),
                     "_new_targetType" => target_type = unquote(&v),
                     "_new_keywords" => c.keywords = unquote(&v),
-                    n @ ("file" | "additionalOptions" | "target" | "targetType" | "application" | "flaskDebug" | "host" | "port" | "runNoReload" | "TARGET" | "USE_OPTIONS" | "OPTIONS") => {
+                    n @ ("file" | "additionalOptions" | "target" | "targetType" | "application" | "flaskDebug" | "host" | "port" | "runNoReload" | "TARGET"
+                    | "USE_OPTIONS" | "OPTIONS") => {
                         web.insert(n, v);
                     }
                     "_new_parameters" | "_new_additionalArguments" => {
@@ -644,7 +645,8 @@ pub(crate) fn templates_in(root: &Path, xml: &str) -> Vec<RunConfig> {
 pub fn import_idea(root: &Path) -> RunFile {
     let mut f = RunFile::default();
     for dir in [root.join(".idea/runConfigurations"), root.join(".run")] {
-        let mut files: Vec<_> = std::fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "xml")).collect();
+        let mut files: Vec<_> =
+            std::fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "xml")).collect();
         files.sort();
         for p in files {
             if let Ok(xml) = std::fs::read_to_string(&p) {
@@ -678,7 +680,9 @@ pub fn idea_test_runner(root: &Path) -> Option<TestRunner> {
         let Ok(xml) = std::fs::read_to_string(&p) else { continue };
         let Ok(doc) = roxmltree::Document::parse(&xml) else { continue };
         let service = doc.descendants().find(|n| n.has_tag_name("component") && n.attribute("name") == Some("TestRunnerService"));
-        let value = service.and_then(|s| s.children().find(|n| n.has_tag_name("option") && n.attribute("name") == Some("PROJECT_TEST_RUNNER"))).and_then(|o| o.attribute("value"));
+        let value = service
+            .and_then(|s| s.children().find(|n| n.has_tag_name("option") && n.attribute("name") == Some("PROJECT_TEST_RUNNER")))
+            .and_then(|o| o.attribute("value"));
         match value {
             Some("py.test" | "pytest") => return Some(TestRunner::Pytest),
             Some("Unittests" | "unittest") => return Some(TestRunner::Unittest),

@@ -14,7 +14,10 @@ fn python() -> Option<PathBuf> {
 
 #[test]
 fn breakpoints_json_is_one_based() {
-    let v = set_breakpoints_args(Path::new("a.py"), &[SourceBreakpoint { line: 2, condition: Some("x > 1".into()) }, SourceBreakpoint { line: 5, condition: None }]);
+    let v = set_breakpoints_args(
+        Path::new("a.py"),
+        &[SourceBreakpoint { line: 2, condition: Some("x > 1".into()) }, SourceBreakpoint { line: 5, condition: None }],
+    );
     assert_eq!(v["breakpoints"][0]["line"], 3);
     assert_eq!(v["breakpoints"][0]["condition"], "x > 1");
     assert!(v["breakpoints"][1].get("condition").is_none());
@@ -89,7 +92,8 @@ fn debug_a_script() {
     let vars = parse_variables(&block_on(client.request("variables", json!({"variablesReference": scopes[0].reference}))).unwrap().unwrap());
     let x = vars.iter().find(|v| v.name == "x").expect("x");
     assert_eq!((x.value.as_str(), x.type_name.as_str()), ("21", "int"));
-    let (r, _) = parse_evaluate(&block_on(client.request("evaluate", json!({"expression": "x * 2", "frameId": frames[0].id, "context": "repl"}))).unwrap().unwrap());
+    let (r, _) =
+        parse_evaluate(&block_on(client.request("evaluate", json!({"expression": "x * 2", "frameId": frames[0].id, "context": "repl"}))).unwrap().unwrap());
     assert_eq!(r, "42");
 
     // Step into double(), then out, then run to the end.

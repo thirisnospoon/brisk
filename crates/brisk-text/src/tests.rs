@@ -318,7 +318,7 @@ fn join_and_case() {
 fn replace_ranges_is_one_undo_step() {
     let mut b = Buffer::new("import os\nx == None\n");
     b.set_caret(19, false); // end of the second line
-    // Delete the first line and rewrite the comparison in one quick fix.
+                            // Delete the first line and rewrite the comparison in one quick fix.
     b.replace_ranges(vec![(0..10, String::new()), (10..19, "x is None".into())]);
     assert_eq!(b.text(), "x is None\n");
     assert_eq!(b.primary().head, 9);
@@ -580,7 +580,10 @@ fn set_text_random_pairs() {
         seed ^= seed << 17;
         seed
     };
-    let mut text = || -> String { let n = next() % 40; (0..n).map(|_| [' ', '\n', 'a', 'b', 'x'][(next() % 5) as usize]).collect() };
+    let mut text = || -> String {
+        let n = next() % 40;
+        (0..n).map(|_| [' ', '\n', 'a', 'b', 'x'][(next() % 5) as usize]).collect()
+    };
     for _ in 0..3000 {
         let (a, c) = (text(), text());
         let mut b = buf(&a);

@@ -77,7 +77,14 @@ impl Client {
         brisk_proc::adopt(&child);
         let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("no stdout"))?;
         let stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("no stdin"))?;
-        let client = Arc::new(Client { stdin: Mutex::new(stdin), pending: Arc::default(), next: AtomicI64::new(1), child: Mutex::new(child), alive: Arc::new(AtomicBool::new(true)), config: Arc::new(Mutex::new(Value::Null)) });
+        let client = Arc::new(Client {
+            stdin: Mutex::new(stdin),
+            pending: Arc::default(),
+            next: AtomicI64::new(1),
+            child: Mutex::new(child),
+            alive: Arc::new(AtomicBool::new(true)),
+            config: Arc::new(Mutex::new(Value::Null)),
+        });
         let weak = Arc::downgrade(&client);
         let (pending, alive, config) = (client.pending.clone(), client.alive.clone(), client.config.clone());
         std::thread::spawn(move || {
@@ -99,15 +106,27 @@ impl Client {
                     }
                     // A request from the server: answer so it never waits on us.
                     (Some(method), Some(id)) => {
-                        let result = match method {
-                            "workspace/configuration" => {
-                                let items = msg.pointer("/params/items").and_then(Value::as_array).cloned().unwrap_or_default();
-                                let own = config.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                                // Sections other than the server's own (`ty`) get nothing.
-                                Value::Array(items.iter().map(|i| if i.get("section").and_then(Value::as_str).is_some_and(|s| s.contains('.')) { Value::Null } else { own.clone() }).collect())
-                            }
-                            _ => Value::Null,
-                        };
+                        let result =
+                            match method {
+                                "workspace/configuration" => {
+                                    let items = msg.pointer("/params/items").and_then(Value::as_array).cloned().unwrap_or_default();
+                                    let own = config.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                                    // Sections other than the server's own (`ty`) get nothing.
+                                    Value::Array(
+                                        items
+                                            .iter()
+                                            .map(|i| {
+                                                if i.get("section").and_then(Value::as_str).is_some_and(|s| s.contains('.')) {
+                                                    Value::Null
+                                                } else {
+                                                    own.clone()
+                                                }
+                                            })
+                                            .collect(),
+                                    )
+                                }
+                                _ => Value::Null,
+                            };
                         if let Some(c) = weak.upgrade() {
                             c.send(json!({"jsonrpc": "2.0", "id": id, "result": result}));
                         }
@@ -486,7 +505,11 @@ pub fn parse_code_actions(v: &Value) -> Vec<CodeAction> {
         .flatten()
         .filter_map(|a| {
             let edits = parse_workspace_edit(a.get("edit")?);
-            (!edits.is_empty()).then(|| CodeAction { title: a["title"].as_str().unwrap_or("").to_string(), preferred: a["isPreferred"].as_bool().unwrap_or(false), edits })
+            (!edits.is_empty()).then(|| CodeAction {
+                title: a["title"].as_str().unwrap_or("").to_string(),
+                preferred: a["isPreferred"].as_bool().unwrap_or(false),
+                edits,
+            })
         })
         .collect()
 }
@@ -667,11 +690,13 @@ impl Ty {
     }
 
     pub fn did_open(&self, path: &Path, version: u64, text: &str) {
-        self.client.notify("textDocument/didOpen", json!({"textDocument": {"uri": path_to_uri(path), "languageId": "python", "version": version, "text": text}}));
+        self.client
+            .notify("textDocument/didOpen", json!({"textDocument": {"uri": path_to_uri(path), "languageId": "python", "version": version, "text": text}}));
     }
 
     pub fn did_change(&self, path: &Path, version: u64, text: &str) {
-        self.client.notify("textDocument/didChange", json!({"textDocument": {"uri": path_to_uri(path), "version": version}, "contentChanges": [{"text": text}]}));
+        self.client
+            .notify("textDocument/didChange", json!({"textDocument": {"uri": path_to_uri(path), "version": version}, "contentChanges": [{"text": text}]}));
     }
 
     /// Files changed on disk behind ty's back (a rename edited closed files).
@@ -753,9 +778,16 @@ impl Ty {
     }
 
     /// Quick fixes for ty's problems in a range (auto-import, qualify, ignore).
-    pub fn code_actions(&self, path: &Path, start: Pos, end: Pos, diags: &[Diagnostic]) -> impl Future<Output = Result<Vec<CodeAction>, String>> + Send + 'static {
+    pub fn code_actions(
+        &self,
+        path: &Path,
+        start: Pos,
+        end: Pos,
+        diags: &[Diagnostic],
+    ) -> impl Future<Output = Result<Vec<CodeAction>, String>> + Send + 'static {
         let ctx: Vec<Value> = diags.iter().map(lsp_diagnostic).collect();
-        let params = json!({"textDocument": text_doc(path), "range": {"start": lsp_pos(start), "end": lsp_pos(end)}, "context": {"diagnostics": ctx, "triggerKind": 1}});
+        let params =
+            json!({"textDocument": text_doc(path), "range": {"start": lsp_pos(start), "end": lsp_pos(end)}, "context": {"diagnostics": ctx, "triggerKind": 1}});
         call(self.client.request("textDocument/codeAction", params), parse_code_actions)
     }
 
@@ -781,5 +813,5 @@ mod tests;
 
 mod markdown;
 mod module_rename;
-pub use module_rename::{module_name, rename_module_refs};
 pub use markdown::{parse_doc_text, unescape_md, DocText, InlineStyle};
+pub use module_rename::{module_name, rename_module_refs};

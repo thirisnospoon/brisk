@@ -5,7 +5,7 @@
 
 use super::{BottomTool, ToolSide, Workspace};
 use crate::theme::Theme;
-use gpui::{div, px, prelude::*, Context, CursorStyle, DragMoveEvent, MouseButton, MouseDownEvent, Window};
+use gpui::{div, prelude::*, px, Context, CursorStyle, DragMoveEvent, MouseButton, MouseDownEvent, Window};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -132,11 +132,14 @@ impl Workspace {
                 (false, true) => d.left_0().w_full().top(px(-3.)).h(px(7.)),
                 (false, false) => d.top_0().h_full().left(px(-3.)).w(px(7.)),
             })
-            .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, _, cx| {
-                let size = this.split_size(side);
-                this.splits.drag = Some((side, e.position, size));
-                cx.stop_propagation();
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                    let size = this.split_size(side);
+                    this.splits.drag = Some((side, e.position, size));
+                    cx.stop_propagation();
+                }),
+            )
             .on_drag(SplitDrag, |d, _, _, cx| cx.new(|_| *d));
         div()
             .relative()

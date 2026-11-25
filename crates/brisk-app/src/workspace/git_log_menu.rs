@@ -13,17 +13,27 @@ impl Workspace {
     pub(super) fn log_commit_menu(&mut self, c: Commit, pos: Point<Pixels>, cx: &mut Context<Self>) {
         let is_head = c.refs.iter().any(|r| r == "HEAD" || r.starts_with("HEAD -> "));
         let shortcut = |s: &str| s.to_string();
-        let item = |label: &str, sc: String, enabled: bool, run: Rc<dyn Fn(&mut Workspace, &mut gpui::Window, &mut Context<Workspace>)>| Entry::Item { label: label.into(), shortcut: sc, enabled, run };
+        let item = |label: &str, sc: String, enabled: bool, run: Rc<dyn Fn(&mut Workspace, &mut gpui::Window, &mut Context<Workspace>)>| Entry::Item {
+            label: label.into(),
+            shortcut: sc,
+            enabled,
+            run,
+        };
         let (c1, c2, c3, c4, c5, c6) = (c.clone(), c.clone(), c.clone(), c.clone(), c.clone(), c.clone());
         let entries = vec![
             item("Copy Revision Number", shortcut("Ctrl+Alt+Shift+C"), true, Rc::new(move |this, _, cx| this.copy_revision(&c1.hash, cx))),
             Entry::Separator,
             item("Cherry-Pick", String::new(), !is_head, Rc::new(move |this, _, cx| this.cherry_pick(c2.clone(), cx))),
-            item("Checkout Revision", String::new(), true, Rc::new(move |this, _, cx| {
-                this.save_all(cx);
-                let h = c3.hash.clone();
-                this.git_op("Checkout Revision", move |r| r.checkout_revision(&h), |_, _| {}, cx);
-            })),
+            item(
+                "Checkout Revision",
+                String::new(),
+                true,
+                Rc::new(move |this, _, cx| {
+                    this.save_all(cx);
+                    let h = c3.hash.clone();
+                    this.git_op("Checkout Revision", move |r| r.checkout_revision(&h), |_, _| {}, cx);
+                }),
+            ),
             Entry::Separator,
             item("Reset Current Branch to Here…", String::new(), true, Rc::new(move |this, _, cx| this.open_reset(&c4, cx))),
             item("Revert Commit", String::new(), true, Rc::new(move |this, _, cx| this.revert_commit(c5.clone(), cx))),

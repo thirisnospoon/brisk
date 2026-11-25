@@ -78,7 +78,10 @@ impl Editor {
     fn stripe_key(&self) -> Key {
         let d = &self.diagnostics;
         let vcs_sum = self.vcs_changes.iter().map(|c| c.lines.start * 31 + c.lines.end).sum();
-        let find = self.find.as_ref().map_or((0, 0, false), |f| (f.matches.len(), f.matches.first().map_or(0, |m| m.start) ^ f.matches.last().map_or(0, |m| m.end), true));
+        let find = self
+            .find
+            .as_ref()
+            .map_or((0, 0, false), |f| (f.matches.len(), f.matches.first().map_or(0, |m| m.start) ^ f.matches.last().map_or(0, |m| m.end), true));
         Key {
             version: self.buffer.version(),
             diags: (self.diag_version, d.len(), d.iter().map(|d| d.start.line).sum()),
@@ -150,7 +153,12 @@ impl Editor {
         }
         let mut out = Vec::new();
         if self.buffer.len_lines() <= TODO_MAX_LINES {
-            let plain = self.path.as_ref().and_then(|p| p.extension()).and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "txt" | "md" | "rst"));
+            let plain = self
+                .path
+                .as_ref()
+                .and_then(|p| p.extension())
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "txt" | "md" | "rst"));
             for (l, line) in self.text().split('\n').enumerate() {
                 if let Some((at, text)) = crate::todo_scan::find_in_line(line, plain) {
                     out.push((l, line[..at].chars().count(), text));
@@ -171,7 +179,13 @@ impl Editor {
     pub(super) fn stripe_y(&self, m: &Mark, vh: f32, total: f32) -> (f32, f32) {
         let k = line_height() / total * vh;
         let top = m.rows.0 * k;
-        let h = if m.kind.vcs() { ((m.rows.1 - m.rows.0) * k).max(2.0) } else if matches!(m.kind, Kind::Error | Kind::Warning) { 3.0 } else { 2.0 };
+        let h = if m.kind.vcs() {
+            ((m.rows.1 - m.rows.0) * k).max(2.0)
+        } else if matches!(m.kind, Kind::Error | Kind::Warning) {
+            3.0
+        } else {
+            2.0
+        };
         (top, h)
     }
 
@@ -199,7 +213,13 @@ impl Editor {
             .enumerate()
             .filter_map(|(i, m)| {
                 let (t, h) = self.stripe_y(m, vh, total);
-                let d = if y < t { t - y } else if y > t + h { y - t - h } else { 0.0 };
+                let d = if y < t {
+                    t - y
+                } else if y > t + h {
+                    y - t - h
+                } else {
+                    0.0
+                };
                 (d <= HIT).then_some((d, i))
             })
             .collect();

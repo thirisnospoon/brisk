@@ -10,15 +10,57 @@ use tree_sitter::{Node, Tree};
 pub type Edit = (Range<usize>, String);
 
 const EXPRS: &[&str] = &[
-    "identifier", "attribute", "call", "subscript", "binary_operator", "boolean_operator", "comparison_operator", "unary_operator", "not_operator",
-    "conditional_expression", "string", "concatenated_string", "integer", "float", "true", "false", "none", "list", "tuple", "dictionary", "set",
-    "list_comprehension", "dictionary_comprehension", "set_comprehension", "generator_expression", "parenthesized_expression", "await", "lambda",
+    "identifier",
+    "attribute",
+    "call",
+    "subscript",
+    "binary_operator",
+    "boolean_operator",
+    "comparison_operator",
+    "unary_operator",
+    "not_operator",
+    "conditional_expression",
+    "string",
+    "concatenated_string",
+    "integer",
+    "float",
+    "true",
+    "false",
+    "none",
+    "list",
+    "tuple",
+    "dictionary",
+    "set",
+    "list_comprehension",
+    "dictionary_comprehension",
+    "set_comprehension",
+    "generator_expression",
+    "parenthesized_expression",
+    "await",
+    "lambda",
 ];
 
 /// Kinds that need no parentheses wherever an expression goes.
 const ATOMS: &[&str] = &[
-    "identifier", "attribute", "call", "subscript", "string", "concatenated_string", "integer", "float", "true", "false", "none", "list", "dictionary", "set",
-    "list_comprehension", "dictionary_comprehension", "set_comprehension", "generator_expression", "parenthesized_expression",
+    "identifier",
+    "attribute",
+    "call",
+    "subscript",
+    "string",
+    "concatenated_string",
+    "integer",
+    "float",
+    "true",
+    "false",
+    "none",
+    "list",
+    "dictionary",
+    "set",
+    "list_comprehension",
+    "dictionary_comprehension",
+    "set_comprehension",
+    "generator_expression",
+    "parenthesized_expression",
 ];
 
 fn src<'a>(n: Node, text: &'a str) -> &'a str {
@@ -204,7 +246,8 @@ pub fn extract_method(tree: &Tree, text: &str, sel: Range<usize>, name: &str) ->
         if stmts.iter().any(|s| contains(*s, &["yield"], false)) {
             return Err("The selection contains 'yield'".into());
         }
-        if stmts.iter().any(|s| contains(*s, &["break_statement", "continue_statement"], true) || matches!(s.kind(), "break_statement" | "continue_statement")) {
+        if stmts.iter().any(|s| contains(*s, &["break_statement", "continue_statement"], true) || matches!(s.kind(), "break_statement" | "continue_statement"))
+        {
             return Err("The selection contains 'break' or 'continue' outside a loop".into());
         }
     }
@@ -252,7 +295,8 @@ pub fn extract_method(tree: &Tree, text: &str, sel: Range<usize>, name: &str) ->
         return Err("The selection both returns and sets variables used after it".into());
     }
     // A method using `self` (or `cls`) stays a method.
-    let class_method = scope.kind() == "function_definition" && scope.parent().is_some_and(|b| b.kind() == "block" && b.parent().is_some_and(|c| c.kind() == "class_definition"));
+    let class_method = scope.kind() == "function_definition"
+        && scope.parent().is_some_and(|b| b.kind() == "block" && b.parent().is_some_and(|c| c.kind() == "class_definition"));
     let receiver = class_method.then(|| params.first().cloned()).flatten().filter(|p| p == "self" || p == "cls");
     if let Some(r) = &receiver {
         params.retain(|p| p != r);
@@ -332,8 +376,14 @@ fn top_level_row(root: Node, byte: usize) -> usize {
 
 /// Parentheses for `value` (a node's text) where `at` stands.
 fn wrap(value: &str, kind: &str, at: Node) -> String {
-    let free = at.parent().is_some_and(|p| matches!(p.kind(), "argument_list" | "expression_statement" | "return_statement" | "keyword_argument" | "list" | "set" | "pair" | "assignment"));
-    if ATOMS.contains(&kind) || free { value.to_string() } else { format!("({value})") }
+    let free = at.parent().is_some_and(|p| {
+        matches!(p.kind(), "argument_list" | "expression_statement" | "return_statement" | "keyword_argument" | "list" | "set" | "pair" | "assignment")
+    });
+    if ATOMS.contains(&kind) || free {
+        value.to_string()
+    } else {
+        format!("({value})")
+    }
 }
 
 /// Inline (Ctrl+Alt+N) at `byte`.
@@ -351,12 +401,17 @@ pub fn inline_at(tree: &Tree, text: &str, byte: usize) -> Result<Inline, String>
     let root = tree.root_node();
     let nodes: Vec<Node> = refs.ranges.iter().filter_map(|r| root.descendant_for_byte_range(r.start, r.end)).collect();
     // A function: one of the bindings is a `def`.
-    if let Some(def) = nodes.iter().find_map(|n| n.parent().filter(|p| p.kind() == "function_definition" && p.child_by_field_name("name").is_some_and(|x| x.id() == n.id()))) {
+    if let Some(def) =
+        nodes.iter().find_map(|n| n.parent().filter(|p| p.kind() == "function_definition" && p.child_by_field_name("name").is_some_and(|x| x.id() == n.id())))
+    {
         return inline_function(def, &nodes, leaf, text, refs.name);
     }
     let binds: Vec<&Node> = nodes.iter().filter(|n| binding_of(**n)).collect();
     let [b] = binds[..] else { return Err(format!("Variable '{}' is assigned more than once", refs.name)) };
-    let assign = b.parent().filter(|p| p.kind() == "assignment" && p.child_by_field_name("left").is_some_and(|l| l.id() == b.id())).ok_or("Only a variable set by a simple assignment can be inlined")?;
+    let assign = b
+        .parent()
+        .filter(|p| p.kind() == "assignment" && p.child_by_field_name("left").is_some_and(|l| l.id() == b.id()))
+        .ok_or("Only a variable set by a simple assignment can be inlined")?;
     let value = assign.child_by_field_name("right").ok_or("The variable has no value")?;
     let stmt = assign.parent().filter(|s| s.kind() == "expression_statement").ok_or("Only a variable set by a simple assignment can be inlined")?;
     let uses: Vec<&Node> = nodes.iter().filter(|n| !binding_of(**n)).collect();
@@ -400,9 +455,10 @@ fn inline_function(def: Node, nodes: &[Node], at: Node, text: &str, name: String
             match p.kind() {
                 "identifier" => params.push((src(p, text).into(), None)),
                 "typed_parameter" => params.push((p.named_child(0).map(|x| src(x, text)).unwrap_or("").into(), None)),
-                "default_parameter" | "typed_default_parameter" => {
-                    params.push((p.child_by_field_name("name").map(|x| src(x, text)).unwrap_or("").into(), p.child_by_field_name("value").map(|x| src(x, text).to_string())))
-                }
+                "default_parameter" | "typed_default_parameter" => params.push((
+                    p.child_by_field_name("name").map(|x| src(x, text)).unwrap_or("").into(),
+                    p.child_by_field_name("value").map(|x| src(x, text).to_string()),
+                )),
                 _ => return Err(format!("Function '{name}' takes *args, **kwargs or special parameters")),
             }
         }
@@ -507,7 +563,11 @@ mod tests {
         let src = format!("x = {}1{}\n", "(".repeat(n), ")".repeat(n));
         let t = crate::parse_full(crate::Lang::Python, &src, None).unwrap();
         let big = std::thread::Builder::new().stack_size(1 << 20);
-        let h = big.spawn(move || { let _ = extract_method(&t, &src, 0..src.len() - 1, "m"); }).unwrap();
+        let h = big
+            .spawn(move || {
+                let _ = extract_method(&t, &src, 0..src.len() - 1, "m");
+            })
+            .unwrap();
         assert!(h.join().is_ok());
     }
 

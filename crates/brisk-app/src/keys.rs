@@ -35,12 +35,7 @@ fn unshift(c: &str) -> Option<&'static str> {
 }
 
 pub fn convert(k: &gpui::Keystroke) -> Keystroke {
-    let mut mods = Modifiers {
-        ctrl: k.modifiers.control,
-        alt: k.modifiers.alt,
-        shift: k.modifiers.shift,
-        meta: k.modifiers.platform,
-    };
+    let mut mods = Modifiers { ctrl: k.modifiers.control, alt: k.modifiers.alt, shift: k.modifiers.shift, meta: k.modifiers.platform };
     let mut key = k.key.to_ascii_lowercase();
     if let Some(base) = unshift(&key) {
         mods.shift = true;

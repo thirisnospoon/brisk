@@ -48,7 +48,12 @@ impl Workspace {
         let entries = self
             .branch_ops(b)
             .into_iter()
-            .map(|(label, op)| Entry::Item { label, shortcut: String::new(), enabled: true, run: Rc::new(move |this, _, cx| this.run_branch_op(op.clone(), cx)) })
+            .map(|(label, op)| Entry::Item {
+                label,
+                shortcut: String::new(),
+                enabled: true,
+                run: Rc::new(move |this, _, cx| this.run_branch_op(op.clone(), cx)),
+            })
             .collect();
         self.open_menu(pos, entries, cx);
     }
@@ -71,18 +76,34 @@ impl Workspace {
                 let repo = g.repo.clone();
                 let task = cx.background_executor().spawn({
                     let name = name.clone();
-                    async move { if repo.is_merged(&name) { None } else { Some(repo.git_count(&format!("HEAD..{name}"))) } }
+                    async move {
+                        if repo.is_merged(&name) {
+                            None
+                        } else {
+                            Some(repo.git_count(&format!("HEAD..{name}")))
+                        }
+                    }
                 });
                 cx.spawn(async move |this, cx| {
                     let unmerged = task.await;
                     let _ = this.update(cx, |this, cx| {
                         let Some(n) = unmerged else {
-                            return this.git_op("Delete Branch", move |r| r.delete_branch(&name, false).map(|_| format!("Deleted branch {name}")), |_, _| {}, cx);
+                            return this.git_op(
+                                "Delete Branch",
+                                move |r| r.delete_branch(&name, false).map(|_| format!("Deleted branch {name}")),
+                                |_, _| {},
+                                cx,
+                            );
                         };
                         let cur = this.branch_label();
                         let detail = format!("not merged into {cur}: {n} commit(s) will be lost");
                         let items = vec![
-                            PopupItem { label: format!("Force Delete {name}"), detail, hint: "Enter".into(), target: Target::Confirm(Pending::Branch(BranchOp::ForceDelete(name))) },
+                            PopupItem {
+                                label: format!("Force Delete {name}"),
+                                detail,
+                                hint: "Enter".into(),
+                                target: Target::Confirm(Pending::Branch(BranchOp::ForceDelete(name))),
+                            },
                             PopupItem { label: "Cancel".into(), detail: String::new(), hint: "Esc".into(), target: Target::Cancel },
                         ];
                         this.popup = Some(Popup { kind: PopupKind::Confirm, query: String::new(), selected: 1, items });
@@ -92,7 +113,12 @@ impl Workspace {
                 .detach();
             }
             BranchOp::ForceDelete(name) => {
-                self.git_op("Delete Branch", move |r| r.delete_branch(&name, true).map(|_| format!("Deleted branch {name} (it was not merged)")), |_, _| {}, cx);
+                self.git_op(
+                    "Delete Branch",
+                    move |r| r.delete_branch(&name, true).map(|_| format!("Deleted branch {name} (it was not merged)")),
+                    |_, _| {},
+                    cx,
+                );
             }
         }
         cx.notify();

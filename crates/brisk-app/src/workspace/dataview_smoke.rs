@@ -178,12 +178,20 @@ impl Workspace {
                 wait(100).await;
             }
             let rows = this
-                .update(cx, |t, _| t.debug.vars.iter().filter(|r| r.depth == 1).map(|r| format!("{} {{{}}} [{}]", r.var.name, r.var.type_name, r.var.evaluate_name)).collect::<Vec<_>>())
+                .update(cx, |t, _| {
+                    t.debug
+                        .vars
+                        .iter()
+                        .filter(|r| r.depth == 1)
+                        .map(|r| format!("{} {{{}}} [{}]", r.var.name, r.var.type_name, r.var.evaluate_name))
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default();
             eprintln!("smoke-dataview: paused {paused}, variables {rows:?}");
             check("did not stop at # BREAK", paused);
             if !paused {
-                let tail = this.update(cx, |t, _| t.debug.console.iter().rev().take(6).map(|(l, _)| l.trim_end().to_string()).collect::<Vec<_>>()).unwrap_or_default();
+                let tail =
+                    this.update(cx, |t, _| t.debug.console.iter().rev().take(6).map(|(l, _)| l.trim_end().to_string()).collect::<Vec<_>>()).unwrap_or_default();
                 eprintln!("smoke-dataview: debug console (last lines first) {tail:?}");
                 finish(false);
             }
@@ -197,7 +205,8 @@ impl Workspace {
                         let s = this.update(cx, |t, cx| match t.active.and_then(|i| t.tabs.get(i)) {
                             Some(Tab::Data(v)) => {
                                 let v = v.read(cx);
-                                (!v.is_loading() && (v.info.is_some() || v.error.is_some())).then(|| (v.title.clone(), v.info.clone(), v.error.clone(), v.row_text(0), v.row_text(1)))
+                                (!v.is_loading() && (v.info.is_some() || v.error.is_some()))
+                                    .then(|| (v.title.clone(), v.info.clone(), v.error.clone(), v.row_text(0), v.row_text(1)))
                             }
                             _ => None,
                         });
@@ -244,7 +253,11 @@ impl Workspace {
             check("sort desc", first(&s).as_deref() == Some("3"));
             let _ = df_view.update(cx, |v, cx| v.set_query("price > 2 and city == 'Kyiv'", "%.2f", cx));
             let s = table!();
-            eprintln!("smoke-dataview: filter+format -> total {:?}, first {:?}", s.as_ref().and_then(|s| s.1.as_ref().map(|i| i.total)), s.as_ref().and_then(|s| s.3.clone()));
+            eprintln!(
+                "smoke-dataview: filter+format -> total {:?}, first {:?}",
+                s.as_ref().and_then(|s| s.1.as_ref().map(|i| i.total)),
+                s.as_ref().and_then(|s| s.3.clone())
+            );
             check("filter", s.as_ref().and_then(|s| s.1.as_ref()).is_some_and(|i| i.total == 2));
             check("format %.2f", s.as_ref().and_then(|s| s.3.clone()).is_some_and(|r| r.1.get(1).map(String::as_str) == Some("7.25")));
             let _ = df_view.update(cx, |v, cx| v.set_query("nope > 1", "", cx));
@@ -294,7 +307,12 @@ impl Workspace {
                 }
             });
             let a = table!();
-            eprintln!("smoke-dataview: arr -> {:?} rows {:?} {:?}", a.as_ref().and_then(|a| a.1.clone()), a.as_ref().and_then(|a| a.3.clone()), a.as_ref().and_then(|a| a.4.clone()));
+            eprintln!(
+                "smoke-dataview: arr -> {:?} rows {:?} {:?}",
+                a.as_ref().and_then(|a| a.1.clone()),
+                a.as_ref().and_then(|a| a.3.clone()),
+                a.as_ref().and_then(|a| a.4.clone())
+            );
             check("arr shape", a.as_ref().and_then(|a| a.1.as_ref()).is_some_and(|i| i.shape == [5, 4]));
 
             // Copy Value of a long string: the whole value, not the tree's short repr.
@@ -305,7 +323,11 @@ impl Workspace {
             });
             wait(1500).await;
             let clip = this.update(cx, |_, cx| cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default()).unwrap_or_default();
-            eprintln!("smoke-dataview: copy value -> {} chars, ends {:?}", clip.chars().count(), clip.chars().rev().take(6).collect::<String>().chars().rev().collect::<String>());
+            eprintln!(
+                "smoke-dataview: copy value -> {} chars, ends {:?}",
+                clip.chars().count(),
+                clip.chars().rev().take(6).collect::<String>().chars().rev().collect::<String>()
+            );
             check("copy value is the whole string", clip.chars().count() == 5003 && clip.ends_with("END"));
             let _ = this.update(cx, |t, cx| {
                 if let Some(i) = row_of(t, "long_s") {

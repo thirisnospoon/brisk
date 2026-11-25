@@ -136,10 +136,15 @@ impl Editor {
             let mut at = 0;
             for line in &old_lines {
                 let end = at + line.len();
-                out.push(ranges.iter().filter_map(|r| {
-                    let (s, e) = (r.start.max(at), r.end.min(end));
-                    (s < e).then(|| s - at..e - at)
-                }).collect());
+                out.push(
+                    ranges
+                        .iter()
+                        .filter_map(|r| {
+                            let (s, e) = (r.start.max(at), r.end.min(end));
+                            (s < e).then(|| s - at..e - at)
+                        })
+                        .collect(),
+                );
                 at = end + 1;
             }
             out

@@ -83,7 +83,11 @@ fn dedented(lines: &[&str], text: &str, block: Node, indent: &str) -> String {
         .iter()
         .map(|l| {
             let ws = indent_of(l).len().min(own);
-            if l.trim().is_empty() { String::new() } else { format!("{indent}{}", &l[ws..]) }
+            if l.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{indent}{}", &l[ws..])
+            }
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -109,7 +113,11 @@ fn head_word(n: &Node) -> &'static str {
 pub fn unwrap_options(tree: &Tree, text: &str, byte: usize) -> Vec<Unwrap> {
     let v = unwrap_from(tree, text, byte);
     // At the end of a line the caret is just past the statement's node.
-    if v.is_empty() && byte > 0 { unwrap_from(tree, text, byte - 1) } else { v }
+    if v.is_empty() && byte > 0 {
+        unwrap_from(tree, text, byte - 1)
+    } else {
+        v
+    }
 }
 
 fn unwrap_from(tree: &Tree, text: &str, byte: usize) -> Vec<Unwrap> {

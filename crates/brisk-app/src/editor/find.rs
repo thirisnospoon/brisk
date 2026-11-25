@@ -75,7 +75,8 @@ impl Editor {
             let query = field(&opts.query, window, cx);
             let subs = vec![cx.observe(&query, |this, _, cx| this.find_query_changed(cx))];
             let origin = self.buffer.selections.first().map(|s| s.range().start).unwrap_or(0);
-            self.find = Some(FindBar { query, replace: None, opts, matches: Vec::new(), current: None, error: None, searched: None, origin, scope, _subs: subs });
+            self.find =
+                Some(FindBar { query, replace: None, opts, matches: Vec::new(), current: None, error: None, searched: None, origin, scope, _subs: subs });
         } else if multiline {
             let f = self.find.as_mut().unwrap();
             f.opts.in_selection = true;
@@ -158,7 +159,13 @@ impl Editor {
         let (matches, error) = if opts.query.is_empty() {
             (Vec::new(), None)
         } else {
-            let o = brisk_search::Options { query: opts.query.clone(), case_sensitive: opts.case_sensitive, whole_words: opts.whole_words, regex: opts.regex, file_mask: String::new() };
+            let o = brisk_search::Options {
+                query: opts.query.clone(),
+                case_sensitive: opts.case_sensitive,
+                whole_words: opts.whole_words,
+                regex: opts.regex,
+                file_mask: String::new(),
+            };
             match brisk_search::Query::new(&o) {
                 Ok(q) => {
                     let rope = self.buffer.rope();
@@ -207,7 +214,18 @@ impl Editor {
             // Search without showing the bar, like PyCharm's F3 after Esc.
             let opts = self.last_find.clone();
             let query = field(&opts.query, window, cx);
-            self.find = Some(FindBar { query, replace: None, opts, matches: Vec::new(), current: None, error: None, searched: None, origin: 0, scope: None, _subs: Vec::new() });
+            self.find = Some(FindBar {
+                query,
+                replace: None,
+                opts,
+                matches: Vec::new(),
+                current: None,
+                error: None,
+                searched: None,
+                origin: 0,
+                scope: None,
+                _subs: Vec::new(),
+            });
             self.refresh_find(false, cx);
             self.step_match(forward);
             self.last_find = self.find.take().unwrap().opts;
@@ -227,7 +245,13 @@ impl Editor {
         let n = f.matches.len();
         let sel = self.buffer.primary().range();
         let i = match f.current.filter(|&i| f.matches[i] == sel) {
-            Some(i) => if forward { (i + 1) % n } else { (i + n - 1) % n },
+            Some(i) => {
+                if forward {
+                    (i + 1) % n
+                } else {
+                    (i + n - 1) % n
+                }
+            }
             None => {
                 let at = if forward { sel.end } else { sel.start };
                 if forward {
@@ -276,7 +300,13 @@ impl Editor {
         let with = f.replace.as_ref().map(|r| r.read(cx).buffer.text()).unwrap_or_default();
         let opts = f.opts.clone();
         let scope = f.scope.as_ref().filter(|_| opts.in_selection).map(|(_, r)| r.clone());
-        let o = brisk_search::Options { query: opts.query.clone(), case_sensitive: opts.case_sensitive, whole_words: opts.whole_words, regex: opts.regex, file_mask: String::new() };
+        let o = brisk_search::Options {
+            query: opts.query.clone(),
+            case_sensitive: opts.case_sensitive,
+            whole_words: opts.whole_words,
+            regex: opts.regex,
+            file_mask: String::new(),
+        };
         let Ok(q) = brisk_search::Query::new(&o) else { return 0 };
         let text = self.text().to_string();
         let rope = self.buffer.rope();
@@ -308,7 +338,13 @@ impl Editor {
         if !opts.regex {
             return keep_case(with);
         }
-        let o = brisk_search::Options { query: opts.query.clone(), case_sensitive: opts.case_sensitive, whole_words: opts.whole_words, regex: true, file_mask: String::new() };
+        let o = brisk_search::Options {
+            query: opts.query.clone(),
+            case_sensitive: opts.case_sensitive,
+            whole_words: opts.whole_words,
+            regex: true,
+            file_mask: String::new(),
+        };
         let Ok(q) = brisk_search::Query::new(&o) else { return keep_case(with) };
         let text = self.text().to_string();
         let rope = self.buffer.rope();
@@ -473,7 +509,16 @@ impl Editor {
                 .child(div().w(px(16.)))
                 .child(input(r, false))
                 .child(toggle("find-preserve", "Preserve case", preserve, 'p', cx))
-                .children(preview.map(|p| div().max_w(px(220.)).overflow_hidden().text_ellipsis().whitespace_nowrap().text_size(px(12.)).text_color(Theme::text_muted()).child(format!("→ {p}"))))
+                .children(preview.map(|p| {
+                    div()
+                        .max_w(px(220.))
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .text_size(px(12.))
+                        .text_color(Theme::text_muted())
+                        .child(format!("→ {p}"))
+                }))
                 .child(button("find-replace", "Replace", cx, |e, _, cx| e.replace_current(cx)))
                 .child(button("find-replace-all", "Replace All", cx, |e, _, cx| {
                     e.replace_all(cx);
@@ -506,7 +551,6 @@ impl Editor {
         f.matches[start..].iter().enumerate().take_while(|(_, m)| m.start <= hi).map(|(j, m)| (m.clone(), f.current == Some(start + j))).collect()
     }
 }
-
 
 /// `with` in the case of `found` (Replace with "Preserve case"): all upper, capitalized or all
 /// lower; mixed case leaves the replacement as typed.
@@ -559,7 +603,9 @@ impl Editor {
     /// Smoke checks: (match count, current index, query, bar open).
     pub fn find_state(&self) -> (usize, Option<usize>, String, bool) {
         match &self.find {
-            Some(f) => (f.matches.len(), f.current, format!("{}{}", f.opts.query, f.error.as_ref().map(|e| format!(" [error: {e}]")).unwrap_or_default()), true),
+            Some(f) => {
+                (f.matches.len(), f.current, format!("{}{}", f.opts.query, f.error.as_ref().map(|e| format!(" [error: {e}]")).unwrap_or_default()), true)
+            }
             None => (0, None, self.last_find.query.clone(), false),
         }
     }

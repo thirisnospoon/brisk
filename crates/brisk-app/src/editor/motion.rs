@@ -264,7 +264,12 @@ impl Editor {
         };
         let at = Instant::now() + d;
         // One timer at a time; a repaint before it fires keeps it if it is still due then.
-        if self.motion.wake.as_ref().is_some_and(|(w, _)| w.saturating_duration_since(at) < Duration::from_millis(4) && at.saturating_duration_since(*w) < Duration::from_millis(4)) {
+        if self
+            .motion
+            .wake
+            .as_ref()
+            .is_some_and(|(w, _)| w.saturating_duration_since(at) < Duration::from_millis(4) && at.saturating_duration_since(*w) < Duration::from_millis(4))
+        {
             return;
         }
         let weak = me.downgrade();

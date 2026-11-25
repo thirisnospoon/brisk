@@ -73,7 +73,8 @@ impl Editor {
             return None;
         }
         // The block's header: the nearest line above that is indented less.
-        let header = (line.saturating_sub(SCAN)..line).rev().find(|&l| !self.blank(l) && leading(&self.buffer.line(l)) < ind && self.statement_indent(l) < ind)?;
+        let header =
+            (line.saturating_sub(SCAN)..line).rev().find(|&l| !self.blank(l) && leading(&self.buffer.line(l)) < ind && self.statement_indent(l) < ind)?;
         let col = self.statement_indent(header);
         let n = self.buffer.len_lines();
         let mut last = line;

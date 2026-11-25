@@ -127,7 +127,13 @@ impl Workspace {
             }
             let _ = this.update_in(cx, |this, window, cx| {
                 this.smoke_press("ctrl-j", window, cx);
-                let labels: Vec<String> = this.problems.intents.iter().map(|i| i.label.clone()).filter(|l| ["main", "iter", "prop", "ifn", "tryexcept"].iter().any(|k| l.starts_with(k))).collect();
+                let labels: Vec<String> = this
+                    .problems
+                    .intents
+                    .iter()
+                    .map(|i| i.label.clone())
+                    .filter(|l| ["main", "iter", "prop", "ifn", "tryexcept"].iter().any(|k| l.starts_with(k)))
+                    .collect();
                 eprintln!("smoke-complete: Ctrl+J has {labels:?}");
                 this.popup = None;
             });
@@ -255,7 +261,8 @@ impl Workspace {
             super::win_input::post(super::win_input::Mouse::Move, x, y, false);
             pause(150).await;
             super::win_input::middle_click(x, y);
-            wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| e.read(cx).caret_line_col().0 != line) || this.status.contains("eclaration")).await;
+            wait(&this, cx, &|this, cx| this.active_editor().is_some_and(|e| e.read(cx).caret_line_col().0 != line) || this.status.contains("eclaration"))
+                .await;
             pause(200).await;
             let _ = this.update(cx, |this, cx| {
                 let caret = this.active_editor().map(|e| e.read(cx).caret_line_col());

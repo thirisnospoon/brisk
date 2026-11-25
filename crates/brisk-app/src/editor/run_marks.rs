@@ -31,7 +31,10 @@ fn ident(s: &str) -> &str {
 
 fn is_main_guard(line: &str) -> bool {
     let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
-    compact.starts_with("if__name__==\"__main__\":") || compact.starts_with("if__name__=='__main__':") || compact.starts_with("if\"__main__\"==__name__:") || compact.starts_with("if'__main__'==__name__:")
+    compact.starts_with("if__name__==\"__main__\":")
+        || compact.starts_with("if__name__=='__main__':")
+        || compact.starts_with("if\"__main__\"==__name__:")
+        || compact.starts_with("if'__main__'==__name__:")
 }
 
 /// The run targets of a Python file's text.

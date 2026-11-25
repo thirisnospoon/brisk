@@ -399,7 +399,11 @@ pub fn change_summary(old: &str, new: &str) -> String {
             _ => {}
         }
     }
-    if add == 0 && del == 0 { "same as now".into() } else { format!("+{add} −{del} vs now") }
+    if add == 0 && del == 0 {
+        "same as now".into()
+    } else {
+        format!("+{add} −{del} vs now")
+    }
 }
 
 #[cfg(test)]

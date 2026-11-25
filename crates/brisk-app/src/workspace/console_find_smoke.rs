@@ -154,7 +154,11 @@ impl Workspace {
             pause(800).await;
             let _ = this.update(cx, |this, cx| {
                 let file = std::fs::read_to_string(this.root.join(".brisk/run-console.json")).unwrap_or_default().split_whitespace().collect::<String>();
-                eprintln!("smoke-cfind: per-configuration toggles while switching tabs {:?}; split run again {:?}; file {file}", seen.iter().map(|s| s.1).collect::<Vec<_>>(), toggles(this, cx));
+                eprintln!(
+                    "smoke-cfind: per-configuration toggles while switching tabs {:?}; split run again {:?}; file {file}",
+                    seen.iter().map(|s| s.1).collect::<Vec<_>>(),
+                    toggles(this, cx)
+                );
                 cx.quit();
             });
         })

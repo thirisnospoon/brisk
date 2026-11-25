@@ -27,7 +27,11 @@ pub(super) fn usage_group(line: &str, col: std::ops::Range<usize>) -> u8 {
     let augmented = ["+=", "-=", "*=", "/=", "//=", "%=", "**=", "|=", "&=", "^=", ">>=", "<<=", "@="];
     // `x = …`, `x += …`, `for x in`, `with … as x`: the name is written.
     let b = before.trim_end();
-    if (a.starts_with('=') && !a.starts_with("==")) || augmented.iter().any(|o| a.starts_with(o)) || b.ends_with(" as") || (b.trim_start() == "for" && a.starts_with("in ")) {
+    if (a.starts_with('=') && !a.starts_with("=="))
+        || augmented.iter().any(|o| a.starts_with(o))
+        || b.ends_with(" as")
+        || (b.trim_start() == "for" && a.starts_with("in "))
+    {
         return 1;
     }
     2

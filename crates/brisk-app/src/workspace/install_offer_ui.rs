@@ -76,7 +76,10 @@ impl Workspace {
                     div()
                         .flex()
                         .gap(px(8.))
-                        .child(button("install-offer-ok", format!("Install {}", offer.package), true).on_click(cx.listener(|this, _, w, cx| this.install_offered(w, cx))))
+                        .child(
+                            button("install-offer-ok", format!("Install {}", offer.package), true)
+                                .on_click(cx.listener(|this, _, w, cx| this.install_offered(w, cx))),
+                        )
                         .child(button("install-offer-cancel", "Cancel".into(), false).on_click(cx.listener(|this, _, _, cx| {
                             this.install_offer = None;
                             cx.notify();
@@ -91,7 +94,8 @@ impl Workspace {
         let Some(InstallOffer { package, python, then }) = self.install_offer.take() else { return };
         self.status = format!("Installing {package}…");
         let (py, root) = (python.clone(), self.root.clone());
-        let task = cx.background_executor().spawn(async move { crate::py_venv::install(&py, &root, &crate::py_venv::Requirements::Pyproject(vec![package.into()])) });
+        let task =
+            cx.background_executor().spawn(async move { crate::py_venv::install(&py, &root, &crate::py_venv::Requirements::Pyproject(vec![package.into()])) });
         cx.spawn_in(window, async move |this, cx| {
             let res = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -178,7 +182,12 @@ impl Workspace {
                 }
             }
             let _ = this.update(cx, |this, cx| {
-                eprintln!("smoke-debugpy-offer: after install -> offer {}, toast {:?}, status {:?}", this.install_offer.is_some(), this.toast.as_ref().map(|t| t.0.clone()), this.status);
+                eprintln!(
+                    "smoke-debugpy-offer: after install -> offer {}, toast {:?}, status {:?}",
+                    this.install_offer.is_some(),
+                    this.toast.as_ref().map(|t| t.0.clone()),
+                    this.status
+                );
                 cx.quit();
             });
         })

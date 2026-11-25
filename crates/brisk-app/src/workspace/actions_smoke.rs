@@ -18,7 +18,9 @@ impl Workspace {
         let _ = std::fs::write(&a, "a = 1\n");
         let _ = std::fs::write(self.root.join("b.py"), "b = 1\n");
         self.tree.reload(0);
-        let open_names = |this: &Workspace, cx: &gpui::App| -> Vec<String> { this.editors().filter_map(|e| e.read(cx).path.as_ref()?.file_name().map(|n| n.to_string_lossy().into_owned())).collect() };
+        let open_names = |this: &Workspace, cx: &gpui::App| -> Vec<String> {
+            this.editors().filter_map(|e| e.read(cx).path.as_ref()?.file_name().map(|n| n.to_string_lossy().into_owned())).collect()
+        };
 
         // Enter and F4 on a file row open it.
         for key in ["enter", "f4"] {
@@ -30,7 +32,12 @@ impl Workspace {
             window.focus(&self.tree_focus);
             self.smoke_press(key, window, cx);
             let open = open_names(self, cx);
-            check(&mut failed, &format!("{key} on a.py in the Project view"), open.contains(&"a.py".to_string()), format!("open={open:?}, status={:?}", self.status));
+            check(
+                &mut failed,
+                &format!("{key} on a.py in the Project view"),
+                open.contains(&"a.py".to_string()),
+                format!("open={open:?}, status={:?}", self.status),
+            );
         }
 
         // Alt+Insert in the Project view with nothing selected, and File › New….
@@ -54,7 +61,12 @@ impl Workspace {
             window.focus(&self.tree_focus);
             self.smoke_press(key, window, cx);
             let op = self.file_op.as_ref().map(|o| format!("{o:?}")).unwrap_or_default();
-            check(&mut failed, &format!("{key} on b.py in the Project view"), op.starts_with(want) && self.popup.is_some(), format!("op={op}, status={:?}", self.status));
+            check(
+                &mut failed,
+                &format!("{key} on b.py in the Project view"),
+                op.starts_with(want) && self.popup.is_some(),
+                format!("op={op}, status={:?}", self.status),
+            );
             self.smoke_press("escape", window, cx);
             self.file_op = None;
         }
@@ -81,12 +93,22 @@ impl Workspace {
             bg.timer(std::time::Duration::from_millis(400)).await;
             let text = ed.and_then(|e| e.read_with(cx, |e, _| e.buffer.text()).ok()).unwrap_or_default();
             let _ = this.update(cx, |this, cx| {
-                check(&mut failed, "Ctrl+Alt+Y", text == "a = 2\n" && this.status == "Reloaded all files from disk", format!("editor={text:?}, status={:?}", this.status));
+                check(
+                    &mut failed,
+                    "Ctrl+Alt+Y",
+                    text == "a = 2\n" && this.status == "Reloaded all files from disk",
+                    format!("editor={text:?}, status={:?}", this.status),
+                );
 
                 // Tools lists the Python tool windows.
                 let menu = this.main_menu_entries();
                 let tools: Vec<String> = menu.iter().flat_map(|e| e.labels()).skip_while(|l| l != "Tools:").collect();
-                check(&mut failed, "Tools menu", tools.iter().any(|l| l == "Python Console") && tools.iter().any(|l| l == "Python Packages"), format!("{tools:?}"));
+                check(
+                    &mut failed,
+                    "Tools menu",
+                    tools.iter().any(|l| l == "Python Console") && tools.iter().any(|l| l == "Python Packages"),
+                    format!("{tools:?}"),
+                );
                 this.menu = None;
                 this.tree_selected = this.tree.reveal(&this.root.join("b.py"));
                 cx.notify();
@@ -102,11 +124,18 @@ impl Workspace {
             bg.timer(std::time::Duration::from_millis(300)).await;
             let _ = this.update(cx, |this, cx| {
                 let labels = this.menu.as_ref().map(|m| m.entries.iter().flat_map(|e| e.labels()).collect::<Vec<_>>()).unwrap_or_default();
-                let rename = this.menu.as_ref().and_then(|m| m.entries.iter().find_map(|e| match e {
-                    super::menu_ui::Entry::Item { label, shortcut, .. } if label == "Rename…" => Some(shortcut.clone()),
-                    _ => None,
-                }));
-                check(&mut failed, "right click below the rows", this.tree_selected == Some(0) && labels.iter().any(|l| l == "Reload from Disk"), format!("selected={:?}, menu={labels:?}", this.tree_selected));
+                let rename = this.menu.as_ref().and_then(|m| {
+                    m.entries.iter().find_map(|e| match e {
+                        super::menu_ui::Entry::Item { label, shortcut, .. } if label == "Rename…" => Some(shortcut.clone()),
+                        _ => None,
+                    })
+                });
+                check(
+                    &mut failed,
+                    "right click below the rows",
+                    this.tree_selected == Some(0) && labels.iter().any(|l| l == "Reload from Disk"),
+                    format!("selected={:?}, menu={labels:?}", this.tree_selected),
+                );
                 check(&mut failed, "Rename label from the keymap", rename.as_deref() == Some("Shift+F6"), format!("{rename:?}"));
                 eprintln!("smoke-actions: done");
                 if failed {

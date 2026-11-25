@@ -4,8 +4,8 @@
 
 use super::menu_ui::Entry;
 use super::{PopupItem, PopupKind, Tab, Target, Workspace};
-use brisk_project::{FileList, Mark, NodeId};
 use brisk_keymap::Action;
+use brisk_project::{FileList, Mark, NodeId};
 use gpui::{Context, Pixels, Point, Window};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -201,7 +201,11 @@ impl Workspace {
                     _ => unreachable!(),
                 };
                 // An existing folder means "into that folder".
-                if t.is_dir() && !under(&t, src) { t.join(name_of(src)) } else { t }
+                if t.is_dir() && !under(&t, src) {
+                    t.join(name_of(src))
+                } else {
+                    t
+                }
             }
             FileOp::Delete(p) => p.clone(),
         };
@@ -229,7 +233,12 @@ impl Workspace {
         if let FileOp::Delete(p) = op {
             let what = if p.is_dir() { "directory" } else { "file" };
             return vec![
-                PopupItem { label: format!("Delete {what} '{}'", name_of(p)), detail: "to the Recycle Bin".into(), hint: String::new(), target: Target::FileDo(p.clone()) },
+                PopupItem {
+                    label: format!("Delete {what} '{}'", name_of(p)),
+                    detail: "to the Recycle Bin".into(),
+                    hint: String::new(),
+                    target: Target::FileDo(p.clone()),
+                },
                 PopupItem { label: "Cancel".into(), detail: String::new(), hint: String::new(), target: Target::Cancel },
             ];
         }
@@ -393,11 +402,7 @@ impl Workspace {
     }
 
     fn close_tabs_under(&mut self, base: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        let doomed: Vec<_> = self
-            .editors()
-            .filter(|e| e.read(cx).path.as_deref().is_some_and(|p| under(p, base)))
-            .cloned()
-            .collect();
+        let doomed: Vec<_> = self.editors().filter(|e| e.read(cx).path.as_deref().is_some_and(|p| under(p, base))).cloned().collect();
         for e in doomed {
             // Nothing to save: the file is gone.
             e.update(cx, |e, _| e.buffer.mark_saved());
@@ -471,7 +476,9 @@ impl Workspace {
     /// File › New… (and Alt+Insert in the Project view with no row selected): into the
     /// Project view's folder when it has the focus, else next to the active file.
     pub(super) fn new_element_menu(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let beside_file = (!self.tree_focus.is_focused(window)).then(|| self.active_editor().and_then(|e| e.read(cx).path.as_deref()?.parent().map(Path::to_path_buf))).flatten();
+        let beside_file = (!self.tree_focus.is_focused(window))
+            .then(|| self.active_editor().and_then(|e| e.read(cx).path.as_deref()?.parent().map(Path::to_path_buf)))
+            .flatten();
         let dir = beside_file.filter(|d| d.starts_with(&self.root)).unwrap_or_else(|| self.target_dir());
         self.open_new_menu(dir, cx);
     }
@@ -509,7 +516,12 @@ impl Workspace {
         let current = self.tree.structure.mark_of(&rel);
         let item = |label: &str, mark: Option<Mark>| {
             let p = path.to_path_buf();
-            Entry::Item { label: label.into(), shortcut: String::new(), enabled: true, run: Rc::new(move |this: &mut Workspace, _, cx| this.mark_dir(&p, mark, cx)) }
+            Entry::Item {
+                label: label.into(),
+                shortcut: String::new(),
+                enabled: true,
+                run: Rc::new(move |this: &mut Workspace, _, cx| this.mark_dir(&p, mark, cx)),
+            }
         };
         let mut entries = Vec::new();
         for (label, mark) in [("Sources Root", Mark::Sources), ("Test Sources Root", Mark::Tests), ("Excluded", Mark::Excluded)] {
@@ -613,7 +625,12 @@ impl Workspace {
                         move |this: &mut Workspace, _, cx| this.show_path_history(p.clone(), cx)
                     }),
                 },
-                Entry::Item { label: "Put Label…".into(), shortcut: String::new(), enabled: true, run: Rc::new(|this: &mut Workspace, _, _| this.start_put_label()) },
+                Entry::Item {
+                    label: "Put Label…".into(),
+                    shortcut: String::new(),
+                    enabled: true,
+                    run: Rc::new(|this: &mut Workspace, _, _| this.start_put_label()),
+                },
             ],
         });
         v.push(self.path_entries(path.clone()));

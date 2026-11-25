@@ -41,7 +41,10 @@ fn generate(root: &Path) {
             let _ = std::fs::create_dir_all(&dir);
             for f in 0..100 {
                 let ext = if top == "node_modules" { "js" } else { "py" };
-                let _ = std::fs::write(dir.join(format!("m{f:03}.{ext}")), format!("def func_{d}_{f}(x):\n    return x + {f}  # needle\n\nclass C{d}_{f}:\n    pass\n"));
+                let _ = std::fs::write(
+                    dir.join(format!("m{f:03}.{ext}")),
+                    format!("def func_{d}_{f}(x):\n    return x + {f}  # needle\n\nclass C{d}_{f}:\n    pass\n"),
+                );
             }
         }
     }

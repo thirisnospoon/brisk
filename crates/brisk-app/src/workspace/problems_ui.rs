@@ -1,10 +1,10 @@
 //! Inspections: ruff checks of open Python files as you type, the Problems tool window
 //! (Alt+6, "File" and "Project" tabs), F2 / Shift+F2 and Alt+Enter quick fixes.
 
-use crate::theme::ui_px;
 use super::{BottomTool, PopupItem, PopupKind, Target, Workspace};
 use crate::editor::{DiagSource, Editor, EditorEvent};
-use crate::theme::{Theme, mono_font};
+use crate::theme::ui_px;
+use crate::theme::{mono_font, Theme};
 use brisk_lint::{Diagnostic, Severity};
 use gpui::prelude::*;
 use gpui::{div, px, uniform_list, ClickEvent, Context, Entity, EntityId, FocusHandle, Focusable, UniformListScrollHandle, Window};
@@ -504,7 +504,11 @@ impl Workspace {
                         .cursor_pointer()
                         .text_color(Theme::text_muted())
                         .hover(|s| s.bg(Theme::hover_row()))
-                        .child(if self.problems.project_running { div().child("Checking…").into_any_element() } else { crate::icons::glyph("↻", 14., Theme::text_muted()) })
+                        .child(if self.problems.project_running {
+                            div().child("Checking…").into_any_element()
+                        } else {
+                            crate::icons::glyph("↻", 14., Theme::text_muted())
+                        })
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.check_project(cx);
                             cx.notify();
@@ -575,22 +579,24 @@ impl Workspace {
                                             }
                                             cx.notify();
                                         }))
-                                        .child(
-                                            div()
-                                                .id(("problem-fold", i))
-                                                .child(crate::icons::tree_arrow(true, open, Theme::text_muted()))
-                                                .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
-                                                    cx.stop_propagation();
-                                                    if e.click_count() == 1 {
-                                                        window.focus(&this.problems.focus.clone());
-                                                        this.problems.toggle_fold(i);
-                                                        cx.notify();
-                                                    }
-                                                })),
-                                        )
+                                        .child(div().id(("problem-fold", i)).child(crate::icons::tree_arrow(true, open, Theme::text_muted())).on_click(
+                                            cx.listener(move |this, e: &ClickEvent, window, cx| {
+                                                cx.stop_propagation();
+                                                if e.click_count() == 1 {
+                                                    window.focus(&this.problems.focus.clone());
+                                                    this.problems.toggle_fold(i);
+                                                    cx.notify();
+                                                }
+                                            }),
+                                        ))
                                         .child(name)
                                         .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(dir))
-                                        .child(div().text_color(Theme::text_muted()).text_size(ui_px(12.)).child(format!("{count} problem{}", if count == 1 { "" } else { "s" })))
+                                        .child(
+                                            div()
+                                                .text_color(Theme::text_muted())
+                                                .text_size(ui_px(12.))
+                                                .child(format!("{count} problem{}", if count == 1 { "" } else { "s" })),
+                                        )
                                 }
                                 Row::Problem(_) => {
                                     let (g, c) = icon(d.severity);
@@ -606,7 +612,13 @@ impl Workspace {
                                         }))
                                         .child(div().w(px(14.)).flex().items_center().child(crate::icons::glyph(g, 14., c)))
                                         .child(div().text_color(Theme::text()).overflow_hidden().whitespace_nowrap().child(d.title()))
-                                        .child(div().text_color(Theme::text_dim()).font_family(mono_font()).text_size(ui_px(12.)).child(format!(":{}", d.start.line + 1)))
+                                        .child(
+                                            div()
+                                                .text_color(Theme::text_dim())
+                                                .font_family(mono_font())
+                                                .text_size(ui_px(12.))
+                                                .child(format!(":{}", d.start.line + 1)),
+                                        )
                                 }
                             }
                         })
@@ -631,7 +643,8 @@ impl Workspace {
             let e = ed.read(cx);
             let mut p = e.problems_at_caret();
             // ruff and ty often flag the same spot (F821 and unresolved-reference): offer both.
-            let same: Vec<Diagnostic> = e.diagnostics.iter().filter(|d| !p.contains(d) && p.iter().any(|q| d.start <= q.end && q.start <= d.end)).cloned().collect();
+            let same: Vec<Diagnostic> =
+                e.diagnostics.iter().filter(|d| !p.contains(d) && p.iter().any(|q| d.start <= q.end && q.start <= d.end)).cloned().collect();
             p.extend(same);
             p
         };
@@ -669,16 +682,21 @@ impl Workspace {
             let fut: futures::future::BoxFuture<'static, Option<String>> = match &h {
                 brisk_syntax::HintTarget::Variable { insert, .. } => {
                     let p = e.byte_pos(*insert);
-                    ty.inlay_hints(&path, p.line..p.line + 1).map(move |r| r.ok()?.into_iter().find(|i| !i.parameter && i.pos == p).map(|i| i.label.trim_start_matches(':').trim().to_string())).boxed()
+                    ty.inlay_hints(&path, p.line..p.line + 1)
+                        .map(move |r| r.ok()?.into_iter().find(|i| !i.parameter && i.pos == p).map(|i| i.label.trim_start_matches(':').trim().to_string()))
+                        .boxed()
                 }
                 brisk_syntax::HintTarget::Return { at, returns, .. } => {
                     use brisk_syntax::Returned;
                     // ty's inferred return type, else the union of what the `return`s give.
                     let sig = ty.hover(&path, e.byte_pos(*at));
-                    let asks: Vec<_> = returns.iter().map(|r| match r {
-                        Returned::Ask(_, b) => Some(ty.hover(&path, e.byte_pos(*b))),
-                        _ => None,
-                    }).collect();
+                    let asks: Vec<_> = returns
+                        .iter()
+                        .map(|r| match r {
+                            Returned::Ask(_, b) => Some(ty.hover(&path, e.byte_pos(*b))),
+                            _ => None,
+                        })
+                        .collect();
                     let returns = returns.clone();
                     async move {
                         if let Some(t) = sig.await.ok().flatten().and_then(|h| return_type(&h)).filter(|t| !t.contains("Unknown")) {
@@ -721,8 +739,12 @@ impl Workspace {
                 if let futures::future::Either::Left((Some(t), _)) = futures::future::select(fut, timeout.boxed()).await {
                     if !t.is_empty() && !t.contains("Unknown") && !t.contains("@Todo") {
                         let (label, edit) = match h {
-                            brisk_syntax::HintTarget::Variable { name, insert, .. } => (format!("Add type hint for variable '{name}'"), (insert..insert, format!(": {t}"))),
-                            brisk_syntax::HintTarget::Return { insert, .. } => ("Specify return type using annotation".to_string(), (insert..insert, format!(" -> {t}"))),
+                            brisk_syntax::HintTarget::Variable { name, insert, .. } => {
+                                (format!("Add type hint for variable '{name}'"), (insert..insert, format!(": {t}")))
+                            }
+                            brisk_syntax::HintTarget::Return { insert, .. } => {
+                                ("Specify return type using annotation".to_string(), (insert..insert, format!(" -> {t}")))
+                            }
                         };
                         back.insert(0, PopupItem { label, detail: t, hint: String::new(), target: Target::Intention(Box::new(Intent::Edits(vec![edit]))) });
                     }
@@ -768,8 +790,18 @@ impl Workspace {
 
     /// Alt+Enter items from the syntax tree and the project index: fixes for an unknown name
     /// (import from the index, Create function) and intentions; plus where a type hint can go.
-    fn syntax_intentions(&mut self, ed: &Entity<Editor>, probs: &[Diagnostic], cx: &mut Context<Self>) -> (Vec<PopupItem>, Vec<PopupItem>, Option<brisk_syntax::HintTarget>) {
-        let item = |label: String, detail: String, edits: Vec<(std::ops::Range<usize>, String)>| PopupItem { label, detail, hint: String::new(), target: Target::Intention(Box::new(Intent::Edits(edits))) };
+    fn syntax_intentions(
+        &mut self,
+        ed: &Entity<Editor>,
+        probs: &[Diagnostic],
+        cx: &mut Context<Self>,
+    ) -> (Vec<PopupItem>, Vec<PopupItem>, Option<brisk_syntax::HintTarget>) {
+        let item = |label: String, detail: String, edits: Vec<(std::ops::Range<usize>, String)>| PopupItem {
+            label,
+            detail,
+            hint: String::new(),
+            target: Target::Intention(Box::new(Intent::Edits(edits))),
+        };
         let (intents, create, hint) = ed.update(cx, |e, _| e.intentions_at_caret());
         let unknown: Option<String> = probs.iter().find(|d| d.code == "F821" || d.code == "unresolved-reference").map(|d| {
             let e = ed.read(cx);
@@ -809,7 +841,8 @@ impl Workspace {
     /// then suppressions.
     fn open_intentions(&mut self, probs: &[Diagnostic], mut actions: Vec<brisk_lsp::CodeAction>, front: Vec<PopupItem>, back: Vec<PopupItem>) {
         let mut items = Vec::new();
-        let item = |label: String, detail: String, intent: Intent| PopupItem { label, detail, hint: String::new(), target: Target::Intention(Box::new(intent)) };
+        let item =
+            |label: String, detail: String, intent: Intent| PopupItem { label, detail, hint: String::new(), target: Target::Intention(Box::new(intent)) };
         // Brisk adds its own "Suppress for line"; ty's "Ignore ... for this line" is the same.
         actions.retain(|a| !a.title.starts_with("Ignore '"));
         // ty also finds the stub copies other tools vendor (`mypy.typeshed.stdlib.collections`):
@@ -826,7 +859,11 @@ impl Workspace {
         }
         for d in probs {
             if let Some(f) = &d.fix {
-                items.push(item(format!("Ruff: {}", f.message), if f.safe { d.code.clone() } else { format!("{} · unsafe fix", d.code) }, Intent::Fix(d.clone())));
+                items.push(item(
+                    format!("Ruff: {}", f.message),
+                    if f.safe { d.code.clone() } else { format!("{} · unsafe fix", d.code) },
+                    Intent::Fix(d.clone()),
+                ));
             }
         }
         let mut codes: Vec<&str> = probs.iter().filter(|d| d.fix.is_some()).map(|d| d.code.as_str()).collect();
@@ -842,7 +879,11 @@ impl Workspace {
             if items.iter().any(|i| i.label == format!("Suppress '{}' for line", d.code)) {
                 continue;
             }
-            items.push(item(format!("Suppress '{}' for line", d.code), if brisk_lint::is_ty_code(&d.code) { "# ty: ignore".into() } else { "# noqa".into() }, Intent::Suppress(d.clone())));
+            items.push(item(
+                format!("Suppress '{}' for line", d.code),
+                if brisk_lint::is_ty_code(&d.code) { "# ty: ignore".into() } else { "# noqa".into() },
+                Intent::Suppress(d.clone()),
+            ));
         }
         if items.is_empty() {
             self.status = "No context actions available here".into();
@@ -922,7 +963,10 @@ impl Workspace {
         self.open_file(&file, window, cx);
         let bg = cx.background_executor().clone();
         let wait_checked = |this: &gpui::WeakEntity<Self>, cx: &mut gpui::AsyncWindowContext| {
-            this.update(cx, |this, cx| this.active_editor().is_some_and(|e| e.read(cx).diag_version == e.read(cx).buffer.version()) || this.problems.error.is_some()).unwrap_or(true)
+            this.update(cx, |this, cx| {
+                this.active_editor().is_some_and(|e| e.read(cx).diag_version == e.read(cx).buffer.version()) || this.problems.error.is_some()
+            })
+            .unwrap_or(true)
         };
         cx.spawn_in(window, async move |this, cx| {
             for _ in 0..100 {
@@ -1026,7 +1070,12 @@ impl Workspace {
             return;
         };
         for ed in eds {
-            let (Some(path), text, version) = ({ let e = ed.read(cx); (e.path.clone(), e.text_string(), e.buffer.version()) }) else { continue };
+            let (Some(path), text, version) = ({
+                let e = ed.read(cx);
+                (e.path.clone(), e.text_string(), e.buffer.version())
+            }) else {
+                continue;
+            };
             let (ruff, root) = (ruff.clone(), self.root.clone());
             let (imports, reformat) = (s.optimize_imports_on_save, s.reformat_on_save);
             let task = cx.background_executor().spawn(async move {
@@ -1098,7 +1147,9 @@ impl Workspace {
             inputs
                 .into_iter()
                 .filter_map(|(f, text, open)| {
-                    let out = if reformat { brisk_lint::format_text(&ruff, &root, &f, &text, None) } else { brisk_lint::optimize_imports(&ruff, &root, &f, &text) }.ok()?;
+                    let out =
+                        if reformat { brisk_lint::format_text(&ruff, &root, &f, &text, None) } else { brisk_lint::optimize_imports(&ruff, &root, &f, &text) }
+                            .ok()?;
                     (!out.is_empty() && out != text).then_some((f, text, out, open))
                 })
                 .collect::<Vec<_>>()
@@ -1186,7 +1237,15 @@ impl Workspace {
         } else {
             brisk_lint::optimize_imports(&ruff, &self.root, &path, &text)
         };
-        let what = if reformat { if lines.is_some() { "Reformatted the selected lines" } else { "Reformatted the file" } } else { "Optimized imports" };
+        let what = if reformat {
+            if lines.is_some() {
+                "Reformatted the selected lines"
+            } else {
+                "Reformatted the file"
+            }
+        } else {
+            "Optimized imports"
+        };
         match result {
             Ok(out) if out.is_empty() && !text.is_empty() => self.status = "ruff returned nothing; the file was not changed".into(),
             Ok(out) => {

@@ -4,14 +4,17 @@
 //! (`pip list --outdated` in the background). Operations queue up and run one at a time in
 //! the background; the package's row shows a spinner meanwhile.
 
-use crate::theme::ui_px;
 use super::{BottomTool, Workspace};
 use crate::editor::Editor;
 use crate::py_packages::{self, Package, Tool};
-use crate::theme::{Theme, mono_font};
+use crate::theme::ui_px;
+use crate::theme::{mono_font, Theme};
 use brisk_keymap::Action;
 use gpui::prelude::*;
-use gpui::{div, px, uniform_list, Animation, AnimationExt, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ScrollStrategy, Transformation, UniformListScrollHandle, Window};
+use gpui::{
+    div, px, uniform_list, Animation, AnimationExt, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ScrollStrategy, Transformation,
+    UniformListScrollHandle, Window,
+};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -170,7 +173,12 @@ impl Packages {
     /// Installs of packages that are not in the list yet (shown as rows above it).
     pub fn pending_new(&self) -> Vec<(&Op, bool)> {
         let known = |n: &str| self.list.iter().any(|p| py_packages::normalize(&p.name) == py_packages::normalize(n));
-        self.running.iter().map(|o| (o, true)).chain(self.queue.iter().map(|o| (o, false))).filter(|(o, _)| matches!(o, Op::Install(..)) && !known(o.name())).collect()
+        self.running
+            .iter()
+            .map(|o| (o, true))
+            .chain(self.queue.iter().map(|o| (o, false)))
+            .filter(|(o, _)| matches!(o, Op::Install(..)) && !known(o.name()))
+            .collect()
     }
 }
 
@@ -180,8 +188,11 @@ fn text(e: &Entity<Editor>, cx: &gpui::App) -> String {
 
 /// A turning loader icon.
 fn spinner(id: impl Into<gpui::ElementId>) -> impl IntoElement {
-    crate::icons::ui_icon("loader-circle", 13., Theme::text_muted())
-        .with_animation(id, Animation::new(std::time::Duration::from_millis(900)).repeat(), |svg, t| svg.with_transformation(Transformation::rotate(gpui::percentage(t))))
+    crate::icons::ui_icon("loader-circle", 13., Theme::text_muted()).with_animation(
+        id,
+        Animation::new(std::time::Duration::from_millis(900)).repeat(),
+        |svg, t| svg.with_transformation(Transformation::rotate(gpui::percentage(t))),
+    )
 }
 
 impl Workspace {
@@ -331,7 +342,9 @@ impl Workspace {
                 // In a uv or Poetry project the change goes into pyproject.toml and the lock
                 // file, as PyCharm does; elsewhere straight into the environment.
                 match (&op, &project) {
-                    (Op::Install(n, v), Some(pt)) => pt.install(&py_packages::requirement(n, v)).map(|_| format!("Added {} to pyproject.toml", py_packages::requirement(n, v))),
+                    (Op::Install(n, v), Some(pt)) => {
+                        pt.install(&py_packages::requirement(n, v)).map(|_| format!("Added {} to pyproject.toml", py_packages::requirement(n, v)))
+                    }
                     (Op::Uninstall(pk), Some(pt)) => pt.uninstall(&pk.name).map(|_| format!("Removed {} from pyproject.toml", pk.name)),
                     (Op::Upgrade(n), Some(pt)) => pt.upgrade(n).map(|_| format!("Upgraded {n}")),
                     (Op::Install(n, v), None) => py_packages::install(&py, &tool, n, v).map(|_| format!("Installed {}", py_packages::requirement(n, v))),
@@ -604,17 +617,19 @@ impl Workspace {
                     Op::Install(_, v) if !v.is_empty() => v.clone(),
                     _ => "latest".into(),
                 };
-                out.push(div()
-                    .id(("pkg-new", i))
-                    .w_full()
-                    .h(ui_px(22.))
-                    .px(px(10.))
-                    .flex()
-                    .items_center()
-                    .child(div().w(px(320.)).child(op.name().to_string()))
-                    .child(div().w(px(200.)).font_family(mono_font()).text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(version))
-                    .child(op_state(op, *running, ("pkg-new-spin", i)))
-                    .into_any_element());
+                out.push(
+                    div()
+                        .id(("pkg-new", i))
+                        .w_full()
+                        .h(ui_px(22.))
+                        .px(px(10.))
+                        .flex()
+                        .items_center()
+                        .child(div().w(px(320.)).child(op.name().to_string()))
+                        .child(div().w(px(200.)).font_family(mono_font()).text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(version))
+                        .child(op_state(op, *running, ("pkg-new-spin", i)))
+                        .into_any_element(),
+                );
                 continue;
             }
             let i = j - pending.len();
@@ -649,24 +664,25 @@ impl Workspace {
                     .children(busy_row)
                     .when(can_up, |d| {
                         let name = pk.name.clone();
-                        d.child(
-                            div().invisible().when(sel, |d| d.visible()).group_hover("pkg-row", |s| s.visible()).child(
-                                ui_kit::button("pkg-row-upgrade", "Upgrade", true, false).h(ui_px(18.)).on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.package_op(Op::Upgrade(name.clone()), cx);
-                                    cx.notify();
-                                })),
-                            ),
-                        )
+                        d.child(div().invisible().when(sel, |d| d.visible()).group_hover("pkg-row", |s| s.visible()).child(
+                            ui_kit::button("pkg-row-upgrade", "Upgrade", true, false).h(ui_px(18.)).on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.package_op(Op::Upgrade(name.clone()), cx);
+                                cx.notify();
+                            })),
+                        ))
                     })
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, w, cx| {
-                        if let Some(p) = this.packages.as_mut() {
-                            p.selected = i;
-                            w.focus(&p.focus.clone());
-                        }
-                        cx.notify();
-                    }))
-            .into_any_element()
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, _, w, cx| {
+                            if let Some(p) = this.packages.as_mut() {
+                                p.selected = i;
+                                w.focus(&p.focus.clone());
+                            }
+                            cx.notify();
+                        }),
+                    )
+                    .into_any_element()
             });
         }
         out
@@ -693,11 +709,7 @@ impl Workspace {
         // Suggestions under the Package name field.
         let name_text = text(&p.name, cx);
         let name_focused = p.name.read(cx).focus_handle(cx).is_focused(window);
-        let note = if p.index_loading {
-            Some("Loading the PyPI package list…".to_string())
-        } else {
-            p.index_error.clone()
-        };
+        let note = if p.index_loading { Some("Loading the PyPI package list…".to_string()) } else { p.index_error.clone() };
         let show_popup = name_focused && !name_text.is_empty() && p.suggested_for == name_text && (!p.suggestions.is_empty() || note.is_some());
         let popup: Option<gpui::AnyElement> = show_popup.then(|| {
             let rows = p.suggestions.iter().enumerate().map(|(i, n)| {
@@ -712,10 +724,13 @@ impl Workspace {
                     .when(sel, |d| d.bg(Theme::selection_row()))
                     .when(!sel, |d| d.hover(|s| s.bg(Theme::hover_row())))
                     .child(n.clone())
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, w, cx| {
-                        cx.stop_propagation();
-                        this.pick_package_suggestion(i, w, cx);
-                    }))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, _, w, cx| {
+                            cx.stop_propagation();
+                            this.pick_package_suggestion(i, w, cx);
+                        }),
+                    )
             });
             gpui::deferred(
                 div()
@@ -742,7 +757,8 @@ impl Workspace {
             .flex_shrink_0()
             .items_center()
             .gap(px(6.))
-            .pl(px(12.)).pr(px(6.))
+            .pl(px(12.))
+            .pr(px(6.))
             .h(ui_px(CONTROL_H + 10.))
             .border_b_1()
             .border_color(Theme::divider())
@@ -772,7 +788,17 @@ impl Workspace {
                     cx.notify();
                 }
             })))
-            .child(div().flex_1().min_w_0().overflow_hidden().text_size(ui_px(12.)).text_color(Theme::text_muted()).whitespace_nowrap().text_ellipsis().child(format!("{tool} · {interp}")));
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_size(ui_px(12.))
+                    .text_color(Theme::text_muted())
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(format!("{tool} · {interp}")),
+            );
         let notice: Option<gpui::AnyElement> = if let Some(pk) = &p.confirm {
             Some(
                 div()
@@ -798,7 +824,19 @@ impl Workspace {
                     .into_any_element(),
             )
         } else {
-            p.error.clone().map(|e| div().px(px(10.)).h(ui_px(24.)).flex().items_center().text_size(ui_px(12.5)).text_color(Theme::error()).border_b_1().border_color(Theme::divider()).child(e).into_any_element())
+            p.error.clone().map(|e| {
+                div()
+                    .px(px(10.))
+                    .h(ui_px(24.))
+                    .flex()
+                    .items_center()
+                    .text_size(ui_px(12.5))
+                    .text_color(Theme::error())
+                    .border_b_1()
+                    .border_color(Theme::divider())
+                    .child(e)
+                    .into_any_element()
+            })
         };
         let pending_n = p.pending_new().len();
         let n_rows = pending_n + visible.len();
@@ -811,7 +849,13 @@ impl Workspace {
             .flex_col()
             .text_size(ui_px(13.))
             .when(n_rows == 0, |d| {
-                let msg = if p.loading { "Loading packages…" } else if p.list.is_empty() { "No packages" } else { "No packages match the filter" };
+                let msg = if p.loading {
+                    "Loading packages…"
+                } else if p.list.is_empty() {
+                    "No packages"
+                } else {
+                    "No packages match the filter"
+                };
                 d.child(div().p(px(10.)).text_color(Theme::text_dim()).child(msg))
             })
             .when(n_rows > 0, |d| {
@@ -840,16 +884,6 @@ impl Workspace {
             .child(div().w(px(320.)).child(format!("Package ({})", visible.len())))
             .child(div().w(px(200.)).child("Version"))
             .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(busy_note));
-        div()
-            .id("pkg-window")
-            .size_full()
-            .flex()
-            .flex_col()
-            .text_size(ui_px(13.))
-            .child(toolbar)
-            .children(notice)
-            .child(header)
-            .child(rows)
-            .into_any_element()
+        div().id("pkg-window").size_full().flex().flex_col().text_size(ui_px(13.)).child(toolbar).children(notice).child(header).child(rows).into_any_element()
     }
 }

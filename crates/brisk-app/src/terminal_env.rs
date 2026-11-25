@@ -25,7 +25,9 @@ fn sep() -> &'static str {
 fn venv_prompt(venv: &Path) -> String {
     std::fs::read_to_string(venv.join("pyvenv.cfg"))
         .ok()
-        .and_then(|t| t.lines().find_map(|l| l.split_once('=').filter(|(k, _)| k.trim() == "prompt").map(|(_, v)| v.trim().trim_matches(['\'', '"']).to_string())))
+        .and_then(|t| {
+            t.lines().find_map(|l| l.split_once('=').filter(|(k, _)| k.trim() == "prompt").map(|(_, v)| v.trim().trim_matches(['\'', '"']).to_string()))
+        })
         .filter(|p| !p.is_empty())
         .unwrap_or_else(|| venv.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
 }
@@ -46,7 +48,13 @@ pub fn activation(python: &Path, kind: InterpKind) -> Activation {
         let prefix = if cfg!(windows) { python.parent() } else { python.parent().and_then(Path::parent) };
         let Some(prefix) = prefix else { return Activation::default() };
         let dirs = if cfg!(windows) {
-            vec![prefix.to_path_buf(), prefix.join("Library").join("mingw-w64").join("bin"), prefix.join("Library").join("usr").join("bin"), prefix.join("Library").join("bin"), prefix.join("Scripts")]
+            vec![
+                prefix.to_path_buf(),
+                prefix.join("Library").join("mingw-w64").join("bin"),
+                prefix.join("Library").join("usr").join("bin"),
+                prefix.join("Library").join("bin"),
+                prefix.join("Scripts"),
+            ]
         } else {
             vec![prefix.join("bin")]
         };

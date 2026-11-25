@@ -3,7 +3,7 @@
 //! only the matching lines (a click on one jumps to it).
 
 use super::TerminalPanel;
-use crate::theme::{Theme, mono_font};
+use crate::theme::{mono_font, Theme};
 use brisk_terminal::Found;
 use gpui::prelude::*;
 use gpui::{div, px, Context, Keystroke, MouseButton};
@@ -157,7 +157,15 @@ impl TerminalPanel {
         let off = snap.as_ref().map_or(0, |s| s.display_offset as i32);
         let rows = snap.as_ref().map_or(0, |s| s.rows as i32);
         let visible = f.line + off >= 0 && f.line + off < rows;
-        format!("line {} cols {:?} more {:?} visible {visible} h_scroll {} follow {} text {:?}", f.line, f.cols, f.more, self.h_scroll, self.scroll_to_end, f.text.chars().take(30).collect::<String>())
+        format!(
+            "line {} cols {:?} more {:?} visible {visible} h_scroll {} follow {} text {:?}",
+            f.line,
+            f.cols,
+            f.more,
+            self.h_scroll,
+            self.scroll_to_end,
+            f.text.chars().take(30).collect::<String>()
+        )
     }
 
     /// Type into the query (smoke tests use it as a user would).
@@ -258,10 +266,13 @@ impl TerminalPanel {
             .border_b_1()
             .border_color(Theme::divider())
             .text_size(px(12.5))
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                this.search.focused = true;
-                cx.notify();
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.search.focused = true;
+                    cx.notify();
+                }),
+            )
             .child(crate::icons::icon("search", 14., Theme::text_dim()))
             .child(
                 div()
@@ -321,18 +332,13 @@ impl TerminalPanel {
             .text_size(px(13.))
             .when(empty, |d| d.child(div().p(px(8.)).text_color(Theme::text_muted()).child("No lines match")))
             .children(lines.into_iter().enumerate().map(|(i, (line, text))| {
-                div()
-                    .id(("cf-line", i))
-                    .w_full()
-                    .px(px(4.))
-                    .whitespace_nowrap()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(Theme::hover_row()))
-                    .child(text)
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                div().id(("cf-line", i)).w_full().px(px(4.)).whitespace_nowrap().cursor_pointer().hover(|s| s.bg(Theme::hover_row())).child(text).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| {
                         this.open_filtered(line);
                         cx.notify();
-                    }))
+                    }),
+                )
             }))
     }
 }

@@ -19,13 +19,21 @@ impl Workspace {
         self.smoke_press("enter", window, cx);
         let scratch = self.active_editor().and_then(|e| e.read(cx).path.clone());
         let rows: Vec<String> = self.tree.rows().to_vec().iter().map(|r| format!("{}{}", "  ".repeat(r.depth), self.tree.nodes[r.id].name)).collect();
-        eprintln!("smoke-w7: scratch {:?} exists={} | tree {rows:?}", scratch.as_ref().and_then(|p| p.file_name()), scratch.as_ref().is_some_and(|p| p.is_file()));
+        eprintln!(
+            "smoke-w7: scratch {:?} exists={} | tree {rows:?}",
+            scratch.as_ref().and_then(|p| p.file_name()),
+            scratch.as_ref().is_some_and(|p| p.is_file())
+        );
         let root = self.root.clone();
         self.start_file_op(FileOp::New(root.clone(), NewKind::Package), cx);
         self.smoke_query("pkg.sub");
         eprintln!("smoke-w7: new package popup {}", self.smoke_popup());
         self.smoke_press("enter", window, cx);
-        eprintln!("smoke-w7: package -> pkg/__init__.py={} pkg/sub/__init__.py={}", root.join("pkg/__init__.py").is_file(), root.join("pkg/sub/__init__.py").is_file());
+        eprintln!(
+            "smoke-w7: package -> pkg/__init__.py={} pkg/sub/__init__.py={}",
+            root.join("pkg/__init__.py").is_file(),
+            root.join("pkg/sub/__init__.py").is_file()
+        );
         let tpl = brisk_db::config_dir().join("fileTemplates");
         let _ = std::fs::create_dir_all(&tpl).and_then(|_| std::fs::write(tpl.join("Python Script.py"), "# ${NAME} in ${PROJECT_NAME}\n"));
         self.start_file_op(FileOp::New(root.join("pkg"), NewKind::Python), cx);
@@ -177,7 +185,9 @@ impl Workspace {
             });
             tick().await;
             tick().await;
-            let probe = |this: &gpui::WeakEntity<Self>, cx: &mut gpui::AsyncWindowContext| this.update(cx, |this, cx| this.active_editor().map(|e| e.read(cx).wrap_smoke())).ok().flatten().unwrap_or_default();
+            let probe = |this: &gpui::WeakEntity<Self>, cx: &mut gpui::AsyncWindowContext| {
+                this.update(cx, |this, cx| this.active_editor().map(|e| e.read(cx).wrap_smoke())).ok().flatten().unwrap_or_default()
+            };
             eprintln!("smoke-w7: wrap md {}", probe(&this, cx));
             for k in ["end", "end", "home", "home", "down", "down", "up"] {
                 let _ = this.update_in(cx, |this, window, cx| this.smoke_press(k, window, cx));
@@ -187,7 +197,12 @@ impl Workspace {
             let _ = this.update(cx, |this, cx| {
                 if let Some(e) = this.active_editor() {
                     let e = e.read(cx);
-                    eprintln!("smoke-w7: wrap click row1 col4 -> {:?} row2 col0 -> {:?} row3 col4 -> {:?}", e.wrap_click(1, 4.0), e.wrap_click(2, 0.0), e.wrap_click(3, 4.0));
+                    eprintln!(
+                        "smoke-w7: wrap click row1 col4 -> {:?} row2 col0 -> {:?} row3 col4 -> {:?}",
+                        e.wrap_click(1, 4.0),
+                        e.wrap_click(2, 0.0),
+                        e.wrap_click(3, 4.0)
+                    );
                 }
             });
             let _ = this.update_in(cx, |this, window, cx| this.smoke_press("ctrl-end", window, cx));
@@ -213,19 +228,25 @@ impl Workspace {
             // --- E11 with sticky lines: a wrapped .py, the view inside a method ---------------
             let _ = this.update_in(cx, |this, window, cx| {
                 let long = "word ".repeat(60);
-                let mut t = String::from("class A:
+                let mut t = String::from(
+                    "class A:
     def m(self):
-");
+",
+                );
                 for i in 0..30 {
-                    t.push_str(&format!("        x{i} = \"{long}\"
-"));
+                    t.push_str(&format!(
+                        "        x{i} = \"{long}\"
+"
+                    ));
                 }
-                t.push_str("        return x0
+                t.push_str(
+                    "        return x0
 
 
 def g():
     pass
-");
+",
+                );
                 let p = this.root.join("wrapsticky.py");
                 let _ = std::fs::write(&p, t);
                 this.open_file(&p, window, cx);
@@ -273,7 +294,18 @@ def g():
                 ed.update(cx, |e, cx| e.smoke_mouse((1, 5), none, 2, Some((1, 16)), window, cx));
                 eprintln!("smoke-w7: mouse double click + drag {:?}", sel(&ed, cx));
                 ed.update(cx, |e, cx| e.smoke_mouse((2, 4), none, 3, Some((3, 1)), window, cx));
-                eprintln!("smoke-w7: mouse triple click + drag lines {:?}", ed.read(cx).buffer.selections.iter().map(|s| { let b = &ed.read(cx).buffer; (b.pos_to_line_col(s.range().start), b.pos_to_line_col(s.range().end)) }).collect::<Vec<_>>());
+                eprintln!(
+                    "smoke-w7: mouse triple click + drag lines {:?}",
+                    ed.read(cx)
+                        .buffer
+                        .selections
+                        .iter()
+                        .map(|s| {
+                            let b = &ed.read(cx).buffer;
+                            (b.pos_to_line_col(s.range().start), b.pos_to_line_col(s.range().end))
+                        })
+                        .collect::<Vec<_>>()
+                );
                 ed.update(cx, |e, cx| e.smoke_mouse((5, 0), none, 1, None, window, cx));
                 let alt_shift = gpui::Modifiers { alt: true, shift: true, ..Default::default() };
                 ed.update(cx, |e, cx| e.smoke_mouse((5, 4), alt_shift, 1, None, window, cx));

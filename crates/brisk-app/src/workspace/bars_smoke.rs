@@ -54,7 +54,11 @@ impl Workspace {
                 let show = |label: &str, this: &WeakEntity<Workspace>, cx: &mut AsyncWindowContext| {
                     if let Some((m, hover, drag, _, thumb)) = probe(this, run, cx) {
                         let m = m.map(|m| format!("{:.0}/{:.0} view {:.0}", m.top, m.max, m.view));
-                        let extra = if run { format!(", follow {:?}", follow(this, cx)) } else { format!(", selected {:?}", this.update(cx, |t, _| t.tree_selected).ok().flatten()) };
+                        let extra = if run {
+                            format!(", follow {:?}", follow(this, cx))
+                        } else {
+                            format!(", selected {:?}", this.update(cx, |t, _| t.tree_selected).ok().flatten())
+                        };
                         eprintln!("smoke-bars: {name} {label}: top {m:?}, hover {hover}, drag {drag}, thumb {thumb:?}{extra}");
                     }
                 };

@@ -388,8 +388,7 @@ pub fn execute(conn: &mut dyn Connection, script: &str, limit: usize) -> (Vec<Qu
 /// Does running this statement change the schema (so the tree should be refreshed)?
 pub fn is_ddl(stmt: &str) -> bool {
     let first = first_keyword(stmt);
-    matches!(first.as_str(), "create" | "alter" | "drop" | "rename" | "truncate" | "comment")
-        || (first == "attach" || first == "detach")
+    matches!(first.as_str(), "create" | "alter" | "drop" | "rename" | "truncate" | "comment") || (first == "attach" || first == "detach")
 }
 
 /// First keyword of a statement, lowercase, skipping comments and parentheses.

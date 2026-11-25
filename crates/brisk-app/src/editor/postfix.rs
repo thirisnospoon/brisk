@@ -66,10 +66,10 @@ pub fn postfix_range(line: &[char], dot: usize, statement: bool) -> Option<std::
     let primary_ok = !expr.is_empty() && !expr.starts_with('.') && !expr.starts_with(|c: char| c.is_ascii_digit());
     let ls = line.iter().position(|c| !c.is_whitespace()).unwrap_or(0);
     let whole: String = line[ls..dot].iter().collect();
-    let keyword = ["return ", "if ", "elif ", "while ", "for ", "with ", "del ", "assert ", "import ", "from ", "def ", "class "].iter().any(|k| whole.starts_with(k));
-    let assigns = whole.char_indices().any(|(i, c)| {
-        c == '=' && !matches!(whole[..i].chars().last(), Some('=' | '!' | '<' | '>')) && !whole[i + 1..].starts_with('=')
-    });
+    let keyword =
+        ["return ", "if ", "elif ", "while ", "for ", "with ", "del ", "assert ", "import ", "from ", "def ", "class "].iter().any(|k| whole.starts_with(k));
+    let assigns =
+        whole.char_indices().any(|(i, c)| c == '=' && !matches!(whole[..i].chars().last(), Some('=' | '!' | '<' | '>')) && !whole[i + 1..].starts_with('='));
     // A whole-line expression (`x > 1.if`), but not a bare number.
     let whole_ok = statement && !keyword && !assigns && !whole.contains('#') && whole.contains(|c: char| c.is_alphabetic() || c == '_');
     if whole_ok && ls < p {

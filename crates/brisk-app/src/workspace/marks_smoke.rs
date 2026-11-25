@@ -19,7 +19,9 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let bg = cx.background_executor().clone();
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
-            let codes = |this: &Workspace, cx: &gpui::App| -> Vec<String> { this.active_editor().map(|e| e.read(cx).diagnostics.iter().map(|d| d.code.clone()).collect()).unwrap_or_default() };
+            let codes = |this: &Workspace, cx: &gpui::App| -> Vec<String> {
+                this.active_editor().map(|e| e.read(cx).diagnostics.iter().map(|d| d.code.clone()).collect()).unwrap_or_default()
+            };
             let _ = this.update_in(cx, |this, window, cx| {
                 this.reindex_files(cx);
                 this.tree.reload(0);
@@ -60,7 +62,10 @@ impl Workspace {
                 pause(100).await;
                 let out = this.update(cx, |t, cx| t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text())).ok().flatten().unwrap_or_default();
                 if out.contains("Process finished") {
-                    eprintln!("smoke-marks: run -> {:?}", out.lines().filter(|l| l.starts_with("hello") || l.contains("Error") || l.starts_with("Process")).collect::<Vec<_>>());
+                    eprintln!(
+                        "smoke-marks: run -> {:?}",
+                        out.lines().filter(|l| l.starts_with("hello") || l.contains("Error") || l.starts_with("Process")).collect::<Vec<_>>()
+                    );
                     break;
                 }
             }

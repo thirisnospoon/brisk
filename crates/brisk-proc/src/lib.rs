@@ -160,11 +160,7 @@ mod tests {
         #[cfg(windows)]
         {
             use std::io::Read;
-            let mut c = std::process::Command::new("cmd")
-                .args(["/C", "ping -n 30 127.0.0.1"])
-                .stdout(std::process::Stdio::piped())
-                .spawn()
-                .unwrap();
+            let mut c = std::process::Command::new("cmd").args(["/C", "ping -n 30 127.0.0.1"]).stdout(std::process::Stdio::piped()).spawn().unwrap();
             std::thread::sleep(std::time::Duration::from_millis(500));
             let mut out = c.stdout.take().unwrap();
             let t = std::time::Instant::now();

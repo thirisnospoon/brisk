@@ -1,22 +1,22 @@
 //! Terminal tool window (Alt+F12): tabs of shell sessions, grid rendering, PyCharm key behavior.
 
-use crate::theme::{Theme, mono_font};
+use crate::theme::{mono_font, Theme};
 use brisk_terminal::{encode_key, KeyMods, SelectKind, Session, Snapshot, SpawnOptions, TermEvent};
 use futures::channel::mpsc;
 use futures::StreamExt;
 use gpui::prelude::*;
 use gpui::{
-    div, fill, font, point, px, rgb, size, App, Bounds, ClipboardItem, ContentMask, Context, Element, ElementId, Entity,
-    FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hsla, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, Pixels, Point, ScrollWheelEvent, ShapedLine, SharedString, Style, TextRun, UnderlineStyle, Window,
+    div, fill, font, point, px, rgb, size, App, Bounds, ClipboardItem, ContentMask, Context, Element, ElementId, Entity, FocusHandle, Focusable, FontStyle,
+    FontWeight, GlobalElementId, Hsla, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, ScrollWheelEvent, ShapedLine, SharedString, Style,
+    TextRun, UnderlineStyle, Window,
 };
 use std::path::PathBuf;
 
-mod tests_view;
 mod console_find;
 mod console_prefs;
-mod scroll_bar;
 mod dashboard;
+mod scroll_bar;
+mod tests_view;
 pub use dashboard::RunInfo;
 pub use tests_view::TestsOutcome;
 
@@ -75,7 +75,11 @@ pub enum RunEvent {
     OpenAt(PathBuf, usize, usize),
     /// An `http(s)://` link was clicked (a server's address).
     OpenUrl(String),
-    Finished { name: String, code: Option<i32>, tests: Option<TestsOutcome> },
+    Finished {
+        name: String,
+        code: Option<i32>,
+        tests: Option<TestsOutcome>,
+    },
     /// The Rerun button: the workspace saves files first, then calls [`TerminalPanel::rerun`].
     RerunRequested,
     /// "Open in Terminal": run this command in the project terminal.
@@ -214,7 +218,9 @@ pub fn shells() -> Vec<Shell> {
     if !cfg!(windows) {
         return v;
     }
-    let pf = |sub: &str| ["ProgramFiles", "ProgramW6432"].iter().filter_map(|k| std::env::var_os(k)).map(|d| std::path::PathBuf::from(d).join(sub)).find(|p| p.is_file());
+    let pf = |sub: &str| {
+        ["ProgramFiles", "ProgramW6432"].iter().filter_map(|k| std::env::var_os(k)).map(|d| std::path::PathBuf::from(d).join(sub)).find(|p| p.is_file())
+    };
     if let Some(p) = pf(r"PowerShell\7\pwsh.exe") {
         v.push(Shell { label: "PowerShell 7", program: p.display().to_string(), args: vec!["-NoLogo".into()] });
     }
@@ -386,7 +392,8 @@ sys.exit(r)";
             } else {
                 spawn.args.clone()
             };
-            let opts = brisk_terminal::SpawnOptions { shell: Some((spawn.program.display().to_string(), args)), cwd: Some(spawn.cwd.clone()), env: spawn.env.clone() };
+            let opts =
+                brisk_terminal::SpawnOptions { shell: Some((spawn.program.display().to_string(), args)), cwd: Some(spawn.cwd.clone()), env: spawn.env.clone() };
             Session::spawn_process_pty(opts, &short_command(&cmd, &self.root), cols, rows, on_event)
         } else {
             Session::spawn_process(spawn.to_std(), &short_command(&cmd, &self.root), cols, rows, on_event)
@@ -395,7 +402,25 @@ sys.exit(r)";
         let name = cfg.name.clone();
         // "Allow multiple instances": a running tab of the configuration stays.
         let multiple = cfg.allow_multiple;
-        let tab = Tab { id, session, title: String::new(), number: 0, shell: String::new(), run: Some(RunTab { name: name.clone(), cfg, cmd, running: true, code: None, tests, started: std::time::Instant::now(), ended: None, pinned: false, stopped: false }) };
+        let tab = Tab {
+            id,
+            session,
+            title: String::new(),
+            number: 0,
+            shell: String::new(),
+            run: Some(RunTab {
+                name: name.clone(),
+                cfg,
+                cmd,
+                running: true,
+                code: None,
+                tests,
+                started: std::time::Instant::now(),
+                ended: None,
+                pinned: false,
+                stopped: false,
+            }),
+        };
         let reuse = into
             .and_then(|id| self.tabs.iter().position(|t| t.id == id && t.run.is_some()))
             .or_else(|| self.tabs.iter().position(|t| t.run.as_ref().is_some_and(|r| r.name == name && !r.pinned && !(multiple && r.running))));
@@ -787,7 +812,8 @@ sys.exit(r)";
         }
         let Some(s) = self.session() else { return false };
         // Copy / paste: Ctrl+C copies when there is a selection, otherwise it's SIGINT.
-        let copy = (m.control && m.shift && key == "c") || (m.control && !m.shift && key == "c" && s.selection_text().is_some()) || (m.control && key == "insert");
+        let copy =
+            (m.control && m.shift && key == "c") || (m.control && !m.shift && key == "c" && s.selection_text().is_some()) || (m.control && key == "insert");
         if copy {
             if let Some(t) = s.selection_text() {
                 cx.write_to_clipboard(ClipboardItem::new_string(t));
@@ -938,32 +964,32 @@ sys.exit(r)";
                     .when_some(state, |d, (g, c)| d.child(crate::icons::icon(g, 12., c)))
                     .when(t.run.as_ref().is_some_and(|r| r.pinned), |d| d.child(crate::icons::icon("pin", 12., Theme::accent())))
                     .child(name)
-                    .child(
-                        div().id(("term-close", t.id as usize)).group("close-x").child(crate::icons::close_x("close-x", 12.)).on_click(
-                            cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.close_tab_id(id);
-                                cx.notify();
-                            }),
-                        ),
-                    )
+                    .child(div().id(("term-close", t.id as usize)).group("close-x").child(crate::icons::close_x("close-x", 12.)).on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.close_tab_id(id);
+                            cx.notify();
+                        },
+                    )))
             }))
-            .when(!self.run_mode, |d| d.child(
-                div()
-                    .id("term-new")
-                    .px(px(8.))
-                    .py(px(2.))
-                    .rounded(px(5.))
-                    .text_color(Theme::text_muted())
-                    .hover(|s| s.bg(Theme::hover_row()))
-                    .cursor_pointer()
-                    .child("+")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.new_tab();
-                        window.focus(&this.focus);
-                        cx.notify();
-                    })),
-            ))
+            .when(!self.run_mode, |d| {
+                d.child(
+                    div()
+                        .id("term-new")
+                        .px(px(8.))
+                        .py(px(2.))
+                        .rounded(px(5.))
+                        .text_color(Theme::text_muted())
+                        .hover(|s| s.bg(Theme::hover_row()))
+                        .cursor_pointer()
+                        .child("+")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.new_tab();
+                            window.focus(&this.focus);
+                            cx.notify();
+                        })),
+                )
+            })
             // ▾: start a tab with another shell found on this machine.
             .when(!self.run_mode, |d| d.child(self.render_shell_picker(cx)))
             // The console title, unless it is just the shell's path.
@@ -1031,13 +1057,16 @@ impl TerminalPanel {
                     .hover(|s| s.bg(Theme::hover_row()))
                     .cursor_pointer()
                     .child(crate::icons::ui_icon("chevron-down", 12., Theme::text_muted()))
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                        // This press already closed the open menu: ▾ toggles it shut.
-                        if this.shell_menu_closed_at.take() != Some(e.position) {
-                            this.shell_menu = true;
-                        }
-                        cx.notify();
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                            // This press already closed the open menu: ▾ toggles it shut.
+                            if this.shell_menu_closed_at.take() != Some(e.position) {
+                                this.shell_menu = true;
+                            }
+                            cx.notify();
+                        }),
+                    ),
             )
             .children(menu)
     }
@@ -1082,7 +1111,11 @@ impl TerminalPanel {
             .gap(px(2.))
             .border_r_1()
             .border_color(Theme::border())
-            .child(button("run-rerun", "rerun", Theme::run_icon()).tooltip(tip("Rerun  Ctrl+F5")).on_click(cx.listener(|_, _, _, cx| cx.emit(RunEvent::RerunRequested))))
+            .child(
+                button("run-rerun", "rerun", Theme::run_icon())
+                    .tooltip(tip("Rerun  Ctrl+F5"))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(RunEvent::RerunRequested))),
+            )
             .when(self.tests().is_some(), |d| {
                 let any_failed = self.tests().is_some_and(|t| t.finished && t.tree().tree.counts().failed > 0);
                 d.child(
@@ -1091,19 +1124,29 @@ impl TerminalPanel {
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(RunEvent::RerunFailedRequested))),
                 )
             })
-            .child(
-                button("run-stop", "stop", if running { Theme::error() } else { Theme::text_dim().opacity(0.5) }).tooltip(tip("Stop  Ctrl+F2")).on_click(cx.listener(|this, _, _, cx| {
+            .child(button("run-stop", "stop", if running { Theme::error() } else { Theme::text_dim().opacity(0.5) }).tooltip(tip("Stop  Ctrl+F2")).on_click(
+                cx.listener(|this, _, _, cx| {
                     this.stop();
                     cx.notify();
-                })),
-            )
+                }),
+            ))
             .child(div().w(px(18.)).h(px(1.)).my(px(3.)).bg(Theme::divider()))
-            .child(button("run-copy-cmd", "copy", Theme::text_muted()).tooltip(tip("Copy command line")).on_click(cx.listener(|this, _, _, cx| this.copy_command_line(cx))))
-            .child(button("run-open-term", "terminal", Theme::text_muted()).tooltip(tip("Open in Terminal")).on_click(cx.listener(|this, _, _, cx| this.open_in_terminal(cx))))
-            .child(toggle("run-pin", "pin", self.active_pinned()).tooltip(tip("Pin Tab: the next run opens a new tab")).child(pin_track()).on_click(cx.listener(|this, _, _, cx| {
-                this.toggle_pin();
-                cx.notify();
-            })))
+            .child(
+                button("run-copy-cmd", "copy", Theme::text_muted())
+                    .tooltip(tip("Copy command line"))
+                    .on_click(cx.listener(|this, _, _, cx| this.copy_command_line(cx))),
+            )
+            .child(
+                button("run-open-term", "terminal", Theme::text_muted())
+                    .tooltip(tip("Open in Terminal"))
+                    .on_click(cx.listener(|this, _, _, cx| this.open_in_terminal(cx))),
+            )
+            .child(toggle("run-pin", "pin", self.active_pinned()).tooltip(tip("Pin Tab: the next run opens a new tab")).child(pin_track()).on_click(
+                cx.listener(|this, _, _, cx| {
+                    this.toggle_pin();
+                    cx.notify();
+                }),
+            ))
             .child(toggle("run-wrap", "soft-wrap", self.soft_wrap).tooltip(tip("Soft-Wrap")).on_click(cx.listener(|this, _, _, cx| {
                 this.toggle_soft_wrap();
                 cx.notify();
@@ -1153,32 +1196,55 @@ impl Render for TerminalPanel {
                         .child("Nothing is running. Run a file with Ctrl+Shift+F10, the selected configuration with Shift+F10."),
                 )
             })
-            .when(!(self.run_mode && self.tabs.is_empty()), |d| d.child(
-                div().flex_1().min_h_0().flex().when(self.run_mode, |d| d.child(self.render_run_toolbar(cx)))
-                .when_some(self.tests(), |d, t| d.child(self.render_tests_tree(t, cx)))
-                .when_some(self.tests().filter(|t| t.shows_details()), |d, t| d.child(self.render_test_details(t, cx)))
-                .when(!self.tests().is_some_and(|t| t.shows_details()), |d| d.child(
-                div().flex_1().min_w_0().h_full().flex().flex_col()
-                .when(self.search.open, |d| d.child(self.render_search_bar(cx)))
-                .when(self.search.open && self.search.filter, |d| d.child(self.render_filtered(cx)))
-                .when(!(self.search.open && self.search.filter), |d| d.child(
-                div().relative().flex_1().min_h_0().flex().child(
-                div()
-                    .id("terminal-grid")
-                    .flex_1()
-                    .min_w_0()
-                    .min_h_0()
-                    .ml(px(8.))
-                    .mr(px(crate::scrollbar::BAR))
-                    .mb(px(4.))
-                    .cursor(gpui::CursorStyle::IBeam)
-                    .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
-                    .on_mouse_move(cx.listener(Self::on_mouse_move))
-                    .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| this.selecting = false))
-                    .on_scroll_wheel(cx.listener(Self::on_scroll))
-                    .child(TerminalElement { panel: cx.entity() }),
-                ).child(self.scrollbar(cx)),
-            ))))))
+            .when(!(self.run_mode && self.tabs.is_empty()), |d| {
+                d.child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .when(self.run_mode, |d| d.child(self.render_run_toolbar(cx)))
+                        .when_some(self.tests(), |d, t| d.child(self.render_tests_tree(t, cx)))
+                        .when_some(self.tests().filter(|t| t.shows_details()), |d, t| d.child(self.render_test_details(t, cx)))
+                        .when(!self.tests().is_some_and(|t| t.shows_details()), |d| {
+                            d.child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .flex()
+                                    .flex_col()
+                                    .when(self.search.open, |d| d.child(self.render_search_bar(cx)))
+                                    .when(self.search.open && self.search.filter, |d| d.child(self.render_filtered(cx)))
+                                    .when(!(self.search.open && self.search.filter), |d| {
+                                        d.child(
+                                            div()
+                                                .relative()
+                                                .flex_1()
+                                                .min_h_0()
+                                                .flex()
+                                                .child(
+                                                    div()
+                                                        .id("terminal-grid")
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .min_h_0()
+                                                        .ml(px(8.))
+                                                        .mr(px(crate::scrollbar::BAR))
+                                                        .mb(px(4.))
+                                                        .cursor(gpui::CursorStyle::IBeam)
+                                                        .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+                                                        .on_mouse_move(cx.listener(Self::on_mouse_move))
+                                                        .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| this.selecting = false))
+                                                        .on_scroll_wheel(cx.listener(Self::on_scroll))
+                                                        .child(TerminalElement { panel: cx.entity() }),
+                                                )
+                                                .child(self.scrollbar(cx)),
+                                        )
+                                    }),
+                            )
+                        }),
+                )
+            })
     }
 }
 
@@ -1219,10 +1285,23 @@ impl Element for TerminalElement {
         (window.request_layout(style, [], cx), ())
     }
 
-    fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), window: &mut Window, cx: &mut App) -> Prepaint {
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Prepaint {
         let fs = px(FONT_SIZE);
         let mono = font(mono_font());
-        let m = window.text_system().shape_line("M".into(), fs, &[TextRun { len: 1, font: mono.clone(), color: Theme::text(), background_color: None, underline: None, strikethrough: None }], None);
+        let m = window.text_system().shape_line(
+            "M".into(),
+            fs,
+            &[TextRun { len: 1, font: mono.clone(), color: Theme::text(), background_color: None, underline: None, strikethrough: None }],
+            None,
+        );
         let cell_w = m.width;
         let fit = (f32::from(bounds.size.width) / f32::from(cell_w)).floor().max(2.0) as usize;
         let rows = (f32::from(bounds.size.height) / CELL_H).floor().max(1.0) as usize;
@@ -1230,7 +1309,6 @@ impl Element for TerminalElement {
 
         let mut marks: Vec<(i32, std::ops::Range<usize>, bool)> = Vec::new();
         let snap: Option<(Snapshot, bool)> = self.panel.update(cx, |p, _| {
-
             p.grid = Some(GridGeom { bounds, cell_w });
             let run_mode = p.run_mode;
             let nowrap = run_mode && !p.soft_wrap;
@@ -1312,7 +1390,13 @@ impl Element for TerminalElement {
                         c += 1;
                         continue;
                     }
-                    if cell.fg != s0.fg || cell.bold != s0.bold || cell.italic != s0.italic || cell.underline != s0.underline || cell.wide || (s0.wide && c > start) {
+                    if cell.fg != s0.fg
+                        || cell.bold != s0.bold
+                        || cell.italic != s0.italic
+                        || cell.underline != s0.underline
+                        || cell.wide
+                        || (s0.wide && c > start)
+                    {
                         break;
                     }
                     text.push(cell.c);
@@ -1351,7 +1435,16 @@ impl Element for TerminalElement {
         Prepaint { rects, texts, cursor }
     }
 
-    fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), pp: &mut Prepaint, window: &mut Window, cx: &mut App) {
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        pp: &mut Prepaint,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let focused = self.panel.read(cx).focus.is_focused(window);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for r in pp.rects.drain(..) {

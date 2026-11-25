@@ -10,7 +10,10 @@ impl Workspace {
     pub(super) fn run_term_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let _ = std::fs::create_dir_all(root.join("sub dir"));
-        let _ = std::fs::write(root.join("argv.py"), "import os, sys\nprint('ARGV', sys.argv[1:], 'CWD', os.path.basename(os.getcwd()), 'V', os.environ.get('RT_VAR'))\n");
+        let _ = std::fs::write(
+            root.join("argv.py"),
+            "import os, sys\nprint('ARGV', sys.argv[1:], 'CWD', os.path.basename(os.getcwd()), 'V', os.environ.get('RT_VAR'))\n",
+        );
         cx.spawn_in(window, async move |this, cx| {
             let bg = cx.background_executor().clone();
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
@@ -59,7 +62,11 @@ impl Workspace {
             }
             let _ = this.update(cx, |this, cx| {
                 let term_line = term.lines().find(|l| l.starts_with("ARGV")).unwrap_or("");
-                eprintln!("smoke-runterm: run {run_line:?}, terminal {term_line:?}, same {}, bottom {:?}", !run_line.is_empty() && run_line == term_line.trim_end(), this.bottom);
+                eprintln!(
+                    "smoke-runterm: run {run_line:?}, terminal {term_line:?}, same {}, bottom {:?}",
+                    !run_line.is_empty() && run_line == term_line.trim_end(),
+                    this.bottom
+                );
                 cx.quit();
             });
         })

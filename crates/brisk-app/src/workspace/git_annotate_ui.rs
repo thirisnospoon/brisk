@@ -137,10 +137,11 @@ impl Workspace {
         let h = hash.clone();
         let task = cx.background_executor().spawn(async move {
             let path = repo.path_at(from.as_deref(), &h, &rel);
-            repo.commit_files(&h)
-                .ok()
-                .and_then(|v| v.into_iter().find(|c| c.path == path))
-                .unwrap_or(FileChange { path, old_path: None, status: FileStatus::Modified })
+            repo.commit_files(&h).ok().and_then(|v| v.into_iter().find(|c| c.path == path)).unwrap_or(FileChange {
+                path,
+                old_path: None,
+                status: FileStatus::Modified,
+            })
         });
         cx.spawn_in(window, async move |this, cx| {
             let change = task.await;
@@ -156,8 +157,11 @@ impl Workspace {
         let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
         let from = ed.read(cx).revision.as_ref().map(|r| r.1.clone());
         let task = cx.background_executor().spawn(async move {
-            let (parent, path) = repo.previous_revision(&hash, &rel, from.as_deref()).ok_or_else(|| "The file was added in this commit: it has no previous revision".to_string())?;
-            let text = repo.file_at(&parent, &path).map_err(|e| e.to_string())?.ok_or_else(|| format!("{path} is not in {}", &parent[..8.min(parent.len())]))?;
+            let (parent, path) = repo
+                .previous_revision(&hash, &rel, from.as_deref())
+                .ok_or_else(|| "The file was added in this commit: it has no previous revision".to_string())?;
+            let text =
+                repo.file_at(&parent, &path).map_err(|e| e.to_string())?.ok_or_else(|| format!("{path} is not in {}", &parent[..8.min(parent.len())]))?;
             let blame = repo.blame_at(&parent, &path).map_err(|e| e.to_string())?;
             Ok::<_, String>((parent, path, text, blame))
         });

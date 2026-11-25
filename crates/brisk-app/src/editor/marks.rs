@@ -45,7 +45,8 @@ impl Default for Occurrences {
 /// scrollbar. Pure, so a large file runs it on a background thread.
 fn find_usages(lang: brisk_syntax::Lang, tree: &brisk_syntax::Tree, text: &str, rope: &brisk_text::TextRope, head: usize) -> (Vec<Range<usize>>, Vec<usize>) {
     let hb = rope.char_to_byte(head);
-    let all: Vec<_> = brisk_syntax::occurrences_of(lang, tree, text, hb, STRIPE_LIMIT).into_iter().map(|r| rope.byte_to_char(r.start)..rope.byte_to_char(r.end)).collect();
+    let all: Vec<_> =
+        brisk_syntax::occurrences_of(lang, tree, text, hb, STRIPE_LIMIT).into_iter().map(|r| rope.byte_to_char(r.start)..rope.byte_to_char(r.end)).collect();
     let mut lines: Vec<usize> = if text.len() <= STRIPE_LIMIT { all.iter().map(|r| rope.char_to_line(r.start)).collect() } else { Vec::new() };
     lines.dedup();
     (all, lines)

@@ -5,55 +5,54 @@ use brisk_keymap::Action;
 use brisk_lint::{Diagnostic, Fix, Severity};
 use brisk_syntax::{Lang, SyntaxTree};
 use brisk_text::{Buffer, Movement, Selection};
+use gpui::prelude::*;
 use gpui::{
-    fill, font, point, px, size, App, Bounds, ClipboardItem, ContentMask, Context, Element, ElementId,
-    ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, ShapedLine,
+    fill, font, point, px, size, App, Bounds, ClipboardItem, ContentMask, Context, Element, ElementId, ElementInputHandler, Entity, EntityInputHandler,
+    FocusHandle, Focusable, GlobalElementId, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, ShapedLine,
     SharedString, Style, TextRun, UTF16Selection, Window,
 };
-use gpui::prelude::*;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 pub mod annotate;
-mod vcs_popup;
 mod bookmarks;
 pub mod breakpoints;
-pub mod run_marks;
 pub mod coverage;
+pub mod run_marks;
+mod scope;
 mod select;
 mod structure;
-mod scope;
+mod vcs_popup;
 pub use scope::siblings as scope_siblings;
 pub use select::{clipboard_history, remember_clip};
+mod big;
+mod column;
 mod disk;
+mod doc_view;
+mod extract;
 mod find;
 mod fold;
-mod marks;
-mod lsp;
+mod guides;
 mod inlay;
-mod column;
-mod wrap;
+mod local_sig;
+mod lsp;
+mod marks;
 mod middle_click;
 mod middle_scroll;
-mod big;
-mod extract;
-mod local_sig;
+mod motion;
 mod postfix;
 mod quick_def;
-mod word_complete;
-mod doc_view;
-mod scroll;
-mod motion;
-mod sticky;
-mod guides;
 mod rounded;
-mod stripe;
+mod scroll;
 mod squiggle;
-mod whitespace;
+mod sticky;
+mod stripe;
 pub mod templates;
-pub use disk::{Conflict, DiskCheck};
+mod whitespace;
+mod word_complete;
+mod wrap;
 pub use disk::write_atomic;
+pub use disk::{Conflict, DiskCheck};
 pub use lsp::Anchor;
 pub use quick_def::definition_source;
 
@@ -63,7 +62,6 @@ const RIGHT_MARGIN: usize = 120;
 pub fn line_height() -> f32 {
     crate::settings::line_height()
 }
-
 
 struct LayoutCache {
     bounds: Bounds<Pixels>,
@@ -312,7 +310,9 @@ impl Editor {
         if err.is_none() {
             // Off the UI thread: it reads the newest revision back and gzips the text.
             let (p, t) = (path.to_path_buf(), text.clone());
-            cx.background_executor().spawn(async move { crate::local_history::record(&p, &t.replace("\r\n", "\n"), crate::local_history::Label::Opened) }).detach();
+            cx.background_executor()
+                .spawn(async move { crate::local_history::record(&p, &t.replace("\r\n", "\n"), crate::local_history::Label::Opened) })
+                .detach();
         }
         // Indent and line endings: .editorconfig, else what the file already uses.
         let editorconfig = crate::editorconfig::for_file(path);
@@ -571,11 +571,7 @@ impl Editor {
         if let Some(t) = &self.title_override {
             return t.clone();
         }
-        self.path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "untitled".into())
+        self.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "untitled".into())
     }
 
     fn text(&mut self) -> &str {
@@ -674,14 +670,16 @@ impl Editor {
         // Errors win over warnings when they overlap. Only the problems around the line of
         // `pos` can contain it: a long file has thousands, and the status bar asks every frame.
         let line = self.buffer.pos_to_line_col(pos).0;
-        let mut hits: Vec<usize> = (0..self.diagnostics.len()).filter(|&i| {
-            let d = &self.diagnostics[i];
-            if d.start.line > line + 1 || d.end.line + 1 < line {
-                return false;
-            }
-            let r = self.diag_range(d);
-            r.contains(&pos) || r.start == pos
-        }).collect();
+        let mut hits: Vec<usize> = (0..self.diagnostics.len())
+            .filter(|&i| {
+                let d = &self.diagnostics[i];
+                if d.start.line > line + 1 || d.end.line + 1 < line {
+                    return false;
+                }
+                let r = self.diag_range(d);
+                r.contains(&pos) || r.start == pos
+            })
+            .collect();
         hits.sort_by_key(|&i| self.diagnostics[i].severity);
         hits.first().copied()
     }
@@ -690,22 +688,14 @@ impl Editor {
     /// priority problems only" when there are any). Shows its tooltip at the caret.
     pub fn goto_problem(&mut self, forward: bool, cx: &mut Context<Self>) -> Option<String> {
         let any_err = self.diagnostics.iter().any(|d| d.severity == Severity::Error);
-        let cands: Vec<(usize, usize)> = self
-            .diagnostics
-            .iter()
-            .enumerate()
-            .filter(|(_, d)| !any_err || d.severity == Severity::Error)
-            .map(|(i, d)| (self.pos_of(d.start), i))
-            .collect();
+        let cands: Vec<(usize, usize)> =
+            self.diagnostics.iter().enumerate().filter(|(_, d)| !any_err || d.severity == Severity::Error).map(|(i, d)| (self.pos_of(d.start), i)).collect();
         if cands.is_empty() {
             return None;
         }
         let caret = self.buffer.primary().head;
-        let pick = if forward {
-            cands.iter().find(|(p, _)| *p > caret).or(cands.first())
-        } else {
-            cands.iter().rev().find(|(p, _)| *p < caret).or(cands.last())
-        };
+        let pick =
+            if forward { cands.iter().find(|(p, _)| *p > caret).or(cands.first()) } else { cands.iter().rev().find(|(p, _)| *p < caret).or(cands.last()) };
         let &(pos, i) = pick?;
         self.buffer.set_caret(pos, false);
         self.ensure_caret_visible();
@@ -878,7 +868,12 @@ impl Editor {
                 _ => {}
             }
         }
-        if self.read_error.is_some() && !matches!(action, A::Copy | A::SelectAll | A::MoveUp | A::MoveDown | A::MoveLeft | A::MoveRight | A::PageUp | A::PageDown | A::MoveDocStart | A::MoveDocEnd) {
+        if self.read_error.is_some()
+            && !matches!(
+                action,
+                A::Copy | A::SelectAll | A::MoveUp | A::MoveDown | A::MoveLeft | A::MoveRight | A::PageUp | A::PageDown | A::MoveDocStart | A::MoveDocEnd
+            )
+        {
             return true;
         }
         self.caret_tip = None;
@@ -899,7 +894,10 @@ impl Editor {
         if !matches!(action, A::EditorBackspace) {
             self.insight.completion = None;
         }
-        if !matches!(action, A::EditorBackspace | A::EditorDelete | A::MoveLeft | A::MoveRight | A::SelectLeft | A::SelectRight | A::MoveWordLeft | A::MoveWordRight) {
+        if !matches!(
+            action,
+            A::EditorBackspace | A::EditorDelete | A::MoveLeft | A::MoveRight | A::SelectLeft | A::SelectRight | A::MoveWordLeft | A::MoveWordRight
+        ) {
             self.insight.signature = None;
         }
         if action == A::ToggleColumnSelectionMode && !self.is_field {
@@ -948,7 +946,20 @@ impl Editor {
         let page = self.layout.as_ref().map(|l| (f32::from(l.bounds.size.height) / line_height()) as usize).unwrap_or(30).max(1);
         let mut keep_scroll = false;
         // Soft-wrapped lines: Up / Down go by rows on screen, Home / End to the row's ends first.
-        if matches!(action, A::MoveUp | A::MoveDown | A::SelectUp | A::SelectDown | A::MoveLineStart | A::MoveLineEnd | A::SelectLineStart | A::SelectLineEnd | A::PageUp | A::PageDown) && self.wrap_active() {
+        if matches!(
+            action,
+            A::MoveUp
+                | A::MoveDown
+                | A::SelectUp
+                | A::SelectDown
+                | A::MoveLineStart
+                | A::MoveLineEnd
+                | A::SelectLineStart
+                | A::SelectLineEnd
+                | A::PageUp
+                | A::PageDown
+        ) && self.wrap_active()
+        {
             self.refresh_wrap();
             let extend = matches!(action, A::SelectUp | A::SelectDown | A::SelectLineStart | A::SelectLineEnd);
             if matches!(action, A::PageUp | A::PageDown) {
@@ -1084,7 +1095,13 @@ impl Editor {
                     } else if line_paste {
                         // Whole-line paste goes above the current line, like PyCharm.
                         let carets: Vec<usize> = b.selections.iter().map(|s| s.head).collect();
-                        b.selections = carets.iter().map(|&p| { let (l, _) = b.pos_to_line_col(p); Selection::caret(b.line_start(l)) }).collect();
+                        b.selections = carets
+                            .iter()
+                            .map(|&p| {
+                                let (l, _) = b.pos_to_line_col(p);
+                                Selection::caret(b.line_start(l))
+                            })
+                            .collect();
                         b.insert(&t);
                     } else {
                         // Python: a pasted block takes the indent of where it goes.
@@ -1371,13 +1388,36 @@ impl Editor {
             .hover(|s| s.bg(Theme::hover_row()))
             .cursor_pointer()
             .when(stale, |d| d.opacity(0.6))
-            .when(e > 0, |d| d.child(gpui::div().flex().items_center().gap(px(3.)).text_color(severity_color(Severity::Error)).child(crate::icons::icon("circle-x", 13., severity_color(Severity::Error))).child(e.to_string())))
-            .when(w > 0, |d| d.child(gpui::div().flex().items_center().gap(px(3.)).text_color(severity_color(Severity::Warning)).child(crate::icons::icon("triangle-alert", 13., severity_color(Severity::Warning))).child(w.to_string())))
+            .when(e > 0, |d| {
+                d.child(
+                    gpui::div()
+                        .flex()
+                        .items_center()
+                        .gap(px(3.))
+                        .text_color(severity_color(Severity::Error))
+                        .child(crate::icons::icon("circle-x", 13., severity_color(Severity::Error)))
+                        .child(e.to_string()),
+                )
+            })
+            .when(w > 0, |d| {
+                d.child(
+                    gpui::div()
+                        .flex()
+                        .items_center()
+                        .gap(px(3.))
+                        .text_color(severity_color(Severity::Warning))
+                        .child(crate::icons::icon("triangle-alert", 13., severity_color(Severity::Warning)))
+                        .child(w.to_string()),
+                )
+            })
             .when(e + w == 0, |d| d.child(crate::icons::icon("check", 13., Theme::vcs_added())))
-            .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| {
-                cx.stop_propagation();
-                cx.emit(EditorEvent::ShowProblems);
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.emit(EditorEvent::ShowProblems);
+                }),
+            )
     }
 
     fn render_tooltip(&self) -> Option<gpui::AnyElement> {
@@ -1405,19 +1445,25 @@ impl Editor {
                 .shadow_md()
                 .text_size(px(12.5))
                 .cursor(gpui::CursorStyle::Arrow)
-                .child(gpui::div().flex().items_center().gap(px(6.)).child(crate::icons::icon(match d.severity {
-                    Severity::Error => "circle-x",
-                    _ => "triangle-alert",
-                }, 14., severity_color(d.severity))).child(gpui::div().text_color(Theme::text()).child(d.title())))
                 .child(
                     gpui::div()
-                        .pt(px(4.))
-                        .text_color(Theme::text_muted())
-                        .child(match fix {
-                            Some(f) => format!("{f}   Alt+Enter"),
-                            None => "More actions…   Alt+Enter".into(),
-                        }),
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(crate::icons::icon(
+                            match d.severity {
+                                Severity::Error => "circle-x",
+                                _ => "triangle-alert",
+                            },
+                            14.,
+                            severity_color(d.severity),
+                        ))
+                        .child(gpui::div().text_color(Theme::text()).child(d.title())),
                 )
+                .child(gpui::div().pt(px(4.)).text_color(Theme::text_muted()).child(match fix {
+                    Some(f) => format!("{f}   Alt+Enter"),
+                    None => "More actions…   Alt+Enter".into(),
+                }))
                 .into_any_element(),
         )
     }
@@ -1465,7 +1511,12 @@ impl Render for Editor {
                     }
                 }
             }))
-            .child(EditorElement { editor: cx.entity(), diff_bg: std::mem::take(&mut self.diff_bg), diff_words: std::mem::take(&mut self.diff_words), diff_blocks: std::mem::take(&mut self.diff_blocks) })
+            .child(EditorElement {
+                editor: cx.entity(),
+                diff_bg: std::mem::take(&mut self.diff_bg),
+                diff_words: std::mem::take(&mut self.diff_words),
+                diff_blocks: std::mem::take(&mut self.diff_blocks),
+            })
             .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))
             .when_some(self.render_tooltip(), |d, t| d.child(t))
             .when_some(self.render_stripe_tip(), |d, t| d.child(t))
@@ -1668,7 +1719,15 @@ impl Element for EditorElement {
         (window.request_layout(style, [], cx), ())
     }
 
-    fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), window: &mut Window, cx: &mut App) -> Prepaint {
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Prepaint {
         // One-line fields (filters, names, find) use the UI font like the rest of the chrome.
         let is_field = self.editor.read(cx).is_field;
         let font_size = px(if is_field { crate::ui_kit::FIELD_TEXT } else { crate::settings::font_size() });
@@ -1701,11 +1760,7 @@ impl Element for EditorElement {
             ed.update_guides();
             ed.update_stripe();
             ed.update_whitespace(f32::from(bounds.size.height));
-            let h = if ed.show_gutter {
-                ed.fold_headers()
-            } else {
-                Vec::new()
-            };
+            let h = if ed.show_gutter { ed.fold_headers() } else { Vec::new() };
             h
         });
         let ed = self.editor.read(cx);
@@ -1812,7 +1867,10 @@ impl Element for EditorElement {
                 }
             }
             // Hints in the UI font, so they do not read as code; their chips are painted under the text.
-            let (text, runs, hint_chips) = ed.line_with_inlays(l, text, runs, |len| TextRun { font: gpui::Font { style: gpui::FontStyle::Italic, ..font(crate::theme::ui_font()) }, ..run(len, Theme::inlay_fg()) });
+            let (text, runs, hint_chips) = ed.line_with_inlays(l, text, runs, |len| TextRun {
+                font: gpui::Font { style: gpui::FontStyle::Italic, ..font(crate::theme::ui_font()) },
+                ..run(len, Theme::inlay_fg())
+            });
             chips.extend(hint_chips.into_iter().map(|r| (ri, r)));
             lines.push(window.text_system().shape_line(SharedString::from(text), font_size, &runs, None));
             if let Some(v) = ed.inline_value(l) {
@@ -1885,10 +1943,38 @@ impl Element for EditorElement {
                 (window.text_system().shape_line(SharedString::from(text), font_size, &runs, None), n, y, ed.sticky.hover == Some(k))
             })
             .collect();
-        Prepaint { lines, numbers, rows, wrap_sign, fold_marks, placeholder, bookmark_marks, breakpoint_marks, breakpoint_preview, run_icons, run_slot, annotations, inline_vals, chips, gutter_w, char_w, marks, sticky }
+        Prepaint {
+            lines,
+            numbers,
+            rows,
+            wrap_sign,
+            fold_marks,
+            placeholder,
+            bookmark_marks,
+            breakpoint_marks,
+            breakpoint_preview,
+            run_icons,
+            run_slot,
+            annotations,
+            inline_vals,
+            chips,
+            gutter_w,
+            char_w,
+            marks,
+            sticky,
+        }
     }
 
-    fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&gpui::InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), pp: &mut Prepaint, window: &mut Window, cx: &mut App) {
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        pp: &mut Prepaint,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let focus = self.editor.read(cx).focus.clone();
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.editor.clone()), cx);
         let focused = focus.is_focused(window);
@@ -2017,7 +2103,8 @@ impl Element for EditorElement {
                     continue;
                 }
                 for (a, z, y) in spans(*l, byte_to_char(&t, r.start), byte_to_char(&t, r.end), false) {
-                    under.push(fill(Bounds::from_corners(point(a, y + px(1.)), point(z, y + lh - px(1.))), Theme::diff_modified_word_bg()).corner_radii(px(3.)));
+                    under
+                        .push(fill(Bounds::from_corners(point(a, y + px(1.)), point(z, y + lh - px(1.))), Theme::diff_modified_word_bg()).corner_radii(px(3.)));
                 }
             }
         }
@@ -2263,7 +2350,10 @@ impl Element for EditorElement {
             if let Some((top, h)) = ed.v_thumb(vh) {
                 let (color, t) = look(scroll::Bar::Vertical);
                 if ed.bar_hot(scroll::Bar::Vertical) {
-                    thumbs.push(fill(Bounds::new(point(bounds.right() - px(scroll::BAR), bounds.top()), size(px(scroll::BAR), px(vh))), Theme::scroll_track_hot()));
+                    thumbs.push(fill(
+                        Bounds::new(point(bounds.right() - px(scroll::BAR), bounds.top()), size(px(scroll::BAR), px(vh))),
+                        Theme::scroll_track_hot(),
+                    ));
                 }
                 thumbs.push(fill(Bounds::new(point(bounds.right() - px(t + 1.), bounds.top() + px(top)), size(px(t), px(h))), color).corner_radii(px(t / 2.)));
             }
@@ -2271,7 +2361,8 @@ impl Element for EditorElement {
             if let Some((left, w)) = ed.h_thumb(vw) {
                 let (color, t) = look(scroll::Bar::Horizontal);
                 if ed.bar_hot(scroll::Bar::Horizontal) {
-                    thumbs.push(fill(Bounds::new(point(text_left, bounds.bottom() - px(scroll::BAR)), size(px(vw), px(scroll::BAR))), Theme::scroll_track_hot()));
+                    thumbs
+                        .push(fill(Bounds::new(point(text_left, bounds.bottom() - px(scroll::BAR)), size(px(vw), px(scroll::BAR))), Theme::scroll_track_hot()));
                 }
                 thumbs.push(fill(Bounds::new(point(text_left + px(left), bounds.bottom() - px(t + 1.)), size(px(w), px(t))), color).corner_radii(px(t / 2.)));
             }
@@ -2418,7 +2509,9 @@ impl Element for EditorElement {
             if let Some(i) = exec_ghost.and_then(|l| idx_of(l)) {
                 // Where a dragged arrow would go.
                 let y = line_ys[i];
-                window.paint_quad(fill(Bounds::new(point(bounds.left() + px(5.), y + px(4.)), size(px(9.), lh - px(8.))), Theme::accent().opacity(0.45)).corner_radii(px(2.)));
+                window.paint_quad(
+                    fill(Bounds::new(point(bounds.left() + px(5.), y + px(4.)), size(px(9.), lh - px(8.))), Theme::accent().opacity(0.45)).corner_radii(px(2.)),
+                );
                 window.paint_quad(fill(Bounds::new(point(text_x, y), size(bounds.right() - text_x, lh)), Theme::accent().opacity(0.08)));
             }
             for (i, m) in &pp.bookmark_marks {
@@ -2479,7 +2572,10 @@ impl Element for EditorElement {
                 // A soft shadow under the panel.
                 let bottom = bounds.top() + px(ed_sticky_h);
                 for (i, a) in [0.22f32, 0.12, 0.06, 0.02].iter().enumerate() {
-                    window.paint_quad(fill(Bounds::new(point(bounds.left(), bottom + px(i as f32)), size(right - bounds.left(), px(1.))), gpui::black().opacity(*a)));
+                    window.paint_quad(fill(
+                        Bounds::new(point(bounds.left(), bottom + px(i as f32)), size(right - bounds.left(), px(1.))),
+                        gpui::black().opacity(*a),
+                    ));
                 }
             }
             for mut q in thumbs {

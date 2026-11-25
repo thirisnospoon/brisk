@@ -45,8 +45,14 @@ fn shell_line_for_the_terminal() {
     assert_eq!(cmd.shell_line(true), r"Set-Location -LiteralPath 'C:\p r'; ${env:A}='o''k'; ${env:B}='2'; & 'C:\venv\python.exe' 'app.py' 'a b' 'it''s'");
     assert_eq!(cmd.shell_line(false), r"cd 'C:\p r' && A='o'\''k' B='2' 'C:\venv\python.exe' 'app.py' 'a b' 'it'\''s'");
     // Names `$env:X` cannot take.
-    let cmd = Command { env: [("MY-VAR".to_string(), "1".to_string()), ("ProgramFiles(x86)".into(), "2".into()), ("a}b".into(), "3".into())].into_iter().collect(), ..cmd };
-    assert_eq!(cmd.shell_line(true), r"Set-Location -LiteralPath 'C:\p r'; ${env:MY-VAR}='1'; ${env:ProgramFiles(x86)}='2'; ${env:a`}b}='3'; & 'C:\venv\python.exe' 'app.py' 'a b' 'it''s'");
+    let cmd = Command {
+        env: [("MY-VAR".to_string(), "1".to_string()), ("ProgramFiles(x86)".into(), "2".into()), ("a}b".into(), "3".into())].into_iter().collect(),
+        ..cmd
+    };
+    assert_eq!(
+        cmd.shell_line(true),
+        r"Set-Location -LiteralPath 'C:\p r'; ${env:MY-VAR}='1'; ${env:ProgramFiles(x86)}='2'; ${env:a`}b}='3'; & 'C:\venv\python.exe' 'app.py' 'a b' 'it''s'"
+    );
 }
 
 /// A cmd.exe line reaches cmd unchanged: inner quotes are not MSVC-escaped to `\"`.
@@ -202,7 +208,8 @@ fn run_real_python() {
         return;
     };
     let script = root.join("my script.py");
-    std::fs::write(&script, "import sys\nname = input('name? ')\nprint('привет', name)\nsys.stdout.flush()\ndef f():\n    raise ValueError('boom')\nf()\n").unwrap();
+    std::fs::write(&script, "import sys\nname = input('name? ')\nprint('привет', name)\nsys.stdout.flush()\ndef f():\n    raise ValueError('boom')\nf()\n")
+        .unwrap();
     let cmd = build(&root, &RunConfig::for_file(&root, &script), &py.path);
     assert!(cmd.display().contains("\"") && cmd.display().contains("my script.py"));
     let (tx, rx) = mpsc::channel();
@@ -229,8 +236,13 @@ fn run_real_python() {
     let text = s.text();
     assert!(text.contains("привет Bob"), "{text}");
     assert!(text.starts_with(&py.path.display().to_string()), "{text}");
-    assert!(text.contains("name? Bob
-"), "{text}");
+    assert!(
+        text.contains(
+            "name? Bob
+"
+        ),
+        "{text}"
+    );
     assert!(text.contains("ValueError: boom"), "{text}");
     assert!(text.contains("Process finished with exit code 1"), "{text}");
     assert_eq!(code, Some(1));
@@ -275,7 +287,11 @@ fn stop_kills_tree() {
     let root = tmp("stop");
     let Some(py) = discover_all(&root).into_iter().next() else { return };
     let script = root.join("sleepy.py");
-    std::fs::write(&script, "import subprocess, sys, time\nsubprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\nprint('started', flush=True)\ntime.sleep(60)\n").unwrap();
+    std::fs::write(
+        &script,
+        "import subprocess, sys, time\nsubprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\nprint('started', flush=True)\ntime.sleep(60)\n",
+    )
+    .unwrap();
     let cmd = build(&root, &RunConfig::for_file(&root, &script), &py.path);
     let (tx, rx) = mpsc::channel();
     let s = brisk_terminal::Session::spawn_process(cmd.to_std(), &cmd.display(), 100, 30, move |e| {
@@ -322,7 +338,10 @@ fn pytest_tree_from_events() {
     t.apply(r#"{"event":"done","exitstatus":1}"#);
     // Root → module → class → test.
     let names: Vec<_> = t.rows(&Default::default()).iter().map(|&i| (t.nodes[i].depth, t.nodes[i].name.clone())).collect();
-    assert_eq!(names, [(0, "Test Results".into()), (1, "test_a".into()), (2, "test_ok".into()), (2, "TestA".into()), (3, "test_b".into()), (2, "test_skip".into())]);
+    assert_eq!(
+        names,
+        [(0, "Test Results".into()), (1, "test_a".into()), (2, "test_ok".into()), (2, "TestA".into()), (3, "test_b".into()), (2, "test_skip".into())]
+    );
     assert_eq!(t.nodes[0].status, TestStatus::Failed);
     assert_eq!(t.summary(true), "Tests failed: 1, passed: 1, ignored: 1 of 3 tests – 210 ms");
     assert_eq!(t.failed_targets(), [format!("{}::TestA::test_b", Path::new("/p/t/test_a.py").display())]);
@@ -352,8 +371,18 @@ fn pytest_tree_from_events() {
 fn pytest_tree_view_params_export_history() {
     let mut t = TestTree::new();
     t.apply(r#"{"event":"collected","tests":[{"id":"a.py::test_p[1-x]","file":"/p/a.py","line":4},{"id":"a.py::test_p[2-y]","file":"/p/a.py","line":4},{"id":"a.py::C::test_q[a::b]","file":"/p/a.py","line":9},{"id":"a.py::test_s","file":"/p/a.py","line":12}]}"#);
-    let fin = |id: &str, outcome: &str, d: f64| format!(r#"{{"event":"finish","id":"{id}","outcome":"{outcome}","duration":{d},"message":"{}","output":""}}"#, if outcome == "failed" { "assert <1>" } else { "" });
-    for l in [fin("a.py::test_p[1-x]", "passed", 0.1), fin("a.py::test_p[2-y]", "failed", 0.3), fin("a.py::C::test_q[a::b]", "passed", 0.5), fin("a.py::test_s", "skipped", 0.0)] {
+    let fin = |id: &str, outcome: &str, d: f64| {
+        format!(
+            r#"{{"event":"finish","id":"{id}","outcome":"{outcome}","duration":{d},"message":"{}","output":""}}"#,
+            if outcome == "failed" { "assert <1>" } else { "" }
+        )
+    };
+    for l in [
+        fin("a.py::test_p[1-x]", "passed", 0.1),
+        fin("a.py::test_p[2-y]", "failed", 0.3),
+        fin("a.py::C::test_q[a::b]", "passed", 0.5),
+        fin("a.py::test_s", "skipped", 0.0),
+    ] {
         t.apply(&l);
     }
     t.apply(r#"{"event":"done","exitstatus":1}"#);
@@ -365,7 +394,10 @@ fn pytest_tree_view_params_export_history() {
     let v = |p, i, d| TreeView { show_passed: p, show_ignored: i, by_duration: d };
     assert_eq!(names(t.rows_view(&Default::default(), v(false, true, false))), ["Test Results", " a", "  test_p", "   [2-y]", "  test_s"]);
     assert_eq!(names(t.rows_view(&Default::default(), v(false, false, false))), ["Test Results", " a", "  test_p", "   [2-y]"]);
-    assert_eq!(names(t.rows_view(&Default::default(), v(true, true, true))), ["Test Results", " a", "  C", "   test_q", "    [a::b]", "  test_p", "   [2-y]", "   [1-x]", "  test_s"]);
+    assert_eq!(
+        names(t.rows_view(&Default::default(), v(true, true, true))),
+        ["Test Results", " a", "  C", "   test_q", "    [a::b]", "  test_p", "   [2-y]", "   [1-x]", "  test_s"]
+    );
     assert_eq!(t.failed_ids(), ["a.py::test_p[2-y]"]);
 
     let html = t.to_html("pytest <a>");
@@ -444,7 +476,11 @@ fn pytest_real_run() {
     // Rerun Failed Tests: only the failed node runs, from the same folder.
     let failed = t.failed_targets();
     assert_eq!(failed.len(), 1);
-    let again = RunConfig { target: failed.iter().map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(" "), working_directory: relativize(&root, &cmd.cwd), ..cfg.clone() };
+    let again = RunConfig {
+        target: failed.iter().map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(" "),
+        working_directory: relativize(&root, &cmd.cwd),
+        ..cfg.clone()
+    };
     let (feed2, text2, cmd2) = run(&again);
     assert_eq!(cmd2.args[2..], ["test_calc.py::TestBad::test_wrong"]);
     assert_eq!(feed2.tree.counts().total, 1, "{text2}");
@@ -456,7 +492,13 @@ fn pytest_real_run() {
     let events3 = pytest::attach(&mut cmd3).unwrap();
     cmd3.env.insert("BRISK_TESTS_FIRST".into(), first.display().to_string());
     let out = cmd3.to_std().output().unwrap();
-    let order: Vec<String> = std::fs::read_to_string(&events3).unwrap().lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter(|v| v["event"] == "start").map(|v| v["id"].as_str().unwrap_or("").to_string()).collect();
+    let order: Vec<String> = std::fs::read_to_string(&events3)
+        .unwrap()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["event"] == "start")
+        .map(|v| v["id"].as_str().unwrap_or("").to_string())
+        .collect();
     assert_eq!(order[..2], ["test_calc.py::TestBad::test_wrong", "test_calc.py::test_param[2]"], "{}", String::from_utf8_lossy(&out.stdout));
     let _ = std::fs::remove_file(&events3);
     drop(feed);
@@ -511,7 +553,11 @@ fn unittest_and_doctest_real_runs() {
 
     // Rerun Failed: dotted names relative to the same folder.
     let failed = t.failed_targets();
-    let again = RunConfig { target: failed.iter().filter(|f| f.contains("TestA")).map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(" "), working_directory: relativize(&root, &cmd.cwd), ..cfg.clone() };
+    let again = RunConfig {
+        target: failed.iter().filter(|f| f.contains("TestA")).map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(" "),
+        working_directory: relativize(&root, &cmd.cwd),
+        ..cfg.clone()
+    };
     let (feed2, cmd2, _, text2) = run(&again);
     let mut tail = cmd2.args[2..].to_vec();
     tail.sort();
@@ -538,7 +584,11 @@ fn unittest_and_doctest_real_runs() {
     assert_eq!((u.name.as_str(), u.target.as_str()), ("Unittests for test_u.TestA.test_ok", "tests/test_u.py::TestA::test_ok"));
     assert_eq!(build(&root, &u, &py.path).args, ["-m", "unittest", "test_u.TestA.test_ok"]);
     std::fs::create_dir_all(root.join(".idea")).unwrap();
-    std::fs::write(root.join(".idea/p.iml"), r#"<module><component name="TestRunnerService"><option name="PROJECT_TEST_RUNNER" value="Unittests" /></component></module>"#).unwrap();
+    std::fs::write(
+        root.join(".idea/p.iml"),
+        r#"<module><component name="TestRunnerService"><option name="PROJECT_TEST_RUNNER" value="Unittests" /></component></module>"#,
+    )
+    .unwrap();
     assert_eq!(crate::idea_test_runner(&root), Some(crate::TestRunner::Unittest));
     let xml = r#"<project><component name="RunManager"><configuration name="ut" type="tests" factoryName="Unittests"><option name="_new_additionalArguments" value="&quot;-v&quot;" /><option name="_new_target" value="&quot;$PROJECT_DIR$/tests&quot;" /><option name="_new_targetType" value="&quot;PATH&quot;" /></configuration><configuration name="dt" type="tests" factoryName="Doctests"><option name="_new_target" value="&quot;$PROJECT_DIR$/mathx.py&quot;" /><option name="_new_targetType" value="&quot;PATH&quot;" /></configuration></component></project>"#;
     std::fs::write(root.join(".idea/workspace.xml"), xml).unwrap();
@@ -593,9 +643,23 @@ fn before_launch_steps_and_import() {
     let mut app = c("app", RunKind::Python, "app.py");
     app.before_run = "migrate; tests".into();
     app.before_command = " pip install -e . ".into();
-    let f = RunFile { configurations: vec![c("migrate", RunKind::Python, "migrate.py"), c("tests", RunKind::Pytest, ""), c("both", RunKind::Compound, "migrate;tests"), app.clone()], ..Default::default() };
+    let f = RunFile {
+        configurations: vec![
+            c("migrate", RunKind::Python, "migrate.py"),
+            c("tests", RunKind::Pytest, ""),
+            c("both", RunKind::Compound, "migrate;tests"),
+            app.clone(),
+        ],
+        ..Default::default()
+    };
     let steps = f.before_steps(&app).unwrap();
-    let shown: Vec<String> = steps.iter().map(|s| match s { BeforeStep::Run(c) => c.name.clone(), BeforeStep::Command(l) => format!("$ {l}") }).collect();
+    let shown: Vec<String> = steps
+        .iter()
+        .map(|s| match s {
+            BeforeStep::Run(c) => c.name.clone(),
+            BeforeStep::Command(l) => format!("$ {l}"),
+        })
+        .collect();
     assert_eq!(shown, vec!["migrate", "tests", "$ pip install -e ."]);
     for (bad, why) in [("nope", "does not exist"), ("app", "itself"), ("both", "Compound")] {
         let cfg = RunConfig { before_run: bad.into(), before_command: String::new(), ..app.clone() };
@@ -791,13 +855,35 @@ fn project_files_round_trip_and_sync() {
             before_run: "tests".into(),
             ..Default::default()
         }),
-        shared(RunConfig { name: "mod: run".into(), module: true, target: "pkg.api".into(), emulate_terminal: true, interpreter: Some("C:/py/python.exe".into()), on_start: OnStart::Nothing, working_directory: "$PROJECT_DIR$".into(), ..Default::default() }),
-        shared(RunConfig { name: "tests".into(), kind: RunKind::Pytest, target: "tests".into(), keywords: "not slow".into(), parameters: "-x".into(), ..Default::default() }),
+        shared(RunConfig {
+            name: "mod: run".into(),
+            module: true,
+            target: "pkg.api".into(),
+            emulate_terminal: true,
+            interpreter: Some("C:/py/python.exe".into()),
+            on_start: OnStart::Nothing,
+            working_directory: "$PROJECT_DIR$".into(),
+            ..Default::default()
+        }),
+        shared(RunConfig {
+            name: "tests".into(),
+            kind: RunKind::Pytest,
+            target: "tests".into(),
+            keywords: "not slow".into(),
+            parameters: "-x".into(),
+            ..Default::default()
+        }),
         shared(RunConfig { name: "unit".into(), kind: RunKind::Unittest, target: "tests/test_a.py::TestA".into(), ..Default::default() }),
         shared(RunConfig { name: "doc".into(), kind: RunKind::Doctest, target: "main.py".into(), ..Default::default() }),
         shared(RunConfig { name: "api".into(), kind: RunKind::FastApi, target: "pkg.api:app".into(), parameters: "--reload".into(), ..Default::default() }),
         shared(RunConfig { name: "flask".into(), kind: RunKind::Flask, target: "pkg.api:app".into(), ..Default::default() }),
-        shared(RunConfig { name: "site".into(), kind: RunKind::Django, target: "manage.py".into(), parameters: "127.0.0.1:8001 --noreload".into(), ..Default::default() }),
+        shared(RunConfig {
+            name: "site".into(),
+            kind: RunKind::Django,
+            target: "manage.py".into(),
+            parameters: "127.0.0.1:8001 --noreload".into(),
+            ..Default::default()
+        }),
         shared(RunConfig { name: "dt".into(), kind: RunKind::DjangoTests, target: "manage.py".into(), parameters: "app.tests".into(), ..Default::default() }),
         shared(RunConfig { name: "all".into(), kind: RunKind::Compound, target: "main;api".into(), ..Default::default() }),
         RunConfig { name: "local".into(), target: "main.py".into(), ..Default::default() },
@@ -812,7 +898,10 @@ fn project_files_round_trip_and_sync() {
     assert_eq!(files.len(), 10, "{files:?}");
     assert!(files.contains(&"mod_ run.run.xml".to_string()) && !files.contains(&"local.run.xml".to_string()), "{files:?}");
     let main_xml = std::fs::read_to_string(root.join(".run/main.run.xml")).unwrap();
-    assert!(main_xml.contains(r#"<option name="SCRIPT_NAME" value="$PROJECT_DIR$/main.py" />"#) && main_xml.contains(r#"value="1&amp;2&lt;3&gt;""#), "{main_xml}");
+    assert!(
+        main_xml.contains(r#"<option name="SCRIPT_NAME" value="$PROJECT_DIR$/main.py" />"#) && main_xml.contains(r#"value="1&amp;2&lt;3&gt;""#),
+        "{main_xml}"
+    );
 
     // As after a clone (no .brisk): the shared configurations come back unchanged.
     std::fs::remove_file(root.join(CONFIG_FILE)).unwrap();
@@ -826,7 +915,11 @@ fn project_files_round_trip_and_sync() {
     let mut h = g.clone();
     h.configurations.iter_mut().find(|c| c.name == "doc").unwrap().project_file = false;
     h.configurations.iter_mut().find(|c| c.name == "unit").unwrap().name = "unit tests".into();
-    std::fs::write(root.join(".run/jest.run.xml"), r#"<component name="ProjectRunConfigurationManager"><configuration name="jest" type="JavaScriptTestRunnerJest" /></component>"#).unwrap();
+    std::fs::write(
+        root.join(".run/jest.run.xml"),
+        r#"<component name="ProjectRunConfigurationManager"><configuration name="jest" type="JavaScriptTestRunnerJest" /></component>"#,
+    )
+    .unwrap();
     save(&root, &h).unwrap();
     let files = listing();
     assert!(!files.contains(&"doc.run.xml".to_string()) && !files.contains(&"unit.run.xml".to_string()), "{files:?}");

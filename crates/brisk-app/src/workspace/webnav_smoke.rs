@@ -100,7 +100,12 @@ impl Workspace {
             });
             pause(800).await;
             let _ = this.update_in(cx, |this, window, cx| {
-                let routes: Vec<String> = this.web.index.as_ref().map(|i| i.routes.iter().map(|r| format!("{} {} {}", r.path, r.name.clone().unwrap_or_default(), r.handler)).collect()).unwrap_or_default();
+                let routes: Vec<String> = this
+                    .web
+                    .index
+                    .as_ref()
+                    .map(|i| i.routes.iter().map(|r| format!("{} {} {}", r.path, r.name.clone().unwrap_or_default(), r.handler)).collect())
+                    .unwrap_or_default();
                 eprintln!("smoke-web: endpoints -> {routes:?}");
                 if let Some(e) = this.endpoints.as_mut() {
                     e.selected = 1;

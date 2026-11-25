@@ -14,7 +14,8 @@ fn path() -> PathBuf {
 fn read_all(p: &Path) -> std::io::Result<BTreeMap<String, String>> {
     match std::fs::read_to_string(p) {
         Ok(s) if s.trim().is_empty() => Ok(BTreeMap::new()),
-        Ok(s) => serde_json::from_str(&s).map_err(|e| std::io::Error::other(format!("{} is damaged ({e}); passwords are not saved until it is fixed or deleted", p.display()))),
+        Ok(s) => serde_json::from_str(&s)
+            .map_err(|e| std::io::Error::other(format!("{} is damaged ({e}); passwords are not saved until it is fixed or deleted", p.display()))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
         Err(e) => Err(e),
     }
@@ -87,7 +88,7 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
 #[cfg(windows)]
 mod dpapi {
     use windows_sys::Win32::Foundation::LocalFree;
-    use windows_sys::Win32::Security::Cryptography::{CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN};
+    use windows_sys::Win32::Security::Cryptography::{CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB};
 
     fn blob(b: &[u8]) -> CRYPT_INTEGER_BLOB {
         CRYPT_INTEGER_BLOB { cbData: b.len() as u32, pbData: b.as_ptr() as *mut u8 }
@@ -106,7 +107,8 @@ mod dpapi {
         let input = blob(data);
         let mut out = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
         // SAFETY: valid input blob, null optional params, out blob filled by the API.
-        let ok = unsafe { CryptProtectData(&input, std::ptr::null(), std::ptr::null(), std::ptr::null(), std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out) };
+        let ok =
+            unsafe { CryptProtectData(&input, std::ptr::null(), std::ptr::null(), std::ptr::null(), std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out) };
         (ok != 0).then(|| take(out))
     }
 
@@ -114,7 +116,9 @@ mod dpapi {
         let input = blob(data);
         let mut out = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
         // SAFETY: as above.
-        let ok = unsafe { CryptUnprotectData(&input, std::ptr::null_mut(), std::ptr::null(), std::ptr::null(), std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out) };
+        let ok = unsafe {
+            CryptUnprotectData(&input, std::ptr::null_mut(), std::ptr::null(), std::ptr::null(), std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out)
+        };
         (ok != 0).then(|| take(out))
     }
 }

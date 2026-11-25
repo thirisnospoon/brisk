@@ -31,7 +31,9 @@ impl Workspace {
             let pause = |ms| bg.timer(Duration::from_millis(ms));
             pause(700).await;
             let pts = ed
-                .read_with(cx, |e, _| (e.breakpoint_point(0), e.breakpoint_point(5), e.run_icon_point(9), e.fold_marker_point(3), e.char_point(4, 6), e.scroll_state().4))
+                .read_with(cx, |e, _| {
+                    (e.breakpoint_point(0), e.breakpoint_point(5), e.run_icon_point(9), e.fold_marker_point(3), e.char_point(4, 6), e.scroll_state().4)
+                })
                 .ok();
             let Some((Some(empty), Some(bp), run, fold, Some(text), Some(b))) = pts else {
                 eprintln!("smoke-gutter: no layout");

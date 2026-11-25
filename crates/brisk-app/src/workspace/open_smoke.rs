@@ -82,10 +82,7 @@ impl Workspace {
                 let pass = first <= limit && later <= LATER_MAX_MS;
                 ok &= pass;
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                eprintln!(
-                    "smoke-open: {name:<16} {lines:>7} {sync:>8.1}ms {first:>10.1}ms {later:>9.1}ms {}",
-                    if pass { "ok" } else { "OVER" }
-                );
+                eprintln!("smoke-open: {name:<16} {lines:>7} {sync:>8.1}ms {first:>10.1}ms {later:>9.1}ms {}", if pass { "ok" } else { "OVER" });
                 let _ = this.update_in(cx, |this, window, cx| {
                     if let Some(i) = this.active {
                         this.close_tab(i, window, cx);

@@ -1,9 +1,9 @@
 //! Merge conflicts: the Conflicts dialog (Accept Yours / Accept Theirs / Merge…). Merge…
 //! opens the merge window (`merge_view`) in a tab: Your version | Result | Changes from <branch>.
 
-use crate::theme::ui_px;
 use super::{Tab, Workspace};
 use crate::merge_view::{MergeEvent, MergeView};
+use crate::theme::ui_px;
 use crate::theme::Theme;
 use gpui::prelude::*;
 use gpui::{div, px, Context, Entity, KeyDownEvent, Window};
@@ -253,20 +253,7 @@ impl Workspace {
             GitDialog::Conflicts(d) => self.render_conflicts(d, cx),
             _ => self.render_stash_dialog(cx)?,
         };
-        Some(
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-                .flex()
-                .justify_center()
-                .items_start()
-                .pt(px(50.))
-                .occlude()
-                .child(body)
-                .into_any_element(),
-        )
+        Some(div().absolute().top_0().left_0().size_full().flex().justify_center().items_start().pt(px(50.)).occlude().child(body).into_any_element())
     }
 
     fn render_conflicts(&self, d: &ConflictsDialog, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -324,7 +311,6 @@ impl Workspace {
             )
             .into_any_element()
     }
-
 }
 
 /// A dialog button (primary: filled with the accent color).

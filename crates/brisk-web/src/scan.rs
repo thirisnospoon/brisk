@@ -251,7 +251,10 @@ fn url_entry(call: tree_sitter::Node, s: &str) -> Option<UrlEntry> {
         let namespace = ts::kwarg(&ikw, "namespace", s).and_then(|v| ts::string_value(v, s)).or(ns);
         UrlTarget::Include { module, namespace }
     } else {
-        UrlTarget::View { handler: ts::text(view, s).split_whitespace().collect::<Vec<_>>().join(""), name: ts::kwarg(&kw, "name", s).and_then(|v| ts::string_value(v, s)) }
+        UrlTarget::View {
+            handler: ts::text(view, s).split_whitespace().collect::<Vec<_>>().join(""),
+            name: ts::kwarg(&kw, "name", s).and_then(|v| ts::string_value(v, s)),
+        }
     };
     Some(UrlEntry { route, target, at: pos(s, call) })
 }
@@ -282,7 +285,11 @@ fn deco_routes(n: tree_sitter::Node, s: &str, out: &mut Vec<DecoRoute>) {
         }
         let Some(mut methods) = deco_methods(ts::text(attr, s)) else { continue };
         let (args, kw) = ts::args(call);
-        let Some(path) = args.first().and_then(|a| ts::string_value(*a, s)).or_else(|| ["path", "rule"].iter().find_map(|k| ts::kwarg(&kw, k, s).and_then(|v| ts::string_value(v, s)))) else {
+        let Some(path) = args
+            .first()
+            .and_then(|a| ts::string_value(*a, s))
+            .or_else(|| ["path", "rule"].iter().find_map(|k| ts::kwarg(&kw, k, s).and_then(|v| ts::string_value(v, s))))
+        else {
             continue;
         };
         if methods.is_empty() {
@@ -292,7 +299,15 @@ fn deco_routes(n: tree_sitter::Node, s: &str, out: &mut Vec<DecoRoute>) {
             }
         }
         let name = ["name", "endpoint"].iter().find_map(|k| ts::kwarg(&kw, k, s).and_then(|v| ts::string_value(v, s)));
-        out.push(DecoRoute { obj: ts::text(obj, s).to_string(), methods, path, name, func: ts::text(fname, s).to_string(), at: pos(s, d), def_at: pos(s, fname) });
+        out.push(DecoRoute {
+            obj: ts::text(obj, s).to_string(),
+            methods,
+            path,
+            name,
+            func: ts::text(fname, s).to_string(),
+            at: pos(s, d),
+            def_at: pos(s, fname),
+        });
     }
 }
 
@@ -413,7 +428,17 @@ struct Walk {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn walk_urls(idx: &Index, infos: &[FileInfo], by_path: &HashMap<&Path, usize>, i: usize, prefix: &str, ns: &str, depth: usize, walk: &mut Walk, out: &mut Vec<Route>) {
+fn walk_urls(
+    idx: &Index,
+    infos: &[FileInfo],
+    by_path: &HashMap<&Path, usize>,
+    i: usize,
+    prefix: &str,
+    ns: &str,
+    depth: usize,
+    walk: &mut Walk,
+    out: &mut Vec<Route>,
+) {
     if depth > 8 || walk.stack[i] {
         return;
     }
@@ -426,7 +451,15 @@ fn walk_urls(idx: &Index, infos: &[FileInfo], by_path: &HashMap<&Path, usize>, i
             UrlTarget::View { handler, name } => {
                 let name = name.as_ref().map(|n| if ns.is_empty() { n.clone() } else { format!("{ns}:{n}") });
                 let handler_at = resolve_target(idx, info, handler).and_then(|(f, n)| find_def(&f, &n));
-                out.push(Route { framework: Framework::Django, methods: Vec::new(), path: url_path(&format!("{prefix}{}", e.route)), name, handler: handler.clone(), at, handler_at });
+                out.push(Route {
+                    framework: Framework::Django,
+                    methods: Vec::new(),
+                    path: url_path(&format!("{prefix}{}", e.route)),
+                    name,
+                    handler: handler.clone(),
+                    at,
+                    handler_at,
+                });
             }
             UrlTarget::Include { module, namespace } => {
                 let Some(child) = resolve_module(idx, &info.path, module).and_then(|p| by_path.get(p.as_path()).copied()) else { continue };

@@ -160,7 +160,12 @@ impl Workspace {
         if name.is_empty() {
             return Vec::new();
         }
-        vec![PopupItem { label: format!("Put label '{name}'"), detail: "on the whole project, now".into(), hint: "Enter".into(), target: Target::PutLabel(name.to_string()) }]
+        vec![PopupItem {
+            label: format!("Put label '{name}'"),
+            detail: "on the whole project, now".into(),
+            hint: "Enter".into(),
+            target: Target::PutLabel(name.to_string()),
+        }]
     }
 
     pub(super) fn put_label(&mut self, name: String, cx: &mut Context<Self>) {

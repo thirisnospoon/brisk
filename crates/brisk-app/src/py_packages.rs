@@ -68,7 +68,12 @@ fn run(python: &Path, tool: &Tool, args: &[&str]) -> Result<String, String> {
         Ok(stdout)
     } else {
         let err = String::from_utf8_lossy(&out.stderr);
-        let msg = err.lines().rev().find(|l| l.trim_start().starts_with("ERROR") || l.contains("error:")).or_else(|| err.lines().rev().find(|l| !l.trim().is_empty())).unwrap_or("failed");
+        let msg = err
+            .lines()
+            .rev()
+            .find(|l| l.trim_start().starts_with("ERROR") || l.contains("error:"))
+            .or_else(|| err.lines().rev().find(|l| !l.trim().is_empty()))
+            .unwrap_or("failed");
         Err(msg.trim().to_string())
     }
 }
@@ -78,9 +83,7 @@ pub fn parse_list(json: &str) -> Vec<Package> {
     let mut list: Vec<Package> = v
         .as_array()
         .map(|a| {
-            a.iter()
-                .filter_map(|p| Some(Package { name: p["name"].as_str()?.to_string(), version: p["version"].as_str().unwrap_or("").to_string() }))
-                .collect()
+            a.iter().filter_map(|p| Some(Package { name: p["name"].as_str()?.to_string(), version: p["version"].as_str().unwrap_or("").to_string() })).collect()
         })
         .unwrap_or_default();
     list.sort_by_key(|p| p.name.to_lowercase());
@@ -204,7 +207,11 @@ pub fn index_file(python: &Path) -> Result<PathBuf, String> {
         return Err("No PyPI index in smoke tests (set BRISK_PYPI_INDEX to a file:// URL)".into());
     }
     let cache = names_cache(&url);
-    let fresh = std::fs::metadata(&cache).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age < std::time::Duration::from_secs(24 * 3600));
+    let fresh = std::fs::metadata(&cache)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < std::time::Duration::from_secs(24 * 3600));
     // A local file is cheap to read again (and tests change theirs).
     if fresh && !url.starts_with("file:") {
         return Ok(cache);
@@ -277,7 +284,11 @@ impl Picker {
 #[cfg(test)]
 fn index_line(name: &str) -> String {
     let k = normalize(name);
-    if k == name { k } else { format!("{k}\t{name}") }
+    if k == name {
+        k
+    } else {
+        format!("{k}\t{name}")
+    }
 }
 
 /// Up to `limit` names for what was typed, from a list in memory.

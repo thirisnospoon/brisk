@@ -3,9 +3,9 @@
 //! Enter). Keyboard: ↑/↓, Enter, →/← into and out of submenus, Esc. A click outside closes the
 //! menu without reaching what is under it.
 
-use crate::theme::ui_px;
 use super::Workspace;
 use crate::editor::Editor;
+use crate::theme::ui_px;
 use crate::theme::Theme;
 use brisk_keymap::Action;
 use gpui::prelude::*;
@@ -257,7 +257,9 @@ impl Workspace {
         let at = m.selected.and_then(|s| selectable.iter().position(|&i| i == s));
         match key {
             "down" => m.selected = selectable.get(at.map_or(0, |a| (a + 1) % selectable.len().max(1))).copied(),
-            "up" => m.selected = selectable.get(at.map_or(selectable.len().saturating_sub(1), |a| (a + selectable.len() - 1) % selectable.len().max(1))).copied(),
+            "up" => {
+                m.selected = selectable.get(at.map_or(selectable.len().saturating_sub(1), |a| (a + selectable.len() - 1) % selectable.len().max(1))).copied()
+            }
             "right" => {
                 if let Some(i) = m.selected.filter(|&i| matches!(m.entries.get(i), Some(Entry::Submenu { .. }))) {
                     m.open_child(i, true);

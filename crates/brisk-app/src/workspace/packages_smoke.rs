@@ -1,7 +1,7 @@
 //! Smokes of the Python Packages window.
 
-use super::Workspace;
 use super::packages_ui::Op;
+use super::Workspace;
 use brisk_keymap::Action;
 use gpui::{Context, Focusable, Window};
 use std::path::Path;
@@ -36,11 +36,7 @@ json.dump({"meta": {"api-version": "1.0"}, "projects": [{"name": n} for n in nam
 /// `PIP_NO_INDEX`: it never asks PyPI) and a local index for the name suggestions
 /// (`BRISK_PYPI_INDEX`). `preinstall` goes into the venv first. Blocks for seconds.
 fn setup_smoke_python(root: &Path, preinstall: &[&str]) -> Result<(), String> {
-    let base = brisk_run::discover_all(root)
-        .into_iter()
-        .find(|i| i.kind == brisk_run::InterpKind::System)
-        .ok_or("no Python on this machine")?
-        .path;
+    let base = brisk_run::discover_all(root).into_iter().find(|i| i.kind == brisk_run::InterpKind::System).ok_or("no Python on this machine")?.path;
     let wheels = root.join("wheels");
     let out = std::process::Command::new(&base).arg("-I").arg("-c").arg(MAKE_WHEELS).arg(&wheels).output().map_err(|e| e.to_string())?;
     if !out.status.success() {
@@ -102,7 +98,9 @@ impl Workspace {
                 }
             };
             wait_idle(&this, cx).await;
-            let names = |this: &Workspace, cx: &gpui::App| this.packages.as_ref().map(|p| p.visible(cx).iter().map(|p| format!("{} {}", p.name, p.version)).collect::<Vec<_>>()).unwrap_or_default();
+            let names = |this: &Workspace, cx: &gpui::App| {
+                this.packages.as_ref().map(|p| p.visible(cx).iter().map(|p| format!("{} {}", p.name, p.version)).collect::<Vec<_>>()).unwrap_or_default()
+            };
             let _ = this.update_in(cx, |this, window, cx| {
                 let p = this.packages.as_ref().unwrap();
                 eprintln!("smoke-packages: tool {:?} python {:?} list {:?} error {:?}", p.tool, p.python, names(this, cx), p.error);
@@ -151,7 +149,12 @@ impl Workspace {
             pause(200).await;
             wait_idle(&this, cx).await;
             let _ = this.update_in(cx, |this, _, cx| {
-                eprintln!("smoke-packages: after uninstall toast {:?} filtered {:?} total {}", this.toast.as_ref().map(|t| t.0.clone()), names(this, cx), this.packages.as_ref().unwrap().list.len());
+                eprintln!(
+                    "smoke-packages: after uninstall toast {:?} filtered {:?} total {}",
+                    this.toast.as_ref().map(|t| t.0.clone()),
+                    names(this, cx),
+                    this.packages.as_ref().unwrap().list.len()
+                );
                 cx.quit();
             });
         })
@@ -179,14 +182,21 @@ impl Workspace {
                 }
             }
             let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::TogglePythonPackages, window, cx));
-            let idle = |t: &Workspace| t.packages.as_ref().is_some_and(|p| !p.loading && p.busy.is_none() && p.queue.is_empty() && !p.outdated_loading && !p.index_loading);
+            let idle = |t: &Workspace| {
+                t.packages.as_ref().is_some_and(|p| !p.loading && p.busy.is_none() && p.queue.is_empty() && !p.outdated_loading && !p.index_loading)
+            };
             for _ in 0..600 {
                 pause(100).await;
                 if this.update(cx, |t, _| idle(t)).unwrap_or(false) {
                     break;
                 }
             }
-            let names = |this: &Workspace, cx: &gpui::App| this.packages.as_ref().map(|p| p.visible(cx).iter().filter(|p| p.name.starts_with("brisk")).map(|p| format!("{} {}", p.name, p.version)).collect::<Vec<_>>()).unwrap_or_default();
+            let names = |this: &Workspace, cx: &gpui::App| {
+                this.packages
+                    .as_ref()
+                    .map(|p| p.visible(cx).iter().filter(|p| p.name.starts_with("brisk")).map(|p| format!("{} {}", p.name, p.version)).collect::<Vec<_>>())
+                    .unwrap_or_default()
+            };
             let _ = this.update_in(cx, |this, window, cx| {
                 let p = this.packages.as_ref().unwrap();
                 eprintln!("smoke-pkgqueue: list {:?} outdated {:?} error {:?}", names(this, cx), p.outdated, p.error);
@@ -261,7 +271,13 @@ impl Workspace {
             }
             let _ = this.update(cx, |this, cx| {
                 let p = this.packages.as_ref().unwrap();
-                eprintln!("smoke-pkgqueue: done -> list {:?} outdated {:?} error {:?} toast {:?}", names(this, cx), p.outdated, p.error, this.toast.as_ref().map(|t| t.0.clone()));
+                eprintln!(
+                    "smoke-pkgqueue: done -> list {:?} outdated {:?} error {:?} toast {:?}",
+                    names(this, cx),
+                    p.outdated,
+                    p.error,
+                    this.toast.as_ref().map(|t| t.0.clone())
+                );
                 cx.quit();
             });
         })

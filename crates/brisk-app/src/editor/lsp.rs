@@ -2,7 +2,7 @@
 //! Parameter Info. The workspace asks ty and hands the results here.
 
 use super::{line_height, Editor, EditorEvent};
-use crate::theme::{Theme, mono_font};
+use crate::theme::{mono_font, Theme};
 use brisk_lsp::{CompletionItem, DocBlock, Signature};
 use gpui::prelude::*;
 use gpui::{point, px, Context, HighlightStyle, MouseButton, Pixels, Point, StyledText};
@@ -282,7 +282,13 @@ impl Editor {
 
     /// Smoke tests: what the code-insight popups show.
     pub fn insight_summary(&self) -> String {
-        let c = self.insight.completion.as_ref().map(|c| c.shown.iter().take(5).map(|&i| if c.items[i].extra.is_empty() { c.items[i].label.clone() } else { format!("{} [{}]", c.items[i].label, c.items[i].detail) }).collect::<Vec<_>>());
+        let c = self.insight.completion.as_ref().map(|c| {
+            c.shown
+                .iter()
+                .take(5)
+                .map(|&i| if c.items[i].extra.is_empty() { c.items[i].label.clone() } else { format!("{} [{}]", c.items[i].label, c.items[i].detail) })
+                .collect::<Vec<_>>()
+        });
         let d = self.insight.doc.as_ref().map(|d| d.blocks.len());
         let s = self.insight.signature.as_ref().map(|s| (s.label.clone(), s.active));
         let preview = self.insight.completion.as_ref().and_then(|c| c.shown.get(c.selected).map(|&i| c.items[i].doc.trim().chars().count())).filter(|&n| n > 0);
@@ -304,7 +310,12 @@ impl Editor {
                 .join("\n")
         };
         let quick = self.insight.doc.as_ref().map(|d| plain(&d.blocks));
-        let preview = self.insight.completion.as_ref().and_then(|c| c.shown.get(c.selected).map(|&i| plain(&brisk_lsp::doc_blocks(c.items[i].doc.trim())))).filter(|t| !t.is_empty());
+        let preview = self
+            .insight
+            .completion
+            .as_ref()
+            .and_then(|c| c.shown.get(c.selected).map(|&i| plain(&brisk_lsp::doc_blocks(c.items[i].doc.trim()))))
+            .filter(|t| !t.is_empty());
         (quick, preview)
     }
 
@@ -428,16 +439,33 @@ impl Editor {
                 let mut hl = Vec::new();
                 if let Some(r) = sig.active.and_then(|a| sig.params.get(a)).filter(|r| r.start <= r.end) {
                     let b = |c: usize| sig.label.char_indices().nth(c).map(|(b, _)| b).unwrap_or(sig.label.len());
-                    hl.push((b(r.start)..b(r.end), HighlightStyle { font_weight: Some(gpui::FontWeight::BOLD), color: Some(Theme::text()), ..Default::default() }));
+                    hl.push((
+                        b(r.start)..b(r.end),
+                        HighlightStyle { font_weight: Some(gpui::FontWeight::BOLD), color: Some(Theme::text()), ..Default::default() },
+                    ));
                 }
                 // As in PyCharm: every overload on its own line, the matching one in full colour
                 // with the current parameter in bold; `<no parameters>` for a call without any.
-                let active_line = if sig.params.is_empty() && sig.overloads.is_empty() { gpui::div().child("<no parameters>").into_any_element() } else { gpui::div().child(StyledText::new(sig.label.clone()).with_highlights(hl)).into_any_element() };
+                let active_line = if sig.params.is_empty() && sig.overloads.is_empty() {
+                    gpui::div().child("<no parameters>").into_any_element()
+                } else {
+                    gpui::div().child(StyledText::new(sig.label.clone()).with_highlights(hl)).into_any_element()
+                };
                 let lines: Vec<gpui::AnyElement> = if sig.overloads.is_empty() {
                     vec![active_line]
                 } else {
                     let mut active_line = Some(active_line);
-                    sig.overloads.iter().enumerate().map(|(i, l)| if i == sig.current { active_line.take().unwrap_or_else(|| gpui::div().into_any_element()) } else { gpui::div().text_color(Theme::text_dim()).child(l.clone()).into_any_element() }).collect()
+                    sig.overloads
+                        .iter()
+                        .enumerate()
+                        .map(|(i, l)| {
+                            if i == sig.current {
+                                active_line.take().unwrap_or_else(|| gpui::div().into_any_element())
+                            } else {
+                                gpui::div().text_color(Theme::text_dim()).child(l.clone()).into_any_element()
+                            }
+                        })
+                        .collect()
                 };
                 let rows = lines.len() as f32;
                 out.push(
@@ -479,17 +507,29 @@ impl Editor {
                         .when(i == c.selected, |d| d.bg(Theme::selection_row()))
                         .child(gpui::div().w(px(14.)).text_color(gpui::rgb(color)).child(badge))
                         .child(gpui::div().text_color(Theme::text()).whitespace_nowrap().child(it.label.clone()))
-                        .child(gpui::div().flex_1().overflow_hidden().whitespace_nowrap().text_right().text_color(Theme::text_dim()).text_size(px(12.)).child(it.detail.clone()))
-                        .on_mouse_down(MouseButton::Left, cx.listener(move |e, ev: &gpui::MouseDownEvent, _, cx| {
-                            cx.stop_propagation();
-                            if let Some(c) = e.insight.completion.as_mut() {
-                                c.selected = i;
-                            }
-                            if ev.click_count >= 2 {
-                                e.accept_completion(false, cx);
-                            }
-                            cx.notify();
-                        }))
+                        .child(
+                            gpui::div()
+                                .flex_1()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_right()
+                                .text_color(Theme::text_dim())
+                                .text_size(px(12.))
+                                .child(it.detail.clone()),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |e, ev: &gpui::MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                if let Some(c) = e.insight.completion.as_mut() {
+                                    c.selected = i;
+                                }
+                                if ev.click_count >= 2 {
+                                    e.accept_completion(false, cx);
+                                }
+                                cx.notify();
+                            }),
+                        )
                 });
                 // Documentation of the selected item, beside the list (PyCharm's preview).
                 let doc = c.shown.get(c.selected).map(|&i| c.items[i].doc.trim()).filter(|d| !d.is_empty());

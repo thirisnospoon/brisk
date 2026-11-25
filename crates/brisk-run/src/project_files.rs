@@ -4,14 +4,15 @@
 //! shared; loading takes every `.run/*.run.xml` Brisk understands as the source of truth
 //! (a `git pull` that changes or removes one shows up in the run configurations).
 
-use crate::config::{configurations_in, RunConfig, RunFile, RunKind, OnStart};
+use crate::config::{configurations_in, OnStart, RunConfig, RunFile, RunKind};
 use std::path::{Path, PathBuf};
 
 pub const DIR: &str = ".run";
 
 /// `.run/<name>.run.xml`, characters Windows does not allow in file names replaced by `_`.
 pub fn file_name(name: &str) -> String {
-    let safe: String = name.chars().map(|c| if matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() { '_' } else { c }).collect();
+    let safe: String =
+        name.chars().map(|c| if matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() { '_' } else { c }).collect();
     format!("{}.run.xml", safe.trim())
 }
 
@@ -120,7 +121,12 @@ pub fn to_xml(root: &Path, c: &RunConfig, kind_of: &dyn Fn(&str) -> Option<RunKi
             // One path (quoted when it has spaces): PATH; several or none: CUSTOM, the
             // targets going with the arguments.
             let t = c.target.trim();
-            let single = t.strip_prefix('"').and_then(|s| s.strip_suffix('"')).filter(|s| !s.contains('"')).map(str::to_string).or_else(|| (!t.is_empty() && !t.contains(' ')).then(|| t.to_string()));
+            let single = t
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .filter(|s| !s.contains('"'))
+                .map(str::to_string)
+                .or_else(|| (!t.is_empty() && !t.contains(' ')).then(|| t.to_string()));
             let mut args = c.parameters.trim().to_string();
             if single.is_none() && !t.is_empty() {
                 args = format!("{t} {args}").trim().to_string();
@@ -184,7 +190,8 @@ fn wrap(attrs: &str, body: &[String]) -> String {
 
 /// The configurations in `.run/*.run.xml` that Brisk understands, with their files.
 pub fn read_all(root: &Path) -> Vec<(PathBuf, RunConfig)> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(root.join(DIR)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(".xml")).collect();
+    let mut files: Vec<PathBuf> =
+        std::fs::read_dir(root.join(DIR)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(".xml")).collect();
     files.sort();
     let mut out = Vec::new();
     for p in files {
@@ -260,5 +267,9 @@ fn read_all_in(p: &Path) -> usize {
     let Ok(doc) = roxmltree::Document::parse(&xml) else { return 0 };
     let total = doc.descendants().filter(|n| n.has_tag_name("configuration")).count();
     let known = configurations_in(p.parent().and_then(Path::parent).unwrap_or(Path::new(".")), &xml, "ProjectRunConfigurationManager").0.len();
-    if total == known { known } else { usize::MAX }
+    if total == known {
+        known
+    } else {
+        usize::MAX
+    }
 }

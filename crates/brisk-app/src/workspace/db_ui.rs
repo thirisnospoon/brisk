@@ -5,9 +5,9 @@
 //! or query). Every driver call runs on the background executor; a connection is a mutex,
 //! so statements on the same data source queue up as in a single JDBC session.
 
-use crate::theme::ui_px;
 use super::*;
 use crate::grid_view::{GridEvent, GridView};
+use crate::theme::ui_px;
 use brisk_db::{Canceller, Connection, DataSource, Driver, Schema, Ssl, TableKind};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -167,8 +167,12 @@ impl Db {
             }
             match self.states.get(&ds.id) {
                 None => {}
-                Some(ConnState::Connecting(_)) => rows.push(Row { depth: 1, kind: RowKind::Message(di, "Connecting…".into(), false), key: String::new(), expandable: false }),
-                Some(ConnState::Failed(e)) => rows.push(Row { depth: 1, kind: RowKind::Message(di, first_line(e), true), key: String::new(), expandable: false }),
+                Some(ConnState::Connecting(_)) => {
+                    rows.push(Row { depth: 1, kind: RowKind::Message(di, "Connecting…".into(), false), key: String::new(), expandable: false })
+                }
+                Some(ConnState::Failed(e)) => {
+                    rows.push(Row { depth: 1, kind: RowKind::Message(di, first_line(e), true), key: String::new(), expandable: false })
+                }
                 Some(ConnState::Live(live)) => {
                     if live.schemas.is_empty() {
                         rows.push(Row { depth: 1, kind: RowKind::Message(di, "No schemas".into(), false), key: String::new(), expandable: false });
@@ -669,12 +673,10 @@ impl Workspace {
                     self.db.selected = p;
                 }
             }
-            "enter" => {
-                match self.db.rows.get(self.db.selected).map(|r| r.kind.clone()) {
-                    Some(RowKind::Table(..) | RowKind::Column(..)) => self.db_open_selected(window, cx),
-                    _ => self.db_toggle(self.db.selected, window, cx),
-                }
-            }
+            "enter" => match self.db.rows.get(self.db.selected).map(|r| r.kind.clone()) {
+                Some(RowKind::Table(..) | RowKind::Column(..)) => self.db_open_selected(window, cx),
+                _ => self.db_toggle(self.db.selected, window, cx),
+            },
             "delete" => {
                 let Some(di) = self.db.selected_source() else { return true };
                 if !matches!(self.db.rows.get(self.db.selected).map(|r| &r.kind), Some(RowKind::Source(_))) {
@@ -708,7 +710,13 @@ impl Workspace {
     pub(super) fn open_ds_dialog(&mut self, editing: Option<usize>, note: Option<String>, after: Option<After>, window: &mut Window, cx: &mut Context<Self>) {
         let ds = editing.and_then(|i| self.db.sources.get(i).cloned()).unwrap_or_else(|| DataSource::new(Driver::Postgres));
         let password = if editing.is_some() { self.password_for(&ds).unwrap_or_default() } else { String::new() };
-        let field = if note.is_some() { Field::Password } else if editing.is_some() { Field::Name } else { Field::Host };
+        let field = if note.is_some() {
+            Field::Password
+        } else if editing.is_some() {
+            Field::Name
+        } else {
+            Field::Host
+        };
         self.db.dialog = Some(Dialog {
             port: if ds.port == 0 { String::new() } else { ds.port.to_string() },
             ds,
@@ -1032,7 +1040,13 @@ impl Workspace {
                                     let null = if c.nullable { "" } else { " not null" };
                                     (icon.into(), color, c.name.clone(), format!("{}{null}", c.type_name), Theme::text())
                                 }
-                                RowKind::Message(_, m, err) => (if *err { "!".into() } else { "…".into() }, Theme::text_muted(), m.clone(), String::new(), if *err { Theme::error() } else { Theme::text_muted() }),
+                                RowKind::Message(_, m, err) => (
+                                    if *err { "!".into() } else { "…".into() },
+                                    Theme::text_muted(),
+                                    m.clone(),
+                                    String::new(),
+                                    if *err { Theme::error() } else { Theme::text_muted() },
+                                ),
                             };
                             let is_source = matches!(row.kind, RowKind::Source(_));
                             div()
@@ -1109,7 +1123,10 @@ impl Workspace {
                     .child(div().flex_1().min_h_0().child(g.clone()))
                     .into_any_element()
             }
-            None => Self::render_placeholder("Services", "Query results appear here. Open a console from the Database tool window (Ctrl+Shift+F10) and run a statement with Ctrl+Enter."),
+            None => Self::render_placeholder(
+                "Services",
+                "Query results appear here. Open a console from the Database tool window (Ctrl+Shift+F10) and run a statement with Ctrl+Enter.",
+            ),
         }
     }
 
@@ -1188,16 +1205,22 @@ impl Workspace {
                 Field::Ssl => div()
                     .flex()
                     .gap(px(4.))
-                    .children([Ssl::Disable, Ssl::Prefer, Ssl::Require].into_iter().enumerate().map(|(i, s)| {
-                        choice(("ds-ssl", i), s == d.ds.ssl, s.title(), cx, move |d| d.ds.ssl = s)
-                    }))
+                    .children(
+                        [Ssl::Disable, Ssl::Prefer, Ssl::Require]
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, s)| choice(("ds-ssl", i), s == d.ds.ssl, s.title(), cx, move |d| d.ds.ssl = s)),
+                    )
                     .into_any_element(),
                 Field::SavePassword => div()
                     .flex()
                     .gap(px(4.))
-                    .children([(true, "Forever"), (false, "Never")].into_iter().enumerate().map(|(i, (v, l))| {
-                        choice(("ds-savepw", i), v == d.ds.save_password, l, cx, move |d| d.ds.save_password = v)
-                    }))
+                    .children(
+                        [(true, "Forever"), (false, "Never")]
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, (v, l))| choice(("ds-savepw", i), v == d.ds.save_password, l, cx, move |d| d.ds.save_password = v)),
+                    )
                     .into_any_element(),
                 _ => {
                     let text = match f {
@@ -1221,7 +1244,12 @@ impl Workspace {
                     if text.is_empty() {
                         div().flex().when(active, |x| x.child(caret())).child(div().text_color(Theme::text_dim()).child(placeholder)).into_any_element()
                     } else {
-                        div().flex().items_center().child(div().when(sel, |x| x.bg(Theme::selection())).child(text)).when(active, |x| x.child(caret())).into_any_element()
+                        div()
+                            .flex()
+                            .items_center()
+                            .child(div().when(sel, |x| x.bg(Theme::selection())).child(text))
+                            .when(active, |x| x.child(caret()))
+                            .into_any_element()
                     }
                 }
             };
@@ -1299,7 +1327,13 @@ impl Workspace {
                                 })))
                                 .child(button("ds-ok", "OK", true).on_click(cx.listener(|this, _, w, cx| this.dialog_ok(w, cx)))),
                         )
-                        .child(div().pt(px(6.)).text_size(ui_px(11.)).text_color(Theme::text_dim()).child("Tab / ↑↓ fields · ←→ or Space switch options · Enter OK · Esc Cancel")),
+                        .child(
+                            div()
+                                .pt(px(6.))
+                                .text_size(ui_px(11.))
+                                .text_color(Theme::text_dim())
+                                .child("Tab / ↑↓ fields · ←→ or Space switch options · Enter OK · Esc Cancel"),
+                        ),
                 )
                 .into_any_element(),
         )
@@ -1323,7 +1357,8 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             for _ in 0..120 {
                 bg.timer(std::time::Duration::from_millis(250)).await;
-                let done = this.update(cx, |this, cx| this.db.results.as_ref().is_some_and(|g| !g.read(cx).is_running()) && this.db.running.is_none()).unwrap_or(true);
+                let done =
+                    this.update(cx, |this, cx| this.db.results.as_ref().is_some_and(|g| !g.read(cx).is_running()) && this.db.running.is_none()).unwrap_or(true);
                 if done {
                     break;
                 }

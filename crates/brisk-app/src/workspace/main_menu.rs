@@ -42,11 +42,16 @@ impl Workspace {
             a("Save All", A::SaveAll),
             a("Reload All from Disk", A::ReloadFromDisk),
             Entry::Separator,
-            Entry::Item { label: "Exit".into(), shortcut: String::new(), enabled: true, run: Rc::new(|this, _, cx| {
-                if this.save_all_for_quit(cx) {
-                    cx.quit();
-                }
-            }) },
+            Entry::Item {
+                label: "Exit".into(),
+                shortcut: String::new(),
+                enabled: true,
+                run: Rc::new(|this, _, cx| {
+                    if this.save_all_for_quit(cx) {
+                        cx.quit();
+                    }
+                }),
+            },
         ];
         // Editor groups give the editor the focus first, so the action applies to it.
         let group = |groups: &[&str], editor: bool| -> Vec<Entry> {

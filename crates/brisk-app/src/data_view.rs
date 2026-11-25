@@ -11,8 +11,8 @@ use crate::ui_kit;
 use brisk_dap::Client;
 use gpui::prelude::*;
 use gpui::{
-    div, px, uniform_list, App, ClipboardItem, Context, Entity, FocusHandle, Focusable, Keystroke, ScrollHandle, ScrollStrategy,
-    Task, UniformListScrollHandle, Window,
+    div, px, uniform_list, App, ClipboardItem, Context, Entity, FocusHandle, Focusable, Keystroke, ScrollHandle, ScrollStrategy, Task, UniformListScrollHandle,
+    Window,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -50,7 +50,9 @@ pub fn parse_reply(result: &str) -> Result<(Info, usize, Page), String> {
     if let Some(e) = v.get("error").and_then(Value::as_str) {
         return Err(e.to_string());
     }
-    let strs = |k: &str| -> Vec<String> { v.get(k).and_then(Value::as_array).map(|a| a.iter().map(|x| x.as_str().unwrap_or("").to_string()).collect()).unwrap_or_default() };
+    let strs = |k: &str| -> Vec<String> {
+        v.get(k).and_then(Value::as_array).map(|a| a.iter().map(|x| x.as_str().unwrap_or("").to_string()).collect()).unwrap_or_default()
+    };
     let info = Info {
         kind: v.get("kind").and_then(Value::as_str).unwrap_or("").to_string(),
         shape: v.get("shape").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(|n| n as usize).collect()).unwrap_or_default(),
@@ -359,7 +361,11 @@ impl DataView {
             (Some(i), None) => {
                 let shape = i.shape.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(" × ");
                 let rows = i.shape.first().copied().unwrap_or(0);
-                if i.total != rows { format!("{} {shape}, {} rows match", i.kind, i.total) } else { format!("{} {shape}", i.kind) }
+                if i.total != rows {
+                    format!("{} {shape}, {} rows match", i.kind, i.total)
+                } else {
+                    format!("{} {shape}", i.kind)
+                }
             }
             (None, None) => "Loading…".into(),
         };
@@ -376,7 +382,17 @@ impl DataView {
             .font_family(ui_font())
             .child(div().font_family(mono_font()).text_size(px(12.5)).text_color(Theme::text()).child(self.expr.clone()))
             .child(label("Filter"))
-            .child(ui_kit::editor_field(&self.filter, if is_array { "x[:, 0] > 5" } else { "price > 10 and city == 'Kyiv'" }, f_focus, false, ui_kit::COMPACT_H, cx).w(px(260.)))
+            .child(
+                ui_kit::editor_field(
+                    &self.filter,
+                    if is_array { "x[:, 0] > 5" } else { "price > 10 and city == 'Kyiv'" },
+                    f_focus,
+                    false,
+                    ui_kit::COMPACT_H,
+                    cx,
+                )
+                .w(px(260.)),
+            )
             .child(label("Format"))
             .child(ui_kit::editor_field(&self.format, "%.3f", m_focus, false, ui_kit::COMPACT_H, cx).w(px(90.)))
             .child(
@@ -560,7 +576,8 @@ mod tests {
 
     #[test]
     fn reply_round_trip() {
-        let json = r#"{"kind":"DataFrame","shape":[3,2],"cols":["a","b"],"dtypes":["int64","object"],"total":2,"a":0,"index":["0","2"],"rows":[["1","x"],["3","z"]]}"#;
+        let json =
+            r#"{"kind":"DataFrame","shape":[3,2],"cols":["a","b"],"dtypes":["int64","object"],"total":2,"a":0,"index":["0","2"],"rows":[["1","x"],["3","z"]]}"#;
         let repr = format!("'{}'", encode_hex(json.as_bytes()));
         let (info, a, page) = parse_reply(&repr).unwrap();
         assert_eq!(info.kind, "DataFrame");

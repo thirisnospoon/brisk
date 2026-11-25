@@ -1,11 +1,11 @@
 //! Run with Coverage: the run goes through coverage.py, then the Coverage tool window lists
 //! the project files with their percentage and the editors show green / red gutter bars.
 
-use crate::theme::ui_px;
 use super::run_marks_ui::norm;
 use super::{BottomTool, Workspace};
 use crate::coverage::{self, Report};
 use crate::editor::Editor;
+use crate::theme::ui_px;
 use crate::theme::Theme;
 use brisk_keymap::Action;
 use brisk_run::{RunConfig, RunKind};
@@ -60,7 +60,8 @@ impl Workspace {
                 if ok {
                     this.start_coverage_run(cfg, python, window, cx);
                 } else {
-                    this.install_offer = Some(super::install_offer_ui::InstallOffer { package: "coverage", python, then: super::install_offer_ui::Then::Coverage(cfg) });
+                    this.install_offer =
+                        Some(super::install_offer_ui::InstallOffer { package: "coverage", python, then: super::install_offer_ui::Then::Coverage(cfg) });
                     cx.notify();
                 }
             });
@@ -211,7 +212,8 @@ impl Workspace {
             .flex_shrink_0()
             .items_center()
             .gap(px(6.))
-            .pl(px(12.)).pr(px(6.))
+            .pl(px(12.))
+            .pr(px(6.))
             .h(px(crate::ui_kit::header_h()))
             .border_b_1()
             .border_color(Theme::divider())
@@ -300,18 +302,29 @@ impl Workspace {
                     .cursor_pointer()
                     .when(sel, |d| d.bg(Theme::selection_row()))
                     .when(!sel, |d| d.hover(|s| s.bg(Theme::hover_row())))
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, e: &gpui::MouseDownEvent, w, cx| {
-                        if let Some(c) = this.coverage.as_mut() {
-                            c.selected = i;
-                            w.focus(&c.focus.clone());
-                        }
-                        if e.click_count >= 2 {
-                            this.coverage_open(i, w, cx);
-                        }
-                        cx.notify();
-                    }))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, e: &gpui::MouseDownEvent, w, cx| {
+                            if let Some(c) = this.coverage.as_mut() {
+                                c.selected = i;
+                                w.focus(&c.focus.clone());
+                            }
+                            if e.click_count >= 2 {
+                                this.coverage_open(i, w, cx);
+                            }
+                            cx.notify();
+                        }),
+                    )
                     .child(div().flex_1().overflow_hidden().text_ellipsis().text_color(Theme::text()).child(rel(&f.path)))
-                    .child(div().w(px(120.)).flex().items_center().gap(px(6.)).child(bar(f.percent)).child(div().text_size(ui_px(12.)).child(format!("{:.0}%", f.percent))))
+                    .child(
+                        div()
+                            .w(px(120.))
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(bar(f.percent))
+                            .child(div().text_size(ui_px(12.)).child(format!("{:.0}%", f.percent))),
+                    )
                     .child(div().w(px(110.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(format!("{} / {}", f.covered.len(), f.statements)))
             }));
         div().id("coverage-window").size_full().flex().flex_col().child(toolbar).child(header).child(list).into_any_element()
@@ -324,8 +337,14 @@ impl Workspace {
     /// checks that an edit hides the marks and ✕ clears them.
     pub(super) fn coverage_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
-        let _ = std::fs::write(root.join("calc.py"), "def add(a, b):\n    return a + b\n\n\ndef sub(a, b):\n    return a - b\n\n\nif __name__ == \"__main__\":\n    print(add(2, 3))\n");
-        let _ = std::fs::write(root.join("test_calc.py"), "from calc import add, sub\n\n\ndef test_add():\n    assert add(1, 2) == 3\n\n\ndef test_sub():\n    assert sub(3, 1) == 2\n");
+        let _ = std::fs::write(
+            root.join("calc.py"),
+            "def add(a, b):\n    return a + b\n\n\ndef sub(a, b):\n    return a - b\n\n\nif __name__ == \"__main__\":\n    print(add(2, 3))\n",
+        );
+        let _ = std::fs::write(
+            root.join("test_calc.py"),
+            "from calc import add, sub\n\n\ndef test_add():\n    assert add(1, 2) == 3\n\n\ndef test_sub():\n    assert sub(3, 1) == 2\n",
+        );
         self.open_file(&root.join("calc.py"), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let bg = cx.background_executor().clone();
@@ -346,7 +365,16 @@ impl Workspace {
                         break;
                     }
                 }
-                let _ = this.update(cx, |this, _| eprintln!("smoke-coverage: offer for {:?}, interpreter {:?}", this.install_offer.as_ref().and_then(|o| match &o.then { super::install_offer_ui::Then::Coverage(c) => Some(c.name.clone()), _ => None }), this.interpreter_label()));
+                let _ = this.update(cx, |this, _| {
+                    eprintln!(
+                        "smoke-coverage: offer for {:?}, interpreter {:?}",
+                        this.install_offer.as_ref().and_then(|o| match &o.then {
+                            super::install_offer_ui::Then::Coverage(c) => Some(c.name.clone()),
+                            _ => None,
+                        }),
+                        this.interpreter_label()
+                    )
+                });
                 return;
             }
             let marks = |this: &Workspace, cx: &gpui::App| {
@@ -356,7 +384,16 @@ impl Workspace {
                 })
             };
             let report = |this: &Workspace| {
-                this.coverage.as_ref().map(|c| (c.report.percent.round(), c.report.files.iter().map(|f| format!("{} {:.0}% {}/{}", f.path.file_name().unwrap().to_string_lossy(), f.percent, f.covered.len(), f.statements)).collect::<Vec<_>>()))
+                this.coverage.as_ref().map(|c| {
+                    (
+                        c.report.percent.round(),
+                        c.report
+                            .files
+                            .iter()
+                            .map(|f| format!("{} {:.0}% {}/{}", f.path.file_name().unwrap().to_string_lossy(), f.percent, f.covered.len(), f.statements))
+                            .collect::<Vec<_>>(),
+                    )
+                })
             };
             for (step, file) in [("script", "calc.py"), ("pytest", "test_calc.py")] {
                 let _ = this.update_in(cx, |this, window, cx| {
@@ -388,7 +425,9 @@ impl Workspace {
                     c.selected = 0;
                 }
                 this.coverage_key("enter", window, cx);
-                let at = this.active_editor().map(|e| (e.read(cx).path.clone().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())), e.read(cx).caret_line_col().0 + 1));
+                let at = this.active_editor().map(|e| {
+                    (e.read(cx).path.clone().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())), e.read(cx).caret_line_col().0 + 1)
+                });
                 eprintln!("smoke-coverage: enter -> {at:?}");
                 let ed = this.active_editor().cloned().unwrap();
                 ed.update(cx, |e, cx| e.replace_text_in_range(None, "x = 1  # edited", window, cx));

@@ -27,8 +27,14 @@ impl Workspace {
     pub(super) fn web_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let _ = std::fs::create_dir_all(root.join("api"));
-        let _ = std::fs::write(root.join("api/main.py"), "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/\")\ndef index():\n    return {\"hello\": \"fastapi\"}\n");
-        let _ = std::fs::write(root.join("webapp.py"), "from flask import Flask\n\nweb = Flask(__name__)\n\n\n@web.route(\"/\")\ndef index():\n    return \"hello flask\"\n");
+        let _ = std::fs::write(
+            root.join("api/main.py"),
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/\")\ndef index():\n    return {\"hello\": \"fastapi\"}\n",
+        );
+        let _ = std::fs::write(
+            root.join("webapp.py"),
+            "from flask import Flask\n\nweb = Flask(__name__)\n\n\n@web.route(\"/\")\ndef index():\n    return \"hello flask\"\n",
+        );
         // A stub of Django's command line: enough to check what Brisk starts.
         let _ = std::fs::create_dir_all(root.join("site/django/core/management"));
         let _ = std::fs::write(root.join("site/manage.py"), "import os\nimport sys\n\n\ndef main():\n    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n    from django.core.management import execute_from_command_line\n    execute_from_command_line(sys.argv)\n\n\nif __name__ == '__main__':\n    main()\n");
@@ -48,7 +54,8 @@ impl Workspace {
                 }
             }
             let keep = std::env::var("BRISK_SMOKE_WEB").is_ok_and(|v| v.starts_with("dialog"));
-            let _ = this.update(cx, |this, cx| eprintln!("smoke-web: dialog + FastAPI / + Flask / + Django / + Django tests -> {:?}", this.web_dialog_probe(keep, cx)));
+            let _ = this
+                .update(cx, |this, cx| eprintln!("smoke-web: dialog + FastAPI / + Flask / + Django / + Django tests -> {:?}", this.web_dialog_probe(keep, cx)));
             if keep {
                 return;
             }

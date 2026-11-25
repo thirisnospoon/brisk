@@ -26,7 +26,8 @@ impl Workspace {
         let budget = arg.parse::<u64>().ok().filter(|&n| n > 1).unwrap_or(DEFAULT_BUDGET_MB);
         let root = self.root.clone();
         let flood = root.join("mb_flood.py");
-        let _ = std::fs::write(&flood, format!("for i in range({LINES}):\n    print(f'line {{i:06d}} the quick brown fox jumps over the lazy dog 0123456789')\n"));
+        let _ =
+            std::fs::write(&flood, format!("for i in range({LINES}):\n    print(f'line {{i:06d}} the quick brown fox jumps over the lazy dog 0123456789')\n"));
         let dir = root.join("mb_tabs");
         let _ = std::fs::create_dir_all(&dir);
         let files: Vec<_> = (0..TABS)

@@ -23,7 +23,10 @@ impl Workspace {
         if std::env::var("BRISK_SMOKE_KEYMAP").is_ok_and(|v| v == "hold") {
             return;
         }
-        let shown = self.key_capture.as_ref().map(|c| (c.strokes.iter().map(Keystroke::to_string).collect::<Vec<_>>(), self.resolver.keymap().conflicts(c.action, &c.strokes)));
+        let shown = self
+            .key_capture
+            .as_ref()
+            .map(|c| (c.strokes.iter().map(Keystroke::to_string).collect::<Vec<_>>(), self.resolver.keymap().conflicts(c.action, &c.strokes)));
         eprintln!("smoke-keymap: capture -> {shown:?}");
         self.smoke_press("enter", window, cx);
         eprintln!("smoke-keymap: status {:?}, capture closed {}", self.status, self.key_capture.is_none());
@@ -40,17 +43,35 @@ impl Workspace {
             jb.join("keymaps/Mine.xml"),
             r#"<keymap version="1" name="Mine" parent="$default"><action id="ReformatCode"><keyboard-shortcut first-keystroke="ctrl alt F" /></action><action id="AnalyzeStacktrace"><keyboard-shortcut first-keystroke="ctrl alt shift S" /></action></keymap>"#,
         );
-        let _ = std::fs::write(jb.join("options/keymap.xml"), r#"<application><component name="KeymapManager"><active_keymap name="Mine" /></component></application>"#);
+        let _ = std::fs::write(
+            jb.join("options/keymap.xml"),
+            r#"<application><component name="KeymapManager"><active_keymap name="Mine" /></component></application>"#,
+        );
         self.keymap_pick(Target::KeymapImport, window, cx);
         let k = Keystroke::parse("ctrl-alt-f").unwrap();
-        let by = self.resolver.keymap().bindings.iter().filter(|b| matches!(&b.trigger, brisk_keymap::Trigger::Keys(ks) if ks == &vec![k.clone()])).map(|b| b.action).collect::<Vec<_>>();
-        eprintln!("smoke-keymap: import -> {:?}; ctrl+alt+f -> {by:?}; delete line still {:?}", self.status, self.resolver.keymap().shortcut_label(Action::DeleteLine));
+        let by = self
+            .resolver
+            .keymap()
+            .bindings
+            .iter()
+            .filter(|b| matches!(&b.trigger, brisk_keymap::Trigger::Keys(ks) if ks == &vec![k.clone()]))
+            .map(|b| b.action)
+            .collect::<Vec<_>>();
+        eprintln!(
+            "smoke-keymap: import -> {:?}; ctrl+alt+f -> {by:?}; delete line still {:?}",
+            self.status,
+            self.resolver.keymap().shortcut_label(Action::DeleteLine)
+        );
 
         self.keymap_pick(Target::KeymapResetAll, window, cx);
         let _ = std::fs::write(&file, "one\ntwo\n");
         self.focus_editor(window, cx);
         self.smoke_press("ctrl-d", window, cx);
-        eprintln!("smoke-keymap: after Reset All -> file exists {}, ctrl+d {:?}", crate::keymap_store::path().exists(), self.resolver.keymap().shortcut_label(Action::DuplicateLine));
+        eprintln!(
+            "smoke-keymap: after Reset All -> file exists {}, ctrl+d {:?}",
+            crate::keymap_store::path().exists(),
+            self.resolver.keymap().shortcut_label(Action::DuplicateLine)
+        );
         cx.quit();
     }
 }

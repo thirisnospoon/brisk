@@ -93,10 +93,7 @@ impl Index {
                 let exact: Vec<&Route> = self.routes.iter().filter(|r| r.name.as_deref() == Some(name.as_str())).collect();
                 let found = if exact.is_empty() {
                     // `{% url 'detail' %}` inside an app, `url_for('index')` for `bp.index`.
-                    self.routes
-                        .iter()
-                        .filter(|r| r.name.as_deref().and_then(|n| n.rsplit([':', '.']).next()) == Some(name.as_str()))
-                        .collect()
+                    self.routes.iter().filter(|r| r.name.as_deref().and_then(|n| n.rsplit([':', '.']).next()) == Some(name.as_str())).collect()
                 } else {
                     exact
                 };
@@ -107,11 +104,7 @@ impl Index {
 
     /// The names a template file is known by: `polls/detail.html` under `polls/templates/`.
     pub fn template_names(&self, file: &Path) -> Vec<String> {
-        self.template_dirs
-            .iter()
-            .filter_map(|d| file.strip_prefix(d).ok())
-            .map(|rel| rel.to_string_lossy().replace('\\', "/"))
-            .collect()
+        self.template_dirs.iter().filter_map(|d| file.strip_prefix(d).ok()).map(|rel| rel.to_string_lossy().replace('\\', "/")).collect()
     }
 
     /// Python files and templates that mention a template by name (`render(...)`,

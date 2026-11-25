@@ -15,8 +15,7 @@ const HIDDEN_EXT: &[&str] = &["pyc", "pyo"];
 const EXCLUDED: &[&str] = &[".venv", "venv", "env", "node_modules", ".tox", "dist", "build", ".next", ".nuxt", "target"];
 
 pub fn is_hidden(name: &str) -> bool {
-    HIDDEN.contains(&name)
-        || Path::new(name).extension().and_then(|e| e.to_str()).is_some_and(|e| HIDDEN_EXT.contains(&e))
+    HIDDEN.contains(&name) || Path::new(name).extension().and_then(|e| e.to_str()).is_some_and(|e| HIDDEN_EXT.contains(&e))
 }
 
 pub fn is_excluded_dir(name: &str) -> bool {
@@ -82,16 +81,7 @@ impl ProjectTree {
     pub fn new(root: &Path) -> Self {
         let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| root.display().to_string());
         let mut t = Self {
-            nodes: vec![Node {
-                name,
-                path: root.to_path_buf(),
-                is_dir: true,
-                excluded: false,
-                depth: 0,
-                parent: None,
-                children: None,
-                expanded: false,
-            }],
+            nodes: vec![Node { name, path: root.to_path_buf(), is_dir: true, excluded: false, depth: 0, parent: None, children: None, expanded: false }],
             roots: vec![0],
             rows: Vec::new(),
             rows_dirty: true,
@@ -111,7 +101,16 @@ impl ProjectTree {
             return id;
         }
         let id = self.nodes.len();
-        self.nodes.push(Node { name: name.into(), path: dir.to_path_buf(), is_dir: true, excluded: false, depth: 0, parent: None, children: None, expanded: false });
+        self.nodes.push(Node {
+            name: name.into(),
+            path: dir.to_path_buf(),
+            is_dir: true,
+            excluded: false,
+            depth: 0,
+            parent: None,
+            children: None,
+            expanded: false,
+        });
         self.roots.push(id);
         self.rows_dirty = true;
         id
@@ -344,7 +343,8 @@ impl FileList {
             .filter_entry(move |e| {
                 let name = e.file_name().to_string_lossy();
                 let dir = e.file_type().is_some_and(|t| t.is_dir());
-                !(is_hidden(&name) || (dir && (is_excluded_dir(&name) || rel_path(&base, e.path()).is_some_and(|r| !r.is_empty() && structure.is_excluded(&r)))))
+                !(is_hidden(&name)
+                    || (dir && (is_excluded_dir(&name) || rel_path(&base, e.path()).is_some_and(|r| !r.is_empty() && structure.is_excluded(&r)))))
             })
             .build_parallel();
         let (tx, rx) = std::sync::mpsc::channel::<String>();

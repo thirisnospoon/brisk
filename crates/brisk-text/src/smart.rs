@@ -247,7 +247,12 @@ impl Buffer {
         let before: String = text.chars().take(col).collect();
         let after: String = text.chars().skip(col).collect();
         // The third quote of `"""`: close it as `"""|"""`.
-        if (c == '"' || c == '\'') && self.auto_pairs && before.ends_with(&c.to_string().repeat(2)) && !before.ends_with(&c.to_string().repeat(3)) && !after.starts_with(c) {
+        if (c == '"' || c == '\'')
+            && self.auto_pairs
+            && before.ends_with(&c.to_string().repeat(2))
+            && !before.ends_with(&c.to_string().repeat(3))
+            && !after.starts_with(c)
+        {
             let sc = scan(&before[..before.len() - 2]);
             if sc.string.is_none() && !sc.triple && sc.comment.is_none() {
                 let ins: String = std::iter::repeat_n(c, 4).collect();
@@ -330,7 +335,11 @@ impl Buffer {
         };
         let target = indent_width(&before, tab);
         let pad = |w: usize| -> String {
-            if unit.starts_with('\t') { "\t".repeat(w / tab) + &" ".repeat(w % tab) } else { " ".repeat(w) }
+            if unit.starts_with('\t') {
+                "\t".repeat(w / tab) + &" ".repeat(w % tab)
+            } else {
+                " ".repeat(w)
+            }
         };
         let mut out = String::with_capacity(text.len());
         out.push_str(first.trim_start_matches([' ', '\t']));

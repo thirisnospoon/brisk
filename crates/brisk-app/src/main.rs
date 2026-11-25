@@ -4,32 +4,32 @@
 
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
+mod coverage;
 mod crash;
-mod stall;
-mod diff_view;
-mod merge_view;
-mod grid_view;
 mod data_view;
-mod icons;
-mod ui_kit;
+mod diff_view;
 mod editor;
 mod editorconfig;
-mod keys;
+mod grid_view;
+mod icons;
 mod keymap_store;
+mod keys;
 mod local_history;
+mod merge_view;
+mod profile;
 mod py_console;
-mod py_packages;
 mod py_manager;
+mod py_packages;
 mod py_venv;
 mod run_anything;
-mod terminal_env;
-mod coverage;
-mod profile;
-mod todo_scan;
-mod terminal_view;
 mod scrollbar;
 mod settings;
+mod stall;
+mod terminal_env;
+mod terminal_view;
 mod theme;
+mod todo_scan;
+mod ui_kit;
 mod workspace;
 
 use gpui::{px, size, App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
@@ -53,9 +53,12 @@ fn main() {
     settings::load();
     workspace::budget_probe::mark("settings");
     // Local History: old revisions and the over-budget oldest go, once per start, off the UI.
-    std::thread::Builder::new().name("local-history-cleanup".into()).spawn(|| {
-        local_history::cleanup();
-    }).ok();
+    std::thread::Builder::new()
+        .name("local-history-cleanup".into())
+        .spawn(|| {
+            local_history::cleanup();
+        })
+        .ok();
 
     Application::new().with_assets(icons::Assets).run(move |cx: &mut App| {
         workspace::budget_probe::mark("app_run");

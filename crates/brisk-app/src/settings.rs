@@ -61,7 +61,31 @@ pub const DEFAULT_SOFT_WRAP_FILES: &str = "*.md; *.txt; *.rst; *.adoc";
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { light: false, editor_font: crate::theme::mono_font().to_string(), font_size: DEFAULT_FONT_SIZE, line_spacing: 1.0, inlay_hints: true, islands: false, tab_limit: DEFAULT_TAB_LIMIT, tab_rows: false, ui_font_size: DEFAULT_UI_FONT_SIZE, ui_zoom: 1.0, reformat_on_save: false, optimize_imports_on_save: false, smooth_scrolling: true, caret_blinking: true, smooth_caret: false, sticky_lines: true, soft_wrap_files: DEFAULT_SOFT_WRAP_FILES.into(), soft_wrap_indent: true, soft_wrap_extra_indent: 0, line_comment_first_column: true, line_comment_space: true, show_whitespaces: false, animations: true }
+        Self {
+            light: false,
+            editor_font: crate::theme::mono_font().to_string(),
+            font_size: DEFAULT_FONT_SIZE,
+            line_spacing: 1.0,
+            inlay_hints: true,
+            islands: false,
+            tab_limit: DEFAULT_TAB_LIMIT,
+            tab_rows: false,
+            ui_font_size: DEFAULT_UI_FONT_SIZE,
+            ui_zoom: 1.0,
+            reformat_on_save: false,
+            optimize_imports_on_save: false,
+            smooth_scrolling: true,
+            caret_blinking: true,
+            smooth_caret: false,
+            sticky_lines: true,
+            soft_wrap_files: DEFAULT_SOFT_WRAP_FILES.into(),
+            soft_wrap_indent: true,
+            soft_wrap_extra_indent: 0,
+            line_comment_first_column: true,
+            line_comment_space: true,
+            show_whitespaces: false,
+            animations: true,
+        }
     }
 }
 
@@ -365,7 +389,11 @@ pub fn inlay_hints() -> bool {
 
 pub fn font_size() -> f32 {
     let v = f32::from_bits(FONT_SIZE.load(Ordering::Relaxed));
-    if v > 0.0 { v } else { DEFAULT_FONT_SIZE }
+    if v > 0.0 {
+        v
+    } else {
+        DEFAULT_FONT_SIZE
+    }
 }
 
 pub fn line_height() -> f32 {

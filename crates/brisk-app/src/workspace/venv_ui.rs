@@ -2,12 +2,12 @@
 //! background, progress in the status bar), made the project interpreter; then an offer to
 //! install the project's requirements into it.
 
-use crate::theme::ui_px;
 use super::{PopupItem, Target, Workspace};
-use crate::py_venv::{self, Requirements};
 use crate::py_manager;
-use brisk_run::pyproj::{self, Manager};
+use crate::py_venv::{self, Requirements};
+use crate::theme::ui_px;
 use crate::theme::Theme;
+use brisk_run::pyproj::{self, Manager};
 use brisk_run::InterpKind;
 use gpui::prelude::*;
 use gpui::{div, px, Context, Window};
@@ -77,7 +77,12 @@ impl Workspace {
         }
         let dir = py_venv::free_dir(&self.root).and_then(|d| d.file_name().map(|n| n.to_string_lossy().into_owned()));
         let Some(dir) = dir else {
-            managed.push(PopupItem { label: "The project already has .venv and venv".into(), detail: "select one of them in the interpreter list".into(), hint: String::new(), target: Target::Cancel });
+            managed.push(PopupItem {
+                label: "The project already has .venv and venv".into(),
+                detail: "select one of them in the interpreter list".into(),
+                hint: String::new(),
+                target: Target::Cancel,
+            });
             return managed;
         };
         let mut v: Vec<PopupItem> = self
@@ -98,7 +103,12 @@ impl Workspace {
         if self.runs.all.is_none() {
             v.push(PopupItem { label: "Detecting interpreters…".into(), detail: String::new(), hint: String::new(), target: Target::Cancel });
         } else if v.is_empty() && managed.is_empty() {
-            v.push(PopupItem { label: "No base Python found".into(), detail: "install Python from python.org".into(), hint: String::new(), target: Target::Cancel });
+            v.push(PopupItem {
+                label: "No base Python found".into(),
+                detail: "install Python from python.org".into(),
+                hint: String::new(),
+                target: Target::Cancel,
+            });
         }
         managed.extend(v);
         managed
@@ -344,7 +354,8 @@ impl Workspace {
                     p.selected = p.items.iter().position(|i| i.label == "Add Interpreter…").unwrap_or(0);
                 }
                 this.smoke_press("enter", window, cx);
-                let labels: Vec<String> = this.popup.as_ref().map(|p| p.items.iter().map(|i| format!("{} | {}", i.label, i.detail)).collect()).unwrap_or_default();
+                let labels: Vec<String> =
+                    this.popup.as_ref().map(|p| p.items.iter().map(|i| format!("{} | {}", i.label, i.detail)).collect()).unwrap_or_default();
                 eprintln!("smoke-venv: add interpreter popup {labels:?}");
                 this.smoke_press("enter", window, cx);
                 eprintln!("smoke-venv: status {:?}", this.status);
@@ -358,7 +369,12 @@ impl Workspace {
             pause(200).await;
             let hold = std::env::var("BRISK_SMOKE_VENV").as_deref() == Ok("hold");
             let _ = this.update_in(cx, |this, _, _| {
-                eprintln!("smoke-venv: created -> interpreter {:?}, .venv exists {}, toast {:?}", this.interpreter_label(), this.root.join(".venv").join("pyvenv.cfg").is_file(), this.toast.as_ref().map(|t| t.0.clone()));
+                eprintln!(
+                    "smoke-venv: created -> interpreter {:?}, .venv exists {}, toast {:?}",
+                    this.interpreter_label(),
+                    this.root.join(".venv").join("pyvenv.cfg").is_file(),
+                    this.toast.as_ref().map(|t| t.0.clone())
+                );
                 eprintln!("smoke-venv: offer {:?}", this.venv_offer.as_ref().map(|o| o.text()));
             });
             if hold {
@@ -401,7 +417,8 @@ impl Workspace {
                 // The offer again (as after another Add Interpreter), to click Not now.
                 OFFER_BUTTONS.with(|c| *c.borrow_mut() = [None, None]);
                 let python = brisk_run::venv_python(&this.root.join(".venv"));
-                this.venv_offer = python.zip(py_venv::requirements(&this.root)).map(|(python, req)| VenvOffer { python, what: OfferKind::Install(req), installing: false });
+                this.venv_offer =
+                    python.zip(py_venv::requirements(&this.root)).map(|(python, req)| VenvOffer { python, what: OfferKind::Install(req), installing: false });
                 cx.notify();
             });
             for _ in 0..30 {

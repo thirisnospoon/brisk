@@ -186,7 +186,9 @@ fn block_inner<'a>(t: &'a str, open: &str, close: &str) -> Option<&'a str> {
 fn block_markers(path: Option<&std::path::Path>) -> Option<(&'static str, &'static str)> {
     let ext = path?.extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
-        "css" | "scss" | "less" | "js" | "jsx" | "ts" | "tsx" | "c" | "cpp" | "h" | "hpp" | "rs" | "java" | "go" | "sql" | "kt" | "json5" | "jsonc" => Some(("/*", "*/")),
+        "css" | "scss" | "less" | "js" | "jsx" | "ts" | "tsx" | "c" | "cpp" | "h" | "hpp" | "rs" | "java" | "go" | "sql" | "kt" | "json5" | "jsonc" => {
+            Some(("/*", "*/"))
+        }
         "html" | "htm" | "xml" | "md" | "vue" | "svg" => Some(("<!--", "-->")),
         _ => None,
     }

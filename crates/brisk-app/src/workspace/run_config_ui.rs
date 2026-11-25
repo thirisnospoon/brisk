@@ -2,8 +2,8 @@
 //! chip, Alt+Shift+F10 › Edit): configurations on the left, the selected one's form on the
 //! right. OK writes `.brisk/run.json`.
 
-use crate::theme::ui_px;
 use super::Workspace;
+use crate::theme::ui_px;
 use crate::theme::Theme;
 use brisk_run::{RunConfig, RunKind};
 use gpui::prelude::*;
@@ -35,7 +35,10 @@ pub enum Field {
 
 impl Field {
     fn is_text(self) -> bool {
-        !matches!(self, Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal | Field::ProjectFile)
+        !matches!(
+            self,
+            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal | Field::ProjectFile
+        )
     }
 }
 
@@ -55,7 +58,8 @@ pub enum Kind {
 }
 
 impl Kind {
-    const ALL: [Kind; 10] = [Kind::Script, Kind::Module, Kind::Pytest, Kind::Unittest, Kind::Doctest, Kind::Compound, Kind::FastApi, Kind::Flask, Kind::Django, Kind::DjangoTests];
+    const ALL: [Kind; 10] =
+        [Kind::Script, Kind::Module, Kind::Pytest, Kind::Unittest, Kind::Doctest, Kind::Compound, Kind::FastApi, Kind::Flask, Kind::Django, Kind::DjangoTests];
     fn of(c: &RunConfig) -> Kind {
         match (c.kind, c.module) {
             (RunKind::Pytest, _) => Kind::Pytest,
@@ -247,7 +251,18 @@ fn fields(kind: Kind, temporary: bool) -> Vec<Field> {
     if matches!(kind, Kind::Pytest | Kind::Unittest) {
         v.push(F::Keywords);
     }
-    v.extend([F::Parameters, F::InterpreterOptions, F::WorkingDirectory, F::Env, F::EnvFiles, F::Interpreter, F::BeforeRun, F::BeforeCommand, F::OnStart, F::AllowMultiple]);
+    v.extend([
+        F::Parameters,
+        F::InterpreterOptions,
+        F::WorkingDirectory,
+        F::Env,
+        F::EnvFiles,
+        F::Interpreter,
+        F::BeforeRun,
+        F::BeforeCommand,
+        F::OnStart,
+        F::AllowMultiple,
+    ]);
     if matches!(kind, Kind::Script | Kind::Module) {
         v.extend([F::PythonConsole, F::EmulateTerminal]);
     }
@@ -351,7 +366,9 @@ impl RunDialog {
             Field::BeforeRun => &mut d.cfg.before_run,
             Field::BeforeCommand => &mut d.cfg.before_command,
             Field::Interpreter => d.cfg.interpreter.get_or_insert_with(String::new),
-            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal | Field::ProjectFile => return None,
+            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal | Field::ProjectFile => {
+                return None
+            }
         })
     }
 
@@ -369,7 +386,9 @@ impl RunDialog {
             Field::BeforeRun => &d.cfg.before_run,
             Field::BeforeCommand => &d.cfg.before_command,
             Field::Interpreter => return d.cfg.interpreter.as_deref().map_or(0, |s| s.chars().count()),
-            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal | Field::ProjectFile => return 0,
+            Field::Kind | Field::Temporary | Field::OnStart | Field::AllowMultiple | Field::PythonConsole | Field::EmulateTerminal | Field::ProjectFile => {
+                return 0
+            }
         };
         s.chars().count()
     }
@@ -604,7 +623,20 @@ impl Workspace {
             drafts[i].selected = true;
         }
         let templates = brisk_run::TEMPLATE_KINDS.iter().map(|(k, _)| Draft::new(f.template(*k))).collect();
-        let mut d = RunDialog { drafts, current: current.unwrap_or(0), field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None, django_settings: None, templates: false, other: (templates, 0), test_runner: f.test_runner };
+        let mut d = RunDialog {
+            drafts,
+            current: current.unwrap_or(0),
+            field: Field::Name,
+            caret: 0,
+            select_all: false,
+            error: None,
+            apps: Vec::new(),
+            adding: None,
+            django_settings: None,
+            templates: false,
+            other: (templates, 0),
+            test_runner: f.test_runner,
+        };
         d.apps = [RunKind::FastApi, RunKind::Flask].into_iter().filter_map(|k| brisk_run::web::find_app(&self.root, Some(k)).map(|(k, _, t)| (k, t))).collect();
         if let Some((m, settings)) = brisk_run::django::find_manage(&self.root) {
             d.django_settings = settings;
@@ -635,7 +667,8 @@ impl Workspace {
         // The toolbar keeps the selected configuration, renamed or not; removed: Current File.
         let selected = d.split().0.iter().zip(&cfgs).find(|(dr, _)| dr.selected).map(|(_, c)| c.name.clone());
         // Templates are kept only when they set something.
-        let templates = d.split().1.iter().map(Draft::commit).filter(|t| *t != RunConfig { name: t.name.clone(), kind: t.kind, ..Default::default() }).collect();
+        let templates =
+            d.split().1.iter().map(Draft::commit).filter(|t| *t != RunConfig { name: t.name.clone(), kind: t.kind, ..Default::default() }).collect();
         self.runs.file.templates = templates;
         self.runs.file.test_runner = d.test_runner;
         self.runs.file.configurations = cfgs;
@@ -726,7 +759,11 @@ impl Workspace {
             "v" if m.control && text => {
                 if let Some(t) = cx.read_from_clipboard().and_then(|c| c.text()) {
                     // Environment: pasted lines become `;`-separated entries.
-                    let t = if matches!(d.field, Field::Env | Field::EnvFiles | Field::BeforeRun) { t.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join(";") } else { t.lines().next().unwrap_or("").to_string() };
+                    let t = if matches!(d.field, Field::Env | Field::EnvFiles | Field::BeforeRun) {
+                        t.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join(";")
+                    } else {
+                        t.lines().next().unwrap_or("").to_string()
+                    };
                     d.insert(&t);
                 }
             }
@@ -878,14 +915,19 @@ impl Workspace {
                     .when(!on, |x| x.hover(|s| s.bg(Theme::hover_row())))
                     .child(div().text_color(Theme::file_added()).child(glyph))
                     .child(div().flex_1().overflow_hidden().whitespace_nowrap().when(dr.cfg.temporary, |x| x.text_color(Theme::text_muted())).child(name))
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                        if let Some(d) = this.runs.dialog.as_mut() {
-                            d.select_config(i);
-                        }
-                        cx.notify();
-                    }))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            if let Some(d) = this.runs.dialog.as_mut() {
+                                d.select_config(i);
+                            }
+                            cx.notify();
+                        }),
+                    )
             }))
-            .when(d.drafts.is_empty(), |x| x.child(div().p(px(8.)).text_color(Theme::text_dim()).child("No configurations. Add one with + above (Alt+Insert).")));
+            .when(d.drafts.is_empty(), |x| {
+                x.child(div().p(px(8.)).text_color(Theme::text_dim()).child("No configurations. Add one with + above (Alt+Insert)."))
+            });
         // "Add New Configuration": the templates in place of the list until one is picked.
         let templates = d.adding.map(|sel| {
             div()
@@ -906,14 +948,17 @@ impl Workspace {
                         .when(!on, |x| x.hover(|s| s.bg(Theme::hover_row())))
                         .child(div().child(k.title()))
                         .child(div().text_size(ui_px(11.5)).text_color(Theme::text_dim()).child(k.hint()))
-                        .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                            if let Some(d) = this.runs.dialog.as_mut() {
-                                d.adding = None;
-                                d.add(k);
-                                d.error = None;
-                            }
-                            cx.notify();
-                        }))
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                if let Some(d) = this.runs.dialog.as_mut() {
+                                    d.adding = None;
+                                    d.add(k);
+                                    d.error = None;
+                                }
+                                cx.notify();
+                            }),
+                        )
                 }))
         });
         let left = div()
@@ -1075,7 +1120,13 @@ impl Workspace {
                             Field::Parameters if kind == Kind::Flask => "flask run options, e.g. --debug --port 5001".into(),
                             Field::Parameters if kind == Kind::Django => "runserver address and options, e.g. 127.0.0.1:8001 --noreload".into(),
                             Field::Parameters if kind == Kind::DjangoTests => "test labels and options, e.g. polls.tests -v 2 (empty: all)".into(),
-                            Field::WorkingDirectory => if kind == Kind::Script { "the script's folder".into() } else { "the project root".into() },
+                            Field::WorkingDirectory => {
+                                if kind == Kind::Script {
+                                    "the script's folder".into()
+                                } else {
+                                    "the project root".into()
+                                }
+                            }
                             Field::Env => "KEY=VALUE;KEY2=VALUE2 (wins over .env files)".into(),
                             Field::EnvFiles => ".env;config/dev.env (KEY=VALUE lines)".into(),
                             Field::BeforeRun => "migrate;build (configurations, in order; a failure stops)".into(),
@@ -1112,7 +1163,16 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap(px(10.))
-                        .child(div().w(px(150.)).flex_shrink_0().whitespace_nowrap().overflow_hidden().text_ellipsis().text_color(Theme::text_muted()).child(label(f, kind)))
+                        .child(
+                            div()
+                                .w(px(150.))
+                                .flex_shrink_0()
+                                .whitespace_nowrap()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .text_color(Theme::text_muted())
+                                .child(label(f, kind)),
+                        )
                         .child(
                             crate::ui_kit::input_frame(active, false, crate::ui_kit::CONTROL_H)
                                 .when(f == Field::Kind, |d| d.h_auto().min_h(px(crate::ui_kit::CONTROL_H)).py(px(3.)))
@@ -1183,7 +1243,13 @@ impl Workspace {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                .child(div().flex_1().text_size(ui_px(11.)).text_color(Theme::text_dim()).child("Tab / ↑↓ fields · Alt+↑↓ configurations · Enter OK · Esc Cancel"))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_size(ui_px(11.))
+                                        .text_color(Theme::text_dim())
+                                        .child("Tab / ↑↓ fields · Alt+↑↓ configurations · Enter OK · Esc Cancel"),
+                                )
                                 .child(button("rc-cancel", "Cancel", false).on_click(cx.listener(|this, _, w, cx| this.run_dialog_cancel(w, cx))))
                                 .child(button("rc-apply", "Apply", false).on_click(cx.listener(|this, _, w, cx| {
                                     this.run_dialog_save(false, w, cx);
@@ -1228,7 +1294,11 @@ impl Workspace {
         self.rc_type(".env", window, cx);
         self.smoke_press("enter", window, cx);
         let cfg = brisk_run::load(&root).0.get("envdemo").cloned();
-        eprintln!("smoke-envfile: field {field:?}, saved env {:?} envFiles {:?}", cfg.as_ref().map(|c| c.env.clone()), cfg.as_ref().map(|c| c.env_files.clone()));
+        eprintln!(
+            "smoke-envfile: field {field:?}, saved env {:?} envFiles {:?}",
+            cfg.as_ref().map(|c| c.env.clone()),
+            cfg.as_ref().map(|c| c.env_files.clone())
+        );
         let Some(cfg) = cfg else {
             cx.quit();
             return;
@@ -1354,7 +1424,13 @@ impl Workspace {
         let show = |this: &Self| {
             let d = this.runs.dialog.as_ref();
             let names: Vec<String> = d.map(|d| d.drafts.iter().map(|x| x.cfg.name.clone()).collect()).unwrap_or_default();
-            format!("open={} current={:?} field={:?} names={names:?} error={:?}", d.is_some(), d.map(|d| d.current), d.map(|d| d.field), d.and_then(|d| d.error.clone()))
+            format!(
+                "open={} current={:?} field={:?} names={names:?} error={:?}",
+                d.is_some(),
+                d.map(|d| d.current),
+                d.map(|d| d.field),
+                d.and_then(|d| d.error.clone())
+            )
         };
         self.dispatch(brisk_keymap::Action::EditRunConfigurations, window, cx);
         eprintln!("smoke-runcfg: open -> {}", show(self));
@@ -1413,7 +1489,11 @@ impl Workspace {
         self.smoke_press("space enter", window, cx);
         let file = self.root.join(".run/demo.run.xml");
         let xml = std::fs::read_to_string(&file).unwrap_or_default();
-        eprintln!("smoke-runcfg: project file (field {field:?}) -> {} bytes, module mode {}", xml.len(), xml.contains(r#"<option name="MODULE_NAME" value="http.server" />"#));
+        eprintln!(
+            "smoke-runcfg: project file (field {field:?}) -> {} bytes, module mode {}",
+            xml.len(),
+            xml.contains(r#"<option name="MODULE_NAME" value="http.server" />"#)
+        );
         // A teammate edits it (git pull): the next look at the configurations takes it.
         let _ = std::fs::write(&file, xml.replace("8000 --bind 127.0.0.1", "9000"));
         self.reload_runs();
@@ -1423,7 +1503,11 @@ impl Workspace {
         self.smoke_press("ctrl-a", window, cx);
         self.rc_type("renamed", window, cx);
         self.smoke_press("escape", window, cx);
-        eprintln!("smoke-runcfg: rename + escape -> {} names on disk {:?}", show(self), brisk_run::load(&self.root).0.configurations.iter().map(|c| c.name.clone()).collect::<Vec<_>>());
+        eprintln!(
+            "smoke-runcfg: rename + escape -> {} names on disk {:?}",
+            show(self),
+            brisk_run::load(&self.root).0.configurations.iter().map(|c| c.name.clone()).collect::<Vec<_>>()
+        );
         eprintln!("smoke-runcfg: done");
         cx.quit();
     }
@@ -1503,7 +1587,20 @@ mod tests {
 
     #[test]
     fn dialog_editing() {
-        let mut d = RunDialog { drafts: Vec::new(), current: 0, field: Field::Name, caret: 0, select_all: false, error: None, apps: Vec::new(), adding: None, django_settings: None, templates: false, other: (Vec::new(), 0), test_runner: None };
+        let mut d = RunDialog {
+            drafts: Vec::new(),
+            current: 0,
+            field: Field::Name,
+            caret: 0,
+            select_all: false,
+            error: None,
+            apps: Vec::new(),
+            adding: None,
+            django_settings: None,
+            templates: false,
+            other: (Vec::new(), 0),
+            test_runner: None,
+        };
         d.add(Kind::Script);
         assert_eq!(d.drafts[0].cfg.name, "Unnamed");
         assert!(d.select_all);

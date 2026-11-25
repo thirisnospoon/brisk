@@ -2,11 +2,11 @@
 //! multi-line input (Enter runs a complete statement, Shift+Enter adds a line, ↑/↓ walk the
 //! history) and the namespace's variables on the right, refreshed after every command.
 
-use crate::theme::ui_px;
 use super::{BottomTool, Workspace};
 use crate::editor::Editor;
 use crate::py_console::{Console, Event, Var};
-use crate::theme::{Theme, mono_font};
+use crate::theme::ui_px;
+use crate::theme::{mono_font, Theme};
 use brisk_keymap::Action;
 use gpui::prelude::*;
 use gpui::{div, list, px, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ListAlignment, ListOffset, ListState, Window};
@@ -528,7 +528,8 @@ impl Workspace {
             .flex()
             .items_center()
             .gap(px(2.))
-            .pl(px(12.)).pr(px(6.))
+            .pl(px(12.))
+            .pr(px(6.))
             .h(px(crate::ui_kit::header_h()))
             .flex_shrink_0()
             .border_b_1()
@@ -538,23 +539,15 @@ impl Workspace {
             .child(tool("pyc-stop", "■", "Stop the console", running, Theme::error(), Action::StopPythonConsole, cx))
             .child(tool("pyc-clear", "⌫", "Clear All", !p.lines.is_empty(), Theme::text_muted(), Action::ClearPythonConsole, cx))
             .child(div().pl(px(10.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(state));
-        let lines = div()
-            .id("pyc-output")
-            .flex_1()
-            .min_h_0()
-            .py(px(4.))
-            .font_family(mono_font())
-            .text_size(ui_px(12.5))
-            .child(list(p.out.clone(), cx.processor(|this, ix: usize, _window, _cx| pyc_line(this.pyc.as_ref().and_then(|p| p.lines.get(ix))))).size_full());
+        let lines =
+            div().id("pyc-output").flex_1().min_h_0().py(px(4.)).font_family(mono_font()).text_size(ui_px(12.5)).child(
+                list(p.out.clone(), cx.processor(|this, ix: usize, _window, _cx| pyc_line(this.pyc.as_ref().and_then(|p| p.lines.get(ix))))).size_full(),
+            );
         let focused = p.input.read(cx).focus_handle(cx).is_focused(window);
         let n_lines = p.input.read(cx).buffer.len_lines().clamp(1, 6);
         let empty = p.input.read(cx).buffer.len_chars() == 0;
         let prompt = if p.waiting_input.is_some() { "?" } else { ">>>" };
-        let hint = if p.waiting_input.is_some() {
-            "Type a line for input() and press Enter"
-        } else {
-            "Enter runs · Shift+Enter new line · ↑/↓ history"
-        };
+        let hint = if p.waiting_input.is_some() { "Type a line for input() and press Enter" } else { "Enter runs · Shift+Enter new line · ↑/↓ history" };
         let input = div()
             .flex()
             .flex_shrink_0()
@@ -574,9 +567,7 @@ impl Workspace {
                     .h(px(19. * n_lines as f32))
                     .overflow_hidden()
                     .child(p.input.clone())
-                    .when(empty && !focused, |d| {
-                        d.child(div().absolute().top_0().left_0().whitespace_nowrap().text_color(Theme::text_dim()).child(hint))
-                    }),
+                    .when(empty && !focused, |d| d.child(div().absolute().top_0().left_0().whitespace_nowrap().text_color(Theme::text_dim()).child(hint))),
             );
         let vars = div()
             .id("pyc-vars")
@@ -588,7 +579,11 @@ impl Workspace {
             .border_color(Theme::divider())
             .font_family(mono_font())
             .text_size(ui_px(12.5))
-            .when(p.vars.is_empty(), |x| x.child(div().p(px(8.)).text_color(Theme::text_dim()).font_family(crate::theme::ui_font()).child("Variables appear after a command defines them")))
+            .when(p.vars.is_empty(), |x| {
+                x.child(
+                    div().p(px(8.)).text_color(Theme::text_dim()).font_family(crate::theme::ui_font()).child("Variables appear after a command defines them"),
+                )
+            })
             .children(p.vars.iter().enumerate().map(|(i, v)| {
                 let ty = match v.size {
                     Some(n) => format!("{{{}: {n}}}", v.ty),
@@ -610,7 +605,23 @@ impl Workspace {
                     .child(div().text_color(Theme::text_dim()).child(ty))
                     .child(div().text_color(Theme::text()).child(v.value.clone()))
             }));
-        let left = div().flex_1().min_w_0().h_full().flex().flex_col().child(div().relative().flex_1().min_h_0().flex().flex_col().child(lines).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list_state(&p.out), p.bar.clone()))).child(input);
+        let left = div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(lines)
+                    .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list_state(&p.out), p.bar.clone())),
+            )
+            .child(input);
         div()
             .id("pyc-window")
             .track_focus(&p.focus)
@@ -620,12 +631,15 @@ impl Workspace {
             .text_size(ui_px(13.))
             .child(toolbar)
             .child(div().flex_1().min_h_0().flex().child(left).child(vars))
-            .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, w, cx| {
-                if let Some(p) = &this.pyc {
-                    w.focus(&p.input.read(cx).focus_handle(cx));
-                }
-                cx.notify();
-            }))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, w, cx| {
+                    if let Some(p) = &this.pyc {
+                        w.focus(&p.input.read(cx).focus_handle(cx));
+                    }
+                    cx.notify();
+                }),
+            )
             .into_any_element()
     }
 
@@ -679,13 +693,7 @@ impl Workspace {
             }
             // An endless loop, then Ctrl+C: KeyboardInterrupt, the session and variables stay.
             for s in ["import time", "enter", "while True: time.sleep(0.05)", "enter"] {
-                let _ = this.update_in(cx, |this, window, cx| {
-                    if s == "enter" {
-                        this.smoke_press(s, window, cx)
-                    } else {
-                        this.smoke_type(s, window, cx)
-                    }
-                });
+                let _ = this.update_in(cx, |this, window, cx| if s == "enter" { this.smoke_press(s, window, cx) } else { this.smoke_type(s, window, cx) });
                 pause(60).await;
                 until_idle!();
             }
@@ -721,7 +729,12 @@ impl Workspace {
             pause(300).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 let p = this.pyc.as_ref().unwrap();
-                eprintln!("smoke-pyconsole: after restart running {} vars {:?} last {:?}", p.running(), p.vars.len(), p.lines.last().map(|l| l.0.trim_end().to_string()));
+                eprintln!(
+                    "smoke-pyconsole: after restart running {} vars {:?} last {:?}",
+                    p.running(),
+                    p.vars.len(),
+                    p.lines.last().map(|l| l.0.trim_end().to_string())
+                );
                 this.dispatch(Action::StopPythonConsole, window, cx);
                 eprintln!("smoke-pyconsole: after stop running {}", this.pyc.as_ref().unwrap().running());
                 cx.quit();
@@ -740,8 +753,13 @@ fn pyc_line(line: Option<&(String, Kind)>) -> gpui::AnyElement {
         Kind::Err => Theme::error(),
         Kind::Info => Theme::text_muted(),
         Kind::Code(hl) => {
-            let mut styles: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = vec![(0..3.min(text.len()), gpui::HighlightStyle { color: Some(Theme::accent()), ..Default::default() })];
-            styles.extend(hl.iter().filter(|(r, _)| r.end <= text.len()).map(|(r, h)| (r.clone(), gpui::HighlightStyle { color: Some(Theme::syntax(*h)), ..Default::default() })));
+            let mut styles: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> =
+                vec![(0..3.min(text.len()), gpui::HighlightStyle { color: Some(Theme::accent()), ..Default::default() })];
+            styles.extend(
+                hl.iter()
+                    .filter(|(r, _)| r.end <= text.len())
+                    .map(|(r, h)| (r.clone(), gpui::HighlightStyle { color: Some(Theme::syntax(*h)), ..Default::default() })),
+            );
             return div().px(px(8.)).text_color(Theme::text()).child(gpui::StyledText::new(text).with_highlights(styles)).into_any_element();
         }
     };

@@ -2,9 +2,9 @@
 //! status, ↻ Rerun and ■ Stop per row; the selected run's console (or the database
 //! console's results) on the right.
 
-use crate::theme::ui_px;
 use super::{BottomTool, Workspace};
 use crate::terminal_view::RunInfo;
+use crate::theme::ui_px;
 use crate::theme::Theme;
 use gpui::prelude::*;
 use gpui::{div, px, Context, FocusHandle, Window};
@@ -191,23 +191,38 @@ impl Workspace {
                     .cursor_pointer()
                     .when(on, |d| d.bg(Theme::selection_row()))
                     .when(!on, |d| d.hover(|s| s.bg(Theme::hover_row())))
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, w, cx| {
-                        this.services_select(Item::Run(id), cx);
-                        w.focus(&this.services.focus.clone());
-                    }))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, _, w, cx| {
+                            this.services_select(Item::Run(id), cx);
+                            w.focus(&this.services.focus.clone());
+                        }),
+                    )
                     .child(div().w(px(14.)).flex().items_center().child(crate::icons::glyph(glyph, 12., color)))
                     .child(div().flex_shrink_0().whitespace_nowrap().child(r.name.clone()))
-                    .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_size(ui_px(11.5)).text_color(Theme::text_dim()).child(detail))
-                    .child(small(("svc-rerun", id), "↻", Theme::file_added(), "Rerun").child(track(id, "rerun")).on_click(cx.listener(move |this, _, w, cx| {
-                        cx.stop_propagation();
-                        this.services_rerun(id, w, cx);
-                    })))
                     .child(
-                        small(("svc-stop", id), "■", if r.running { Theme::error() } else { Theme::text_dim() }, "Stop").child(track(id, "stop")).on_click(cx.listener(move |this, _, _, cx| {
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(ui_px(11.5))
+                            .text_color(Theme::text_dim())
+                            .child(detail),
+                    )
+                    .child(small(("svc-rerun", id), "↻", Theme::file_added(), "Rerun").child(track(id, "rerun")).on_click(cx.listener(
+                        move |this, _, w, cx| {
+                            cx.stop_propagation();
+                            this.services_rerun(id, w, cx);
+                        },
+                    )))
+                    .child(small(("svc-stop", id), "■", if r.running { Theme::error() } else { Theme::text_dim() }, "Stop").child(track(id, "stop")).on_click(
+                        cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
                             this.services_stop(id, cx);
-                        })),
-                    ),
+                        }),
+                    )),
             );
         }
         if let Some(title) = self.db.results.as_ref().map(|g| g.read(cx).title.clone()) {
@@ -224,10 +239,13 @@ impl Workspace {
                     .cursor_pointer()
                     .when(on, |d| d.bg(Theme::selection_row()))
                     .when(!on, |d| d.hover(|s| s.bg(Theme::hover_row())))
-                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _, w, cx| {
-                        this.services_select(Item::Database, cx);
-                        w.focus(&this.services.focus.clone());
-                    }))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _, w, cx| {
+                            this.services_select(Item::Database, cx);
+                            w.focus(&this.services.focus.clone());
+                        }),
+                    )
                     .child(crate::icons::ui_icon("database", 12., Theme::accent()))
                     .child(format!("{title} · console")),
             );
@@ -235,7 +253,8 @@ impl Workspace {
         let right: gpui::AnyElement = match (sel, &self.runs.panel) {
             (Some(Item::Run(_)), Some(p)) => div().flex_1().min_w_0().h_full().child(p.clone()).into_any_element(),
             (Some(Item::Database), _) => self.render_db_results(cx),
-            _ => crate::ui_kit::empty_state("play", "Select a run to see its console. Runs appear here as you start them (Shift+F10, Ctrl+Shift+F10).").into_any_element(),
+            _ => crate::ui_kit::empty_state("play", "Select a run to see its console. Runs appear here as you start them (Shift+F10, Ctrl+Shift+F10).")
+                .into_any_element(),
         };
         // The shared tool window header: the title, then how many runs are live.
         let running = runs.iter().filter(|r| r.running).count();
@@ -289,7 +308,10 @@ impl Workspace {
                 // ↑ from the active (last) run selects the one above.
                 this.smoke_press("up", window, cx);
                 let name = this.runs_list(cx).into_iter().find(|r| Some(Item::Run(r.id)) == this.services.selected).map(|r| r.name);
-                eprintln!("smoke-services: up -> {name:?}, run window shows it {}", this.runs_list(cx).iter().any(|r| r.active && Some(r.name.clone()) == name));
+                eprintln!(
+                    "smoke-services: up -> {name:?}, run window shows it {}",
+                    this.runs_list(cx).iter().any(|r| r.active && Some(r.name.clone()) == name)
+                );
             });
             if std::env::var("BRISK_SMOKE_SERVICES").as_deref() == Ok("hold") {
                 return;
@@ -313,8 +335,12 @@ impl Workspace {
                         let text = this.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default();
                         eprintln!("smoke-services: {name} console ends {:?}", text.lines().last().unwrap_or(""));
                     }
-                    let runs =std::fs::read_to_string(this.root.join("fail.log")).map(|s| s.lines().count()).unwrap_or(0);
-                    eprintln!("smoke-services: click {what} on {name} -> rows {:?}, fail ran {runs}x, services open {}", rows(this, cx), this.bottom == Some(BottomTool::Services));
+                    let runs = std::fs::read_to_string(this.root.join("fail.log")).map(|s| s.lines().count()).unwrap_or(0);
+                    eprintln!(
+                        "smoke-services: click {what} on {name} -> rows {:?}, fail ran {runs}x, services open {}",
+                        rows(this, cx),
+                        this.bottom == Some(BottomTool::Services)
+                    );
                 });
             }
             let _ = this.update(cx, |_, cx| cx.quit());

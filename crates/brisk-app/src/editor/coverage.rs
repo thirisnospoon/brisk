@@ -16,7 +16,8 @@ pub struct CoverageMarks {
 impl Editor {
     /// 0-based covered and missed lines of the current text; `None` clears the marks.
     pub fn set_coverage(&mut self, lines: Option<(&[usize], &[usize])>) {
-        self.coverage = lines.map(|(c, m)| CoverageMarks { version: self.buffer.version(), covered: c.iter().copied().collect(), missed: m.iter().copied().collect() });
+        self.coverage =
+            lines.map(|(c, m)| CoverageMarks { version: self.buffer.version(), covered: c.iter().copied().collect(), missed: m.iter().copied().collect() });
     }
 
     /// `Some(true)` covered, `Some(false)` missed, `None` no mark (or the text changed).

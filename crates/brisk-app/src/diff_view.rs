@@ -12,7 +12,10 @@ use crate::settings::{font_size, line_height};
 use crate::theme::{mono_font, ui_font, ui_px, ui_scale, Theme};
 use brisk_git::{AlignedRow, RowKind, UnifiedRow};
 use gpui::prelude::*;
-use gpui::{canvas, div, point, px, uniform_list, App, Context, Entity, FocusHandle, Focusable, Hsla, SharedString, StyledText, Subscription, TextRun, UniformListScrollHandle, Window};
+use gpui::{
+    canvas, div, point, px, uniform_list, App, Context, Entity, FocusHandle, Focusable, Hsla, SharedString, StyledText, Subscription, TextRun,
+    UniformListScrollHandle, Window,
+};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ops::Range;
@@ -352,7 +355,16 @@ impl DiffView {
     /// A live diff of the working copy: `editor` is the right side (edits re-align the diff).
     /// `owned`: the view opened the editor itself (no tab has the file) and saves it.
     #[allow(clippy::too_many_arguments)]
-    pub fn new_live(title: String, path: Option<PathBuf>, left_label: String, base: String, right_label: String, editor: Entity<Editor>, owned: bool, cx: &mut Context<Self>) -> Self {
+    pub fn new_live(
+        title: String,
+        path: Option<PathBuf>,
+        left_label: String,
+        base: String,
+        right_label: String,
+        editor: Entity<Editor>,
+        owned: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let right = editor.read(cx).text_string();
         let mut v = Self::new(title, path, left_label, &base, right_label, &right, cx);
         if owned {
@@ -361,7 +373,17 @@ impl DiffView {
         }
         let version = editor.read(cx).buffer.version();
         let sub = cx.observe(&editor, |this, ed, cx| this.editor_changed(ed, cx));
-        v.live = Some(Live { editor, owned, base, version, left_row: Vec::new(), right_row: Vec::new(), blocks: Vec::new(), left_scroll: UniformListScrollHandle::new(), _sub: sub });
+        v.live = Some(Live {
+            editor,
+            owned,
+            base,
+            version,
+            left_row: Vec::new(),
+            right_row: Vec::new(),
+            blocks: Vec::new(),
+            left_scroll: UniformListScrollHandle::new(),
+            _sub: sub,
+        });
         v.index_live();
         v
     }
@@ -374,7 +396,10 @@ impl DiffView {
     pub fn hunk_keys(&self, cx: &App) -> Vec<String> {
         let Some(live) = self.live.as_ref() else { return Vec::new() };
         let e = live.editor.read(cx);
-        live.blocks.iter().map(|b| brisk_git::hunk_key(&(b.l0..b.l1), (b.r0..b.r1).map(|r| e.buffer.line(r)).collect::<Vec<_>>().iter().map(String::as_str))).collect()
+        live.blocks
+            .iter()
+            .map(|b| brisk_git::hunk_key(&(b.l0..b.l1), (b.r0..b.r1).map(|r| e.buffer.line(r)).collect::<Vec<_>>().iter().map(String::as_str)))
+            .collect()
     }
 
     /// Include block `i` into the commit, or leave it out.
@@ -434,11 +459,19 @@ impl DiffView {
     }
 
     fn base_len(&self) -> usize {
-        if self.prefs.unified { self.unified_rows.len() } else { self.rows.len() }
+        if self.prefs.unified {
+            self.unified_rows.len()
+        } else {
+            self.rows.len()
+        }
     }
 
     fn base_equal(&self, i: usize) -> bool {
-        if self.prefs.unified { self.unified_rows[i].kind == RowKind::Equal } else { self.rows[i].kind == RowKind::Equal }
+        if self.prefs.unified {
+            self.unified_rows[i].kind == RowKind::Equal
+        } else {
+            self.rows[i].kind == RowKind::Equal
+        }
     }
 
     /// Recompute the displayed rows (after a mode change or an expanded fold).
@@ -589,7 +622,14 @@ impl DiffView {
             }
         };
         let num = |n: Option<usize>| {
-            div().w(px(44.)).flex_shrink_0().pr(px(8.)).flex().justify_end().text_color(Theme::gutter_fg()).child(n.map(|n| (n + 1).to_string()).unwrap_or_default())
+            div()
+                .w(px(44.))
+                .flex_shrink_0()
+                .pr(px(8.))
+                .flex()
+                .justify_end()
+                .text_color(Theme::gutter_fg())
+                .child(n.map(|n| (n + 1).to_string()).unwrap_or_default())
         };
         let kind_at = |j: usize| self.unified_rows.get(j).map(|x| x.kind);
         let edges = if u.kind == RowKind::Equal { (false, false) } else { (i == 0 || kind_at(i - 1) != Some(u.kind), kind_at(i + 1) != Some(u.kind)) };
@@ -665,10 +705,13 @@ impl DiffView {
                         .top(px(y + (lh - 14. * ui_scale()) / 2.))
                         .cursor_pointer()
                         .child(hunk_checkbox(!excluded))
-                        .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.toggle_hunk(i, cx);
-                        }))
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.toggle_hunk(i, cx);
+                            }),
+                        )
                         .into_any_element()
                 })
             })
@@ -717,48 +760,54 @@ impl DiffView {
                     ),
             )
             .child(
-                div().relative().w(px(28.)).h_full().flex_shrink_0().overflow_hidden().child(
-                canvas(
-                    |_, _, _| (),
-                    move |bounds, _, window, _| {
-                        let top = f32::from(bounds.top());
-                        let (x0, x1) = (bounds.left(), bounds.right());
-                        let h = f32::from(bounds.size.height);
-                        let mid = (x0 + x1) / 2.;
-                        for (n, b) in blocks.iter().enumerate() {
-                            let ly0 = top + b.l0 as f32 * lh - left_y;
-                            let ly1 = top + b.l1 as f32 * lh - left_y;
-                            let ry0 = top + b.r0 as f32 * lh - right_y;
-                            let ry1 = top + b.r1 as f32 * lh - right_y;
-                            if ly1.max(ry1) < top || ly0.min(ry0) > top + h {
-                                continue;
-                            }
-                            let color = if b.l0 == b.l1 {
-                                Theme::diff_added_bg()
-                            } else if b.r0 == b.r1 {
-                                Theme::diff_deleted_bg()
-                            } else {
-                                Theme::diff_modified_bg()
-                            };
-                            // A block left out of the commit: a paler connector.
-                            let color = if out.get(n).copied().flatten() == Some(true) { color.opacity(0.4) } else { color };
-                            // An empty side gets a 2 px band, so a pure insertion still shows.
-                            let (ly1, ry1) = (ly1.max(ly0 + 2.), ry1.max(ry0 + 2.));
-                            let mut pb = gpui::PathBuilder::fill();
-                            pb.move_to(point(x0, px(ly0)));
-                            pb.cubic_bezier_to(point(x1, px(ry0)), point(mid, px(ly0)), point(mid, px(ry0)));
-                            pb.line_to(point(x1, px(ry1)));
-                            pb.cubic_bezier_to(point(x0, px(ly1)), point(mid, px(ry1)), point(mid, px(ly1)));
-                            pb.close();
-                            if let Ok(path) = pb.build() {
-                                window.paint_path(path, color);
-                            }
-                        }
-                    },
-                )
-                .size_full(),
-                )
-                .children(checks),
+                div()
+                    .relative()
+                    .w(px(28.))
+                    .h_full()
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .child(
+                        canvas(
+                            |_, _, _| (),
+                            move |bounds, _, window, _| {
+                                let top = f32::from(bounds.top());
+                                let (x0, x1) = (bounds.left(), bounds.right());
+                                let h = f32::from(bounds.size.height);
+                                let mid = (x0 + x1) / 2.;
+                                for (n, b) in blocks.iter().enumerate() {
+                                    let ly0 = top + b.l0 as f32 * lh - left_y;
+                                    let ly1 = top + b.l1 as f32 * lh - left_y;
+                                    let ry0 = top + b.r0 as f32 * lh - right_y;
+                                    let ry1 = top + b.r1 as f32 * lh - right_y;
+                                    if ly1.max(ry1) < top || ly0.min(ry0) > top + h {
+                                        continue;
+                                    }
+                                    let color = if b.l0 == b.l1 {
+                                        Theme::diff_added_bg()
+                                    } else if b.r0 == b.r1 {
+                                        Theme::diff_deleted_bg()
+                                    } else {
+                                        Theme::diff_modified_bg()
+                                    };
+                                    // A block left out of the commit: a paler connector.
+                                    let color = if out.get(n).copied().flatten() == Some(true) { color.opacity(0.4) } else { color };
+                                    // An empty side gets a 2 px band, so a pure insertion still shows.
+                                    let (ly1, ry1) = (ly1.max(ly0 + 2.), ry1.max(ry0 + 2.));
+                                    let mut pb = gpui::PathBuilder::fill();
+                                    pb.move_to(point(x0, px(ly0)));
+                                    pb.cubic_bezier_to(point(x1, px(ry0)), point(mid, px(ly0)), point(mid, px(ry0)));
+                                    pb.line_to(point(x1, px(ry1)));
+                                    pb.cubic_bezier_to(point(x0, px(ly1)), point(mid, px(ry1)), point(mid, px(ly1)));
+                                    pb.close();
+                                    if let Ok(path) = pb.build() {
+                                        window.paint_path(path, color);
+                                    }
+                                }
+                            },
+                        )
+                        .size_full(),
+                    )
+                    .children(checks),
             )
             .child(div().flex_1().min_w_0().h_full().child(editor))
             .into_any_element()
@@ -902,26 +951,28 @@ impl Render for DiffView {
                     .child(labels),
             )
             .children(live_el)
-            .when(!live, |d| d.child(
-                uniform_list(
-                    "diff-rows",
-                    n,
-                    cx.processor(|this, range: Range<usize>, _, cx| {
-                        range
-                            .map(|d| match this.disp[d].clone() {
-                                Disp::Fold(r) => this.render_fold(d, &r, cx),
-                                Disp::Row(i) if this.prefs.unified => this.render_unified(i),
-                                Disp::Row(i) => this.render_side_by_side(i),
-                            })
-                            .collect()
-                    }),
+            .when(!live, |d| {
+                d.child(
+                    uniform_list(
+                        "diff-rows",
+                        n,
+                        cx.processor(|this, range: Range<usize>, _, cx| {
+                            range
+                                .map(|d| match this.disp[d].clone() {
+                                    Disp::Fold(r) => this.render_fold(d, &r, cx),
+                                    Disp::Row(i) if this.prefs.unified => this.render_unified(i),
+                                    Disp::Row(i) => this.render_side_by_side(i),
+                                })
+                                .collect()
+                        }),
+                    )
+                    .track_scroll(self.scroll.clone())
+                    .flex_1()
+                    .font_family(mono_font())
+                    .text_size(px(font_size()))
+                    .text_color(Theme::text()),
                 )
-                .track_scroll(self.scroll.clone())
-                .flex_1()
-                .font_family(mono_font())
-                .text_size(px(font_size()))
-                .text_color(Theme::text()),
-            ))
+            })
     }
 }
 

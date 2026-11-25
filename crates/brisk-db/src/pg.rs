@@ -37,11 +37,7 @@ pub struct Pg {
 
 fn tls() -> Result<MakeTlsConnector, String> {
     // libpq "require"/"prefer" semantics: encrypt, but don't verify the certificate.
-    let c = native_tls::TlsConnector::builder()
-        .danger_accept_invalid_certs(true)
-        .danger_accept_invalid_hostnames(true)
-        .build()
-        .map_err(|e| e.to_string())?;
+    let c = native_tls::TlsConnector::builder().danger_accept_invalid_certs(true).danger_accept_invalid_hostnames(true).build().map_err(|e| e.to_string())?;
     Ok(MakeTlsConnector::new(c))
 }
 

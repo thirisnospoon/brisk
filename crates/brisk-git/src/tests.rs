@@ -296,8 +296,12 @@ fn log_filters() {
     let authors = repo.authors().unwrap();
     assert!(authors.contains(&"Bob".to_string()) && authors.contains(&"Test".to_string()), "{authors:?}");
     // Paths and Date: an old commit of another file.
-    fs::write(d.join("old.py"), "o = 1
-").unwrap();
+    fs::write(
+        d.join("old.py"),
+        "o = 1
+",
+    )
+    .unwrap();
     sh(&d, &["add", "old.py"]);
     let out = git_cmd()
         .arg("-C")

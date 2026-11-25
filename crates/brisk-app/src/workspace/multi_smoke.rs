@@ -10,7 +10,13 @@ impl Workspace {
     pub(super) fn multi_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let _ = std::fs::write(root.join("srv.py"), "import time\nopen('srv.log', 'a').write('run\\n')\nprint('serving', flush=True)\ntime.sleep(60)\n");
-        let cfg = |name: &str, on_start: OnStart, multiple: bool| RunConfig { name: name.into(), target: "srv.py".into(), on_start, allow_multiple: multiple, ..Default::default() };
+        let cfg = |name: &str, on_start: OnStart, multiple: bool| RunConfig {
+            name: name.into(),
+            target: "srv.py".into(),
+            on_start,
+            allow_multiple: multiple,
+            ..Default::default()
+        };
         if std::env::var("BRISK_SMOKE_MULTI").as_deref() == Ok("dialog") {
             let file = brisk_run::RunFile { configurations: vec![cfg("srv", OnStart::Services, true)], ..Default::default() };
             let _ = brisk_run::save(&root, &file);
@@ -26,7 +32,9 @@ impl Workspace {
                     break;
                 }
             }
-            let tabs = |this: &Workspace, cx: &gpui::App| this.runs_list(cx).iter().map(|r| format!("{}{}", r.name, if r.running { "▶" } else { "" })).collect::<Vec<_>>();
+            let tabs = |this: &Workspace, cx: &gpui::App| {
+                this.runs_list(cx).iter().map(|r| format!("{}{}", r.name, if r.running { "▶" } else { "" })).collect::<Vec<_>>()
+            };
             let runs = |root: &std::path::Path| std::fs::read_to_string(root.join("srv.log")).map(|s| s.lines().count()).unwrap_or(0);
             // Show in Services.
             let _ = this.update_in(cx, |this, window, cx| this.run_config(cfg("srv", OnStart::Services, false), window, cx));
@@ -43,7 +51,9 @@ impl Workspace {
                 this.smoke_press("enter", window, cx);
             });
             pause(2000).await;
-            let _ = this.update(cx, |this, cx| eprintln!("smoke-multi: stop and rerun -> tabs {:?}, srv.py ran {}x, popup {}", tabs(this, cx), runs(&this.root), this.popup.is_some()));
+            let _ = this.update(cx, |this, cx| {
+                eprintln!("smoke-multi: stop and rerun -> tabs {:?}, srv.py ran {}x, popup {}", tabs(this, cx), runs(&this.root), this.popup.is_some())
+            });
             // Cancel leaves it running.
             let _ = this.update_in(cx, |this, window, cx| {
                 this.run_config(cfg("srv", OnStart::Services, false), window, cx);
@@ -56,7 +66,9 @@ impl Workspace {
                 let _ = this.update_in(cx, |this, window, cx| this.run_config(cfg("par", OnStart::Show, true), window, cx));
                 pause(800).await;
             }
-            let _ = this.update(cx, |this, cx| eprintln!("smoke-multi: multiple -> tabs {:?}, popup {}, bottom {:?}", tabs(this, cx), this.popup.is_some(), this.bottom));
+            let _ = this.update(cx, |this, cx| {
+                eprintln!("smoke-multi: multiple -> tabs {:?}, popup {}, bottom {:?}", tabs(this, cx), this.popup.is_some(), this.bottom)
+            });
             // Focus Run window, then Don't show.
             let _ = this.update_in(cx, |this, window, cx| {
                 this.focus_editor(window, cx);

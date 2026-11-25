@@ -41,7 +41,10 @@ fn urls() {
     let mut ds = DataSource::new(Driver::Sqlite);
     let pw = ds.apply_url("jdbc:postgresql://bob:p%40ss@db.example.com:6543/shop?sslmode=require").unwrap();
     assert_eq!(pw.as_deref(), Some("p@ss"));
-    assert_eq!((ds.driver, ds.host.as_str(), ds.port, ds.user.as_str(), ds.database.as_str(), ds.ssl), (Driver::Postgres, "db.example.com", 6543, "bob", "shop", Ssl::Require));
+    assert_eq!(
+        (ds.driver, ds.host.as_str(), ds.port, ds.user.as_str(), ds.database.as_str(), ds.ssl),
+        (Driver::Postgres, "db.example.com", 6543, "bob", "shop", Ssl::Require)
+    );
     assert_eq!(ds.display_name(), "shop@db.example.com");
     let mut m = DataSource::new(Driver::Postgres);
     assert_eq!(m.apply_url("mysql://root@localhost/app").unwrap(), None);

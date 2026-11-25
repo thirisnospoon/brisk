@@ -2,20 +2,23 @@
 //! (`.brisk/run.json`, imported from `.idea`), command lines and traceback links.
 
 mod config;
+pub mod django;
+pub mod envfile;
 mod interp;
 mod links;
-pub mod pytest;
-pub mod envfile;
-pub mod web;
-pub mod django;
 pub mod project_files;
 pub mod pyproj;
+pub mod pytest;
 pub mod ssh;
+pub mod web;
 
-pub use config::{compound_names, idea_test_runner, import_idea, load, save, BeforeStep, OnStart, RunConfig, RunFile, RunKind, TestRunner, CONFIG_FILE, MAX_TEMPORARY, TEMPLATE_KINDS};
-pub use pytest::{is_test_file, split_nodeid, TestFeed, TestStatus, TestTree, TreeView};
+pub use config::{
+    compound_names, idea_test_runner, import_idea, load, save, BeforeStep, OnStart, RunConfig, RunFile, RunKind, TestRunner, CONFIG_FILE, MAX_TEMPORARY,
+    TEMPLATE_KINDS,
+};
 pub use interp::{discover_all, probe, project_venvs, venv_python, venv_version, InterpKind, Interpreter};
 pub use links::{find_links, find_urls, Link};
+pub use pytest::{is_test_file, split_nodeid, TestFeed, TestStatus, TestTree, TreeView};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -243,7 +246,12 @@ fn build_pytest(root: &Path, cfg: &RunConfig, python: &Path, mut args: Vec<Strin
             // A folder: discovery from it (the working directory is the top level).
             args.push("discover".into());
             if let Some((p, _)) = targets.iter().find(|(p, _)| p.is_dir() && *p != cwd) {
-                args.extend(["-s".to_string(), p.strip_prefix(&cwd).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_else(|_| p.display().to_string()), "-t".into(), ".".into()]);
+                args.extend([
+                    "-s".to_string(),
+                    p.strip_prefix(&cwd).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_else(|_| p.display().to_string()),
+                    "-t".into(),
+                    ".".into(),
+                ]);
             }
         } else {
             for (p, rest) in &targets {
@@ -301,7 +309,8 @@ fn finish(root: &Path, cfg: &RunConfig, python: &Path, args: Vec<String>, cwd: P
     env.insert("PYTHONIOENCODING".into(), "UTF-8".into());
     // The project root, then the folders marked as source and test roots (as PyCharm's
     // "Add source roots to PYTHONPATH").
-    let mut pp: Vec<String> = std::iter::once(root.to_path_buf()).chain(brisk_project::Structure::load(root).import_roots(root)).map(|p| p.display().to_string()).collect();
+    let mut pp: Vec<String> =
+        std::iter::once(root.to_path_buf()).chain(brisk_project::Structure::load(root).import_roots(root)).map(|p| p.display().to_string()).collect();
     if let Ok(old) = std::env::var("PYTHONPATH") {
         if !old.is_empty() {
             pp.push(old);

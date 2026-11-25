@@ -311,7 +311,17 @@ impl Workspace {
                 self.inline_action(window, cx);
                 return true;
             }
-            A::GotoDeclaration | A::GotoTypeDeclaration | A::QuickDefinition | A::QuickDocumentation | A::TypeInfo | A::ParameterInfo | A::CodeCompletion | A::SmartCompletion | A::FindUsages | A::ShowUsages | A::Rename => {}
+            A::GotoDeclaration
+            | A::GotoTypeDeclaration
+            | A::QuickDefinition
+            | A::QuickDocumentation
+            | A::TypeInfo
+            | A::ParameterInfo
+            | A::CodeCompletion
+            | A::SmartCompletion
+            | A::FindUsages
+            | A::ShowUsages
+            | A::Rename => {}
             _ => return false,
         }
         // Templates, URL names and static files of a web project, also in templates.
@@ -381,7 +391,15 @@ impl Workspace {
             E::CtrlClick(pos) if self.web_goto(&ed, Some(pos), window, cx) => {}
             E::CtrlClick(pos) => self.goto_declaration(ed, Some(pos), false, window, cx),
             E::OpenLocation(ref path, line) => self.open_symbol(path.clone(), line, 0, window, cx),
-            E::ShowProblems | E::ContextMenu(_) | E::BreakpointsChanged | E::EditBreakpoint(_) | E::GutterMenu(_) | E::ShowCommit(_) | E::ShowVcsDiff | E::RunMark(..) | E::SetNextStatement(_) => {}
+            E::ShowProblems
+            | E::ContextMenu(_)
+            | E::BreakpointsChanged
+            | E::EditBreakpoint(_)
+            | E::GutterMenu(_)
+            | E::ShowCommit(_)
+            | E::ShowVcsDiff
+            | E::RunMark(..)
+            | E::SetNextStatement(_) => {}
         }
     }
 
@@ -449,7 +467,8 @@ impl Workspace {
             let (res, def) = futures::join!(fut, def);
             // PyCharm's header link: the module (or file) and line of the definition.
             let source = def.ok().and_then(|d| d.into_iter().next()).map(|l| {
-                let name = brisk_lsp::module_name(&root, &l.path).unwrap_or_else(|| l.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+                let name =
+                    brisk_lsp::module_name(&root, &l.path).unwrap_or_else(|| l.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
                 (l.path, l.start.line, format!("{name}:{}", l.start.line + 1))
             });
             let _ = this.update(cx, |this, cx| match res {
@@ -578,7 +597,12 @@ impl Workspace {
                 self.status = format!("Inlined variable '{name}' ({uses} usage{})", if uses == 1 { "" } else { "s" });
             }
             Ok(Inline::Function { name, all, this, calls }) => {
-                let item = |label: String, edits: Vec<_>| PopupItem { label, detail: String::new(), hint: String::new(), target: Target::Intention(Box::new(Intent::Edits(edits))) };
+                let item = |label: String, edits: Vec<_>| PopupItem {
+                    label,
+                    detail: String::new(),
+                    hint: String::new(),
+                    target: Target::Intention(Box::new(Intent::Edits(edits))),
+                };
                 let mut items = Vec::new();
                 if let Some(a) = all {
                     items.push(item(format!("Inline all {calls} invocation{} and remove '{name}'", if calls == 1 { "" } else { "s" }), a));
@@ -842,14 +866,24 @@ impl Workspace {
         if let Some(m) = &self.nav.rename_module {
             if valid && q != old {
                 let file = |n: &str| if m.is_dir() { format!("{n}/") } else { format!("{n}.{}", m.extension().and_then(|e| e.to_str()).unwrap_or("py")) };
-                items.push(item(format!("Rename module '{old}' and its usages to '{q}'"), format!("{} → {}", file(old), file(q)), "Enter", Target::Rename(q.to_string())));
+                items.push(item(
+                    format!("Rename module '{old}' and its usages to '{q}'"),
+                    format!("{} → {}", file(old), file(q)),
+                    "Enter",
+                    Target::Rename(q.to_string()),
+                ));
             }
             return items;
         }
         if valid && q != old {
             let detail = if self.nav.rename_text { "in all files, comments and strings" } else { "in all files" };
             items.push(item(format!("Rename '{old}' to '{q}'"), detail.into(), "Enter", Target::Rename(q.to_string())));
-            items.push(item("Preview…".into(), "usages in the Find window, then Do Refactor".into(), "", Target::Intention(Box::new(Intent::RenamePreview(q.to_string())))));
+            items.push(item(
+                "Preview…".into(),
+                "usages in the Find window, then Do Refactor".into(),
+                "",
+                Target::Intention(Box::new(Intent::RenamePreview(q.to_string()))),
+            ));
         }
         let mark = if self.nav.rename_text { "☑" } else { "☐" };
         items.push(item(format!("{mark} Search in comments and strings"), String::new(), "", Target::Intention(Box::new(Intent::RenameText(q.to_string())))));
@@ -876,7 +910,11 @@ impl Workspace {
         self.focus_editor(window, cx);
         let Some((path, p, old)) = self.nav.rename.take() else { return };
         if let Some(m) = self.nav.rename_module.take() {
-            let target = if m.is_dir() { m.with_file_name(&new_name) } else { m.with_file_name(format!("{new_name}.{}", m.extension().and_then(|e| e.to_str()).unwrap_or("py"))) };
+            let target = if m.is_dir() {
+                m.with_file_name(&new_name)
+            } else {
+                m.with_file_name(format!("{new_name}.{}", m.extension().and_then(|e| e.to_str()).unwrap_or("py")))
+            };
             if target.exists() {
                 self.status = format!("Rename: {} already exists", target.display());
                 return;
@@ -899,7 +937,12 @@ impl Workspace {
                         if files.is_empty() {
                             this.status = "Nothing to rename".into();
                         } else if preview {
-                            let usages = files.iter().flat_map(|(f, es)| es.iter().filter(|e| e.start.line == e.end.line).map(move |e| (f.clone(), e.start.line, e.start.col..e.end.col))).collect();
+                            let usages = files
+                                .iter()
+                                .flat_map(|(f, es)| {
+                                    es.iter().filter(|e| e.start.line == e.end.line).map(move |e| (f.clone(), e.start.line, e.start.col..e.end.col))
+                                })
+                                .collect();
                             this.show_usages(format!("Refactoring Preview: rename '{old}' to '{new_name}'"), usages, window, cx);
                             this.nav.pending = Some((files, old, new_name));
                         } else {
@@ -928,7 +971,10 @@ impl Workspace {
                 let ls = text[..b].rfind('\n').map_or(0, |n| n + 1);
                 Pos { line: text[..ls].matches('\n').count(), col: text[ls..b].chars().count() }
             };
-            let edits: Vec<brisk_lint::Edit> = brisk_syntax::text_occurrences(&tree, &text, old).into_iter().map(|r| brisk_lint::Edit { start: pos(r.start), end: pos(r.end), content: new.to_string() }).collect();
+            let edits: Vec<brisk_lint::Edit> = brisk_syntax::text_occurrences(&tree, &text, old)
+                .into_iter()
+                .map(|r| brisk_lint::Edit { start: pos(r.start), end: pos(r.end), content: new.to_string() })
+                .collect();
             if !edits.is_empty() {
                 groups.push((f, edits));
             }
@@ -945,7 +991,10 @@ impl Workspace {
     }
 
     fn do_rename(&mut self, files: Vec<brisk_lsp::FileEdits>, old: &str, new: &str, cx: &mut Context<Self>) {
-        let before: Vec<(PathBuf, Option<String>, bool)> = files.iter().map(|(f, _)| (f.clone(), self.file_text_now(f, cx), self.editors().any(|e| e.read(cx).path.as_deref() == Some(f.as_path())))).collect();
+        let before: Vec<(PathBuf, Option<String>, bool)> = files
+            .iter()
+            .map(|(f, _)| (f.clone(), self.file_text_now(f, cx), self.editors().any(|e| e.read(cx).path.as_deref() == Some(f.as_path()))))
+            .collect();
         let n = files.len();
         let (count, failed) = self.apply_file_edits(files, cx);
         let undo = before.into_iter().filter_map(|(f, b, open)| Some((f.clone(), b?, self.file_text_now(&f, cx)?, open))).collect();
@@ -1148,12 +1197,7 @@ impl Workspace {
     /// folders); a walk of the disk until the first scan is done.
     pub(super) fn project_python_files(&self, dir: &Path) -> Vec<PathBuf> {
         let Some(list) = &self.files else { return python_files_under(dir) };
-        list.files
-            .iter()
-            .filter(|f| f.ends_with(".py") || f.ends_with(".pyi"))
-            .map(|f| list.root.join(f))
-            .filter(|p| p.starts_with(dir))
-            .collect()
+        list.files.iter().filter(|f| f.ends_with(".py") || f.ends_with(".pyi")).map(|f| list.root.join(f)).filter(|p| p.starts_with(dir)).collect()
     }
 
     /// Import updates for moving `src` to `target`, found by Brisk in the project's Python
@@ -1223,7 +1267,8 @@ impl Workspace {
                 pause(50).await;
                 let ready = this
                     .update(cx, |this, cx| {
-                        this.lsp.state != TyState::Unknown && this.lsp.state != TyState::Starting
+                        this.lsp.state != TyState::Unknown
+                            && this.lsp.state != TyState::Starting
                             && this.active_editor().is_some_and(|e| e.read(cx).diagnostics.iter().any(|d| brisk_lint::is_ty_code(&d.code)))
                     })
                     .unwrap_or(true);
@@ -1242,7 +1287,8 @@ impl Workspace {
                     }
                 }
             });
-            let where_ = |this: &Self, cx: &gpui::App| this.here(cx).map(|h| format!("{}:{}:{}", h.path.file_name().unwrap().to_string_lossy(), h.line + 1, h.col + 1));
+            let where_ =
+                |this: &Self, cx: &gpui::App| this.here(cx).map(|h| format!("{}:{}:{}", h.path.file_name().unwrap().to_string_lossy(), h.line + 1, h.col + 1));
             // Ctrl+B on `add` in `print(add(3, 4))` (line 4).
             step(&this, cx, &mut |this, window, cx| {
                 if let Some(ed) = this.active_editor().cloned() {
@@ -1326,4 +1372,3 @@ impl Workspace {
         .detach();
     }
 }
-

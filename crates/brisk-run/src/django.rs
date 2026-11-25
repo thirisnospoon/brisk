@@ -69,7 +69,11 @@ pub fn command(root: &Path, cfg: &RunConfig) -> (Vec<String>, PathBuf) {
     let sub = if cfg.kind == RunKind::DjangoTests { "test" } else { "runserver" };
     let mut v = vec![manage.display().to_string(), sub.to_string()];
     v.extend(split_args(&cfg.parameters));
-    let cwd = if cfg.working_directory.trim().is_empty() { manage.parent().map(Path::to_path_buf).unwrap_or_else(|| root.to_path_buf()) } else { resolve(root, &cfg.working_directory) };
+    let cwd = if cfg.working_directory.trim().is_empty() {
+        manage.parent().map(Path::to_path_buf).unwrap_or_else(|| root.to_path_buf())
+    } else {
+        resolve(root, &cfg.working_directory)
+    };
     (v, cwd)
 }
 
@@ -90,7 +94,10 @@ mod tests {
         std::fs::write(root.join("backend/manage.py"), src).unwrap();
         let (m, settings) = find_manage(&root).unwrap();
         assert_eq!((m, settings.as_deref()), (root.join("backend/manage.py"), Some("mysite.settings")));
-        let cfg = RunConfig { parameters: "127.0.0.1:8001 --noreload".into(), ..RunConfig::for_django(&root, RunKind::Django, &root.join("backend/manage.py"), false) };
+        let cfg = RunConfig {
+            parameters: "127.0.0.1:8001 --noreload".into(),
+            ..RunConfig::for_django(&root, RunKind::Django, &root.join("backend/manage.py"), false)
+        };
         assert_eq!(cfg.target, "backend/manage.py");
         assert_eq!(cfg.env.get(SETTINGS_VAR).map(String::as_str), Some("mysite.settings"));
         let (args, cwd) = command(&root, &cfg);

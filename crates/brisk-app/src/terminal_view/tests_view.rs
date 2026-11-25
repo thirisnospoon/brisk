@@ -1,8 +1,8 @@
 //! The test runner part of a Run tab, like PyCharm's: a live tree of tests on the left,
 //! the console (or the selected test's output and failure) on the right.
 
-use super::{RunEvent, TerminalPanel, TermEvent, LINK};
-use crate::theme::{Theme, mono_font};
+use super::{RunEvent, TermEvent, TerminalPanel, LINK};
+use crate::theme::{mono_font, Theme};
 use brisk_run::pytest::history;
 use brisk_run::{TestFeed, TestStatus, TestTree, TreeView};
 use futures::channel::mpsc;
@@ -90,7 +90,18 @@ impl TestsView {
                 }
             });
         }
-        TestsView { feed, stop, selected: 0, collapsed: HashSet::new(), scroll: UniformListScrollHandle::new(), bar: Default::default(), details_scroll: ScrollHandle::new(), finished: false, view: TreeView::default(), rows_cache: Default::default() }
+        TestsView {
+            feed,
+            stop,
+            selected: 0,
+            collapsed: HashSet::new(),
+            scroll: UniformListScrollHandle::new(),
+            bar: Default::default(),
+            details_scroll: ScrollHandle::new(),
+            finished: false,
+            view: TreeView::default(),
+            rows_cache: Default::default(),
+        }
     }
 
     /// A finished run from the Test History.
@@ -153,7 +164,13 @@ impl TestsView {
                 .nodes
                 .iter()
                 .filter(|n| n.is_test)
-                .map(|n| (n.file.as_ref().map(|p| if p.is_absolute() { p.clone() } else { root.as_ref().map(|r| r.join(p)).unwrap_or_else(|| p.clone()) }), n.id.clone(), n.status))
+                .map(|n| {
+                    (
+                        n.file.as_ref().map(|p| if p.is_absolute() { p.clone() } else { root.as_ref().map(|r| r.join(p)).unwrap_or_else(|| p.clone()) }),
+                        n.id.clone(),
+                        n.status,
+                    )
+                })
                 .collect();
             (f.tree.summary(true), c.failed > 0, f.tree.first_failed(), results)
         };
@@ -477,10 +494,12 @@ impl TerminalPanel {
                         this.set_tests_view(|v| v.by_duration = !v.by_duration);
                         cx.notify();
                     })))
-                    .child(tool("tests-failed-first", "✗↑", self.failed_first).tooltip(tip("Rerun Failed Tests First")).on_click(cx.listener(|this, _, _, cx| {
-                        this.failed_first = !this.failed_first;
-                        cx.notify();
-                    })))
+                    .child(tool("tests-failed-first", "✗↑", self.failed_first).tooltip(tip("Rerun Failed Tests First")).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.failed_first = !this.failed_first;
+                            cx.notify();
+                        },
+                    )))
                     .child(div().flex_1())
                     .child(tool("tests-history", "🕘", self.history_open).tooltip(tip("Test History")).on_click(cx.listener(|this, _, _, cx| {
                         this.history_open = !this.history_open;
@@ -511,92 +530,99 @@ impl TerminalPanel {
                     .child(root_icon)
                     .child(div().text_color(Theme::text_muted()).overflow_hidden().whitespace_nowrap().child(summary)),
             )
-            .child(div().relative().flex_1().min_h_0().flex().flex_col().child(
-                uniform_list(
-                    "test-tree",
-                    n_rows,
-                    cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
-                        let Some(t) = this.tests() else { return Vec::new() };
-                        let f = t.tree();
-                        let rows = t.rows_of(&f);
-                        range
-                            .filter_map(|ix| rows.get(ix).copied())
-                            .map(|i| {
-                                let n = &f.tree.nodes[i];
-                                let icon = status_icon(n.status);
-                                let arrow = crate::icons::tree_arrow(!n.children.is_empty(), !t.collapsed.contains(&i), Theme::text_muted());
-                                let done = matches!(n.status, TestStatus::Passed | TestStatus::Failed | TestStatus::Error | TestStatus::Skipped);
-                                let dur = (done && n.duration > 0.0).then(|| brisk_run::pytest::format_duration(n.duration));
-                                let sel = i == t.selected;
-                                div()
-                                    .id(("test-row", i))
-                                    .group("test-row")
-                                    .h(px(ROW_H))
-                                    .w_full()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(5.))
-                                    .pl(px(6. + n.depth as f32 * 14.))
-                                    .pr(px(8.))
-                                    .text_size(px(13.))
-                                    .when(i == t.selected, |d| d.bg(Theme::selection_row()))
-                                    .when(i != t.selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
-                                    .cursor_pointer()
-                                    .child(
-                                        div().id(("test-arrow", i)).w(px(12.)).child(arrow).on_click(cx.listener(move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            if let Some(t) = this.tests_mut() {
-                                                if !t.collapsed.remove(&i) {
-                                                    t.collapsed.insert(i);
-                                                }
-                                            }
-                                            cx.notify();
-                                        })),
-                                    )
-                                    .child(icon)
-                                    .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_color(Theme::text()).child(n.name.clone()))
-                                    .when_some(dur, |d, s| d.child(div().text_size(px(11.)).text_color(Theme::text_dim()).child(s)))
-                                    .child(
-                                        // ▶: run this node alone (shown on the selected row and on hover).
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        uniform_list(
+                            "test-tree",
+                            n_rows,
+                            cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+                                let Some(t) = this.tests() else { return Vec::new() };
+                                let f = t.tree();
+                                let rows = t.rows_of(&f);
+                                range
+                                    .filter_map(|ix| rows.get(ix).copied())
+                                    .map(|i| {
+                                        let n = &f.tree.nodes[i];
+                                        let icon = status_icon(n.status);
+                                        let arrow = crate::icons::tree_arrow(!n.children.is_empty(), !t.collapsed.contains(&i), Theme::text_muted());
+                                        let done = matches!(n.status, TestStatus::Passed | TestStatus::Failed | TestStatus::Error | TestStatus::Skipped);
+                                        let dur = (done && n.duration > 0.0).then(|| brisk_run::pytest::format_duration(n.duration));
+                                        let sel = i == t.selected;
                                         div()
-                                            .id(("test-run", i))
-                                            .w(px(16.))
+                                            .id(("test-row", i))
+                                            .group("test-row")
+                                            .h(px(ROW_H))
+                                            .w_full()
                                             .flex()
-                                            .justify_center()
-                                            .rounded(px(3.))
-                                            .text_size(px(11.))
-                                            .text_color(if sel { rgb(0x5fb865).into() } else { gpui::transparent_black() })
-                                            .group_hover("test-row", |s| s.text_color(rgb(0x5fb865)))
-                                            .hover(|s| s.bg(Theme::hover_row()))
-                                            .active(|s| s.bg(Theme::press()))
-                                            .tooltip(move |_, cx| cx.new(|_| crate::workspace::Tip("Run this node (Ctrl+Shift+F10)".into())).into())
-                                            .child("▶")
-                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                            .items_center()
+                                            .gap(px(5.))
+                                            .pl(px(6. + n.depth as f32 * 14.))
+                                            .pr(px(8.))
+                                            .text_size(px(13.))
+                                            .when(i == t.selected, |d| d.bg(Theme::selection_row()))
+                                            .when(i != t.selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
+                                            .cursor_pointer()
+                                            .child(div().id(("test-arrow", i)).w(px(12.)).child(arrow).on_click(cx.listener(move |this, _, _, cx| {
                                                 cx.stop_propagation();
-                                                this.run_node(i, cx);
-                                            })),
-                                    )
-                                    .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
-                                        window.focus(&this.focus);
-                                        let open = e.click_count() >= 2;
-                                        if let Some(t) = this.tests_mut() {
-                                            t.selected = i;
-                                            if open {
-                                                let loc = node_location(&t.tree().tree, i);
-                                                if let Some((p, l)) = loc {
-                                                    cx.emit(RunEvent::Open(p, l));
+                                                if let Some(t) = this.tests_mut() {
+                                                    if !t.collapsed.remove(&i) {
+                                                        t.collapsed.insert(i);
+                                                    }
                                                 }
-                                            }
-                                        }
-                                        cx.notify();
-                                    }))
-                            })
-                            .collect()
-                    }),
-                )
-                .flex_1()
-                .track_scroll(t.scroll.clone()),
-            ).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&t.scroll), t.bar.clone())))
+                                                cx.notify();
+                                            })))
+                                            .child(icon)
+                                            .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_color(Theme::text()).child(n.name.clone()))
+                                            .when_some(dur, |d, s| d.child(div().text_size(px(11.)).text_color(Theme::text_dim()).child(s)))
+                                            .child(
+                                                // ▶: run this node alone (shown on the selected row and on hover).
+                                                div()
+                                                    .id(("test-run", i))
+                                                    .w(px(16.))
+                                                    .flex()
+                                                    .justify_center()
+                                                    .rounded(px(3.))
+                                                    .text_size(px(11.))
+                                                    .text_color(if sel { rgb(0x5fb865).into() } else { gpui::transparent_black() })
+                                                    .group_hover("test-row", |s| s.text_color(rgb(0x5fb865)))
+                                                    .hover(|s| s.bg(Theme::hover_row()))
+                                                    .active(|s| s.bg(Theme::press()))
+                                                    .tooltip(move |_, cx| cx.new(|_| crate::workspace::Tip("Run this node (Ctrl+Shift+F10)".into())).into())
+                                                    .child("▶")
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        cx.stop_propagation();
+                                                        this.run_node(i, cx);
+                                                    })),
+                                            )
+                                            .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
+                                                window.focus(&this.focus);
+                                                let open = e.click_count() >= 2;
+                                                if let Some(t) = this.tests_mut() {
+                                                    t.selected = i;
+                                                    if open {
+                                                        let loc = node_location(&t.tree().tree, i);
+                                                        if let Some((p, l)) = loc {
+                                                            cx.emit(RunEvent::Open(p, l));
+                                                        }
+                                                    }
+                                                }
+                                                cx.notify();
+                                            }))
+                                    })
+                                    .collect()
+                            }),
+                        )
+                        .flex_1()
+                        .track_scroll(t.scroll.clone()),
+                    )
+                    .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&t.scroll), t.bar.clone())),
+            )
             .when(self.history_open, |d| {
                 d.child(
                     div()
@@ -629,11 +655,14 @@ impl TerminalPanel {
                                 .cursor_pointer()
                                 .child(div().flex_1().overflow_hidden().whitespace_nowrap().text_color(Theme::text()).child(e.name.clone()))
                                 .child(div().text_color(Theme::text_dim()).child(when))
-                                .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.error = this.open_history(&e).err();
-                                    cx.notify();
-                                }))
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.error = this.open_history(&e).err();
+                                        cx.notify();
+                                    }),
+                                )
                         })),
                 )
             })
@@ -679,12 +708,7 @@ impl TerminalPanel {
                 if at < chars.len() {
                     pieces.push(div().child(chars[at..].iter().collect::<String>()).into_any_element());
                 }
-                div()
-                    .min_h(px(super::CELL_H))
-                    .flex()
-                    .whitespace_nowrap()
-                    .text_color(if red { rgb(0xf05d5d).into() } else { Theme::text() })
-                    .children(pieces)
+                div().min_h(px(super::CELL_H)).flex().whitespace_nowrap().text_color(if red { rgb(0xf05d5d).into() } else { Theme::text() }).children(pieces)
             })
             .collect();
         div()

@@ -120,7 +120,9 @@ pub fn call_at(before: &str) -> Option<(String, bool, Vec<String>)> {
         return None;
     }
     let name: String = chars[s..open].iter().collect();
-    if name.starts_with(|c: char| c.is_ascii_digit()) || ["if", "while", "for", "return", "and", "or", "not", "in", "elif", "assert", "yield", "with"].contains(&name.as_str()) {
+    if name.starts_with(|c: char| c.is_ascii_digit())
+        || ["if", "while", "for", "return", "and", "or", "not", "in", "elif", "assert", "yield", "with"].contains(&name.as_str())
+    {
         return None;
     }
     let method = s > 0 && chars[s - 1] == '.';

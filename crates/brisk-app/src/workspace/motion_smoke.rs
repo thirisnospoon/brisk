@@ -17,7 +17,10 @@ pub(super) fn long_python() -> String {
     for c in 0..12 {
         s.push_str(&format!("class Service{c}:\n    \"\"\"Service number {c}.\"\"\"\n\n    def __init__(self, name: str, size: int = {c}):\n        self.name = name\n        self.size = size\n\n"));
         for m in 0..6 {
-            s.push_str(&format!("    def method_{m}(self, value, *args, **kwargs):\n        total = 0\n        for i in range(value):\n            if i % 3 == {}:\n", m % 3));
+            s.push_str(&format!(
+                "    def method_{m}(self, value, *args, **kwargs):\n        total = 0\n        for i in range(value):\n            if i % 3 == {}:\n",
+                m % 3
+            ));
             for k in 0..8 {
                 s.push_str(&format!("                total += i * {k}  # step {k}\n"));
             }
@@ -218,7 +221,8 @@ impl Workspace {
             let at = async |cx: &mut gpui::AsyncWindowContext, ed: &Entity<Editor>, top_line: f32| {
                 let _ = ed.update(cx, |e, cx| e.set_scroll_for_smoke(top_line * lh, cx));
                 bg.timer(Duration::from_millis(120)).await;
-                ed.read_with(cx, |e, _| e.sticky_shown().iter().map(|&(l, y)| (l + 1, (y / lh * 100.0).round() / 100.0)).collect::<Vec<_>>()).unwrap_or_default()
+                ed.read_with(cx, |e, _| e.sticky_shown().iter().map(|&(l, y)| (l + 1, (y / lh * 100.0).round() / 100.0)).collect::<Vec<_>>())
+                    .unwrap_or_default()
             };
             eprintln!("smoke-sticky: class Service3 at line {}, def method_2 at {}, its return at {}", class3 + 1, def2 + 1, ret2 + 1);
             let s = at(cx, &ed, (def2 + 3) as f32).await;
@@ -272,7 +276,8 @@ impl Workspace {
             bg.timer(Duration::from_millis(300)).await;
             let _ = cx.update(|window, cx| ed.update(cx, |e, cx| e.select_for_smoke(anchor, head, window, cx)));
             bg.timer(Duration::from_millis(300)).await;
-            let (hits, guide, marks) = ed.update(cx, |e, _| (e.find_hits_for_smoke(), e.active_guide_for_smoke(), e.caret_marks_for_smoke())).unwrap_or_default();
+            let (hits, guide, marks) =
+                ed.update(cx, |e, _| (e.find_hits_for_smoke(), e.active_guide_for_smoke(), e.caret_marks_for_smoke())).unwrap_or_default();
             eprintln!("smoke-palette: find hits {hits}, caret block guide {guide:?} (column, lines), caret marks {marks:?}");
             if hold {
                 eprintln!("smoke-palette: holding");

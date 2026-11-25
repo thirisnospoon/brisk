@@ -12,7 +12,9 @@ use crate::settings::{font_size, line_height};
 use crate::theme::{mono_font, ui_font, ui_px, Theme};
 use brisk_git::Chunk;
 use gpui::prelude::*;
-use gpui::{canvas, div, point, px, uniform_list, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, Subscription, UniformListScrollHandle, Window};
+use gpui::{
+    canvas, div, point, px, uniform_list, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, Subscription, UniformListScrollHandle, Window,
+};
 use std::ops::Range;
 use std::path::PathBuf;
 
@@ -536,7 +538,11 @@ impl MergeView {
     }
 
     fn render_side_row(&self, ours: bool, l: usize) -> gpui::AnyElement {
-        let (sd, chunk_of, words, at) = if ours { (&self.left, &self.ours_chunk, &self.ours_words, &self.ours_at) } else { (&self.right, &self.theirs_chunk, &self.theirs_words, &self.theirs_at) };
+        let (sd, chunk_of, words, at) = if ours {
+            (&self.left, &self.ours_chunk, &self.ours_words, &self.ours_at)
+        } else {
+            (&self.right, &self.theirs_chunk, &self.theirs_words, &self.theirs_at)
+        };
         let Some(&i) = chunk_of.get(l) else {
             return div().h(px(line_height())).into_any_element();
         };
@@ -575,7 +581,8 @@ impl MergeView {
 
     /// A side pane: its lines, scrolled with the result; the wheel scrolls the result.
     fn render_pane(&self, ours: bool, y: f32, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let (n, scroll, id) = if ours { (self.left.lines.len(), &self.left_scroll, "merge-ours") } else { (self.right.lines.len(), &self.right_scroll, "merge-theirs") };
+        let (n, scroll, id) =
+            if ours { (self.left.lines.len(), &self.left_scroll, "merge-ours") } else { (self.right.lines.len(), &self.right_scroll, "merge-theirs") };
         scroll.0.borrow().base_handle.set_offset(point(px(0.), px(-y)));
         let ed = self.editor.clone();
         let lh = line_height();
@@ -639,7 +646,8 @@ impl MergeView {
             let accept_tip = if other_applied { "Append" } else { "Accept" };
             let accept = mini(("merge-accept", i * 2 + ours as usize), if ours { "chevrons-right" } else { "chevrons-left" }, Theme::accent(), accept_tip)
                 .on_click(cx.listener(move |this, _, _, cx| this.apply(i, ours, cx)));
-            let ignore = mini(("merge-ignore", i * 2 + ours as usize), "x", Theme::text_muted(), "Ignore").on_click(cx.listener(move |this, _, _, cx| this.ignore(i, ours, cx)));
+            let ignore = mini(("merge-ignore", i * 2 + ours as usize), "x", Theme::text_muted(), "Ignore")
+                .on_click(cx.listener(move |this, _, _, cx| this.ignore(i, ours, cx)));
             let pair = div().absolute().top(px(s0.max(0.) + 1.)).flex().gap(px(2.));
             buttons.push(if ours { pair.left(px(2.)).child(accept).child(ignore) } else { pair.right(px(2.)).child(ignore).child(accept) }.into_any_element());
         }
@@ -752,11 +760,8 @@ impl Render for MergeView {
         let changes = self.model.changes();
         let left = self.model.unresolved();
         let conflicts = self.model.unresolved_conflicts();
-        let status = if left == 0 {
-            "All changes have been processed".to_string()
-        } else {
-            format!("{left} of {changes} change(s) left, {conflicts} conflict(s)")
-        };
+        let status =
+            if left == 0 { "All changes have been processed".to_string() } else { format!("{left} of {changes} change(s) left, {conflicts} conflict(s)") };
         let label = |t: String| div().flex_1().min_w_0().px(px(12.)).overflow_hidden().whitespace_nowrap().child(t);
         let ours_pane = self.render_pane(true, ours_y, cx);
         let theirs_pane = self.render_pane(false, theirs_y, cx);
@@ -790,7 +795,10 @@ impl Render for MergeView {
                         tool("merge-nc-left", "arrow-right-to-line", "Apply Non-Conflicting Changes from the Left Side", false)
                             .on_click(cx.listener(|this, _, _, cx| this.apply_non_conflicting(Some(true), cx))),
                     )
-                    .child(tool("merge-nc-all", "check-check", "Apply All Non-Conflicting Changes", false).on_click(cx.listener(|this, _, _, cx| this.apply_non_conflicting(None, cx))))
+                    .child(
+                        tool("merge-nc-all", "check-check", "Apply All Non-Conflicting Changes", false)
+                            .on_click(cx.listener(|this, _, _, cx| this.apply_non_conflicting(None, cx))),
+                    )
                     .child(
                         tool("merge-nc-right", "arrow-left-to-line", "Apply Non-Conflicting Changes from the Right Side", false)
                             .on_click(cx.listener(|this, _, _, cx| this.apply_non_conflicting(Some(false), cx))),

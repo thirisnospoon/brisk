@@ -282,7 +282,13 @@ impl Session {
 
     /// A Run process through a pseudo-terminal (PyCharm's "Emulate terminal in output
     /// console"): like [`Session::spawn_process`], `header` (the command line) comes first.
-    pub fn spawn_process_pty(opts: SpawnOptions, header: &str, cols: usize, rows: usize, on_event: impl Fn(TermEvent) + Send + Sync + 'static) -> std::io::Result<Self> {
+    pub fn spawn_process_pty(
+        opts: SpawnOptions,
+        header: &str,
+        cols: usize,
+        rows: usize,
+        on_event: impl Fn(TermEvent) + Send + Sync + 'static,
+    ) -> std::io::Result<Self> {
         Self::spawn_pty(opts, cols, rows, 8, 16, RUN_HISTORY_LINES, header, on_event)
     }
 
@@ -595,7 +601,17 @@ impl Session {
         let rows = term.screen_lines();
         let offset = content.display_offset as i32;
         let palette = Palette { overrides: content.colors };
-        let blank = CellView { c: ' ', fg: palette.named(NamedColor::Foreground), bg: None, bold: false, italic: false, underline: false, wide: false, selected: false, link: false };
+        let blank = CellView {
+            c: ' ',
+            fg: palette.named(NamedColor::Foreground),
+            bg: None,
+            bold: false,
+            italic: false,
+            underline: false,
+            wide: false,
+            selected: false,
+            link: false,
+        };
         let mut cells = vec![blank; cols * rows];
         let sel = content.selection;
         for ind in content.display_iter {
@@ -629,7 +645,13 @@ impl Session {
             });
             let spacer = f.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER);
             cells[row * cols + col] = CellView {
-                c: if spacer { '\0' } else if f.contains(Flags::HIDDEN) { ' ' } else { cell.c },
+                c: if spacer {
+                    '\0'
+                } else if f.contains(Flags::HIDDEN) {
+                    ' '
+                } else {
+                    cell.c
+                },
                 fg,
                 bg,
                 bold: f.contains(Flags::BOLD),

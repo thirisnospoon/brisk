@@ -82,12 +82,7 @@ impl Repo {
     pub fn stash_file_versions(&self, name: &str, c: &FileChange) -> (String, String) {
         let base = c.old_path.clone().unwrap_or_else(|| c.path.clone());
         let before = self.file_at(&format!("{name}^1"), &base).ok().flatten().unwrap_or_default();
-        let after = self
-            .file_at(name, &c.path)
-            .ok()
-            .flatten()
-            .or_else(|| self.file_at(&format!("{name}^3"), &c.path).ok().flatten())
-            .unwrap_or_default();
+        let after = self.file_at(name, &c.path).ok().flatten().or_else(|| self.file_at(&format!("{name}^3"), &c.path).ok().flatten()).unwrap_or_default();
         (before, after)
     }
 }

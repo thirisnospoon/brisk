@@ -57,7 +57,8 @@ pub fn rename_module_refs(text: &str, old: &str, new: &str) -> Vec<Edit> {
     let mut edits = Vec::new();
     let mut qualified = false;
     let mut code_lines = Vec::new();
-    let edit = |line: usize, col: usize, len: usize, content: &str| Edit { start: Pos { line, col }, end: Pos { line, col: col + len }, content: content.to_string() };
+    let edit =
+        |line: usize, col: usize, len: usize, content: &str| Edit { start: Pos { line, col }, end: Pos { line, col: col + len }, content: content.to_string() };
     for (ln, raw) in text.lines().enumerate() {
         let line: Vec<char> = raw.chars().collect();
         let code_end = line.iter().position(|&c| c == '#').unwrap_or(line.len());

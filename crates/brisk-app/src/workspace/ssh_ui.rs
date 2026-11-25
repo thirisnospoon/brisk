@@ -21,7 +21,11 @@ impl Workspace {
     /// of quietly using a local Python. True when blocked.
     pub(super) fn remote_blocks(&mut self, cfg: &RunConfig, what: &str, cx: &mut Context<Self>) -> bool {
         let Some(s) = self.ssh_for(cfg) else { return false };
-        self.show_toast(format!("{what} is not available with an SSH interpreter yet ({}): run it, or pick a local interpreter in the status bar", s.label()), true, cx);
+        self.show_toast(
+            format!("{what} is not available with an SSH interpreter yet ({}): run it, or pick a local interpreter in the status bar", s.label()),
+            true,
+            cx,
+        );
         true
     }
 
@@ -81,7 +85,12 @@ impl Workspace {
             })
             .collect();
         if "add ssh interpreter".contains(ql) {
-            v.push(PopupItem { label: "Add SSH Interpreter…".into(), detail: "a Python on another machine, through ssh".into(), hint: String::new(), target: Target::AddSsh });
+            v.push(PopupItem {
+                label: "Add SSH Interpreter…".into(),
+                detail: "a Python on another machine, through ssh".into(),
+                hint: String::new(),
+                target: Target::AddSsh,
+            });
         }
         v
     }
@@ -97,10 +106,23 @@ impl Workspace {
             .collect();
         let typed = q.trim();
         if !typed.is_empty() && !hosts.iter().any(|h| h == typed) && !typed.contains(char::is_whitespace) {
-            v.insert(0, PopupItem { label: format!("Connect to {typed}"), detail: "user@host or user@host:port".into(), hint: "Enter".into(), target: Target::SshHost(typed.to_string()) });
+            v.insert(
+                0,
+                PopupItem {
+                    label: format!("Connect to {typed}"),
+                    detail: "user@host or user@host:port".into(),
+                    hint: "Enter".into(),
+                    target: Target::SshHost(typed.to_string()),
+                },
+            );
         }
         if v.is_empty() {
-            v.push(PopupItem { label: "Type user@host".into(), detail: "keys and the ssh agent are used; passwords are not supported".into(), hint: String::new(), target: Target::Cancel });
+            v.push(PopupItem {
+                label: "Type user@host".into(),
+                detail: "keys and the ssh agent are used; passwords are not supported".into(),
+                hint: String::new(),
+                target: Target::Cancel,
+            });
         }
         v
     }
@@ -120,7 +142,12 @@ impl Workspace {
             })
             .collect();
         if v.is_empty() {
-            v.push(PopupItem { label: format!("No Python found on {host}"), detail: "install python3 there".into(), hint: String::new(), target: Target::Cancel });
+            v.push(PopupItem {
+                label: format!("No Python found on {host}"),
+                detail: "install python3 there".into(),
+                hint: String::new(),
+                target: Target::Cancel,
+            });
         }
         v
     }

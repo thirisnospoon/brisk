@@ -33,7 +33,9 @@ impl Workspace {
             let st = |cx: &mut gpui::AsyncWindowContext| ed.read_with(cx, |e, _| (e.scroll_state(), e.mouse_state_for_smoke(), e.caret_line_col())).ok();
             let show = |label: &str, cx: &mut gpui::AsyncWindowContext| {
                 if let Some(((_, y, _, my, _), (hover, hot, thumb, middle), caret)) = st(cx) {
-                    eprintln!("smoke-mouse: {label}: scroll y={y:.0}/{my:.0}, bar hover {hover:?}, hot {hot}, thumb {thumb:?}, middle {middle:?}, caret {caret:?}");
+                    eprintln!(
+                        "smoke-mouse: {label}: scroll y={y:.0}/{my:.0}, bar hover {hover:?}, hot {hot}, thumb {thumb:?}, middle {middle:?}, caret {caret:?}"
+                    );
                 }
             };
             let Some(((_, _, _, _, Some(b)), (_, _, Some((top, th)), _), _)) = st(cx) else {

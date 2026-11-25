@@ -12,7 +12,10 @@ impl Workspace {
         let root = self.root.clone();
         let _ = std::fs::create_dir_all(root.join("pkg"));
         let _ = std::fs::write(root.join("pkg/__init__.py"), "");
-        let _ = std::fs::write(root.join("pkg/util.py"), "import platform\n\n\ndef where():\n    return platform.node()\n\n\ndef boom():\n    raise ValueError('from the host')\n");
+        let _ = std::fs::write(
+            root.join("pkg/util.py"),
+            "import platform\n\n\ndef where():\n    return platform.node()\n\n\ndef boom():\n    raise ValueError('from the host')\n",
+        );
         let _ = std::fs::write(root.join("app.py"), "import sys\nfrom pkg import util\n\nprint('host', util.where(), sys.version.split()[0])\nutil.boom()\n");
         cx.spawn_in(window, async move |this, cx| {
             let bg = cx.background_executor().clone();
@@ -39,7 +42,10 @@ impl Workspace {
             });
             for round in 0..2 {
                 if round == 1 {
-                    let _ = std::fs::write(root.join("app.py"), "import sys\nfrom pkg import util\n\nprint('host', util.where(), sys.version.split()[0], 'again')\nutil.boom()\n");
+                    let _ = std::fs::write(
+                        root.join("app.py"),
+                        "import sys\nfrom pkg import util\n\nprint('host', util.where(), sys.version.split()[0], 'again')\nutil.boom()\n",
+                    );
                 }
                 let path = root.join("app.py");
                 let _ = this.update_in(cx, |this, window, cx| {
@@ -52,7 +58,9 @@ impl Workspace {
                 let mut uploaded = String::new();
                 for _ in 0..300 {
                     pause(100).await;
-                    let (o, st) = this.update(cx, |t, cx| (t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default(), t.status.clone())).unwrap_or_default();
+                    let (o, st) = this
+                        .update(cx, |t, cx| (t.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default(), t.status.clone()))
+                        .unwrap_or_default();
                     if st.starts_with("Uploaded") {
                         uploaded = st;
                     }

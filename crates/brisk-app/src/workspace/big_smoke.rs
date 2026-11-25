@@ -20,7 +20,15 @@ impl Workspace {
             let _ = this.update(cx, |this, cx| {
                 let Some(ed) = this.active_editor().cloned() else { return };
                 let e = ed.read(cx);
-                eprintln!("smoke-big: after 6s: {} lines, ty {:?}, {} diagnostics, syntax tree ready {}, fold markers fresh {}, status {:?}", e.buffer.len_lines(), this.lsp.state, e.diagnostics.len(), e.syntax_ready(), e.folds_fresh(), this.status);
+                eprintln!(
+                    "smoke-big: after 6s: {} lines, ty {:?}, {} diagnostics, syntax tree ready {}, fold markers fresh {}, status {:?}",
+                    e.buffer.len_lines(),
+                    this.lsp.state,
+                    e.diagnostics.len(),
+                    e.syntax_ready(),
+                    e.folds_fresh(),
+                    this.status
+                );
                 let mid = e.buffer.len_lines() / 2;
                 ed.update(cx, |e, cx| e.go_to_line(mid, cx));
             });
@@ -51,7 +59,14 @@ impl Workspace {
             pause(4000).await;
             let _ = this.update(cx, |this, cx| {
                 let Some(ed) = this.active_editor() else { return };
-                eprintln!("smoke-big: 4s after typing: {} diagnostics, inlay lines {}, fold markers fresh {}, syntax tree ready {}, status {:?}", ed.read(cx).diagnostics.len(), ed.read(cx).inlay_line_count(), ed.read(cx).folds_fresh(), ed.read(cx).syntax_ready(), this.status);
+                eprintln!(
+                    "smoke-big: 4s after typing: {} diagnostics, inlay lines {}, fold markers fresh {}, syntax tree ready {}, status {:?}",
+                    ed.read(cx).diagnostics.len(),
+                    ed.read(cx).inlay_line_count(),
+                    ed.read(cx).folds_fresh(),
+                    ed.read(cx).syntax_ready(),
+                    this.status
+                );
                 eprintln!("smoke-big: done in {:.1?}", t0.elapsed());
                 if std::env::var_os("BRISK_SMOKE_BIG_HOLD").is_none() {
                     cx.quit();
