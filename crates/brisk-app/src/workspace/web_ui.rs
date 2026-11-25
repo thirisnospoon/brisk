@@ -26,8 +26,11 @@ pub struct WebState {
     pub stale: bool,
     scanning: bool,
     /// Callbacks waiting for the scan in progress.
-    waiting: Vec<Box<dyn FnOnce(&mut Workspace, &Index, &mut Window, &mut Context<Workspace>)>>,
+    waiting: Vec<WebCallback>,
 }
+
+/// A callback that runs with a current index.
+type WebCallback = Box<dyn FnOnce(&mut Workspace, &Index, &mut Window, &mut Context<Workspace>)>;
 
 pub struct Endpoints {
     pub focus: FocusHandle,
@@ -64,8 +67,8 @@ impl Workspace {
             }
             idx
         };
-        if window.is_some() {
-            cx.spawn_in(window.unwrap(), async move |this, cx| {
+        if let Some(window) = window {
+            cx.spawn_in(window, async move |this, cx| {
                 let idx = task.await;
                 let _ = this.update_in(cx, |this, window, cx| {
                     let idx = finish(this, idx);

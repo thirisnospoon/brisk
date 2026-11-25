@@ -98,7 +98,7 @@ impl Editor {
         let text: Vec<char> = self.buffer.line(line).chars().collect();
         let dot = col - 1;
         let first = text.iter().collect::<String>();
-        if matches!(first.trim_start().split_whitespace().next(), Some("import" | "from")) || text[..dot].contains(&'#') {
+        if matches!(first.split_whitespace().next(), Some("import" | "from")) || text[..dot].contains(&'#') {
             return Vec::new();
         }
         let indent: String = text.iter().take_while(|c| c.is_whitespace()).collect();

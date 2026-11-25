@@ -22,7 +22,10 @@ fn dir_mtime(p: &std::path::Path) -> Option<SystemTime> {
     std::fs::metadata(p).ok()?.modified().ok()
 }
 
-fn file_stamp(p: &std::path::Path) -> Option<(SystemTime, u64)> {
+/// A file's modification time and length.
+type FileStamp = (SystemTime, u64);
+
+fn file_stamp(p: &std::path::Path) -> Option<FileStamp> {
     let m = std::fs::metadata(p).ok()?;
     Some((m.modified().ok()?, m.len()))
 }
@@ -39,7 +42,7 @@ struct Snapshot {
 
 /// What the background poll hands back.
 struct Polled {
-    editors: Vec<(Entity<Editor>, Option<(SystemTime, u64)>)>,
+    editors: Vec<(Entity<Editor>, Option<FileStamp>)>,
     stamps: HashMap<PathBuf, Option<SystemTime>>,
     /// Changed folders with their fresh listings, shallowest first.
     changed: Vec<(PathBuf, Vec<brisk_project::Entry>)>,

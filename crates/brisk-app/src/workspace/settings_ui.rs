@@ -10,6 +10,9 @@ use brisk_keymap::Action;
 use gpui::prelude::*;
 use gpui::{div, px, Context, Window};
 
+/// A control's `on_click` handler.
+type ClickHandler = Box<dyn Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static>;
+
 pub struct SettingsDialog {
     /// The settings when the dialog opened (Cancel goes back to them).
     orig: Settings,
@@ -229,7 +232,7 @@ impl Workspace {
     }
 
     /// A click on control `c`: it takes the focus (its ring shows) and is pressed.
-    fn settings_click(c: SetCtl, cx: &mut Context<Self>) -> Box<dyn Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> {
+    fn settings_click(c: SetCtl, cx: &mut Context<Self>) -> ClickHandler {
         Box::new(cx.listener(move |this, _: &gpui::ClickEvent, w, cx| {
             if let Some(d) = this.settings_dialog.as_mut() {
                 d.kb = d.controls().iter().position(|x| *x == c);

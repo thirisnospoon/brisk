@@ -160,7 +160,7 @@ impl Workspace {
     /// the balloon offering `uv sync` / `poetry lock && install`.
     pub(super) fn pyproject_saved(&mut self, saved: &[PathBuf], cx: &mut Context<Self>) {
         let file = self.root.join("pyproject.toml");
-        if !saved.iter().any(|p| *p == file) {
+        if !saved.contains(&file) {
             return;
         }
         let fp = std::fs::read_to_string(&file).ok().map(|t| pyproj::deps_fingerprint(&t));

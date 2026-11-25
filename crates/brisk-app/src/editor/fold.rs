@@ -317,15 +317,6 @@ impl Editor {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn indent_regions() {
-        let lines: Vec<String> = ["a:", "  b", "", "  c:", "    d", "e"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(super::indent_regions(&lines), vec![(0, 4), (3, 4)]);
-    }
-}
-
 impl Editor {
     /// The pointer is on a fold marker in the gutter (the hand cursor).
     pub(super) fn fold_marker_at(&mut self, p: gpui::Point<gpui::Pixels>) -> bool {
@@ -388,5 +379,14 @@ impl Editor {
         self.fill_occurrences();
         let m = self.caret_marks(0..self.text_cache.1.len());
         (m.brackets.iter().map(|r| self.buffer.pos_to_line_col(r.start)).collect(), m.occurrences.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn indent_regions() {
+        let lines: Vec<String> = ["a:", "  b", "", "  c:", "    d", "e"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(super::indent_regions(&lines), vec![(0, 4), (3, 4)]);
     }
 }

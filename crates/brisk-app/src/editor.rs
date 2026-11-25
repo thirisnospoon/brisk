@@ -1762,8 +1762,12 @@ impl Element for EditorElement {
             ed.update_guides();
             ed.update_stripe();
             ed.update_whitespace(f32::from(bounds.size.height));
-            let h = if ed.show_gutter { ed.fold_headers() } else { Vec::new() };
-            h
+
+            if ed.show_gutter {
+                ed.fold_headers()
+            } else {
+                Vec::new()
+            }
         });
         let ed = self.editor.read(cx);
         let b = &ed.buffer;
@@ -2501,14 +2505,14 @@ impl Element for EditorElement {
                 let c = point(bounds.left() + pp.gutter_w - px(30.) - pp.run_slot - px(1. + d / 2.), line_ys[i] + lh / 2.);
                 crate::icons::paint_dot(window, c, d, Theme::breakpoint().opacity(0.4), None);
             }
-            if let Some(i) = exec_line.and_then(|l| idx_of(l)) {
+            if let Some(i) = exec_line.and_then(&idx_of) {
                 // ▶ arrow at the bookmark slot.
                 let y = line_ys[i];
                 let x = bounds.left() + px(5.);
                 let h = lh - px(8.);
                 window.paint_quad(fill(Bounds::new(point(x, y + px(4.)), size(px(9.), h)), Theme::accent()).corner_radii(px(2.)));
             }
-            if let Some(i) = exec_ghost.and_then(|l| idx_of(l)) {
+            if let Some(i) = exec_ghost.and_then(idx_of) {
                 // Where a dragged arrow would go.
                 let y = line_ys[i];
                 window.paint_quad(

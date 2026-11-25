@@ -227,8 +227,11 @@ pub(super) struct Nav {
     pub pending: Option<(Vec<brisk_lsp::FileEdits>, String, String)>,
     /// The last refactoring, undone at once from any of its files: its name, then each file
     /// with its text before and after and whether it was open in an editor.
-    pub last_refactor: Option<(String, Vec<(PathBuf, String, String, bool)>)>,
+    pub last_refactor: Option<(String, Vec<RefactoredFile>)>,
 }
+
+/// A file a refactoring changed: its path, text before and after, and whether it was open.
+type RefactoredFile = (PathBuf, String, String, bool);
 
 const NAV_LIMIT: usize = 100;
 
@@ -1125,7 +1128,7 @@ impl Workspace {
             .editors()
             .filter_map(|e| {
                 let e = e.read(cx);
-                Some((e.path.clone()?, e.buffer.version(), e.text_string())).filter(|_| e.is_python())
+                e.is_python().then_some((e.path.clone()?, e.buffer.version(), e.text_string()))
             })
             .collect();
         for (p, v, t) in open {

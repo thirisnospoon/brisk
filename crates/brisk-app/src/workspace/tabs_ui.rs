@@ -413,7 +413,7 @@ impl Workspace {
                 Tab::Diff(d) => (d.read(cx).title.clone(), None),
                 Tab::Grid(g) => (g.read(cx).title.clone(), None),
                 Tab::Merge(m) => (m.read(cx).title.clone(), Some(m.read(cx).path.clone())),
-                Tab::Data(v) => (v.read(cx).title.clone().into(), None),
+                Tab::Data(v) => (v.read(cx).title.clone(), None),
             };
             let hidden = scroll.bounds_for_item(i).is_some_and(|b| b.left() + x < vb.left() - px(1.) || b.right() + x > vb.right() + px(1.));
             let detail = path

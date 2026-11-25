@@ -122,7 +122,7 @@ impl Workspace {
                             e.type_for_smoke("\n", cx);
                             e.close_insight();
                         });
-                        let _ = ed.update(cx, |e, _| {
+                        ed.update(cx, |e, _| {
                             let t = e.text_string();
                             let n = t.trim_end_matches([' ', '\t']).len();
                             let n = t[..n].chars().count();

@@ -133,10 +133,7 @@ impl Side {
     }
 
     pub(crate) fn line(&self, i: Option<usize>) -> (SharedString, &[(Range<usize>, Hsla)]) {
-        match i.and_then(|i| self.lines.get(i).map(|l| (l.clone(), self.colors[i].as_slice()))) {
-            Some(x) => x,
-            None => (SharedString::default(), &[]),
-        }
+        i.and_then(|i| self.lines.get(i).map(|l| (l.clone(), self.colors[i].as_slice()))).unwrap_or_default()
     }
 }
 

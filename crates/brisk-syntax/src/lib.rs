@@ -1131,7 +1131,7 @@ class C:
         let mut inc = SyntaxTree::new(Lang::Python);
         inc.parse(&text);
         // Two keystrokes shifted without parsing: the tree stays, marked stale.
-        text.insert_str(3000, "x");
+        text.insert(3000, 'x');
         inc.shift(&text);
         text.insert_str(3001, " = (");
         inc.shift(&text);
@@ -1149,7 +1149,7 @@ class C:
         let mut text: String = (0..200).map(|i| format!("def f{i}(a):\n    return a\n\n")).collect();
         let mut inc = SyntaxTree::new(Lang::Python);
         inc.parse(&text);
-        text.insert_str(100, "(");
+        text.insert(100, '(');
         inc.shift(&text);
         let (lang, job_text, tree) = inc.stale_job().unwrap();
         let built = parse_full(lang, &job_text, tree.as_ref()).unwrap();
@@ -1181,7 +1181,7 @@ class C:
         assert_eq!(inc.tree().unwrap().root_node().to_sexp(), full(&base));
         // An unclosed bracket near the top, with a zero budget: the parse gives up.
         let mut text = base.clone();
-        text.insert_str(20, "(");
+        text.insert(20, '(');
         inc.parse_within(&text, Some(std::time::Duration::ZERO));
         assert!(inc.is_stale());
         // Further edits on a stale tree accumulate; the background parse catches up.
@@ -1199,7 +1199,7 @@ class C:
         assert!(!inc.is_stale());
         assert_eq!(inc.tree().unwrap().root_node().to_sexp(), full(&text));
         // And a normal parse afterwards is incremental and correct again.
-        text.insert_str(20, ")");
+        text.insert(20, ')');
         inc.parse_within(&text, Some(std::time::Duration::from_secs(10)));
         assert!(!inc.is_stale());
         assert_eq!(inc.tree().unwrap().root_node().to_sexp(), full(&text));

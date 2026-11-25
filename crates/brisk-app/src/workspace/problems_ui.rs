@@ -816,7 +816,7 @@ impl Workspace {
                 let this_file = ed.read(cx).path.clone();
                 let mut mods: Vec<String> = list
                     .iter()
-                    .filter(|s| &*s.name == name && s.container.is_empty())
+                    .filter(|s| *s.name == name && s.container.is_empty())
                     .filter(|s| this_file.as_deref() != Some(files.abs(s.file).as_path()))
                     .filter_map(|s| brisk_lsp::module_name(&self.root, &files.abs(s.file)))
                     .collect();

@@ -1644,7 +1644,7 @@ impl Workspace {
                 action_score(&title, &ql).map(|s| (s, a))
             })
             .collect();
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        scored.sort_by_key(|s| std::cmp::Reverse(s.0));
         let km = self.resolver.keymap();
         // An action and the tool window of the same name ("Run") are one row; the second's
         // shortcut joins the first's.

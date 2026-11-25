@@ -7,6 +7,9 @@ use crate::workspace::Workspace;
 use gpui::{Context, Entity, EntityInputHandler, Focusable, KeyDownEvent, Keystroke, Window};
 use std::path::PathBuf;
 
+/// The editor's scroll as the smoke sees it: (x, y, max x, max y, text area bounds).
+type ScrollState = (f32, f32, f32, f32, Option<gpui::Bounds<gpui::Pixels>>);
+
 impl Workspace {
     pub(in crate::workspace) fn smoke_press(&mut self, keys: &str, window: &mut Window, cx: &mut Context<Self>) {
         for k in keys.split(' ') {
@@ -121,7 +124,7 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
             let st = |cx: &mut gpui::AsyncWindowContext| ed.read_with(cx, |e, _| e.scroll_state()).ok();
-            let show = |label: &str, s: Option<(f32, f32, f32, f32, Option<gpui::Bounds<gpui::Pixels>>)>| {
+            let show = |label: &str, s: Option<ScrollState>| {
                 if let Some((x, y, mx, my, _)) = s {
                     eprintln!("smoke-edit: {label}: scroll x={x:.0}/{mx:.0} y={y:.0}/{my:.0}");
                 }

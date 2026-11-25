@@ -8,6 +8,9 @@ use brisk_text::Selection;
 use gpui::Context;
 use std::ops::Range;
 
+/// A function a call of an unknown name could create: its name and the edit that adds it.
+type CreateFunction = (String, (Range<usize>, String));
+
 fn is_ident(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
@@ -261,7 +264,7 @@ impl Editor {
         let sel = self.buffer.rope().char_to_byte(r.start)..self.buffer.rope().char_to_byte(r.end);
         let mut name = "extracted".to_string();
         let mut k = 1;
-        while occurrences(&text.chars().collect::<Vec<_>>(), &name.chars().collect::<Vec<_>>(), 0..text.chars().count()).len() > 0 {
+        while !occurrences(&text.chars().collect::<Vec<_>>(), &name.chars().collect::<Vec<_>>(), 0..text.chars().count()).is_empty() {
             name = format!("extracted{k}");
             k += 1;
         }
@@ -313,7 +316,7 @@ impl Editor {
 
     /// Alt+Enter: the intentions at the caret (f-string, 'if' ones), the function a call of an
     /// unknown name could create, and the variable or function a type hint can go to.
-    pub fn intentions_at_caret(&mut self) -> (Vec<brisk_syntax::Intention>, Option<(String, (Range<usize>, String))>, Option<brisk_syntax::HintTarget>) {
+    pub fn intentions_at_caret(&mut self) -> (Vec<brisk_syntax::Intention>, Option<CreateFunction>, Option<brisk_syntax::HintTarget>) {
         let byte = self.buffer.rope().char_to_byte(self.buffer.primary().head);
         let text = self.text().to_string();
         let Some(tree) = self.python_tree() else { return (Vec::new(), None, None) };

@@ -523,7 +523,7 @@ fn undo_is_capped_by_bytes() {
     while b.undo() {
         steps += 1;
     }
-    assert!(steps >= 1 && steps < 8, "{steps}");
+    assert!((1..8).contains(&steps), "{steps}");
     assert_eq!(b.undo_bytes, 0);
 }
 

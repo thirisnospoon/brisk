@@ -105,7 +105,7 @@ impl Workspace {
         open.unwrap_or_else(|| std::fs::read_to_string(path).unwrap_or_default().replace("\r\n", "\n"))
     }
 
-    fn history_revision(path: &PathBuf, at: u64) -> Option<local_history::Revision> {
+    fn history_revision(path: &Path, at: u64) -> Option<local_history::Revision> {
         local_history::revisions(path).into_iter().find(|r| r.at == at)
     }
 

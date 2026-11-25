@@ -539,6 +539,12 @@ library crates. The last one adds `[workspace.lints]` and the clippy job with
 Files: wherever clippy points. Verify: tests, CI. Risk: low to medium; clippy fixes in
 `brisk-app` UI code need the smokes of the touched area.
 
+Done on branch `batch1` in one commit: 74 warnings, about half fixed by `cargo clippy --fix`,
+the rest by hand (type aliases for complex types, `Box` in two large enum variants,
+`sort_by_key`, `if let` instead of `unwrap` after a check). The CI `clippy` job runs with
+`-D warnings`, with and without the smoke feature. `[workspace.lints]` with
+`clippy::unwrap_used` is not added yet.
+
 ### Phase 1: take smokes out of the product
 
 #### Step 4. Add the `smoke` feature and `smoke::schedule`

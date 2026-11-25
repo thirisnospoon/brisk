@@ -73,6 +73,30 @@ pub(super) fn wave_top(row_top: Pixels, line_h: Pixels) -> Pixels {
     row_top + line_h - px(3.)
 }
 
+/// A wave on one row: (1-based line, first column, past the last column).
+#[cfg(feature = "smoke")]
+type WaveRow = (usize, usize, usize);
+
+impl super::Editor {
+    /// Smoke: the waves as (1-based line, first column, past the last column), per problem.
+    #[cfg(feature = "smoke")]
+    pub fn waves_for_smoke(&self) -> Vec<(String, Vec<WaveRow>)> {
+        self.diagnostics
+            .iter()
+            .filter(|d| d.severity != brisk_lint::Severity::Unused && !is_deprecated(d))
+            .map(|d| {
+                let r = self.diag_range(d);
+                let (l1, c1) = self.buffer.pos_to_line_col(r.start);
+                let (l2, c2) = self.buffer.pos_to_line_col(r.end);
+                let rows = (l1..=l2)
+                    .filter_map(|l| wave_cols(&self.buffer.line(l), (l == l1).then_some(c1), (l == l2).then_some(c2)).map(|(a, b)| (l + 1, a, b)))
+                    .collect();
+                (d.code.clone(), rows)
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::wave_cols;
@@ -91,25 +115,5 @@ mod tests {
         assert_eq!(wave_cols("x = (", Some(5), Some(5)), Some((5, 6)));
         // A problem that starts inside the indentation is moved to the code.
         assert_eq!(wave_cols("        return", Some(0), Some(14)), Some((8, 14)));
-    }
-}
-
-impl super::Editor {
-    /// Smoke: the waves as (1-based line, first column, past the last column), per problem.
-    #[cfg(feature = "smoke")]
-    pub fn waves_for_smoke(&self) -> Vec<(String, Vec<(usize, usize, usize)>)> {
-        self.diagnostics
-            .iter()
-            .filter(|d| d.severity != brisk_lint::Severity::Unused && !is_deprecated(d))
-            .map(|d| {
-                let r = self.diag_range(d);
-                let (l1, c1) = self.buffer.pos_to_line_col(r.start);
-                let (l2, c2) = self.buffer.pos_to_line_col(r.end);
-                let rows = (l1..=l2)
-                    .filter_map(|l| wave_cols(&self.buffer.line(l), (l == l1).then_some(c1), (l == l2).then_some(c2)).map(|(a, b)| (l + 1, a, b)))
-                    .collect();
-                (d.code.clone(), rows)
-            })
-            .collect()
     }
 }

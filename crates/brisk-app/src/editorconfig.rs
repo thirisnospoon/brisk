@@ -140,10 +140,13 @@ fn apply(c: &mut EditorConfig, k: &str, v: &str) {
     }
 }
 
+/// A section: its glob and its (key, value) pairs.
+type Section = (String, Vec<(String, String)>);
+
 /// (root = true?, sections of (glob, [(key, value)])); keys and values lowercased.
-fn parse(text: &str) -> (bool, Vec<(String, Vec<(String, String)>)>) {
+fn parse(text: &str) -> (bool, Vec<Section>) {
     let mut root = false;
-    let mut sections: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    let mut sections: Vec<Section> = Vec::new();
     for line in text.lines() {
         let l = line.trim();
         if l.is_empty() || l.starts_with('#') || l.starts_with(';') {

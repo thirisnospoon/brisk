@@ -66,29 +66,33 @@ impl Editor {
         let sel = self.buffer.primary().range();
         let multiline = !sel.is_empty() && self.buffer.pos_to_line_col(sel.start).0 != self.buffer.pos_to_line_col(sel.end).0;
         let scope = multiline.then(|| (self.buffer.version(), sel.clone()));
-        if self.find.is_none() {
-            let mut opts = self.last_find.clone();
-            if let Some(s) = &seed {
-                opts.query = s.clone();
+        match self.find.as_mut() {
+            None => {
+                let mut opts = self.last_find.clone();
+                if let Some(s) = &seed {
+                    opts.query = s.clone();
+                }
+                opts.in_selection = multiline;
+                let query = field(&opts.query, window, cx);
+                let subs = vec![cx.observe(&query, |this, _, cx| this.find_query_changed(cx))];
+                let origin = self.buffer.selections.first().map(|s| s.range().start).unwrap_or(0);
+                self.find =
+                    Some(FindBar { query, replace: None, opts, matches: Vec::new(), current: None, error: None, searched: None, origin, scope, _subs: subs });
             }
-            opts.in_selection = multiline;
-            let query = field(&opts.query, window, cx);
-            let subs = vec![cx.observe(&query, |this, _, cx| this.find_query_changed(cx))];
-            let origin = self.buffer.selections.first().map(|s| s.range().start).unwrap_or(0);
-            self.find =
-                Some(FindBar { query, replace: None, opts, matches: Vec::new(), current: None, error: None, searched: None, origin, scope, _subs: subs });
-        } else if multiline {
-            let f = self.find.as_mut().unwrap();
-            f.opts.in_selection = true;
-            f.scope = scope;
-            f.searched = None;
-        } else if let Some(s) = seed {
-            let f = self.find.as_ref().unwrap();
-            f.query.update(cx, |q, cx| {
-                q.buffer.set_text(&s);
-                q.buffer.select_all();
-                cx.notify();
-            });
+            Some(f) if multiline => {
+                f.opts.in_selection = true;
+                f.scope = scope;
+                f.searched = None;
+            }
+            Some(f) => {
+                if let Some(s) = seed {
+                    f.query.update(cx, |q, cx| {
+                        q.buffer.set_text(&s);
+                        q.buffer.select_all();
+                        cx.notify();
+                    });
+                }
+            }
         }
         let f = self.find.as_mut().unwrap();
         if replace && f.replace.is_none() {
@@ -583,6 +587,19 @@ pub fn preserve_case(found: &str, with: &str) -> String {
     with.to_string()
 }
 
+impl Editor {
+    /// Smoke checks: (match count, current index, query, bar open).
+    #[cfg(feature = "smoke")]
+    pub fn find_state(&self) -> (usize, Option<usize>, String, bool) {
+        match &self.find {
+            Some(f) => {
+                (f.matches.len(), f.current, format!("{}{}", f.opts.query, f.error.as_ref().map(|e| format!(" [error: {e}]")).unwrap_or_default()), true)
+            }
+            None => (0, None, self.last_find.query.clone(), false),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::preserve_case;
@@ -596,18 +613,5 @@ mod tests {
         assert_eq!(preserve_case("fooBar", "bazQux"), "bazQux");
         assert_eq!(preserve_case("F", "bar"), "Bar");
         assert_eq!(preserve_case("42", "x"), "x");
-    }
-}
-
-impl Editor {
-    /// Smoke checks: (match count, current index, query, bar open).
-    #[cfg(feature = "smoke")]
-    pub fn find_state(&self) -> (usize, Option<usize>, String, bool) {
-        match &self.find {
-            Some(f) => {
-                (f.matches.len(), f.current, format!("{}{}", f.opts.query, f.error.as_ref().map(|e| format!(" [error: {e}]")).unwrap_or_default()), true)
-            }
-            None => (0, None, self.last_find.query.clone(), false),
-        }
     }
 }

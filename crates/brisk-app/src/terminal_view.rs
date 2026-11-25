@@ -241,9 +241,8 @@ pub fn shells() -> Vec<Shell> {
     if !cfg!(windows) {
         return v;
     }
-    let pf = |sub: &str| {
-        ["ProgramFiles", "ProgramW6432"].iter().filter_map(|k| std::env::var_os(k)).map(|d| std::path::PathBuf::from(d).join(sub)).find(|p| p.is_file())
-    };
+    let pf =
+        |sub: &str| ["ProgramFiles", "ProgramW6432"].iter().filter_map(std::env::var_os).map(|d| std::path::PathBuf::from(d).join(sub)).find(|p| p.is_file());
     if let Some(p) = pf(r"PowerShell\7\pwsh.exe") {
         v.push(Shell { label: "PowerShell 7", program: p.display().to_string(), args: vec!["-NoLogo".into()] });
     }

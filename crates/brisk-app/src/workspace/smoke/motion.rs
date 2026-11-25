@@ -24,7 +24,7 @@ pub(in crate::workspace) fn long_python() -> String {
             for k in 0..8 {
                 s.push_str(&format!("                total += i * {k}  # step {k}\n"));
             }
-            s.push_str(&format!("        return f\"{{self.name}}: {{total}}\"\n\n"));
+            s.push_str("        return f\"{self.name}: {total}\"\n\n");
         }
         s.push('\n');
     }

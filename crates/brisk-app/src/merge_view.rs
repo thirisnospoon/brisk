@@ -403,7 +403,7 @@ impl MergeView {
         if parts.is_empty() {
             return;
         }
-        parts.sort_by(|a, b| b.0.cmp(&a.0));
+        parts.sort_by_key(|p| std::cmp::Reverse(p.0));
         let mut all: Vec<String> = self.text.split('\n').map(str::to_string).collect();
         let mut lens: Vec<usize> = self.res_at.iter().map(|r| r.len()).collect();
         for (i, lines) in &parts {

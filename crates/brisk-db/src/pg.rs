@@ -79,10 +79,8 @@ fn fmt_err_at(e: postgres::Error, shift: u32) -> String {
         if let Some(h) = db.hint() {
             s.push_str(&format!("\nHint: {h}"));
         }
-        if let Some(p) = db.position() {
-            if let postgres::error::ErrorPosition::Original(p) = p {
-                s.push_str(&format!("\nPosition: {}", p.saturating_sub(shift).max(1)));
-            }
+        if let Some(postgres::error::ErrorPosition::Original(p)) = db.position() {
+            s.push_str(&format!("\nPosition: {}", p.saturating_sub(shift).max(1)));
         }
         return s;
     }
@@ -156,10 +154,8 @@ impl Connection for Pg {
                     }
                     out.rows.push((0..r.len()).map(|i| r.get(i).map(str::to_string)).collect());
                 }
-                SimpleQueryMessage::CommandComplete(n) => {
-                    if out.columns.is_empty() {
-                        out.affected = Some(n);
-                    }
+                SimpleQueryMessage::CommandComplete(n) if out.columns.is_empty() => {
+                    out.affected = Some(n);
                 }
                 _ => {}
             }

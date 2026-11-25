@@ -52,10 +52,15 @@ pub enum Source {
     /// A GPUI scroll container (`overflow_y_scroll`, or a `uniform_list`'s base handle).
     Handle(ScrollHandle),
     Custom {
-        metrics: Rc<dyn Fn(&App) -> Option<Metrics>>,
-        set: Rc<dyn Fn(f32, &mut Window, &mut App)>,
+        metrics: GetMetrics,
+        set: SetTop,
     },
 }
+
+/// Reads a custom source's position.
+type GetMetrics = Rc<dyn Fn(&App) -> Option<Metrics>>;
+/// Scrolls a custom source to a top (in its own units).
+type SetTop = Rc<dyn Fn(f32, &mut Window, &mut App)>;
 
 impl Source {
     pub fn list(h: &gpui::UniformListScrollHandle) -> Self {

@@ -190,8 +190,8 @@ impl PipeIo {
                         }
                     }
                 }
-                for i in 0..2 {
-                    let rest = std::mem::take(&mut bufs[i]);
+                for (i, buf) in bufs.iter_mut().enumerate() {
+                    let rest = std::mem::take(buf);
                     emit(i, &rest, &mut prev_cr);
                 }
                 let _ = done_tx.send(());

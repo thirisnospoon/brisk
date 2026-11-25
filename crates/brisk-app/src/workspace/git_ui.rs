@@ -17,6 +17,10 @@ const LOG_LIMIT: usize = 20_000;
 const LOG_ROW_H: f32 = 24.0;
 const LANE_W: f32 = 14.0;
 
+/// A Commit list row: `Ok((change index, change, check state))`, or `Err(untracked)` for a
+/// group header.
+type CommitRow = Result<(usize, FileChange, Option<bool>), bool>;
+
 #[derive(Clone, Debug)]
 pub enum Pending {
     Rollback(Vec<FileChange>),
@@ -1255,7 +1259,7 @@ impl Workspace {
                             }
                         };
                         let sel = g.commit_sel;
-                        let rows: Vec<Result<(usize, FileChange, Option<bool>), bool>> = range
+                        let rows: Vec<CommitRow> = range
                             .map(|r| match g.list_item(r) {
                                 Ok(i) => g.row(i).map(|c| (i, c.clone(), g.check_state(c))).ok_or(true),
                                 Err(u) => Err(u),

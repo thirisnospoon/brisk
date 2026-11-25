@@ -459,7 +459,7 @@ pub fn introspect(conn: &mut dyn Connection) -> Result<Vec<Schema>, String> {
             }
         };
         let tables = &mut schemas[si].tables;
-        if tables.last().map_or(true, |t| t.name != tn) {
+        if tables.last().is_none_or(|t| t.name != tn) {
             let kind = if tt.to_ascii_uppercase().contains("VIEW") { TableKind::View } else { TableKind::Table };
             tables.push(Table { name: tn, kind, columns: Vec::new() });
         }

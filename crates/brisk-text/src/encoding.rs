@@ -68,7 +68,7 @@ pub fn system_legacy() -> &'static Encoding {
 /// Whether `bytes` contain at least one valid UTF-8 multi-byte character. Text in a legacy
 /// code page practically never does by accident.
 fn has_utf8_sequences(bytes: &[u8]) -> bool {
-    bytes.utf8_chunks().any(|c| c.valid().chars().any(|ch| !ch.is_ascii()))
+    bytes.utf8_chunks().any(|c| !c.valid().is_ascii())
 }
 
 fn looks_binary(bytes: &[u8]) -> bool {

@@ -567,9 +567,9 @@ impl Buffer {
         }
         if let Some(close) = closing {
             if self.selections.iter().all(|s| s.is_empty()) {
-                let next_ok = self.selections.iter().all(|s| self.char_at(s.head).map_or(true, |n| n.is_whitespace() || ")]},:".contains(n)));
+                let next_ok = self.selections.iter().all(|s| self.char_at(s.head).is_none_or(|n| n.is_whitespace() || ")]},:".contains(n)));
                 let quote_ok = !matches!(c, '"' | '\'')
-                    || self.selections.iter().all(|s| s.head == 0 || self.char_at(s.head - 1).map_or(true, |p| !p.is_alphanumeric() && p != c));
+                    || self.selections.iter().all(|s| s.head == 0 || self.char_at(s.head - 1).is_none_or(|p| !p.is_alphanumeric() && p != c));
                 if next_ok && quote_ok {
                     let pair: String = [c, close].iter().collect();
                     let starts: Vec<usize> = self.selections.iter().map(|s| s.head).collect();

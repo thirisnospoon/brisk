@@ -298,7 +298,7 @@ impl RunFile {
             if c.kind == RunKind::Compound {
                 return Err(format!("'{}' runs the Compound '{name}' before launch: pick its configurations instead", cfg.name));
             }
-            out.push(BeforeStep::Run(c.clone()));
+            out.push(BeforeStep::Run(Box::new(c.clone())));
         }
         let line = cfg.before_command.trim();
         if !line.is_empty() {
@@ -341,7 +341,7 @@ impl RunFile {
 #[derive(Clone, Debug, PartialEq)]
 pub enum BeforeStep {
     /// Another configuration, in its own Run tab.
-    Run(RunConfig),
+    Run(Box<RunConfig>),
     /// A shell command line.
     Command(String),
 }

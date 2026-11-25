@@ -103,7 +103,7 @@ pub(in crate::workspace) fn wheel(x: f32, y: f32, delta: i16) {
         let mut p = Pt { x: x as i32, y: y as i32 };
         ClientToScreen(hwnd, &mut p);
         let l = ((p.y as isize & 0xffff) << 16) | (p.x as isize & 0xffff);
-        let w = ((delta as u16 as usize) << 16) as usize;
+        let w = (delta as u16 as usize) << 16;
         PostMessageW(hwnd, 0x020A, w, l); // WM_MOUSEWHEEL
     }
 }

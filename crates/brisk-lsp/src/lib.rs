@@ -623,14 +623,12 @@ fn at(path: &Path, p: Pos) -> Value {
 }
 
 /// Await a reply and parse it.
-fn call<T>(rx: oneshot::Receiver<Reply>, parse: impl FnOnce(&Value) -> T + Send + 'static) -> impl Future<Output = Result<T, String>> + Send + 'static
+async fn call<T>(rx: oneshot::Receiver<Reply>, parse: impl FnOnce(&Value) -> T + Send + 'static) -> Result<T, String>
 where
     T: Send + 'static,
 {
-    async move {
-        let v = rx.await.map_err(|_| "the language server exited".to_string())??;
-        Ok(parse(&v))
-    }
+    let v = rx.await.map_err(|_| "the language server exited".to_string())??;
+    Ok(parse(&v))
 }
 
 fn rename_params(renames: &[(PathBuf, PathBuf)]) -> Value {

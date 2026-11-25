@@ -230,7 +230,7 @@ impl KeyResolver {
             // Prefer the most specific (innermost) context; global bindings rank last.
             let rank = b.context.and_then(|c| contexts.iter().position(|x| *x == c)).unwrap_or(usize::MAX);
             if ks.len() == self.pending.len() && *ks == self.pending {
-                if best.map_or(true, |(r, _)| rank < r) {
+                if best.is_none_or(|(r, _)| rank < r) {
                     best = Some((rank, b.action));
                 }
             } else if ks.len() > self.pending.len() && ks[..self.pending.len()] == self.pending[..] {
@@ -241,7 +241,7 @@ impl KeyResolver {
         // A chord whose first stroke is also a shortcut of its own: the chord wins where it
         // is at least as specific, else it could never fire (`Keymap::conflicts` reports it).
         if let Some(p) = prefix_rank {
-            if best.map_or(true, |(r, _)| p <= r) {
+            if best.is_none_or(|(r, _)| p <= r) {
                 return Resolution::Pending;
             }
         }

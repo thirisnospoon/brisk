@@ -1046,10 +1046,8 @@ impl Workspace {
         let Some((ed, line)) = self.debug_edit.take() else { return };
         match target {
             Target::BpCondition(c) => ed.update(cx, |e, cx| e.set_breakpoint_condition(line, Some(c), cx)),
-            Target::BpRemove => {
-                if ed.read(cx).breakpoint_list().iter().any(|(l, _)| *l == line) {
-                    ed.update(cx, |e, cx| e.toggle_breakpoint(line, cx));
-                }
+            Target::BpRemove if ed.read(cx).breakpoint_list().iter().any(|(l, _)| *l == line) => {
+                ed.update(cx, |e, cx| e.toggle_breakpoint(line, cx));
             }
             _ => {}
         }

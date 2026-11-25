@@ -334,7 +334,7 @@ mod tests {
     fn ranges_inside_a_scope() {
         let q = Query::new(&opts("ab")).unwrap();
         let text = "ab ab ab ab";
-        assert_eq!(q.ranges_in(text, 2..7, 10), [3..5]);
+        assert_eq!(q.ranges_in(text, 2..7, 10), [Range { start: 3, end: 5 }]);
         assert_eq!(q.ranges_in(text, 3..11, 2), [3..5, 6..8]);
         assert_eq!(q.ranges_in(text, 0..text.len(), usize::MAX), q.ranges(text, usize::MAX));
     }

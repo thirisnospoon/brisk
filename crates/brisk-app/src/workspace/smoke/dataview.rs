@@ -17,6 +17,9 @@ use gpui::{Context, Window};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+/// A data view as the smoke sees it: (title, info, error, row 0, row 1).
+type DataSnapshot = (String, Option<crate::data_view::Info>, Option<String>, Option<(String, Vec<String>)>, Option<(String, Vec<String>)>);
+
 const FRAMES: &str = "import numpy as np
 import pandas as pd
 
@@ -226,9 +229,7 @@ impl Workspace {
                 .ok()
                 .flatten()
             };
-            let first = |s: &Option<(String, Option<crate::data_view::Info>, Option<String>, Option<(String, Vec<String>)>, Option<(String, Vec<String>)>)>| {
-                s.as_ref().and_then(|s| s.3.clone()).map(|r| r.0)
-            };
+            let first = |s: &Option<DataSnapshot>| s.as_ref().and_then(|s| s.3.clone()).map(|r| r.0);
 
             let t0 = Instant::now();
             let _ = this.update_in(cx, |t, w, cx| {

@@ -263,11 +263,14 @@ pub fn pycharm_config_dirs() -> Vec<PathBuf> {
     v
 }
 
+/// A keymap file of a PyCharm settings folder: `(name, file text)`.
+type KeymapFile = (String, String);
+
 /// The active custom keymap of a PyCharm settings folder: `(name, file text, the folder's
 /// other keymaps)`. `None` when PyCharm uses a built-in keymap.
-pub fn active_keymap(config: &Path) -> Option<(String, String, Vec<(String, String)>)> {
+pub fn active_keymap(config: &Path) -> Option<(String, String, Vec<KeymapFile>)> {
     let dir = config.join("keymaps");
-    let mut all: Vec<(String, String)> = Vec::new();
+    let mut all: Vec<KeymapFile> = Vec::new();
     for e in std::fs::read_dir(&dir).ok()?.flatten() {
         if e.path().extension().is_some_and(|x| x == "xml") {
             if let Ok(text) = std::fs::read_to_string(e.path()) {

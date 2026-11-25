@@ -42,6 +42,9 @@ fn imported(text: &str, name: &str, file: &Path, root: &Path) -> Vec<(PathBuf, S
     out
 }
 
+/// A base class still to look up: its name, ty's (file, row) for it, and the file naming it.
+type PendingBase = (String, Option<(PathBuf, usize)>, PathBuf);
+
 /// Methods of `c`'s bases, nearest first (a name once), with the class each comes from.
 /// `located`: ty's (file, row) for each direct base, when ty answered.
 fn base_methods(
@@ -53,7 +56,7 @@ fn base_methods(
     index: &[(String, PathBuf)],
 ) -> Vec<(Method, String)> {
     let load = |p: &Path| if p == file { Some(text.to_string()) } else { std::fs::read_to_string(p).ok() };
-    let mut queue: std::collections::VecDeque<(String, Option<(PathBuf, usize)>, PathBuf)> =
+    let mut queue: std::collections::VecDeque<PendingBase> =
         c.bases.iter().zip(located.into_iter().chain(std::iter::repeat(None))).map(|((b, _), loc)| (b.clone(), loc, file.to_path_buf())).collect();
     let mut seen = std::collections::HashSet::new();
     let mut out: Vec<(Method, String)> = Vec::new();

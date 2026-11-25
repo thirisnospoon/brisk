@@ -56,7 +56,7 @@ impl Workspace {
             return;
         }
         match run_anything::parse(&self.root, &line) {
-            Some(Parsed::Config(cfg)) => self.run_config(cfg, window, cx),
+            Some(Parsed::Config(cfg)) => self.run_config(*cfg, window, cx),
             Some(Parsed::Shell(cmdline)) => {
                 self.save_all(cx);
                 let env = self.terminal_activation().map(|a| a.env).unwrap_or_default();

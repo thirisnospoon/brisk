@@ -82,7 +82,7 @@ impl Workspace {
                 let history = p.run_tabs_detail().into_iter().find(|t| t.0 == "big").map(|t| t.2);
                 let text = p.active_text().unwrap_or_default();
                 let first = text.lines().next().unwrap_or("").to_string();
-                let last = text.lines().filter(|l| l.starts_with("line ")).last().unwrap_or("").to_string();
+                let last = text.lines().rfind(|l| l.starts_with("line ")).unwrap_or("").to_string();
                 eprintln!(
                     "smoke-pin: big output -> history {history:?} (limit {}), lines {}, first {first:?}, last {last:?}",
                     brisk_terminal::RUN_HISTORY_LINES,

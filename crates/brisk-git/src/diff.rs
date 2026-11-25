@@ -233,12 +233,12 @@ mod tests {
     #[test]
     fn inline_words() {
         let (l, r) = inline_diff("x = foo(bar, 1)", "x = foo(baz, 1)");
-        assert_eq!((l, r), (vec![8..11], vec![8..11]));
+        assert_eq!((l, r), (vec![Range { start: 8, end: 11 }], vec![Range { start: 8, end: 11 }]));
         let (l, r) = inline_diff("print(a)", "print(a, b)");
-        assert_eq!((l, r), (vec![], vec![7..10]));
+        assert_eq!((l, r), (vec![], vec![Range { start: 7, end: 10 }]));
         // Two changed words with a space between read as one highlight.
         let (l, r) = inline_diff("return old value", "return new thing");
-        assert_eq!((l, r), (vec![7..16], vec![7..16]));
+        assert_eq!((l, r), (vec![Range { start: 7, end: 16 }], vec![Range { start: 7, end: 16 }]));
         assert_eq!(inline_diff("same", "same"), (vec![], vec![]));
     }
 

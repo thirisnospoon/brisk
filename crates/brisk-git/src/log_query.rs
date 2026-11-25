@@ -72,7 +72,7 @@ impl Repo {
             if let Ok(out) = self.git(&["log", "-1", FORMAT, &rev, "--"]) {
                 let hit: Vec<Commit> = parse_log(&out).into_iter().filter(|c| c.hash.starts_with(&lower)).collect();
                 v.extend(hit);
-                v.sort_by(|a, b| b.time.cmp(&a.time));
+                v.sort_by_key(|c| std::cmp::Reverse(c.time));
             }
         }
         Ok(v)

@@ -3,7 +3,7 @@
 //! (Soft / Mixed / Hard / Keep), Revert Commit, Undo Commit.
 
 use super::git_ui::Pending;
-use super::menu_ui::Entry;
+use super::menu_ui::{Entry, MenuFn};
 use super::{Popup, PopupItem, PopupKind, Target, Workspace};
 use brisk_git::{Commit, ResetMode};
 use gpui::{ClipboardItem, Context, Pixels, Point};
@@ -13,12 +13,7 @@ impl Workspace {
     pub(super) fn log_commit_menu(&mut self, c: Commit, pos: Point<Pixels>, cx: &mut Context<Self>) {
         let is_head = c.refs.iter().any(|r| r == "HEAD" || r.starts_with("HEAD -> "));
         let shortcut = |s: &str| s.to_string();
-        let item = |label: &str, sc: String, enabled: bool, run: Rc<dyn Fn(&mut Workspace, &mut gpui::Window, &mut Context<Workspace>)>| Entry::Item {
-            label: label.into(),
-            shortcut: sc,
-            enabled,
-            run,
-        };
+        let item = |label: &str, sc: String, enabled: bool, run: MenuFn| Entry::Item { label: label.into(), shortcut: sc, enabled, run };
         let (c1, c2, c3, c4, c5, c6) = (c.clone(), c.clone(), c.clone(), c.clone(), c.clone(), c.clone());
         let entries = vec![
             item("Copy Revision Number", shortcut("Ctrl+Alt+Shift+C"), true, Rc::new(move |this, _, cx| this.copy_revision(&c1.hash, cx))),

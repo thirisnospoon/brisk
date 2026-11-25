@@ -304,11 +304,7 @@ pub fn suggest_file(path: &Path, typed: &str, limit: usize, wanted: &dyn Fn() ->
     let Ok(mut f) = std::fs::File::open(path) else { return Vec::new() };
     let mut buf: Vec<u8> = Vec::with_capacity(1 << 20);
     let mut chunk = vec![0u8; 1 << 20];
-    loop {
-        let n = match f.read(&mut chunk) {
-            Ok(n) => n,
-            Err(_) => break,
-        };
+    while let Ok(n) = f.read(&mut chunk) {
         buf.extend_from_slice(&chunk[..n]);
         // Whole lines only; the rest waits for the next piece (or is the last line).
         let cut = if n == 0 { buf.len() } else { buf.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1) };

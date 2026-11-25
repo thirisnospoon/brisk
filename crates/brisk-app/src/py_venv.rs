@@ -87,8 +87,7 @@ pub fn pyproject_dependencies(text: &str) -> Vec<String> {
             continue;
         };
         let mut s = rest;
-        loop {
-            let Some(q) = s.find(['"', '\'']) else { break };
+        while let Some(q) = s.find(['"', '\'']) {
             let quote = &s[q..q + 1];
             let Some(end) = s[q + 1..].find(quote) else { break };
             let dep = s[q + 1..q + 1 + end].trim();

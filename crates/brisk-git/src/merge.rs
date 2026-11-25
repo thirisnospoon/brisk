@@ -47,8 +47,8 @@ fn lcs_match<T: PartialEq>(a: &[T], b: &[T]) -> Vec<Option<usize>> {
     let (a2, b2) = (&a[pre..n - suf], &b[pre..m - suf]);
     let (n2, m2) = (a2.len(), b2.len());
     let mut out = vec![None; n];
-    for i in 0..pre {
-        out[i] = Some(i);
+    for (i, o) in out.iter_mut().enumerate().take(pre) {
+        *o = Some(i);
     }
     for k in 0..suf {
         out[n - 1 - k] = Some(m - 1 - k);

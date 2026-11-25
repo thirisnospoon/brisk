@@ -85,7 +85,7 @@ impl Workspace {
                 // The member runs as it is, without its own Before launch.
                 let name = c.name.clone();
                 self.before_passed = Some(name.clone());
-                self.run_config(c, window, cx);
+                self.run_config(*c, window, cx);
                 self.before_passed = None;
                 name
             }
@@ -185,7 +185,7 @@ impl Workspace {
                 }
             }
             let _ = this.update(cx, |this, cx| {
-                let out = this.runs.panel.as_ref().map(|p| p.read(cx).active_text()).flatten().unwrap_or_default();
+                let out = this.runs.panel.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default();
                 let line = out.lines().find(|l| l.contains("app sees")).unwrap_or("-").to_string();
                 eprintln!("smoke-before: after chain -> tabs {:?}, app output {line:?}", tabs(this, cx));
             });

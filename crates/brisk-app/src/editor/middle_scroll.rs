@@ -14,6 +14,10 @@ const TICK: Duration = Duration::from_millis(16);
 /// Scroll per tick for each pixel beyond the threshold.
 const SPEED: f32 = 0.12;
 
+/// For smokes: (scrollbar under the pointer, vertical one hot, vertical thumb, middle scroll moving).
+#[cfg(feature = "smoke")]
+type SmokeMouse = (Option<String>, bool, Option<(f32, f32)>, Option<bool>);
+
 pub(super) struct MiddleScroll {
     origin: Point<Pixels>,
     mouse: Point<Pixels>,
@@ -109,7 +113,7 @@ impl Editor {
     /// Smokes: the scrollbar under the pointer, whether the vertical one is drawn hot, the
     /// vertical thumb (top, height), and whether middle-button scrolling is armed / moving.
     #[cfg(feature = "smoke")]
-    pub fn mouse_state_for_smoke(&self) -> (Option<String>, bool, Option<(f32, f32)>, Option<bool>) {
+    pub fn mouse_state_for_smoke(&self) -> SmokeMouse {
         let vh = self.layout.as_ref().map(|l| f32::from(l.bounds.size.height)).unwrap_or(0.0);
         (self.bar_hover.map(|b| format!("{b:?}")), self.bar_hot(super::scroll::Bar::Vertical), self.v_thumb(vh), self.middle.as_ref().map(|m| m.moved))
     }

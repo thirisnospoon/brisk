@@ -49,25 +49,6 @@ pub(super) fn row(top: Pixels, bottom: Pixels, left: Pixels, right: Pixels) -> R
     (f32::from(top), f32::from(bottom), f32::from(left), f32::from(right))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn outer_corners_only() {
-        // A selection from the middle of line 1 to the middle of line 3.
-        let rows = [(0., 20., 50., 200.), (20., 40., 10., 180.), (40., 60., 10., 90.)];
-        let k = radii(&rows, 3.);
-        assert_eq!(k[0], [3., 3., 3., 0.], "row 1: bottom-right is exposed, bottom-left lies on row 2");
-        assert_eq!(k[1], [3., 0., 3., 0.], "row 2 sticks out left above and right below");
-        assert_eq!(k[2], [0., 0., 3., 3.]);
-        // One row: all four corners, at most half its width.
-        assert_eq!(radii(&[(0., 20., 0., 4.)], 3.), vec![[2.; 4]]);
-        // Rows that do not touch (a fold between them) are separate shapes.
-        assert_eq!(radii(&[(0., 20., 0., 50.), (40., 60., 0., 50.)], 3.), vec![[3.; 4], [3.; 4]]);
-    }
-}
-
 impl super::Editor {
     /// Smoke: open the find bar with `query` (its hits are drawn rounded).
     #[cfg(feature = "smoke")]
@@ -101,5 +82,24 @@ impl super::Editor {
     #[cfg(feature = "smoke")]
     pub fn find_hits_for_smoke(&self) -> usize {
         self.find.as_ref().map_or(0, |f| f.matches.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outer_corners_only() {
+        // A selection from the middle of line 1 to the middle of line 3.
+        let rows = [(0., 20., 50., 200.), (20., 40., 10., 180.), (40., 60., 10., 90.)];
+        let k = radii(&rows, 3.);
+        assert_eq!(k[0], [3., 3., 3., 0.], "row 1: bottom-right is exposed, bottom-left lies on row 2");
+        assert_eq!(k[1], [3., 0., 3., 0.], "row 2 sticks out left above and right below");
+        assert_eq!(k[2], [0., 0., 3., 3.]);
+        // One row: all four corners, at most half its width.
+        assert_eq!(radii(&[(0., 20., 0., 4.)], 3.), vec![[2.; 4]]);
+        // Rows that do not touch (a fold between them) are separate shapes.
+        assert_eq!(radii(&[(0., 20., 0., 50.), (40., 60., 0., 50.)], 3.), vec![[3.; 4], [3.; 4]]);
     }
 }

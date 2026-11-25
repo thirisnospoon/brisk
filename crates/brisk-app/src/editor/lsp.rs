@@ -246,8 +246,8 @@ impl Editor {
         let next = (end < rope.len_chars()).then(|| rope.char(end));
         let (line, _) = self.buffer.pos_to_line_col(caret);
         let line_text = self.buffer.line(line);
-        let in_import = matches!(line_text.trim_start().split_whitespace().next(), Some("import" | "from"));
-        let call = matches!(item.kind, 2 | 3 | 4) && next != Some('(') && !in_import;
+        let in_import = matches!(line_text.split_whitespace().next(), Some("import" | "from"));
+        let call = matches!(item.kind, 2..=4) && next != Some('(') && !in_import;
         let text = if call { format!("{}()", item.insert) } else { item.insert.clone() };
         // The import line of an auto-import item goes in the same undo step.
         let (mut edits, shift) = extra_ranges(self, &item.extra, c.start);
@@ -379,10 +379,7 @@ impl Editor {
     /// Escape: close the topmost code-insight popup. Returns false when none was open.
     pub fn close_insight(&mut self) -> bool {
         self.insight.requery = None;
-        if self.insight.completion.take().is_some() || self.insight.doc.take().is_some() || self.insight.signature.take().is_some() {
-            return true;
-        }
-        false
+        self.insight.completion.take().is_some() || self.insight.doc.take().is_some() || self.insight.signature.take().is_some()
     }
 
     /// Called from mouse move when no problem tooltip is shown: after a rest on a word,

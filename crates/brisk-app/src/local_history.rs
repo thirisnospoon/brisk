@@ -155,7 +155,7 @@ fn revisions_in(dir: &Path) -> Vec<Revision> {
             Some(Revision { at: at.parse().ok()?, label: Label::from_slug(label), file: e.path() })
         })
         .collect();
-    v.sort_by(|a, b| b.at.cmp(&a.at));
+    v.sort_by_key(|r| std::cmp::Reverse(r.at));
     v
 }
 
@@ -277,7 +277,7 @@ pub fn history_under(dir: &Path, limit: usize) -> Vec<Change> {
             v.push(Change { path: path.clone(), rev });
         }
     }
-    v.sort_by(|a, b| b.rev.at.cmp(&a.rev.at));
+    v.sort_by_key(|c| std::cmp::Reverse(c.rev.at));
     v.truncate(limit);
     v
 }
@@ -320,7 +320,7 @@ fn parse_labels(text: &str, k: &str, cutoff: u64) -> Vec<UserLabel> {
             (inside && at >= cutoff).then_some(UserLabel { at, name })
         })
         .collect();
-    v.sort_by(|a, b| b.at.cmp(&a.at));
+    v.sort_by_key(|r| std::cmp::Reverse(r.at));
     v
 }
 

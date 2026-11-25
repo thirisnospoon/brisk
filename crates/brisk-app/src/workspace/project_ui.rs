@@ -375,21 +375,6 @@ impl Workspace {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::name_score;
-
-    #[test]
-    fn symbol_matching() {
-        assert!(name_score("add", "add").unwrap() > name_score("add_all", "add").unwrap());
-        assert!(name_score("get_current_window", "gcw").is_some());
-        assert!(name_score("HttpRequest", "hr").is_some());
-        assert!(name_score("HttpRequest", "req").is_some());
-        assert!(name_score("HttpRequest", "xyz").is_none());
-        assert!(name_score("HttpRequest", "http").unwrap() > name_score("HttpRequest", "req").unwrap());
-    }
-}
-
 // --- Smoke check (BRISK_SMOKE_UI=1) ----------------------------------------------------
 //
 // Sends real mouse events to the window: clicks along the Search Everywhere tab row, a click
@@ -500,5 +485,20 @@ impl Workspace {
             self.open_popup(PopupKind::SearchEverywhere(super::SeTab::All));
         }
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::name_score;
+
+    #[test]
+    fn symbol_matching() {
+        assert!(name_score("add", "add").unwrap() > name_score("add_all", "add").unwrap());
+        assert!(name_score("get_current_window", "gcw").is_some());
+        assert!(name_score("HttpRequest", "hr").is_some());
+        assert!(name_score("HttpRequest", "req").is_some());
+        assert!(name_score("HttpRequest", "xyz").is_none());
+        assert!(name_score("HttpRequest", "http").unwrap() > name_score("HttpRequest", "req").unwrap());
     }
 }

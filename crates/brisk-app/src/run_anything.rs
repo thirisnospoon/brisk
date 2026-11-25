@@ -15,7 +15,7 @@ const HISTORY_MAX: usize = 30;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Parsed {
     /// Runs with the project interpreter.
-    Config(RunConfig),
+    Config(Box<RunConfig>),
     /// A shell command line.
     Shell(String),
 }
@@ -53,7 +53,7 @@ pub fn parse(root: &Path, text: &str) -> Option<Parsed> {
     let tokens = split_args(text);
     let first = tokens.first()?;
     let config = |kind: RunKind, module: bool, target: &str, params: &[String]| {
-        Parsed::Config(RunConfig {
+        Parsed::Config(Box::new(RunConfig {
             name: text.to_string(),
             kind,
             module,
@@ -68,7 +68,7 @@ pub fn parse(root: &Path, text: &str) -> Option<Parsed> {
             interpreter: None,
             temporary: false,
             ..Default::default()
-        })
+        }))
     };
     let rest = &tokens[1..];
     Some(if is_python(first) {
@@ -126,7 +126,7 @@ mod tests {
 
     fn cfg(p: Option<Parsed>) -> RunConfig {
         match p {
-            Some(Parsed::Config(c)) => c,
+            Some(Parsed::Config(c)) => *c,
             other => panic!("not a configuration: {other:?}"),
         }
     }

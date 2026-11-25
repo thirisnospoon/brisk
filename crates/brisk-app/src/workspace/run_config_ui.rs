@@ -1571,6 +1571,31 @@ fn command_preview(root: &std::path::Path, c: &RunConfig, interp: &str) -> Strin
     format!("› {}", parts.join(" "))
 }
 
+impl Workspace {
+    /// The targets "+ FastAPI" and "+ Flask" get in a freshly opened dialog (smoke tests).
+    /// `keep` leaves the dialog open on the last one (for a screenshot).
+    #[cfg(feature = "smoke")]
+    pub(super) fn web_dialog_probe(&mut self, keep: bool, cx: &mut Context<Self>) -> Vec<(String, String)> {
+        self.open_run_dialog(cx);
+        let Some(d) = self.runs.dialog.as_mut() else { return Vec::new() };
+        let mut out = Vec::new();
+        for k in [Kind::FastApi, Kind::Flask, Kind::Django, Kind::DjangoTests] {
+            d.add(k);
+            if let Some(dr) = d.drafts.last() {
+                out.push((dr.cfg.name.clone(), dr.cfg.target.clone()));
+            }
+        }
+        if !keep {
+            self.runs.dialog = None;
+        } else if std::env::var("BRISK_SMOKE_WEB").as_deref() == Ok("dialog-add") {
+            if let Some(d) = self.runs.dialog.as_mut() {
+                d.adding = Some(6);
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1627,30 +1652,5 @@ mod tests {
         d.add(Kind::Pytest);
         assert_eq!(d.drafts[1].cfg.kind, RunKind::Pytest);
         assert!(d.validate().is_ok(), "pytest may have an empty target");
-    }
-}
-
-impl Workspace {
-    /// The targets "+ FastAPI" and "+ Flask" get in a freshly opened dialog (smoke tests).
-    /// `keep` leaves the dialog open on the last one (for a screenshot).
-    #[cfg(feature = "smoke")]
-    pub(super) fn web_dialog_probe(&mut self, keep: bool, cx: &mut Context<Self>) -> Vec<(String, String)> {
-        self.open_run_dialog(cx);
-        let Some(d) = self.runs.dialog.as_mut() else { return Vec::new() };
-        let mut out = Vec::new();
-        for k in [Kind::FastApi, Kind::Flask, Kind::Django, Kind::DjangoTests] {
-            d.add(k);
-            if let Some(dr) = d.drafts.last() {
-                out.push((dr.cfg.name.clone(), dr.cfg.target.clone()));
-            }
-        }
-        if !keep {
-            self.runs.dialog = None;
-        } else if std::env::var("BRISK_SMOKE_WEB").as_deref() == Ok("dialog-add") {
-            if let Some(d) = self.runs.dialog.as_mut() {
-                d.adding = Some(6);
-            }
-        }
-        out
     }
 }

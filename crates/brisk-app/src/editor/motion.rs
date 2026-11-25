@@ -6,6 +6,7 @@
 //! - the caret blinks by fading out and in (solid while typing or moving it), 2 px wide and
 //!   snapped to device pixels;
 //! - optional smooth caret movement: the caret slides to its new place in ~60 ms.
+//!
 //! Between fades nothing is redrawn: a timer wakes the editor for the next one.
 
 use super::{line_height, Editor};
@@ -36,6 +37,9 @@ pub(super) struct Glide {
     last: f32,
 }
 
+/// A caret slide: (from, to, start) in content coordinates.
+type Slide = (Point<Pixels>, Point<Pixels>, Instant);
+
 #[derive(Default)]
 pub(super) struct Motion {
     pub(super) glide: Option<Glide>,
@@ -44,7 +48,7 @@ pub(super) struct Motion {
     /// What the carets looked like at the last paint: (buffer version, primary head, count).
     caret_key: (u64, usize, usize),
     /// Smooth caret movement: (from, to, start) in content coordinates (scroll not applied).
-    slide: Option<(Point<Pixels>, Point<Pixels>, Instant)>,
+    slide: Option<Slide>,
     /// The timer that wakes the editor for the next fade, and when it fires.
     wake: Option<(Instant, Task<()>)>,
     /// For smokes: paints so far, the carets' last opacity and the primary caret's last x.
@@ -194,7 +198,7 @@ pub(super) struct CaretLook {
     pub drawn_x: Option<Pixels>,
     /// Wake the editor after this long (the next fade).
     pub wake_in: Option<Duration>,
-    state: (Option<Instant>, (u64, usize, usize), Option<(Point<Pixels>, Point<Pixels>, Instant)>),
+    state: (Option<Instant>, (u64, usize, usize), Option<Slide>),
 }
 
 impl Motion {
