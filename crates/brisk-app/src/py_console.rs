@@ -51,13 +51,9 @@ impl Console {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000);
-        }
+        brisk_platform::process::no_window(&mut cmd);
         let mut child = cmd.spawn()?;
-        brisk_proc::adopt(&child);
+        brisk_platform::process::adopt(&child);
         let stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
@@ -109,7 +105,7 @@ impl Console {
 
     /// Also stops what the code started (`subprocess`, multiprocessing workers).
     pub fn kill(&mut self) {
-        brisk_proc::kill_tree(&mut self.child);
+        brisk_platform::process::kill_tree(&mut self.child);
         let _ = self.child.wait();
     }
 }

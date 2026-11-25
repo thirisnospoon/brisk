@@ -21,11 +21,7 @@ fn command(tool: &Path, root: &Path) -> Command {
         // An environment activated in the shell Brisk was started from is not the project's.
         .env_remove("VIRTUAL_ENV")
         .env_remove("CONDA_PREFIX");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000);
-    }
+    brisk_platform::process::no_window(&mut c);
     c
 }
 

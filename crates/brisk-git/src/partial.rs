@@ -67,7 +67,7 @@ impl Repo {
             c.stdin(Stdio::piped());
         }
         let mut child = c.spawn()?;
-        brisk_proc::adopt(&child);
+        brisk_platform::process::adopt(&child);
         if let (Some(data), Some(mut pipe)) = (stdin, child.stdin.take()) {
             let data = data.to_vec();
             std::thread::spawn(move || {

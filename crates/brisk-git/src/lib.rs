@@ -125,11 +125,7 @@ fn git_cmd() -> Command {
         .env("LC_ALL", "C")
         .env("GIT_TERMINAL_PROMPT", "0") // no hanging on credential prompts
         .stdin(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
+    brisk_platform::process::no_window(&mut c);
     c
 }
 

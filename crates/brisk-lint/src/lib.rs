@@ -184,17 +184,13 @@ pub fn find_ruff(python: Option<&Path>) -> Option<PathBuf> {
 fn command(ruff: &Path, root: &Path) -> Command {
     let mut c = Command::new(ruff);
     c.current_dir(root).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
+    brisk_platform::process::no_window(&mut c);
     c
 }
 
 fn run(mut c: Command, stdin: Option<&str>) -> Result<String, String> {
     let mut child = c.spawn().map_err(|e| format!("cannot start ruff: {e}"))?;
-    brisk_proc::adopt(&child);
+    brisk_platform::process::adopt(&child);
     if let Some(text) = stdin {
         let mut i = child.stdin.take().ok_or("no stdin")?;
         let text = text.to_string();

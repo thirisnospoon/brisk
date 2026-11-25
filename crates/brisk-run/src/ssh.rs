@@ -110,11 +110,7 @@ pub fn check_host(host: &str) -> Result<(), String> {
 fn ssh_command(host: &str) -> std::process::Command {
     let mut c = std::process::Command::new(ssh_exe());
     c.args(connect_args(host));
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
+    brisk_platform::process::no_window(&mut c);
     c
 }
 

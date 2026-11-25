@@ -336,7 +336,7 @@ impl Session {
         let pid = pty.child_watcher().pid().map(|p| p.get());
         #[cfg(windows)]
         if let Some(pid) = pid {
-            brisk_proc::adopt_pid(pid);
+            brisk_platform::process::adopt_pid(pid);
         }
         #[cfg(unix)]
         let pid = Some(pty.child().id());

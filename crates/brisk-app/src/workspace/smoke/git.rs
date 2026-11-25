@@ -12,11 +12,7 @@ use std::time::Duration;
 pub(in crate::workspace) fn sh(dir: &Path, args: &[&str]) -> String {
     let mut c = std::process::Command::new("git");
     c.arg("-C").arg(dir).args(args).env("GIT_TERMINAL_PROMPT", "0");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000);
-    }
+    brisk_platform::process::no_window(&mut c);
     match c.output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         Ok(o) => {
@@ -36,11 +32,7 @@ pub(in crate::workspace) fn commit_as(dir: &Path, who: &str, date: &str, msg: &s
     let author = format!("{who} <{}@example.com>", who.to_lowercase());
     let mut c = std::process::Command::new("git");
     c.arg("-C").arg(dir).args(["commit", "-q", "-m", msg, "--author", &author, "--date", date]).env("GIT_COMMITTER_DATE", date);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000);
-    }
+    brisk_platform::process::no_window(&mut c);
     let _ = c.output();
 }
 

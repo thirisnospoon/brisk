@@ -243,7 +243,7 @@ processes live in one Windows Job Object, so nothing outlives the IDE.
 | `brisk-terminal` | ConPTY plus `alacritty_terminal` for VT emulation |
 | `brisk-db` | Database console (SQLite, PostgreSQL, MySQL) |
 | `brisk-keymap` | Actions and the PyCharm keymap |
-| `brisk-proc` | Child processes in one Job Object |
+| `brisk-platform` | The OS-specific parts: child processes without console windows, in one Job Object |
 | `brisk-vm` | Groundwork for running containers without Docker Desktop (experimental) |
 
 Design notes are in [docs/architecture.md](docs/architecture.md).

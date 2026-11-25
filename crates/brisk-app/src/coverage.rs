@@ -47,11 +47,7 @@ pub fn json_command(python: &Path, data: &Path, out: &Path, cwd: &Path) -> std::
     let mut c = std::process::Command::new(python);
     c.args(["-m", "coverage", "json", "-q", "--ignore-errors"]).arg(format!("--data-file={}", data.display())).arg("-o").arg(out).current_dir(cwd);
     c.env("PYTHONIOENCODING", "utf-8");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000);
-    }
+    brisk_platform::process::no_window(&mut c);
     c
 }
 

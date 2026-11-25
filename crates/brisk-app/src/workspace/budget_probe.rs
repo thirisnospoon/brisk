@@ -89,7 +89,7 @@ impl Workspace {
                 std::process::exit(0);
             }
             wait(idle).await;
-            let (ws, private) = brisk_proc::memory().unwrap_or_default();
+            let (ws, private) = brisk_platform::process::memory().unwrap_or_default();
             let idle = [("idle_ws_mb", mb(ws).into()), ("idle_private_mb", mb(private).into())];
             write(&path, &[&idle[..], &[("stage", "idle".into())]].concat());
             wait(hold).await;

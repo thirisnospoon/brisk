@@ -113,11 +113,7 @@ impl Workspace {
             }
             let mut c = std::process::Command::new(&p.python);
             c.arg("-c").arg(profile::DUMP).arg(&stats).arg(&out);
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                c.creation_flags(0x0800_0000);
-            }
+            brisk_platform::process::no_window(&mut c);
             let res = c.output().map_err(|e| format!("cannot read the profile: {e}"))?;
             if !res.status.success() {
                 return Err(String::from_utf8_lossy(&res.stderr).lines().last().unwrap_or("pstats failed").to_string());

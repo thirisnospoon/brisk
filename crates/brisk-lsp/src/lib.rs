@@ -68,13 +68,9 @@ impl Client {
         for (k, v) in env {
             c.env(k, v);
         }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        }
+        brisk_platform::process::no_window(&mut c);
         let mut child = c.spawn()?;
-        brisk_proc::adopt(&child);
+        brisk_platform::process::adopt(&child);
         let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("no stdout"))?;
         let stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("no stdin"))?;
         let client = Arc::new(Client {

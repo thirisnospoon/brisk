@@ -603,6 +603,14 @@ names `brisk-proc`. Verify: tests; RUN, DEBUG, LSP, LINT, GIT smokes; MEMBUDGET 
 live children after exit. Risk: medium: a missed `adopt` leaves a child running after a
 crash.
 
+Done on branch `batch1`. `crates/brisk-proc` became `crates/brisk-platform` with one module,
+`process` (`mod.rs` for the API, `windows.rs` and `unix.rs` behind one `cfg_attr` on the `mod`
+line). 21 of the `#[cfg(windows)] { ... creation_flags(...) }` blocks became
+`process::no_window(&mut c)`; `process::command(program)` does the same for new code. The
+`adopt` calls stay where they are: a `std::process::Command` cannot run code on spawn, so
+adopting on spawn needs a wrapper type, left for later. Two Windows-only sites keep their
+flag: the `taskkill` in `brisk-terminal` and the PowerShell process list in `debug_ui.rs`.
+
 #### Step P3. `python` and `shell`
 
 Move the venv layout and the default shell choice into the crate. Replace the 47 layout

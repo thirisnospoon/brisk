@@ -25,11 +25,7 @@ fn command(program: &Path) -> Command {
     let mut c = Command::new(program);
     c.env("PYTHONIOENCODING", "utf-8").env("PIP_DISABLE_PIP_VERSION_CHECK", "1").env("PIP_NO_INPUT", "1");
     crate::py_packages::offline_in_smoke(&mut c);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000);
-    }
+    brisk_platform::process::no_window(&mut c);
     c
 }
 

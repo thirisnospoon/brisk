@@ -275,11 +275,7 @@ pub fn lock_outdated(root: &Path, manager: Manager) -> bool {
 pub fn poetry_env_python(poetry: &Path, root: &Path) -> Option<PathBuf> {
     let mut cmd = Command::new(poetry);
     cmd.args(["env", "info", "--executable", "--no-interaction"]).current_dir(root).stdin(Stdio::null()).stderr(Stdio::null()).stdout(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000);
-    }
+    brisk_platform::process::no_window(&mut cmd);
     let mut child = cmd.spawn().ok()?;
     let mut stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {

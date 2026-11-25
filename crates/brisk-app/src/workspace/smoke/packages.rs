@@ -174,7 +174,7 @@ impl Workspace {
                 let _ = this.update(cx, |_, cx| cx.quit());
                 return;
             }
-            let mb = || brisk_proc::memory().map(|m| m.0 as f64 / 1048576.0).unwrap_or(0.0);
+            let mb = || brisk_platform::process::memory().map(|m| m.0 as f64 / 1048576.0).unwrap_or(0.0);
             for _ in 0..100 {
                 pause(100).await;
                 if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
@@ -233,7 +233,7 @@ impl Workspace {
                     let t = std::time::Instant::now();
                     let found = crate::py_packages::suggest_file(&big, "brisk-big", 12, &|| true);
                     let ms = t.elapsed().as_secs_f64() * 1000.0;
-                    let peak = brisk_proc::memory().map(|m| m.0 as f64 / 1048576.0).unwrap_or(0.0);
+                    let peak = brisk_platform::process::memory().map(|m| m.0 as f64 / 1048576.0).unwrap_or(0.0);
                     let size = std::fs::metadata(&big).map(|m| m.len() / 1_000_000).unwrap_or(0);
                     let _ = std::fs::remove_file(&big);
                     (ms, found, peak, size)

@@ -50,11 +50,7 @@ fn git(root: &Path, args: &[&str], stdin: Option<&[u8]>) -> bool {
     c.arg("-C").arg(root).args(args).env("GIT_TERMINAL_PROMPT", "0");
     c.stdin(if stdin.is_some() { std::process::Stdio::piped() } else { std::process::Stdio::null() });
     c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000);
-    }
+    brisk_platform::process::no_window(&mut c);
     let Ok(mut ch) = c.spawn() else { return false };
     if let (Some(data), Some(mut si)) = (stdin, ch.stdin.take()) {
         let _ = si.write_all(data);

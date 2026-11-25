@@ -73,13 +73,9 @@ impl Client {
         for (k, v) in env {
             c.env(k, v);
         }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        }
+        brisk_platform::process::no_window(&mut c);
         let mut child = c.spawn()?;
-        brisk_proc::adopt(&child);
+        brisk_platform::process::adopt(&child);
         let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("no stdout"))?;
         let stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("no stdin"))?;
         let client = Arc::new(Client {
@@ -172,7 +168,7 @@ impl Client {
     /// Stops the adapter and what it started (the debuggee's launcher and the debuggee).
     pub fn kill(&self) {
         let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
-        brisk_proc::kill_tree(&mut child);
+        brisk_platform::process::kill_tree(&mut child);
     }
 }
 
@@ -198,11 +194,7 @@ pub struct AdapterCommand {
 pub fn has_debugpy(python: &Path) -> bool {
     let mut c = Command::new(python);
     c.args(["-c", "import debugpy"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000);
-    }
+    brisk_platform::process::no_window(&mut c);
     c.status().is_ok_and(|s| s.success())
 }
 

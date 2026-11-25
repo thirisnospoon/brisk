@@ -39,11 +39,7 @@ print(len(df))
 ";
 
 fn quiet(cmd: &mut std::process::Command) -> &mut std::process::Command {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000);
-    }
+    brisk_platform::process::no_window(cmd);
     crate::py_packages::offline_in_smoke(cmd);
     cmd.stdin(std::process::Stdio::null())
 }

@@ -38,7 +38,7 @@ impl Workspace {
                 p
             })
             .collect();
-        let (ws0, _) = brisk_proc::memory().unwrap_or_default();
+        let (ws0, _) = brisk_platform::process::memory().unwrap_or_default();
         eprintln!("smoke-membudget: start, working set {} MB", mb(ws0));
         let t0 = Instant::now();
         let bg = cx.background_executor().clone();
@@ -63,14 +63,18 @@ impl Workspace {
                     break;
                 }
             }
-            eprintln!("smoke-membudget: run finished after {:.1?}, working set {} MB", t0.elapsed(), mb(brisk_proc::memory().unwrap_or_default().0));
+            eprintln!(
+                "smoke-membudget: run finished after {:.1?}, working set {} MB",
+                t0.elapsed(),
+                mb(brisk_platform::process::memory().unwrap_or_default().0)
+            );
 
             // 2. Open and close 50 tabs.
             for f in &files {
                 let _ = this.update_in(cx, |this, window, cx| this.open_file(f, window, cx));
                 wait(20).await;
             }
-            let peak_tabs = brisk_proc::memory().unwrap_or_default().0;
+            let peak_tabs = brisk_platform::process::memory().unwrap_or_default().0;
             let _ = this.update_in(cx, |this, window, cx| {
                 let eds: Vec<_> = this.editors().filter(|e| e.read(cx).path.as_ref().is_some_and(|p| p.starts_with(&dir))).cloned().collect();
                 for e in eds {
@@ -78,7 +82,11 @@ impl Workspace {
                 }
             });
             wait(500).await;
-            eprintln!("smoke-membudget: {TABS} tabs opened ({} MB) and closed ({} MB)", mb(peak_tabs), mb(brisk_proc::memory().unwrap_or_default().0));
+            eprintln!(
+                "smoke-membudget: {TABS} tabs opened ({} MB) and closed ({} MB)",
+                mb(peak_tabs),
+                mb(brisk_platform::process::memory().unwrap_or_default().0)
+            );
 
             // 3. Find in Files (over the 50 new files too: index them first).
             let _ = this.update(cx, |this, cx| this.reindex_files(cx));
@@ -105,8 +113,8 @@ impl Workspace {
 
             // 4. Settle and report.
             wait(2000).await;
-            let (ws, private) = brisk_proc::memory().unwrap_or_default();
-            let kids = brisk_proc::live_children().map_or("n/a".to_string(), |n| n.to_string());
+            let (ws, private) = brisk_platform::process::memory().unwrap_or_default();
+            let kids = brisk_platform::process::live_children().map_or("n/a".to_string(), |n| n.to_string());
             let ok = mb(ws) <= budget;
             eprintln!(
                 "smoke-membudget: working set {} MB, private {} MB, budget {budget} MB, live children {kids}, total {:.1?} -> {}",

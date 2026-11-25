@@ -9,7 +9,7 @@ name = "brisk"
 path = "src/main.rs"
 
 [dependencies]
-brisk-proc.workspace = true
+brisk-platform.workspace = true
 brisk-keymap.workspace = true
 brisk-text.workspace = true
 brisk-project.workspace = true

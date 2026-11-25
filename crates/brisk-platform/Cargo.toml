@@ -1,9 +1,9 @@
 [package]
-name = "brisk-proc"
+name = "brisk-platform"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Child process ownership: a kill-on-close Job Object, so no child outlives Brisk"
+description = "The operating-system specific parts of Brisk: child processes, and later paths, shells and secrets"
 
 [dependencies]
 

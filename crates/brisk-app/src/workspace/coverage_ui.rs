@@ -450,10 +450,6 @@ fn has_coverage(python: &std::path::Path) -> bool {
     }
     let mut c = std::process::Command::new(python);
     c.args(["-c", "import coverage"]);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000);
-    }
+    brisk_platform::process::no_window(&mut c);
     c.output().is_ok_and(|o| o.status.success())
 }

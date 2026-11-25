@@ -697,7 +697,7 @@ dependencies = [
  "brisk-keymap",
  "brisk-lint",
  "brisk-lsp",
- "brisk-proc",
+ "brisk-platform",
  "brisk-project",
  "brisk-run",
  "brisk-search",
@@ -717,7 +717,7 @@ dependencies = [
 name = "brisk-dap"
 version = "0.3.0"
 dependencies = [
- "brisk-proc",
+ "brisk-platform",
  "futures",
  "serde_json",
 ]
@@ -740,7 +740,7 @@ dependencies = [
 name = "brisk-git"
 version = "0.3.0"
 dependencies = [
- "brisk-proc",
+ "brisk-platform",
  "similar",
 ]
 
@@ -757,7 +757,7 @@ dependencies = [
 name = "brisk-lint"
 version = "0.3.0"
 dependencies = [
- "brisk-proc",
+ "brisk-platform",
  "brisk-run",
  "serde",
  "serde_json",
@@ -768,13 +768,13 @@ name = "brisk-lsp"
 version = "0.3.0"
 dependencies = [
  "brisk-lint",
- "brisk-proc",
+ "brisk-platform",
  "futures",
  "serde_json",
 ]
 
 [[package]]
-name = "brisk-proc"
+name = "brisk-platform"
 version = "0.3.0"
 dependencies = [
  "windows-sys 0.59.0",
@@ -794,6 +794,7 @@ dependencies = [
 name = "brisk-run"
 version = "0.3.0"
 dependencies = [
+ "brisk-platform",
  "brisk-project",
  "brisk-terminal",
  "roxmltree",
@@ -833,7 +834,7 @@ name = "brisk-terminal"
 version = "0.3.0"
 dependencies = [
  "alacritty_terminal",
- "brisk-proc",
+ "brisk-platform",
 ]
 
 [[package]]

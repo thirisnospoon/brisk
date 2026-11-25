@@ -72,11 +72,7 @@ fn stdin_writer(mut stdin: ChildStdin) -> Sender<Vec<u8>> {
 impl PipeIo {
     pub(crate) fn spawn(mut cmd: Command, header: &str, term: SharedTerm, cb: Callback) -> std::io::Result<(Self, u32)> {
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        }
+        brisk_platform::process::no_window(&mut cmd);
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -85,7 +81,7 @@ impl PipeIo {
         let parser = Arc::new(Mutex::new(Processor::new()));
         feed(&term, &parser, format!("{header}\r\n").as_bytes());
         let mut child = cmd.spawn()?;
-        brisk_proc::adopt(&child);
+        brisk_platform::process::adopt(&child);
         let pid = child.id();
         // Readers only read; one writer thread orders output by whole lines, so a stderr line
         // never lands in the middle of a stdout line that `print()` wrote in pieces.

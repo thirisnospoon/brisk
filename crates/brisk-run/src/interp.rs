@@ -105,11 +105,7 @@ pub fn project_venvs(root: &Path) -> Vec<Interpreter> {
 }
 
 fn hidden(cmd: &mut Command) -> &mut Command {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
+    brisk_platform::process::no_window(cmd);
     cmd.stdin(Stdio::null()).stderr(Stdio::null()).stdout(Stdio::piped())
 }
 

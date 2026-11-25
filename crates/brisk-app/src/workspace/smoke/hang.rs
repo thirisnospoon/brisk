@@ -141,11 +141,7 @@ impl Workspace {
                     let git = |args: &[&str]| {
                         let mut c = std::process::Command::new("git");
                         c.arg("-C").arg(&root2).args(args).env("GIT_TERMINAL_PROMPT", "0");
-                        #[cfg(windows)]
-                        {
-                            use std::os::windows::process::CommandExt;
-                            c.creation_flags(0x0800_0000);
-                        }
+                        brisk_platform::process::no_window(&mut c);
                         c.output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                     };
                     git(&["add", "app/pkg000"])?;
