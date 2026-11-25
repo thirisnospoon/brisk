@@ -594,6 +594,11 @@ the tests of every crate but `brisk-app` on `ubuntu-latest`. Nothing here can bu
 (no target, no WSL), so the job is `continue-on-error` until its first green run; the fixes
 follow from its log.
 
+The first run failed in `xattr` 0.2.3 (through GPUI's HTTP client): it reads `libc::ENOATTR`,
+which the `libc` in `Cargo.lock` no longer defines on Linux, and `rustix` keeps `libc` from
+going back. `third_party/xattr` is that release with `ENODATA` there, wired in through
+`[patch.crates-io]`; it goes once GPUI moves to a fixed `xattr`.
+
 #### Step P2. Create `brisk-platform` from `brisk-proc`
 
 Rename `brisk-proc` to `brisk-platform::process` and add `command()`. Replace the 24

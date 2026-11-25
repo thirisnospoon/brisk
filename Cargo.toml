@@ -18,6 +18,13 @@ members = [
     "crates/brisk-web",
     "crates/brisk-app",
 ]
+exclude = ["third_party"]
+
+# xattr 0.2.3 (through GPUI's HTTP client and async-tar) reads libc::ENOATTR, which libc
+# 0.2.191 no longer defines on Linux. third_party/xattr is that release with ENODATA there;
+# it is not compiled on Windows.
+[patch.crates-io]
+xattr = { path = "third_party/xattr" }
 
 [workspace.package]
 version = "0.3.0"
