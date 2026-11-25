@@ -62,6 +62,9 @@ pub struct Git {
     refs_stamp: Option<u64>,
     refs_fp: Option<u64>,
     log_fp: Option<u64>,
+    /// git itself agreed that this is the project's repository (`Repo::find` only looked for
+    /// `.git`); the first refresh asks it.
+    confirmed: bool,
     /// Bumped per refresh: a slower, older refresh must not overwrite a newer one.
     refresh_gen: u64,
     /// PyCharm: tracked changes are included by default, unversioned files are not.
@@ -119,6 +122,7 @@ impl Git {
             refs_stamp: None,
             refs_fp: None,
             log_fp: None,
+            confirmed: false,
             refresh_gen: 0,
             excluded: HashSet::new(),
             included_untracked: HashSet::new(),
@@ -396,15 +400,46 @@ impl Workspace {
         self.refresh_git(cx);
     }
 
+    /// At startup: the repository found without git is confirmed by the first refresh; without
+    /// one, git is asked in the background (`GIT_DIR` and the like point elsewhere).
+    pub(super) fn start_git(&mut self, cx: &mut Context<Self>) {
+        if self.git.is_some() {
+            return self.refresh_git(cx);
+        }
+        let root = self.root.clone();
+        let task = cx.background_executor().spawn(async move { Repo::discover(&root) });
+        cx.spawn(async move |this, cx| {
+            let found = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if let (Some(repo), None) = (found, &this.git) {
+                    let mut g = Git::new(repo, cx);
+                    g.confirmed = true;
+                    this.git = Some(g);
+                    this.refresh_git(cx);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     fn start_git_refresh(&mut self, gen: u64, cx: &mut Context<Self>) {
         let want_log = self.bottom == Some(BottomTool::Git);
+        let ws_root = self.root.clone();
         let Some(g) = self.git.as_mut().filter(|g| g.refresh_gen == gen) else { return };
         g.refresh_running = true;
         g.refresh_again = false;
         let repo = g.repo.clone();
         let query = g.filter.query.clone();
         let (old_stamp, old_refs_fp, old_log_fp) = (g.refs_stamp, g.refs_fp, g.log_fp);
+        let confirm = !g.confirmed;
         let task = cx.background_executor().spawn(async move {
+            if confirm {
+                let found = Repo::discover(&ws_root);
+                if !found.as_ref().is_some_and(|f| f.same_root(&repo)) {
+                    return Err(found);
+                }
+            }
             let st = repo.status();
             let stamp = repo.refs_stamp();
             // No ref file changed: the branches are the ones read last time.
@@ -428,14 +463,32 @@ impl Workspace {
                 (log, graph)
             });
             let refs = refs.map(|r| (r.map(|r| r.branches).unwrap_or_default(), stamp, refs_fp));
-            (st, refs, log.map(|l| (l, log_fp)), query)
+            Ok((st, refs, log.map(|l| (l, log_fp)), query))
         });
         cx.spawn(async move |this, cx| {
-            let (st, refs, log, query) = task.await;
+            let res = task.await;
             let _ = this.update(cx, |this, cx| {
                 // The repository was replaced (Create Git Repository) while this ran.
                 if this.git.as_ref().is_none_or(|g| g.refresh_gen != gen) {
                     return;
+                }
+                let (st, refs, log, query) = match res {
+                    Ok(r) => r,
+                    // git disagrees with the `.git` found on disk (`GIT_DIR`, `safe.directory`,
+                    // no git installed): its answer stands.
+                    Err(found) => {
+                        this.git = found.map(|repo| {
+                            let mut g = Git::new(repo, cx);
+                            g.confirmed = true;
+                            g
+                        });
+                        this.refresh_git(cx);
+                        cx.notify();
+                        return;
+                    }
+                };
+                if let Some(g) = this.git.as_mut() {
+                    g.confirmed = true;
                 }
                 // The filters changed while this ran: the refresh queued for it brings the log.
                 let log = log.filter(|_| this.git.as_ref().is_some_and(|g| g.filter.query == query));

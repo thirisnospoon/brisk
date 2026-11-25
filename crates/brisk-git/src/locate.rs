@@ -1,5 +1,5 @@
-//! The repository folder and a cheap stamp of its refs, read without starting git: the stamp
-//! lets a refresh skip `for-each-ref` and `git log` when no ref moved.
+//! Finding a repository and a cheap stamp of its refs without starting git. The stamp lets a
+//! refresh skip `for-each-ref` and `git log` when no ref moved.
 
 use crate::Repo;
 use std::hash::{Hash, Hasher};
@@ -58,6 +58,23 @@ fn stamp_tree(dir: &Path, h: &mut impl Hasher) {
 }
 
 impl Repo {
+    /// Find the repository containing `path` by looking for `.git` in it and its parents. No
+    /// process is started (`git rev-parse` costs 25-60 ms on Windows, too much before the
+    /// first frame); [`Repo::discover`] asks git itself, which knows about `GIT_DIR`,
+    /// `safe.directory` and the like.
+    pub fn find(path: &Path) -> Option<Repo> {
+        path.ancestors().find_map(|top| Some(Repo { git_dir: Some(git_dir_of(top)?), root: top.to_path_buf() }))
+    }
+
+    /// The same working tree as `other` (git spells the root with '/' and the long name).
+    pub fn same_root(&self, other: &Repo) -> bool {
+        let norm = |p: &Path| {
+            let p = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            p.to_string_lossy().replace('\\', "/").trim_end_matches('/').to_lowercase()
+        };
+        norm(&self.root) == norm(&other.root)
+    }
+
     /// A hash of HEAD, packed-refs and the loose refs as files on disk: equal stamps mean no
     /// branch, tag or remote branch moved. None when the git directory is unknown.
     pub fn refs_stamp(&self) -> Option<u64> {

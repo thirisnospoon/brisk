@@ -574,9 +574,10 @@ impl Workspace {
             let n = db.sources.len();
             cx.defer_in(window, move |this: &mut Self, _, cx| this.show_toast(format!("Imported {n} data source(s) from .idea/dataSources.xml"), false, cx));
         }
-        let git = brisk_git::Repo::discover(&root).map(|repo| git_ui::Git::new(repo, cx));
+        // `.git` is looked for on disk; git confirms it in the background.
+        let git = brisk_git::Repo::find(&root).map(|repo| git_ui::Git::new(repo, cx));
         budget_probe::mark("git");
-        cx.defer_in(window, |this: &mut Self, _, cx| this.refresh_git(cx));
+        cx.defer_in(window, |this: &mut Self, _, cx| this.start_git(cx));
 
         window.focus(&tree_focus);
         let saved_bookmarks = bookmarks_ui::load(&root);

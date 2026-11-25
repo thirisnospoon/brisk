@@ -482,6 +482,37 @@ fn rel_through_a_short_name() {
 }
 
 #[test]
+fn find_without_git_agrees_with_git() {
+    let (d, repo) = temp_repo("find");
+    fs::create_dir_all(d.join("pkg/sub")).unwrap();
+    fs::write(d.join("a.py"), "x = 1\n").unwrap();
+    let files = vec!["a.py".to_string()];
+    repo.commit("one", &files, false, &files).unwrap();
+    for start in [d.clone(), d.join("pkg/sub")] {
+        let found = Repo::find(&start).expect("found from a subfolder too");
+        assert!(found.same_root(&Repo::discover(&start).unwrap()), "{start:?}");
+        assert_eq!(found.refs_stamp(), repo.refs_stamp());
+    }
+    // A worktree: `.git` is a file pointing into the main repository.
+    let wt = d.with_file_name(format!("{}-wt", d.file_name().unwrap().to_string_lossy()));
+    let _ = fs::remove_dir_all(&wt);
+    sh(&d, &["worktree", "add", "-q", "-b", "side", wt.to_str().unwrap()]);
+    let found = Repo::find(&wt).expect("a worktree");
+    assert!(found.same_root(&Repo::discover(&wt).unwrap()));
+    assert!(!found.same_root(&repo));
+    let before = found.refs_stamp().expect("refs of the shared repository");
+    sh(&d, &["branch", "more"]);
+    assert_ne!(found.refs_stamp(), Some(before), "a branch made in the main tree");
+    // No repository: nothing found (unless the temp folder itself is inside one).
+    let plain = std::env::temp_dir().join(format!("brisk-git-none-{}", std::process::id()));
+    fs::create_dir_all(&plain).unwrap();
+    assert_eq!(Repo::find(&plain).is_some(), Repo::discover(&plain).is_some());
+    let _ = fs::remove_dir_all(&plain);
+    sh(&d, &["worktree", "remove", "--force", wt.to_str().unwrap()]);
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
 fn refs_stamp_and_fingerprint_follow_refs() {
     let (d, repo) = temp_repo("stamp");
     fs::write(d.join("a.py"), "x = 1\n").unwrap();
