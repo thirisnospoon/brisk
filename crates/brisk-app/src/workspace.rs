@@ -1,26 +1,14 @@
 //! Main window: tool window stripes, project tree, editor tabs, popups, status bar.
 //! All shortcuts go through brisk-keymap's PyCharm keymap.
 
-#[cfg(feature = "smoke")]
-mod actions_smoke;
-#[cfg(feature = "smoke")]
-mod ansi_smoke;
 mod bookmarks_ui;
 pub(crate) mod budget_probe;
 mod console_ui;
-#[cfg(feature = "smoke")]
-mod dataview_smoke;
 mod db_ui;
 mod debug_ui;
 mod disk_ui;
-#[cfg(feature = "smoke")]
-mod edit2_smoke;
-#[cfg(feature = "smoke")]
-mod edit_smoke;
 mod files_ui;
 mod find_ui;
-#[cfg(feature = "smoke")]
-mod flood_smoke;
 mod git_annotate_ui;
 mod git_branch_ui;
 mod git_compare_ui;
@@ -29,86 +17,24 @@ mod git_log_filter;
 mod git_log_menu;
 mod git_merge_ui;
 mod git_push_ui;
-#[cfg(feature = "smoke")]
-mod git_smoke;
 mod git_stash_ui;
 mod git_ui;
-#[cfg(feature = "smoke")]
-mod keymap_smoke;
 mod keymap_ui;
-#[cfg(feature = "smoke")]
-mod latency_smoke;
-#[cfg(feature = "smoke")]
-mod marks_smoke;
-#[cfg(feature = "smoke")]
-mod motion_smoke;
-#[cfg(feature = "smoke")]
-mod multi_smoke;
-#[cfg(feature = "smoke")]
-mod packages_smoke;
 mod packages_ui;
-#[cfg(feature = "smoke")]
-mod pin_smoke;
-#[cfg(feature = "smoke")]
-mod pycon_smoke;
-#[cfg(feature = "smoke")]
-mod pyproj_smoke;
-#[cfg(feature = "smoke")]
-mod run_term_smoke;
-#[cfg(feature = "smoke")]
-mod run_tpl_smoke;
 mod services_ui;
-#[cfg(feature = "smoke")]
-mod squiggle_smoke;
-#[cfg(feature = "smoke")]
-mod ssh_smoke;
 mod ssh_ui;
-#[cfg(feature = "smoke")]
-mod stripe_smoke;
-#[cfg(feature = "smoke")]
-mod test_runners_smoke;
-#[cfg(feature = "smoke")]
-mod test_view_smoke;
 mod todo_ui;
-#[cfg(feature = "smoke")]
-mod tour_smoke;
-#[cfg(feature = "smoke")]
-mod vcs_smoke;
 mod web_ui;
-#[cfg(feature = "smoke")]
-mod webnav_smoke;
-#[cfg(feature = "smoke")]
-mod whitespace_smoke;
 pub(crate) use git_ui::fmt_time;
-#[cfg(feature = "smoke")]
-mod bars_smoke;
 mod before_launch_ui;
-#[cfg(feature = "smoke")]
-mod big_smoke;
-#[cfg(feature = "smoke")]
-mod complete_smoke;
-#[cfg(feature = "smoke")]
-mod console_find_smoke;
 mod coverage_ui;
 mod generate_ui;
-#[cfg(feature = "smoke")]
-mod gutter_smoke;
-#[cfg(feature = "smoke")]
-mod hang_smoke;
 mod history_ui;
 mod install_offer_ui;
-#[cfg(feature = "smoke")]
-mod intel_smoke;
 mod local_refs;
 mod lsp_ui;
 mod main_menu;
-#[cfg(feature = "smoke")]
-mod membudget_smoke;
 mod menu_ui;
-#[cfg(feature = "smoke")]
-mod mouse_smoke;
-#[cfg(feature = "smoke")]
-mod open_smoke;
 mod places_ui;
 mod problems_ui;
 mod profile_ui;
@@ -117,11 +43,7 @@ mod run_anything_ui;
 mod run_config_ui;
 mod run_marks_ui;
 mod run_ui;
-#[cfg(feature = "smoke")]
-mod scope_smoke;
 mod scratch_ui;
-#[cfg(feature = "smoke")]
-mod scroll_smoke;
 mod settings_ui;
 #[cfg(feature = "smoke")]
 mod smoke;
@@ -131,14 +53,6 @@ mod tabs_ui;
 mod templates_ui;
 mod terminal_env_ui;
 mod venv_ui;
-#[cfg(feature = "smoke")]
-mod w7_smoke;
-#[cfg(feature = "smoke")]
-mod w7_smoke2;
-#[cfg(feature = "smoke")]
-mod web_smoke;
-#[cfg(feature = "smoke")]
-mod win_input;
 
 use crate::diff_view::DiffView;
 use crate::editor::Editor;

@@ -204,7 +204,7 @@ impl Workspace {
                 let ed = this.active_editor()?.clone();
                 let (x, y) = ed.read(cx).run_icon_point(line)?;
                 let scale = window.scale_factor();
-                super::win_input::click(x * scale, y * scale);
+                super::smoke::win_input::click(x * scale, y * scale);
                 Some((x, y))
             };
             let _ = this.update_in(cx, |this, window, cx| {
@@ -304,7 +304,7 @@ impl Workspace {
                 });
                 let Some((x, y)) = ed.read(cx).run_icon_point(4) else { return };
                 let scale = window.scale_factor();
-                super::win_input::click((x - 18.) * scale, y * scale);
+                super::smoke::win_input::click((x - 18.) * scale, y * scale);
             });
             pause(500).await;
             let _ = this.update_in(cx, |this, _, cx| {

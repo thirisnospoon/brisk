@@ -314,7 +314,7 @@ drivers all work on Linux and macOS. What is tied to Windows is scattered:
   `brisk-db/src/config.rs:24` and used by the whole app; `APPDATA` is also read directly in 6
   other files.
 - Build and release tooling is PowerShell only, and the mouse smokes post Win32 messages
-  (`workspace/win_input.rs`).
+  (`workspace/smoke/win_input.rs`).
 - Nothing builds the workspace on Linux, so whether it compiles there is unknown.
 
 None of this is wrong for a Windows product. The cost comes with a port: every one of these
@@ -561,6 +561,14 @@ about a minute instead of ten.
 Pure file moves of the 41 `*_smoke.rs` files and `win_input.rs` into `workspace/smoke/`,
 then the smoke functions and probes now gated in ordinary files, where they only use public
 methods. Files: listed. Verify: tests, all smokes. Risk: low.
+
+Done on branch `smoke-dir` for the files: the 42 smoke files moved to `workspace/smoke/<name>.rs`
+without the `_smoke` suffix (`w7_smoke2.rs` became `w7_2.rs`), and `win_input.rs` to
+`workspace/smoke/win_input.rs`. `workspace/smoke.rs` declares them, `workspace.rs` no longer
+does. Inside the moved files `super::` became `crate::workspace::` and `pub(super)` became
+`pub(in crate::workspace)`; nothing else changed. The smoke functions and probes gated inside
+ordinary files stay where they are for now: each one needs a check of which module-private
+items it reaches, and that is left for later.
 
 
 ### Phase 1b: `brisk-platform`

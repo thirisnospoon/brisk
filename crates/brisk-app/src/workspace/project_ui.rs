@@ -411,7 +411,7 @@ impl Workspace {
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
             // Real platform input: WM_LBUTTONDOWN/UP posted to our own window, in physical pixels.
             let scale = cx.update(|window, _| window.scale_factor()).unwrap_or(1.);
-            let click = |_: &mut gpui::AsyncWindowContext, x: f32, y: f32| super::win_input::click(x * scale, y * scale);
+            let click = |_: &mut gpui::AsyncWindowContext, x: f32, y: f32| super::smoke::win_input::click(x * scale, y * scale);
             // Wait for the file list and the symbol index.
             for _ in 0..200 {
                 pause(50).await;

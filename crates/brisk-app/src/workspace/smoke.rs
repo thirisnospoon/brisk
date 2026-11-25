@@ -3,6 +3,50 @@
 
 use super::*;
 
+mod actions;
+mod ansi;
+mod bars;
+mod big;
+mod complete;
+mod console_find;
+mod dataview;
+mod edit;
+mod edit2;
+mod flood;
+mod git;
+mod gutter;
+mod hang;
+mod intel;
+mod keymap;
+mod latency;
+mod marks;
+mod membudget;
+mod motion;
+mod mouse;
+mod multi;
+mod open;
+mod packages;
+mod pin;
+mod pycon;
+mod pyproj;
+mod run_term;
+mod run_tpl;
+mod scope;
+mod scroll;
+mod squiggle;
+mod ssh;
+mod stripe;
+mod test_runners;
+mod test_view;
+mod tour;
+mod vcs;
+mod w7;
+mod w7_2;
+mod web;
+mod webnav;
+mod whitespace;
+pub(super) mod win_input;
+
 /// Starts every smoke or helper the environment asks for. Each runs deferred, after the
 /// workspace's own start-up work has been queued.
 pub(super) fn schedule(window: &mut Window, cx: &mut Context<Workspace>) {

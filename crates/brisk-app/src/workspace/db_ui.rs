@@ -1385,7 +1385,7 @@ impl Workspace {
                 let _ = this.update_in(cx, |this, window, _| match FOLD_BOUNDS.with(|c| c.get()) {
                     Some(b) => {
                         let s = window.scale_factor();
-                        super::win_input::click(f32::from(b.center().x) * s, f32::from(b.center().y) * s);
+                        super::smoke::win_input::click(f32::from(b.center().x) * s, f32::from(b.center().y) * s);
                     }
                     None => eprintln!("smoke-db: FAIL the fold arrow of {:?} was not painted", this.db.rows.first().map(|r| &r.key)),
                 });

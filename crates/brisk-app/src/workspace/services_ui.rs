@@ -324,7 +324,7 @@ impl Workspace {
                 let _ = this.update_in(cx, |this, window, cx| {
                     let scale = window.scale_factor();
                     match id_of(this, cx, name).and_then(|id| button_center(id, what)) {
-                        Some((x, y)) => super::win_input::click(x * scale, y * scale),
+                        Some((x, y)) => super::smoke::win_input::click(x * scale, y * scale),
                         None => eprintln!("smoke-services: no {what} button for {name}"),
                     }
                 });

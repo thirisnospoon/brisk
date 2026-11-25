@@ -394,7 +394,7 @@ impl Workspace {
                 let _ = this.update_in(cx, |_, window, _| {
                     let scale = window.scale_factor();
                     if let Some((x, y)) = header_center(i) {
-                        super::win_input::click(x * scale, y * scale);
+                        super::smoke::win_input::click(x * scale, y * scale);
                     }
                 });
                 pause(400).await;

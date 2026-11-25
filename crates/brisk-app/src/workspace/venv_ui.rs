@@ -388,7 +388,7 @@ impl Workspace {
             let click = |i: usize, window: &mut Window| -> Option<(f32, f32)> {
                 let (x, y) = offer_button_center(i)?;
                 let scale = window.scale_factor();
-                super::win_input::click(x * scale, y * scale);
+                super::smoke::win_input::click(x * scale, y * scale);
                 Some((x, y))
             };
             for _ in 0..30 {
