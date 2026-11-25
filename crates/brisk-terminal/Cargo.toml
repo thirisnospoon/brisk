@@ -7,3 +7,4 @@ license.workspace = true
 [dependencies]
 brisk-platform.workspace = true
 alacritty_terminal = { version = "0.26", default-features = false }
+unicode-width = "0.2"

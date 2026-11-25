@@ -1,7 +1,10 @@
 //! Terminal sessions: PTY (ConPTY on Windows, openpty on Unix) + VT emulation via
-//! `alacritty_terminal`. UI-free: the app takes [`Snapshot`]s and sends input bytes.
+//! `alacritty_terminal`, or a process on pipes whose output goes into a compact log (the Run
+//! console without "Emulate terminal"). UI-free: the app takes [`Snapshot`]s and sends input
+//! bytes, the same way for both.
 
 mod keys;
+mod log;
 mod pipe;
 
 pub use keys::{encode_key, KeyMods};
@@ -136,15 +139,30 @@ enum Io {
     None,
 }
 
-/// How many lines of a Run console's output are kept: beyond it the oldest lines are dropped
-/// (the buffer is a ring), so a chatty process cannot grow memory without bound.
-/// Lines a Run console keeps above the screen. A line costs about 24 bytes per column
-/// (2.7 KB at 110 columns), so 100k lines took ~275 MB per tab; 20k is ~55 MB.
+/// Lines a Run console keeps above the screen: beyond it the oldest lines are dropped, so a
+/// chatty process cannot grow memory without bound. With Emulate terminal a line is a grid
+/// row of about 24 bytes per column (4 MB per 1,000 rows at 170 columns); through pipes it is
+/// its text plus a few bytes.
 pub const RUN_HISTORY_LINES: usize = 20_000;
+
+/// Bytes of text a Run console on pipes keeps at most (long lines reach it before the line
+/// limit does).
+pub const RUN_HISTORY_BYTES: usize = 8 << 20;
+
+/// Matches a console search returns at most.
+pub const MAX_FOUND: usize = 10_000;
+
+/// What a session's output goes into.
+enum Screen {
+    /// A terminal grid: Terminal tabs and Run with Emulate terminal.
+    Grid(Arc<FairMutex<Term<Listener>>>),
+    /// A log of lines: Run on pipes and saved runs.
+    Log(Arc<FairMutex<log::Log>>),
+}
 
 /// One terminal tab or one running process.
 pub struct Session {
-    term: Arc<FairMutex<Term<Listener>>>,
+    screen: Screen,
     io: Io,
     size: Size,
     pid: Option<u32>,
@@ -178,8 +196,8 @@ pub struct Found {
     pub more: Vec<(i32, std::ops::Range<usize>)>,
     /// First row of the logical line.
     pub row: i32,
-    /// The whole logical line, trailing blanks trimmed.
-    pub text: String,
+    /// The whole logical line, trailing blanks trimmed (shared by the line's matches).
+    pub text: Arc<str>,
 }
 
 impl Found {
@@ -197,7 +215,8 @@ pub struct SearchRow {
     pub wrapped: bool,
 }
 
-/// Matches of `needle` (case-insensitive unless `case`) in rows joined into logical lines.
+/// Matches of `needle` (case-insensitive unless `case`) in rows joined into logical lines, at
+/// most [`MAX_FOUND`].
 pub fn find_in_rows(rows: impl IntoIterator<Item = SearchRow>, needle: &str, case: bool) -> Vec<Found> {
     let fold = |c: char| match c {
         _ if case => c,
@@ -211,16 +230,16 @@ pub fn find_in_rows(rows: impl IntoIterator<Item = SearchRow>, needle: &str, cas
     }
     // (line, column, char) of the logical line being collected.
     let mut logical: Vec<(i32, usize, char)> = Vec::new();
-    let mut search = |logical: &mut Vec<(i32, usize, char)>| {
+    let search = |logical: &mut Vec<(i32, usize, char)>, out: &mut Vec<Found>| {
         if logical.is_empty() {
             return;
         }
         let chars: Vec<char> = logical.iter().map(|&(_, _, c)| fold(c)).collect();
         // The line's text, built once and only for a line that has a match.
-        let mut text: Option<String> = None;
+        let mut text: Option<Arc<str>> = None;
         let row = logical[0].0;
         let mut i = 0;
-        while i + pat.len() <= chars.len() {
+        while i + pat.len() <= chars.len() && out.len() < MAX_FOUND {
             if chars[i..i + pat.len()] != pat[..] {
                 i += 1;
                 continue;
@@ -234,19 +253,22 @@ pub fn find_in_rows(rows: impl IntoIterator<Item = SearchRow>, needle: &str, cas
                 }
             }
             let (line, cols) = parts.remove(0);
-            let text = text.get_or_insert_with(|| logical.iter().map(|&(_, _, c)| c).collect::<String>().trim_end().to_string()).clone();
+            let text = text.get_or_insert_with(|| Arc::from(logical.iter().map(|&(_, _, c)| c).collect::<String>().trim_end())).clone();
             out.push(Found { line, cols, more: parts, row, text });
             i += pat.len();
         }
         logical.clear();
     };
     for r in rows {
+        if out.len() >= MAX_FOUND {
+            break;
+        }
         logical.extend(r.cells.iter().map(|&(c, ch)| (r.line, c, ch)));
         if !r.wrapped {
-            search(&mut logical);
+            search(&mut logical, &mut out);
         }
     }
-    search(&mut logical);
+    search(&mut logical, &mut out);
     out
 }
 
@@ -338,7 +360,7 @@ impl Session {
         let tx = event_loop.channel();
         let _ = listener.sender.set(tx.clone());
         event_loop.spawn();
-        Ok(Self { term, io: Io::Pty(tx, exited), size, pid })
+        Ok(Self { screen: Screen::Grid(term), io: Io::Pty(tx, exited), size, pid })
     }
 
     pub fn write(&self, bytes: impl Into<Cow<'static, [u8]>>) {
@@ -347,19 +369,25 @@ impl Session {
             return;
         }
         // Typing jumps back to the live screen, like every terminal.
-        self.term.lock().scroll_display(Scroll::Bottom);
-        match &self.io {
-            Io::Pty(tx, _) => {
+        match &self.screen {
+            Screen::Grid(term) => term.lock().scroll_display(Scroll::Bottom),
+            Screen::Log(log) => log.lock().scroll(i32::MIN),
+        }
+        match (&self.io, &self.screen) {
+            (Io::Pty(tx, _), _) => {
                 let _ = tx.send(Msg::Input(bytes));
             }
-            Io::Pipe(p) => p.input(&self.term, &bytes),
-            Io::None => {}
+            (Io::Pipe(p), Screen::Log(log)) => p.input(log, &bytes),
+            _ => {}
         }
     }
 
     /// Paste text, honoring bracketed paste mode.
     pub fn paste(&self, text: &str) {
-        let bracketed = self.term.lock().mode().contains(TermMode::BRACKETED_PASTE);
+        let bracketed = match &self.screen {
+            Screen::Grid(term) => term.lock().mode().contains(TermMode::BRACKETED_PASTE),
+            Screen::Log(_) => false,
+        };
         let text = text.replace("\r\n", "\r").replace('\n', "\r");
         if bracketed {
             let clean = text.replace('\x1b', "");
@@ -376,7 +404,10 @@ impl Session {
             return;
         }
         self.size = Size { cols, rows };
-        self.term.lock().resize(self.size);
+        match &self.screen {
+            Screen::Grid(term) => term.lock().resize(self.size),
+            Screen::Log(log) => log.lock().resize(cols, rows),
+        }
         if let Io::Pty(tx, _) = &self.io {
             let _ = tx.send(Msg::Resize(WindowSize { num_lines: rows as u16, num_cols: cols as u16, cell_width: cell_w, cell_height: cell_h }));
         }
@@ -387,45 +418,73 @@ impl Session {
     }
 
     pub fn scroll(&self, lines: i32) {
-        self.term.lock().scroll_display(Scroll::Delta(lines));
+        match &self.screen {
+            Screen::Grid(term) => term.lock().scroll_display(Scroll::Delta(lines)),
+            Screen::Log(log) => log.lock().scroll(lines),
+        }
     }
 
     pub fn app_cursor(&self) -> bool {
-        self.term.lock().mode().contains(TermMode::APP_CURSOR)
+        match &self.screen {
+            Screen::Grid(term) => term.lock().mode().contains(TermMode::APP_CURSOR),
+            Screen::Log(_) => false,
+        }
     }
 
     pub fn alt_screen(&self) -> bool {
-        self.term.lock().mode().contains(TermMode::ALT_SCREEN)
+        match &self.screen {
+            Screen::Grid(term) => term.lock().mode().contains(TermMode::ALT_SCREEN),
+            Screen::Log(_) => false,
+        }
     }
 
-    fn grid_point(&self, row: usize, col: usize) -> Point {
-        let offset = self.term.lock().grid().display_offset() as i32;
-        Point::new(Line(row as i32 - offset), Column(col.min(self.size.cols - 1)))
+    fn grid_point(term: &Term<Listener>, size: Size, row: usize, col: usize) -> Point {
+        let offset = term.grid().display_offset() as i32;
+        Point::new(Line(row as i32 - offset), Column(col.min(size.cols - 1)))
     }
 
     pub fn start_selection(&self, row: usize, col: usize, kind: SelectKind) {
-        let p = self.grid_point(row, col);
-        let ty = match kind {
-            SelectKind::Simple => SelectionType::Simple,
-            SelectKind::Word => SelectionType::Semantic,
-            SelectKind::Line => SelectionType::Lines,
-        };
-        self.term.lock().selection = Some(Selection::new(ty, p, Side::Left));
+        match &self.screen {
+            Screen::Grid(term) => {
+                let mut term = term.lock();
+                let p = Self::grid_point(&term, self.size, row, col);
+                let ty = match kind {
+                    SelectKind::Simple => SelectionType::Simple,
+                    SelectKind::Word => SelectionType::Semantic,
+                    SelectKind::Line => SelectionType::Lines,
+                };
+                term.selection = Some(Selection::new(ty, p, Side::Left));
+            }
+            Screen::Log(log) => log.lock().start_selection(row, col, kind),
+        }
     }
 
     pub fn update_selection(&self, row: usize, col: usize, right_half: bool) {
-        let p = self.grid_point(row, col);
-        if let Some(s) = self.term.lock().selection.as_mut() {
-            s.update(p, if right_half { Side::Right } else { Side::Left });
+        match &self.screen {
+            Screen::Grid(term) => {
+                let mut term = term.lock();
+                let p = Self::grid_point(&term, self.size, row, col);
+                if let Some(s) = term.selection.as_mut() {
+                    s.update(p, if right_half { Side::Right } else { Side::Left });
+                }
+            }
+            Screen::Log(log) => log.lock().update_selection(row, col, right_half),
         }
     }
 
     pub fn clear_selection(&self) {
-        self.term.lock().selection = None;
+        match &self.screen {
+            Screen::Grid(term) => term.lock().selection = None,
+            Screen::Log(log) => log.lock().clear_selection(),
+        }
     }
 
     pub fn selection_text(&self) -> Option<String> {
-        self.term.lock().selection_to_string().filter(|s| !s.is_empty())
+        match &self.screen {
+            Screen::Grid(term) => term.lock().selection_to_string(),
+            Screen::Log(log) => log.lock().selection_text(),
+        }
+        .filter(|s| !s.is_empty())
     }
 
     /// Process id of the child.
@@ -462,7 +521,7 @@ impl Session {
         }
     }
 
-    /// Start a program with pipes instead of a PTY and render its output in an emulator.
+    /// Start a program with pipes instead of a PTY; its output goes into a log of lines.
     /// `header` is printed first (PyCharm shows the command line there).
     pub fn spawn_process(
         cmd: std::process::Command,
@@ -472,48 +531,58 @@ impl Session {
         on_event: impl Fn(TermEvent) + Send + Sync + 'static,
     ) -> std::io::Result<Self> {
         let size = Size { cols: cols.max(2), rows: rows.max(1) };
-        let listener = Listener { callback: Arc::new(on_event), sender: Arc::new(OnceLock::new()) };
-        let config = Config { scrolling_history: RUN_HISTORY_LINES, ..Config::default() };
-        let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
-        let (io, pid) = pipe::PipeIo::spawn(cmd, header, term.clone(), listener.callback.clone())?;
-        Ok(Self { term, io: Io::Pipe(io), size, pid: Some(pid) })
+        let callback: Callback = Arc::new(on_event);
+        let log = Arc::new(FairMutex::new(log::Log::new(size.cols, size.rows, RUN_HISTORY_LINES, RUN_HISTORY_BYTES, Some(callback.clone()))));
+        let (io, pid) = pipe::PipeIo::spawn(cmd, header, log.clone(), callback)?;
+        Ok(Self { screen: Screen::Log(log), io: Io::Pipe(io), size, pid: Some(pid) })
     }
 
     /// A console with `text` and no process behind it (a run from the Test History).
     pub fn offline(text: &str, cols: usize, rows: usize) -> Self {
         let size = Size { cols: cols.max(2), rows: rows.max(1) };
-        let listener = Listener { callback: Arc::new(|_| {}), sender: Arc::new(OnceLock::new()) };
-        let config = Config { scrolling_history: RUN_HISTORY_LINES, ..Config::default() };
-        let term = Arc::new(FairMutex::new(Term::new(config, &size, listener)));
-        let s = Self { term, io: Io::None, size, pid: None };
+        let log = Arc::new(FairMutex::new(log::Log::new(size.cols, size.rows, RUN_HISTORY_LINES, RUN_HISTORY_BYTES, None)));
+        let s = Self { screen: Screen::Log(log), io: Io::None, size, pid: None };
         s.inject(format!("{}\x1b[?25l", text.replace('\n', "\r\n")).as_bytes());
         s
     }
 
-    /// Feed bytes to the emulator as if the program printed them (IDE messages such as
+    /// Feed bytes to the console as if the program printed them (IDE messages such as
     /// "Process finished with exit code 0"). Use only after the child has exited.
     pub fn inject(&self, bytes: &[u8]) {
-        let mut term = self.term.lock();
-        let mut p: alacritty_terminal::vte::ansi::Processor = alacritty_terminal::vte::ansi::Processor::new();
-        p.advance(&mut *term, bytes);
-        term.scroll_display(Scroll::Bottom);
+        match &self.screen {
+            Screen::Grid(term) => {
+                let mut term = term.lock();
+                let mut p: alacritty_terminal::vte::ansi::Processor = alacritty_terminal::vte::ansi::Processor::new();
+                p.advance(&mut *term, bytes);
+                term.scroll_display(Scroll::Bottom);
+            }
+            Screen::Log(log) => log.lock().inject(bytes),
+        }
     }
 
     /// (lines scrolled back from the bottom, screen lines, lines above the screen).
     pub fn scroll_pos(&self) -> (usize, usize, usize) {
-        let term = self.term.lock();
-        let g = term.grid();
-        (g.display_offset(), g.screen_lines(), g.history_size())
+        match &self.screen {
+            Screen::Grid(term) => {
+                let term = term.lock();
+                let g = term.grid();
+                (g.display_offset(), g.screen_lines(), g.history_size())
+            }
+            Screen::Log(log) => log.lock().scroll_pos(),
+        }
     }
 
     /// Lines kept above the screen; at [`RUN_HISTORY_LINES`] the oldest output is being dropped.
     pub fn history_lines(&self) -> usize {
-        self.term.lock().grid().history_size()
+        self.scroll_pos().2
     }
 
     /// Plain text of the whole buffer (history and screen), trailing blanks trimmed.
     pub fn text(&self) -> String {
-        let term = self.term.lock();
+        let term = match &self.screen {
+            Screen::Grid(term) => term.lock(),
+            Screen::Log(log) => return log.lock().text(),
+        };
         let grid = term.grid();
         let top = -(grid.history_size() as i32);
         let bottom = grid.screen_lines() as i32;
@@ -535,9 +604,13 @@ impl Session {
         out.trim_end().to_string()
     }
 
-    /// Matches of `needle` in the whole buffer (history and screen), top to bottom.
+    /// Matches of `needle` in the whole buffer (history and screen), top to bottom, at most
+    /// [`MAX_FOUND`].
     pub fn find(&self, needle: &str, case: bool) -> Vec<Found> {
-        let term = self.term.lock();
+        let term = match &self.screen {
+            Screen::Grid(term) => term.lock(),
+            Screen::Log(log) => return log.lock().find(needle, case),
+        };
         let grid = term.grid();
         let top = -(grid.history_size() as i32);
         let rows = (top..grid.screen_lines() as i32).map(|l| {
@@ -556,7 +629,10 @@ impl Session {
 
     /// Scroll so that grid `line` is visible (centered when it was off screen).
     pub fn scroll_to(&self, line: i32) {
-        let mut term = self.term.lock();
+        let mut term = match &self.screen {
+            Screen::Grid(term) => term.lock(),
+            Screen::Log(log) => return log.lock().scroll_to(line),
+        };
         let (offset, rows, history) = {
             let g = term.grid();
             (g.display_offset() as i32, g.screen_lines() as i32, g.history_size() as i32)
@@ -580,7 +656,10 @@ impl Session {
 
     /// The OSC 8 hyperlink (`ESC ]8;;uri ESC \\ text ESC ]8;; ESC \\`) under a screen cell.
     pub fn hyperlink_at(&self, row: usize, col: usize) -> Option<String> {
-        let term = self.term.lock();
+        let term = match &self.screen {
+            Screen::Grid(term) => term.lock(),
+            Screen::Log(log) => return log.lock().hyperlink_at(row, col),
+        };
         let grid = term.grid();
         let line = Line(row as i32 - grid.display_offset() as i32);
         if col >= term.columns() || row >= term.screen_lines() {
@@ -591,7 +670,10 @@ impl Session {
 
     /// Copy the visible screen. Holds the lock only for the copy.
     pub fn snapshot(&self) -> Snapshot {
-        let term = self.term.lock();
+        let term = match &self.screen {
+            Screen::Grid(term) => term.lock(),
+            Screen::Log(log) => return log.lock().snapshot(),
+        };
         let content = term.renderable_content();
         let cols = term.columns();
         let rows = term.screen_lines();
@@ -805,7 +887,7 @@ mod tests {
         }
         let f = find_in_rows(rows(), "error", false);
         assert_eq!(f.iter().map(|f| (f.line, f.cols.clone())).collect::<Vec<_>>(), vec![(-1, 0..5), (-1, 10..15)]);
-        assert_eq!(f[0].text, "Error: x  error");
+        assert_eq!(&*f[0].text, "Error: x  error");
         assert_eq!(find_in_rows(rows(), "Error", true).len(), 1);
         assert_eq!(find_in_rows(rows(), "err", false).last().map(|f| (f.line, f.cols.clone())), Some((2, 2..5)));
         assert!(find_in_rows(rows(), "", false).is_empty());
@@ -814,7 +896,7 @@ mod tests {
         let f = find_in_rows(wrapped, "needle", false);
         assert_eq!(f.len(), 1);
         assert_eq!((f[0].line, f[0].cols.clone(), f[0].more.clone(), f[0].row), (5, 7..10, vec![(6, 0..3)], 5));
-        assert_eq!(f[0].text, "xxxxxxxneedle yy");
+        assert_eq!(&*f[0].text, "xxxxxxxneedle yy");
     }
 
     #[test]
@@ -848,6 +930,46 @@ mod tests {
         }
         assert!(t.elapsed() < Duration::from_secs(8), "input blocked for {:?}", t.elapsed());
         s.kill();
+    }
+
+    /// A flood through the bounded pipe channel: every line reaches the console before the
+    /// exit is reported, and the console keeps only the newest lines.
+    #[test]
+    fn pipe_flood_arrives_before_exit() {
+        let path = std::env::temp_dir().join(format!("brisk-flood-{}.txt", std::process::id()));
+        let mut data = String::new();
+        for i in 0..300_000 {
+            data.push_str(&format!("line {i} {}\n", "x".repeat(i % 40)));
+        }
+        std::fs::write(&path, &data).unwrap();
+        let mut cmd = if cfg!(windows) { std::process::Command::new("cmd") } else { std::process::Command::new("cat") };
+        if cfg!(windows) {
+            cmd.args(["/C", "type"]);
+        }
+        cmd.arg(&path);
+        let (tx, rx) = mpsc::channel();
+        let s = Arc::new(std::sync::Mutex::new(None::<Session>));
+        let seen = s.clone();
+        let session = Session::spawn_process(cmd, "flood", 120, 30, move |e| {
+            // At the exit the output must all be in.
+            if e == TermEvent::Exit {
+                let text = seen.lock().unwrap().as_ref().map(|s: &Session| s.text()).unwrap_or_default();
+                let _ = tx.send(text);
+            }
+        })
+        .expect("spawn");
+        *s.lock().unwrap() = Some(session);
+        let text = rx.recv_timeout(Duration::from_secs(60)).expect("no exit");
+        let last = text.lines().last().unwrap_or("");
+        assert_eq!(last, format!("line 299999 {}", "x".repeat(299_999 % 40)));
+        let guard = s.lock().unwrap();
+        let session = guard.as_ref().unwrap();
+        assert_eq!(session.history_lines(), RUN_HISTORY_LINES);
+        assert_eq!(
+            text.lines().next(),
+            Some(format!("line {} {}", 300_000 - RUN_HISTORY_LINES - 29, "x".repeat((300_000 - RUN_HISTORY_LINES - 29) % 40)).as_str())
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     /// A PTY session remembers that its child exited, so Stop never hits a reused pid.

@@ -1,48 +1,37 @@
 //! Pipe backend for the Run console: the program's stdout and stderr go straight into the
-//! emulator (no ConPTY, so nothing is lost when the process exits), stderr in red, input is
+//! log (no ConPTY, so nothing is lost when the process exits), stderr in red, input is
 //! edited locally and sent a line at a time, like PyCharm's Run window.
 
-use crate::{Callback, Listener, TermEvent};
+use crate::log::Log;
+use crate::{Callback, TermEvent};
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::vte::ansi::Processor;
-use alacritty_terminal::Term;
 use std::io::{Read, Write};
 use std::process::{ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-type SharedTerm = Arc<FairMutex<Term<Listener>>>;
+pub(crate) type SharedLog = Arc<FairMutex<Log>>;
+
+/// Chunks of output (up to 16 KB each) on their way from the readers to the log: a process
+/// that prints faster than the console takes it is held back by its pipe instead of filling
+/// memory.
+const IN_FLIGHT: usize = 64;
 
 pub(crate) struct PipeIo {
     /// Lines for the stdin writer thread; `None` once input is closed (Ctrl+D or a dead pipe).
     stdin: Mutex<Option<Sender<Vec<u8>>>>,
     line: Mutex<String>,
-    parser: Arc<Mutex<Processor>>,
-    exited: Arc<std::sync::atomic::AtomicBool>,
+    exited: Arc<AtomicBool>,
 }
 
-/// The terminal lock is taken per 32 KB, so a backlog of output never keeps the UI (which
+/// The log's lock is taken per 32 KB, so a backlog of output never keeps the UI (which
 /// takes the same lock to draw) waiting for more than a moment.
-fn feed(term: &SharedTerm, parser: &Mutex<Processor>, bytes: &[u8]) {
-    let mut p = parser.lock().unwrap_or_else(|e| e.into_inner());
+fn feed(log: &SharedLog, bytes: &[u8]) {
     for chunk in bytes.chunks(32 * 1024) {
-        let mut t = term.lock();
-        p.advance(&mut *t, chunk);
+        log.lock().feed(chunk);
     }
-}
-
-/// Program output: a bare LF also returns the carriage, as a tty would.
-fn feed_output(term: &SharedTerm, parser: &Mutex<Processor>, bytes: &[u8], prev_cr: &mut bool) {
-    let mut v = Vec::with_capacity(bytes.len() + 16);
-    for &b in bytes {
-        if b == b'\n' && !*prev_cr {
-            v.push(b'\r');
-        }
-        *prev_cr = b == b'\r';
-        v.push(b);
-    }
-    feed(term, parser, &v);
 }
 
 /// Split off an incomplete UTF-8 sequence at the end so it is decoded with the next chunk.
@@ -70,7 +59,7 @@ fn stdin_writer(mut stdin: ChildStdin) -> Sender<Vec<u8>> {
 }
 
 impl PipeIo {
-    pub(crate) fn spawn(mut cmd: Command, header: &str, term: SharedTerm, cb: Callback) -> std::io::Result<(Self, u32)> {
+    pub(crate) fn spawn(mut cmd: Command, header: &str, log: SharedLog, cb: Callback) -> std::io::Result<(Self, u32)> {
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         brisk_platform::process::no_window(&mut cmd);
         #[cfg(unix)]
@@ -78,52 +67,55 @@ impl PipeIo {
             use std::os::unix::process::CommandExt;
             cmd.process_group(0);
         }
-        let parser = Arc::new(Mutex::new(Processor::new()));
-        feed(&term, &parser, format!("{header}\r\n").as_bytes());
+        feed(&log, format!("{header}\r\n").as_bytes());
         let mut child = cmd.spawn()?;
         brisk_platform::process::adopt(&child);
         let pid = child.id();
         // Readers only read; one writer thread orders output by whole lines, so a stderr line
         // never lands in the middle of a stdout line that `print()` wrote in pieces.
-        let (chunk_tx, chunk_rx) = std::sync::mpsc::channel::<(usize, Option<Vec<u8>>)>();
+        let (chunk_tx, chunk_rx) = std::sync::mpsc::sync_channel::<(usize, Option<Vec<u8>>)>(IN_FLIGHT);
         let streams: [Option<Box<dyn Read + Send>>; 2] =
             [child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>), child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>)];
         let mut open = 0;
         // Streams still being read: once both are closed, the rest of the output is queued and
         // the exit waits for it to reach the console, however far behind the parser is.
-        let reading = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let reading = Arc::new(AtomicUsize::new(0));
+        // Readers waiting for room in the channel: the console is behind, not the pipe idle.
+        let sending = Arc::new(AtomicUsize::new(0));
         for (i, stream) in streams.into_iter().enumerate() {
             let Some(mut stream) = stream else { continue };
             open += 1;
-            reading.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            reading.fetch_add(1, Ordering::SeqCst);
             let tx = chunk_tx.clone();
-            let reading = reading.clone();
+            let (reading, sending) = (reading.clone(), sending.clone());
             std::thread::spawn(move || {
                 let mut buf = vec![0u8; 16 * 1024];
                 loop {
                     match stream.read(&mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
-                            if tx.send((i, Some(buf[..n].to_vec()))).is_err() {
+                            sending.fetch_add(1, Ordering::SeqCst);
+                            let sent = tx.send((i, Some(buf[..n].to_vec())));
+                            sending.fetch_sub(1, Ordering::SeqCst);
+                            if sent.is_err() {
                                 return;
                             }
                         }
                     }
                 }
-                reading.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                reading.fetch_sub(1, Ordering::SeqCst);
                 let _ = tx.send((i, None));
             });
         }
         drop(chunk_tx);
         let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
         {
-            let (term, parser, cb) = (term.clone(), parser.clone(), cb.clone());
+            let (log, cb) = (log.clone(), cb.clone());
             std::thread::spawn(move || {
                 const PARTIAL: Duration = Duration::from_millis(30);
                 let mut bufs: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
                 let mut since: [Option<Instant>; 2] = [None, None];
-                let mut prev_cr = [false; 2];
-                let emit = |i: usize, bytes: &[u8], prev_cr: &mut [bool; 2]| {
+                let emit = |i: usize, bytes: &[u8]| {
                     if bytes.is_empty() {
                         return;
                     }
@@ -131,9 +123,9 @@ impl PipeIo {
                         let mut v = b"\x1b[31m".to_vec();
                         v.extend_from_slice(bytes);
                         v.extend_from_slice(b"\x1b[39m");
-                        feed_output(&term, &parser, &v, &mut prev_cr[i]);
+                        feed(&log, &v);
                     } else {
-                        feed_output(&term, &parser, bytes, &mut prev_cr[i]);
+                        feed(&log, bytes);
                     }
                     cb(TermEvent::Wakeup);
                 };
@@ -164,13 +156,13 @@ impl PipeIo {
                         }
                         if eof[i] {
                             let rest = std::mem::take(&mut bufs[i]);
-                            emit(i, &rest, &mut prev_cr);
+                            emit(i, &rest);
                             since[i] = None;
                             continue;
                         }
                         if let Some(nl) = bufs[i].iter().rposition(|&c| c == b'\n') {
                             let lines: Vec<u8> = bufs[i].drain(..=nl).collect();
-                            emit(i, &lines, &mut prev_cr);
+                            emit(i, &lines);
                             since[i] = (!bufs[i].is_empty()).then(Instant::now);
                         }
                         if bufs[i].is_empty() {
@@ -179,7 +171,7 @@ impl PipeIo {
                         if since[i].is_some_and(|t| t.elapsed() >= PARTIAL) {
                             let k = complete_prefix(&bufs[i]);
                             let part: Vec<u8> = bufs[i].drain(..k).collect();
-                            emit(i, &part, &mut prev_cr);
+                            emit(i, &part);
                             since[i] = (!bufs[i].is_empty()).then(Instant::now);
                         } else {
                             break;
@@ -188,23 +180,31 @@ impl PipeIo {
                 }
                 for (i, buf) in bufs.iter_mut().enumerate() {
                     let rest = std::mem::take(buf);
-                    emit(i, &rest, &mut prev_cr);
+                    emit(i, &rest);
                 }
                 let _ = done_tx.send(());
             });
         }
-        let exited = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let io = PipeIo { stdin: Mutex::new(child.stdin.take().map(stdin_writer)), line: Mutex::new(String::new()), parser, exited: exited.clone() };
+        let exited = Arc::new(AtomicBool::new(false));
+        let io = PipeIo { stdin: Mutex::new(child.stdin.take().map(stdin_writer)), line: Mutex::new(String::new()), exited: exited.clone() };
         std::thread::spawn(move || {
             let code = child.wait().ok().and_then(|s| s.code());
-            exited.store(true, std::sync::atomic::Ordering::SeqCst);
+            exited.store(true, Ordering::SeqCst);
             // Normally the pipes close with the process. A detached grandchild may keep them
-            // open: report the exit anyway after a moment and let its output keep coming.
-            let t = Instant::now();
-            while reading.load(std::sync::atomic::Ordering::SeqCst) > 0 && t.elapsed() < Duration::from_secs(1) {
+            // open: report the exit anyway after a second of the readers waiting on the pipes
+            // (time they spend waiting for the console to catch up does not count) and let its
+            // output keep coming.
+            let mut idle = Duration::ZERO;
+            let mut last = Instant::now();
+            while reading.load(Ordering::SeqCst) > 0 && idle < Duration::from_secs(1) {
                 std::thread::sleep(Duration::from_millis(5));
+                let now = Instant::now();
+                if sending.load(Ordering::SeqCst) == 0 {
+                    idle += now - last;
+                }
+                last = now;
             }
-            if reading.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            if reading.load(Ordering::SeqCst) == 0 {
                 let _ = done_rx.recv();
             } else {
                 let _ = done_rx.recv_timeout(Duration::from_millis(1));
@@ -216,11 +216,11 @@ impl PipeIo {
     }
 
     pub(crate) fn exited(&self) -> bool {
-        self.exited.load(std::sync::atomic::Ordering::SeqCst)
+        self.exited.load(Ordering::SeqCst)
     }
 
     /// Keys from the console: printable text is echoed in green and kept until Enter.
-    pub(crate) fn input(&self, term: &SharedTerm, bytes: &[u8]) {
+    pub(crate) fn input(&self, log: &SharedLog, bytes: &[u8]) {
         let text = String::from_utf8_lossy(bytes);
         if text.starts_with('\x1b') {
             return; // arrows, function keys: no line editing beyond Backspace
@@ -232,7 +232,7 @@ impl PipeIo {
                 '\r' | '\n' => {
                     // Echo first, so the program's answer appears below the typed line.
                     echo.push_str("\r\n");
-                    feed(term, &self.parser, std::mem::take(&mut echo).as_bytes());
+                    feed(log, std::mem::take(&mut echo).as_bytes());
                     let mut stdin = self.stdin.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(tx) = stdin.as_ref() {
                         if tx.send(format!("{line}\n").into_bytes()).is_err() {
@@ -261,7 +261,7 @@ impl PipeIo {
         }
         drop(line);
         if !echo.is_empty() {
-            feed(term, &self.parser, echo.as_bytes());
+            feed(log, echo.as_bytes());
         }
     }
 }

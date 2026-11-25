@@ -839,6 +839,7 @@ version = "0.3.0"
 dependencies = [
  "alacritty_terminal",
  "brisk-platform",
+ "unicode-width",
 ]
 
 [[package]]

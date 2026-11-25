@@ -141,11 +141,12 @@ impl TerminalPanel {
         self.jump(i);
     }
 
-    /// "3/12", "No matches" or "".
+    /// "3/12", "3/10000+" (the search stops there), "No matches" or "".
     pub fn search_summary(&self) -> String {
         match (self.search.query.is_empty(), self.search.found.len()) {
             (true, _) => String::new(),
             (false, 0) => "No matches".into(),
+            (false, n) if n >= brisk_terminal::MAX_FOUND => format!("{}/{n}+", self.search.current + 1),
             (false, n) => format!("{}/{n}", self.search.current + 1),
         }
     }
@@ -185,7 +186,7 @@ impl TerminalPanel {
         let mut out: Vec<(i32, String)> = Vec::new();
         for f in &self.search.found {
             if out.last().is_none_or(|(l, _)| *l != f.row) {
-                out.push((f.row, f.text.clone()));
+                out.push((f.row, f.text.to_string()));
             }
         }
         out
