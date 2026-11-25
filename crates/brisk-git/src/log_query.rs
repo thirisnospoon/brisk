@@ -2,7 +2,7 @@
 
 use crate::{parse_log, Commit, Repo, Result};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct LogQuery {
     /// Part of the message (case-insensitive) or the start of a hash.
     pub text: String,

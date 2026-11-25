@@ -456,7 +456,7 @@ fn log_actions() {
 
 #[test]
 fn rel_is_safe_with_non_ascii_and_sibling_folders() {
-    let r = Repo { root: PathBuf::from(r"C:\projects\app") };
+    let r = Repo { root: PathBuf::from(r"C:\projects\app"), git_dir: None };
     assert_eq!(r.rel(Path::new(r"C:\projects\app\src\x.py")).as_deref(), Some("src/x.py"));
     assert_eq!(r.rel(Path::new(r"C:\PROJECTS\APP\x.py")).as_deref(), Some("x.py"));
     assert_eq!(r.rel(Path::new(r"C:\projects\app2\x.py")), None);
@@ -478,5 +478,32 @@ fn rel_through_a_short_name() {
     }
     assert_eq!(repo.rel(&short.join("sub").join("c.py")).as_deref(), Some("sub/c.py"));
     assert_eq!(repo.rel(&short.join("..").join("elsewhere.py")), None);
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn refs_stamp_and_fingerprint_follow_refs() {
+    let (d, repo) = temp_repo("stamp");
+    fs::write(d.join("a.py"), "x = 1\n").unwrap();
+    let files = vec!["a.py".to_string()];
+    repo.commit("one", &files, false, &files).unwrap();
+    let s0 = repo.refs_stamp().expect("the repository folder is known");
+    assert_eq!(repo.refs_stamp(), Some(s0), "nothing moved");
+    let r0 = repo.refs().unwrap();
+    sh(&d, &["tag", "v1"]);
+    let s1 = repo.refs_stamp().unwrap();
+    assert_ne!(s0, s1, "a new tag");
+    let r1 = repo.refs().unwrap();
+    assert_eq!(r1.tags.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(), vec!["v1"]);
+    assert_eq!(r1.branches.len(), 1, "tags are not branches");
+    assert_ne!(r0.fingerprint(), r1.fingerprint());
+    assert_eq!(r1.fingerprint(), repo.refs().unwrap().fingerprint());
+    repo.create_branch("other").unwrap();
+    let s2 = repo.refs_stamp().unwrap();
+    assert_ne!(s1, s2, "a branch, and HEAD moved to it");
+    fs::write(d.join("a.py"), "x = 2\n").unwrap();
+    assert_eq!(repo.refs_stamp(), Some(s2), "an edit in the working tree is not a ref");
+    sh(&d, &["pack-refs", "--all"]);
+    assert_ne!(repo.refs_stamp(), Some(s2), "refs packed");
     let _ = fs::remove_dir_all(&d);
 }

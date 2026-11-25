@@ -7,6 +7,7 @@ mod blame;
 mod branch_ops;
 mod diff;
 mod graph;
+mod locate;
 mod log_ops;
 mod log_query;
 mod merge;
@@ -117,6 +118,29 @@ pub type Result<T> = std::result::Result<T, GitError>;
 #[derive(Clone, Debug)]
 pub struct Repo {
     root: PathBuf,
+    /// The repository folder (`.git`, or where a `.git` file points), for the refs stamp.
+    git_dir: Option<PathBuf>,
+}
+
+/// Branches, remote branches and tags, from one `for-each-ref`.
+#[derive(Clone, Debug, Default)]
+pub struct Refs {
+    pub branches: Vec<Branch>,
+    /// Tag names with the object each points to.
+    pub tags: Vec<(String, String)>,
+}
+
+impl Refs {
+    /// Equal for equal names and tips: the log (whose decorations name them) is the same.
+    pub fn fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for b in &self.branches {
+            (&b.name, b.remote, b.current, &b.upstream, &b.hash).hash(&mut h);
+        }
+        self.tags.hash(&mut h);
+        h.finish()
+    }
 }
 
 fn git_cmd() -> Command {
@@ -165,8 +189,8 @@ impl Repo {
         if !out.status.success() {
             return None;
         }
-        let root = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        Some(Repo { root: PathBuf::from(root) })
+        let root = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+        Some(Repo { git_dir: locate::git_dir_of(&root), root })
     }
 
     /// "Create Git Repository" (VCS → Enable Version Control Integration).
@@ -216,12 +240,21 @@ impl Repo {
     }
 
     pub fn branches(&self) -> Result<Vec<Branch>> {
-        let out = self.git(&["for-each-ref", "--format=%(refname)%1f%(HEAD)%1f%(upstream:short)%1f%(objectname)", "refs/heads", "refs/remotes"])?;
+        self.refs().map(|r| r.branches)
+    }
+
+    pub fn refs(&self) -> Result<Refs> {
+        let out = self.git(&["for-each-ref", "--format=%(refname)%1f%(HEAD)%1f%(upstream:short)%1f%(objectname)", "refs/heads", "refs/remotes", "refs/tags"])?;
+        let mut tags = Vec::new();
         let mut v: Vec<Branch> = out
             .lines()
             .filter_map(|l| {
                 let f: Vec<&str> = l.split('\x1f').collect();
                 if f.len() < 4 {
+                    return None;
+                }
+                if let Some(t) = f[0].strip_prefix("refs/tags/") {
+                    tags.push((t.to_string(), f[3].to_string()));
                     return None;
                 }
                 let (remote, name) = if let Some(n) = f[0].strip_prefix("refs/heads/") { (false, n) } else { (true, f[0].strip_prefix("refs/remotes/")?) };
@@ -238,7 +271,7 @@ impl Repo {
             })
             .collect();
         v.sort_by(|a, b| a.remote.cmp(&b.remote).then(b.current.cmp(&a.current)).then(a.name.cmp(&b.name)));
-        Ok(v)
+        Ok(Refs { branches: v, tags })
     }
 
     /// Commits of all branches, newest first (like PyCharm's Log tab).

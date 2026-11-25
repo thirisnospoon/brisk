@@ -14,6 +14,8 @@ use std::time::Duration;
 /// Commits the Git log loads (git log, parsing and the graph run off the UI thread; the
 /// list draws only the rows on screen).
 const LOG_LIMIT: usize = 20_000;
+/// Git refreshes asked for within this time of each other run once.
+const REFRESH_DELAY: Duration = Duration::from_millis(200);
 const LOG_ROW_H: f32 = 24.0;
 const LANE_W: f32 = 14.0;
 
@@ -50,8 +52,16 @@ pub struct Git {
     log_scroll: UniformListScrollHandle,
     pub log_focus: FocusHandle,
     pub(super) busy: Option<&'static str>,
-    /// A status refresh is running (the status bar's tasks indicator).
+    /// A status refresh is scheduled or running (the status bar's tasks indicator).
     pub(super) refreshing: bool,
+    /// The refresh's git commands are running; `refresh_again`: run one more afterwards.
+    refresh_running: bool,
+    refresh_again: bool,
+    /// `Repo::refs_stamp` and `Refs::fingerprint` at the last branch read, and the
+    /// fingerprint of the loaded log (HEAD, branch, refs, filters).
+    refs_stamp: Option<u64>,
+    refs_fp: Option<u64>,
+    log_fp: Option<u64>,
     /// Bumped per refresh: a slower, older refresh must not overwrite a newer one.
     refresh_gen: u64,
     /// PyCharm: tracked changes are included by default, unversioned files are not.
@@ -104,6 +114,11 @@ impl Git {
             log_focus: cx.focus_handle(),
             busy: None,
             refreshing: false,
+            refresh_running: false,
+            refresh_again: false,
+            refs_stamp: None,
+            refs_fp: None,
+            log_fp: None,
             refresh_gen: 0,
             excluded: HashSet::new(),
             included_untracked: HashSet::new(),
@@ -344,40 +359,106 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Refresh status, branches and (with the Git window open) the log. Calls within
+    /// `REFRESH_DELAY` of each other make one refresh; a call while one runs makes one more
+    /// afterwards. Branches are read again only when the refs on disk changed, and the log
+    /// only when HEAD, the current branch, a ref or the filters changed.
     pub(super) fn refresh_git(&mut self, cx: &mut Context<Self>) {
         let Some(g) = self.git.as_mut() else { return };
+        if g.refresh_running {
+            g.refresh_again = true;
+            return;
+        }
+        if g.refreshing {
+            return; // scheduled, not started: it reads the state when it starts
+        }
         g.refreshing = true;
         g.refresh_gen += 1;
         let gen = g.refresh_gen;
-        let repo = g.repo.clone();
+        // The first status comes at once; later ones wait for calls that come right after
+        // (a save and the window activation that caused it).
+        let delay = if g.loaded { REFRESH_DELAY } else { Duration::ZERO };
+        let timer = cx.background_executor().timer(delay);
+        cx.spawn(async move |this, cx| {
+            timer.await;
+            let _ = this.update(cx, |this, cx| this.start_git_refresh(gen, cx));
+        })
+        .detach();
+    }
+
+    /// Refresh with the branches and the log read again whatever the stamps say (the Refresh
+    /// buttons).
+    pub(super) fn reload_git(&mut self, cx: &mut Context<Self>) {
+        if let Some(g) = self.git.as_mut() {
+            g.refs_stamp = None;
+            g.log_fp = None;
+        }
+        self.refresh_git(cx);
+    }
+
+    fn start_git_refresh(&mut self, gen: u64, cx: &mut Context<Self>) {
         let want_log = self.bottom == Some(BottomTool::Git);
+        let Some(g) = self.git.as_mut().filter(|g| g.refresh_gen == gen) else { return };
+        g.refresh_running = true;
+        g.refresh_again = false;
+        let repo = g.repo.clone();
         let query = g.filter.query.clone();
+        let (old_stamp, old_refs_fp, old_log_fp) = (g.refs_stamp, g.refs_fp, g.log_fp);
         let task = cx.background_executor().spawn(async move {
             let st = repo.status();
-            let br = repo.branches().unwrap_or_default();
-            let log = want_log.then(|| {
+            let stamp = repo.refs_stamp();
+            // No ref file changed: the branches are the ones read last time.
+            let refs = if stamp.is_some() && stamp == old_stamp && old_refs_fp.is_some() { None } else { Some(repo.refs().ok()) };
+            let refs_fp = match &refs {
+                None => old_refs_fp,
+                Some(r) => r.as_ref().map(brisk_git::Refs::fingerprint),
+            };
+            let log_fp = match (&st, refs_fp) {
+                (Ok(s), Some(r)) => {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    (&s.head, &s.branch, r, &query).hash(&mut h);
+                    Some(h.finish())
+                }
+                _ => None,
+            };
+            let log = (want_log && (log_fp.is_none() || log_fp != old_log_fp)).then(|| {
                 let log = repo.log_query(LOG_LIMIT, &query).unwrap_or_default();
                 let graph = brisk_git::layout(log.iter().map(|c| (c.hash.as_str(), c.parents.as_slice())));
                 (log, graph)
             });
-            (st, br, log, query)
+            let refs = refs.map(|r| (r.map(|r| r.branches).unwrap_or_default(), stamp, refs_fp));
+            (st, refs, log.map(|l| (l, log_fp)), query)
         });
         cx.spawn(async move |this, cx| {
-            let (st, br, log, query) = task.await;
+            let (st, refs, log, query) = task.await;
             let _ = this.update(cx, |this, cx| {
-                // A newer refresh started while this ran: its result is the current one.
+                // The repository was replaced (Create Git Repository) while this ran.
                 if this.git.as_ref().is_none_or(|g| g.refresh_gen != gen) {
                     return;
                 }
-                // The filters changed while this ran: a newer refresh brings the right log.
+                // The filters changed while this ran: the refresh queued for it brings the log.
                 let log = log.filter(|_| this.git.as_ref().is_some_and(|g| g.filter.query == query));
-                this.apply_git(st, br, log, cx)
+                if let Some(g) = this.git.as_mut() {
+                    g.refresh_running = false;
+                    if let Some((_, stamp, fp)) = &refs {
+                        g.refs_stamp = *stamp;
+                        g.refs_fp = *fp;
+                    }
+                    if let Some((_, fp)) = &log {
+                        g.log_fp = *fp;
+                    }
+                }
+                this.apply_git(st, refs.map(|r| r.0), log.map(|l| l.0), cx);
+                if this.git.as_ref().is_some_and(|g| g.refresh_again) {
+                    this.refresh_git(cx);
+                }
             });
         })
         .detach();
     }
 
-    fn apply_git(&mut self, st: brisk_git::Result<Status>, br: Vec<Branch>, log: Option<(Vec<Commit>, Vec<GraphRow>)>, cx: &mut Context<Self>) {
+    fn apply_git(&mut self, st: brisk_git::Result<Status>, br: Option<Vec<Branch>>, log: Option<(Vec<Commit>, Vec<GraphRow>)>, cx: &mut Context<Self>) {
         crate::stall::note("apply git status");
         let Some(g) = self.git.as_mut() else { return };
         g.refreshing = false;
@@ -398,7 +479,9 @@ impl Workspace {
             }
             Err(e) => self.status = format!("git: {e}"),
         }
-        g.branches = br;
+        if let Some(br) = br {
+            g.branches = br;
+        }
         if let Some((log, graph)) = log {
             let sel_hash = g.log_selected.and_then(|i| g.log.get(i)).map(|c| c.hash.clone());
             g.graph = graph;
@@ -1294,7 +1377,7 @@ impl Workspace {
             .child(crate::ui_kit::tool_title("Commit"))
             .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(self.branch_label()))
             .child(div().flex_1())
-            .child(tool("cm-refresh", "⟳", "Refresh").on_click(cx.listener(|this, _, _, cx| this.refresh_git(cx))))
+            .child(tool("cm-refresh", "⟳", "Refresh").on_click(cx.listener(|this, _, _, cx| this.reload_git(cx))))
             .child(tool("cm-rollback", "↶", "Rollback  Ctrl+Alt+Z").on_click(cx.listener(|this, _, window, cx| {
                 window.focus(&this.commit_focus);
                 this.dispatch(Action::RollbackChanges, window, cx);
@@ -1733,7 +1816,7 @@ impl Workspace {
                             .cursor_pointer()
                             .hover(|s| s.bg(Theme::hover_row()))
                             .child(crate::icons::ui_icon("rotate-cw", 14., Theme::text_muted()))
-                            .on_click(cx.listener(|this, _, _, cx| this.refresh_git(cx))),
+                            .on_click(cx.listener(|this, _, _, cx| this.reload_git(cx))),
                     ),
             )
             .child(div().flex_1().min_h_0().flex().child(branches).child(center).child(details))
