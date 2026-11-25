@@ -207,6 +207,47 @@ impl Found {
     }
 }
 
+/// Collects at most [`MAX_FOUND`] matches, top to bottom. When there are more, matches above
+/// the view (line < `top`) give way to later ones, so the view and what follows it stay
+/// found whether it is at the start, in the middle or at the end of the output.
+pub(crate) struct Capped {
+    out: Vec<Found>,
+    start: usize,
+    top: i32,
+}
+
+impl Capped {
+    pub(crate) fn new(top: i32) -> Self {
+        Self { out: Vec::new(), start: 0, top }
+    }
+
+    /// No later match will be kept.
+    pub(crate) fn full(&self) -> bool {
+        self.out.len() - self.start >= MAX_FOUND && self.out[self.start].line >= self.top
+    }
+
+    /// Adds a match; false (and nothing added) once full.
+    pub(crate) fn push(&mut self, f: Found) -> bool {
+        if self.out.len() - self.start >= MAX_FOUND {
+            if self.full() {
+                return false;
+            }
+            self.start += 1;
+            if self.start >= MAX_FOUND {
+                self.out.drain(..self.start);
+                self.start = 0;
+            }
+        }
+        self.out.push(f);
+        true
+    }
+
+    pub(crate) fn finish(mut self) -> Vec<Found> {
+        self.out.drain(..self.start);
+        self.out
+    }
+}
+
 /// One grid row for [`find_in_rows`]: its line, its `(column, char)` cells and whether it
 /// continues on the next row (soft wrap).
 pub struct SearchRow {
@@ -216,21 +257,21 @@ pub struct SearchRow {
 }
 
 /// Matches of `needle` (case-insensitive unless `case`) in rows joined into logical lines, at
-/// most [`MAX_FOUND`].
-pub fn find_in_rows(rows: impl IntoIterator<Item = SearchRow>, needle: &str, case: bool) -> Vec<Found> {
+/// most [`MAX_FOUND`] (see [`Capped`]; `top` is the first line in view).
+pub fn find_in_rows(rows: impl IntoIterator<Item = SearchRow>, needle: &str, case: bool, top: i32) -> Vec<Found> {
     let fold = |c: char| match c {
         _ if case => c,
         _ if c.is_ascii() => c.to_ascii_lowercase(),
         _ => c.to_lowercase().next().unwrap_or(c),
     };
     let pat: Vec<char> = needle.chars().map(fold).collect();
-    let mut out = Vec::new();
+    let mut out = Capped::new(top);
     if pat.is_empty() {
-        return out;
+        return Vec::new();
     }
     // (line, column, char) of the logical line being collected.
     let mut logical: Vec<(i32, usize, char)> = Vec::new();
-    let search = |logical: &mut Vec<(i32, usize, char)>, out: &mut Vec<Found>| {
+    let search = |logical: &mut Vec<(i32, usize, char)>, out: &mut Capped| {
         if logical.is_empty() {
             return;
         }
@@ -239,7 +280,7 @@ pub fn find_in_rows(rows: impl IntoIterator<Item = SearchRow>, needle: &str, cas
         let mut text: Option<Arc<str>> = None;
         let row = logical[0].0;
         let mut i = 0;
-        while i + pat.len() <= chars.len() && out.len() < MAX_FOUND {
+        while i + pat.len() <= chars.len() && !out.full() {
             if chars[i..i + pat.len()] != pat[..] {
                 i += 1;
                 continue;
@@ -260,7 +301,7 @@ pub fn find_in_rows(rows: impl IntoIterator<Item = SearchRow>, needle: &str, cas
         logical.clear();
     };
     for r in rows {
-        if out.len() >= MAX_FOUND {
+        if out.full() {
             break;
         }
         logical.extend(r.cells.iter().map(|&(c, ch)| (r.line, c, ch)));
@@ -269,7 +310,7 @@ pub fn find_in_rows(rows: impl IntoIterator<Item = SearchRow>, needle: &str, cas
         }
     }
     search(&mut logical, &mut out);
-    out
+    out.finish()
 }
 
 #[derive(Clone, Debug)]
@@ -605,7 +646,7 @@ impl Session {
     }
 
     /// Matches of `needle` in the whole buffer (history and screen), top to bottom, at most
-    /// [`MAX_FOUND`].
+    /// [`MAX_FOUND`] (the ones around the view when there are more).
     pub fn find(&self, needle: &str, case: bool) -> Vec<Found> {
         let term = match &self.screen {
             Screen::Grid(term) => term.lock(),
@@ -624,7 +665,7 @@ impl Session {
             });
             SearchRow { line: l, cells: cells.collect(), wrapped }
         });
-        find_in_rows(rows, needle, case)
+        find_in_rows(rows, needle, case, -(grid.display_offset() as i32))
     }
 
     /// Scroll so that grid `line` is visible (centered when it was off screen).
@@ -885,15 +926,15 @@ mod tests {
         fn wide_clone(w: &SearchRow) -> SearchRow {
             SearchRow { line: w.line, cells: w.cells.clone(), wrapped: w.wrapped }
         }
-        let f = find_in_rows(rows(), "error", false);
+        let f = find_in_rows(rows(), "error", false, 0);
         assert_eq!(f.iter().map(|f| (f.line, f.cols.clone())).collect::<Vec<_>>(), vec![(-1, 0..5), (-1, 10..15)]);
         assert_eq!(&*f[0].text, "Error: x  error");
-        assert_eq!(find_in_rows(rows(), "Error", true).len(), 1);
-        assert_eq!(find_in_rows(rows(), "err", false).last().map(|f| (f.line, f.cols.clone())), Some((2, 2..5)));
-        assert!(find_in_rows(rows(), "", false).is_empty());
+        assert_eq!(find_in_rows(rows(), "Error", true, 0).len(), 1);
+        assert_eq!(find_in_rows(rows(), "err", false, 0).last().map(|f| (f.line, f.cols.clone())), Some((2, 2..5)));
+        assert!(find_in_rows(rows(), "", false, 0).is_empty());
         // A match broken by soft wrap: "needle" over rows 5 and 6.
         let wrapped = vec![row(5, "xxxxxxxnee", true), row(6, "dle yy", false), row(7, "dle", false)];
-        let f = find_in_rows(wrapped, "needle", false);
+        let f = find_in_rows(wrapped, "needle", false, 0);
         assert_eq!(f.len(), 1);
         assert_eq!((f[0].line, f[0].cols.clone(), f[0].more.clone(), f[0].row), (5, 7..10, vec![(6, 0..3)], 5));
         assert_eq!(&*f[0].text, "xxxxxxxneedle yy");

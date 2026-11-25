@@ -8,7 +8,7 @@
 //! `\r` progress line is rewritten in place), BS, tab, SGR colours and attributes, OSC 8,
 //! erase in line, the cursor's visibility and Clear All.
 
-use crate::{CellView, Found, Palette, SelectKind, Snapshot, TermEvent, MAX_FOUND};
+use crate::{Capped, CellView, Found, Palette, SelectKind, Snapshot, TermEvent};
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::term::SEMANTIC_ESCAPE_CHARS;
 use alacritty_terminal::vte::ansi::{Attr, ClearMode, Color, Handler, Hyperlink, LineClearMode, NamedColor, NamedPrivateMode, PrivateMode, Processor, Rgb};
@@ -967,7 +967,8 @@ impl Buf {
     }
 
     /// Matches of `needle` (case-insensitive unless `case`), top to bottom, at most
-    /// [`MAX_FOUND`]. Lines are `0..rows` on the screen at the bottom, negative above.
+    /// [`crate::MAX_FOUND`] (the ones around the view when there are more, see `Capped`). Lines are
+    /// `0..rows` on the screen at the bottom, negative above.
     pub(crate) fn find(&self, needle: &str, case: bool) -> Vec<Found> {
         let fold = |c: char| match c {
             _ if case => c,
@@ -975,16 +976,16 @@ impl Buf {
             _ => c.to_lowercase().next().unwrap_or(c),
         };
         let pat: Vec<char> = needle.chars().map(fold).collect();
-        let mut out = Vec::new();
+        let mut out = Capped::new(-(self.offset as i32));
         if pat.is_empty() {
-            return out;
+            return Vec::new();
         }
         let pat_str: String = pat.iter().collect();
         let history = self.history() as i64;
         let grid_line = |v: usize| (v as i64 - history) as i32;
         let mut lower = String::new();
         for i in 0..self.n_lines() {
-            if out.len() >= MAX_FOUND {
+            if out.full() {
                 break;
             }
             let full = self.line(i);
@@ -1040,7 +1041,7 @@ impl Buf {
             let at = |k: usize| if cells.is_empty() { (k / self.cols, k % self.cols, 1) } else { cells[k] };
             let text: Arc<str> = Arc::from(full.trim_end());
             for (a, b) in hits {
-                if out.len() >= MAX_FOUND {
+                if out.full() {
                     break;
                 }
                 let mut parts: Vec<(i32, std::ops::Range<usize>)> = Vec::new();
@@ -1062,7 +1063,7 @@ impl Buf {
                 out.push(Found { line, cols, more: parts, row: grid_line(row0), text: text.clone() });
             }
         }
-        out
+        out.finish()
     }
 }
 
@@ -1190,6 +1191,7 @@ impl Buf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MAX_FOUND;
 
     fn log(cols: usize, rows: usize) -> Log {
         Log::new(cols, rows, 1000, 1 << 20, None)
@@ -1359,6 +1361,20 @@ mod tests {
         assert_eq!(f.len(), MAX_FOUND);
         // One text per line, shared by its matches.
         assert!(Arc::ptr_eq(&f[0].text, &f[4].text));
+        // 15,000 matches: at the end of the output the last 10,000 are kept, the view's among them.
+        let h = l.history() as i32;
+        assert_eq!((f[0].line, f.last().map(|f| f.line)), (1000 - h, Some(2999 - h)));
+        // Scrolled to the top: the first 10,000.
+        l.scroll(h);
+        let f = l.find("a", true);
+        assert_eq!((f.len(), f[0].line, f.last().map(|f| f.line)), (MAX_FOUND, -h, Some(1999 - h)));
+        // In the middle: from the view on, or the last 10,000 when fewer follow it.
+        l.scroll(-500);
+        let f = l.find("a", true);
+        assert_eq!((f.len(), f[0].line, f.last().map(|f| f.line)), (MAX_FOUND, 500 - h, Some(2499 - h)));
+        l.scroll(-1000);
+        let f = l.find("a", true);
+        assert_eq!((f.len(), f[0].line), (MAX_FOUND, 1000 - h));
     }
 
     #[test]
