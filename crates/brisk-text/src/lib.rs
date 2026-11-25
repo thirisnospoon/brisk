@@ -367,26 +367,29 @@ impl Buffer {
         let before = self.selections.clone();
 
         // Deltas for mapping old -> new positions.
+        // The edits are sorted and do not overlap; `shift[i]` is how far the edits before the
+        // i-th move what follows them, so mapping a position is a binary search (thousands
+        // of carets after Select All Occurrences used to walk all edits for each caret).
         let deltas: Vec<(Range<usize>, usize)> = edits.iter().map(|(r, s)| (r.clone(), s.chars().count())).collect();
+        let mut shift: Vec<isize> = Vec::with_capacity(deltas.len() + 1);
+        shift.push(0);
+        for (r, ins) in &deltas {
+            shift.push(shift[shift.len() - 1] + *ins as isize - r.len() as isize);
+        }
         let map = move |pos: usize, right_bias: bool| -> usize {
-            let mut shift: isize = 0;
-            for (r, ins) in &deltas {
-                if pos < r.start {
-                    break;
-                }
-                let new_start = (r.start as isize + shift) as usize;
-                if pos == r.start {
-                    // Pure insertion at pos: right bias moves past it. A replacement starting at
-                    // pos leaves pos at its start.
-                    return if r.is_empty() && right_bias { new_start + ins } else { new_start };
-                }
-                if pos < r.end {
-                    // Inside a replaced range.
-                    return if right_bias { new_start + ins } else { new_start };
-                }
-                shift += *ins as isize - r.len() as isize;
+            let new_start = |i: usize| (deltas[i].0.start as isize + shift[i]) as usize;
+            // Edits that start before `pos`.
+            let k = deltas.partition_point(|(r, _)| r.start < pos);
+            if let Some((r, ins)) = deltas.get(k).filter(|(r, _)| r.start == pos) {
+                // Pure insertion at pos: right bias moves past it. A replacement starting at
+                // pos leaves pos at its start.
+                return if r.is_empty() && right_bias { new_start(k) + ins } else { new_start(k) };
             }
-            (pos as isize + shift) as usize
+            if k > 0 && pos < deltas[k - 1].0.end {
+                // Inside a replaced range.
+                return if right_bias { new_start(k - 1) + deltas[k - 1].1 } else { new_start(k - 1) };
+            }
+            (pos as isize + shift[k]) as usize
         };
 
         let mut records = Vec::with_capacity(edits.len());
