@@ -1102,16 +1102,11 @@ impl Workspace {
 // --- Moving modules ----------------------------------------------------------------------
 
 impl Workspace {
-    /// The project file list was rescanned: tell ty which Python files appeared or went away.
-    pub(super) fn ty_files_rescanned(&mut self, old: Option<Arc<brisk_project::FileList>>, new: &brisk_project::FileList) {
-        let (Some(old), Some(ty)) = (old, self.lsp.ty.as_ref()) else { return };
-        let py = |f: &&String| f.ends_with(".py") || f.ends_with(".pyi");
-        let before: std::collections::HashSet<&String> = old.files.iter().filter(py).collect();
-        let after: std::collections::HashSet<&String> = new.files.iter().filter(py).collect();
-        let abs = |f: &&String| new.root.join(f.as_str());
-        let created: Vec<PathBuf> = after.difference(&before).map(abs).collect();
-        let deleted: Vec<PathBuf> = before.difference(&after).map(abs).collect();
-        ty.files_created_deleted(&created, &deleted);
+    /// The project file list was rescanned: tell ty which Python files appeared or went away
+    /// (worked out off the UI thread).
+    pub(super) fn ty_files_rescanned(&mut self, created: &[PathBuf], deleted: &[PathBuf]) {
+        let Some(ty) = self.lsp.ty.as_ref() else { return };
+        ty.files_created_deleted(created, deleted);
     }
 
     /// Rename / Move of a Python file or a folder in the Project tree: ask ty for the import

@@ -10,13 +10,25 @@ use crate::editor::{DiskCheck, Editor};
 use gpui::{Context, Entity, Window};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 pub const POLL: Duration = Duration::from_millis(1500);
 
-/// Last seen modification time of each expanded folder.
+/// Last seen modification time of each expanded folder, and when Brisk last saved files.
 #[derive(Default)]
-pub struct DirStamps(HashMap<PathBuf, Option<SystemTime>>);
+pub struct DirStamps(HashMap<PathBuf, Option<SystemTime>>, Option<Instant>);
+
+impl DirStamps {
+    /// Files were saved (and Git refreshed for them). A save through a temporary file changes
+    /// its folder's time, which the next poll sees.
+    pub(super) fn saved(&mut self) {
+        self.1 = Some(Instant::now());
+    }
+
+    fn saved_recently(&self) -> bool {
+        self.1.is_some_and(|t| t.elapsed() < POLL * 2)
+    }
+}
 
 fn dir_mtime(p: &std::path::Path) -> Option<SystemTime> {
     std::fs::metadata(p).ok()?.modified().ok()
@@ -86,6 +98,18 @@ impl Workspace {
         .detach();
     }
 
+    /// Files were saved (`save_all` refreshes Git for them). The folder-time change a save makes
+    /// does not rescan the file list, so a saved ignore file does.
+    pub(super) fn disk_files_saved(&mut self, saved: &[PathBuf], cx: &mut Context<Self>) {
+        if saved.is_empty() {
+            return;
+        }
+        self.dir_stamps.saved();
+        if saved.iter().any(|p| p.file_name().is_some_and(|n| n == ".gitignore" || n == ".ignore")) {
+            self.reindex_files(cx);
+        }
+    }
+
     fn disk_snapshot(&mut self, cx: &mut Context<Self>) -> Snapshot {
         let editors = self.editors().filter_map(|e| Some((e.clone(), e.read(cx).path.clone()?))).collect();
         let dirs = self.tree.expanded_dirs().into_iter().map(|i| self.tree.nodes[i].path.clone()).collect();
@@ -142,13 +166,27 @@ impl Workspace {
         self.dir_stamps.0 = polled.stamps;
         let changed = !polled.changed.is_empty();
         if changed {
+            // Only folders that gained or lost entries change the file list; a save through a
+            // temporary file changes the folder's time alone.
+            let mut renamed = Vec::new();
             for (p, entries) in polled.changed {
                 if let Some(id) = self.tree.find(&p) {
-                    self.tree.set_entries(id, entries);
+                    if self.tree.set_entries(id, entries) {
+                        renamed.push(p);
+                    }
                 }
             }
-            self.reindex_files(cx);
-            self.refresh_git(cx);
+            if !renamed.is_empty() {
+                self.reindex_dirs(renamed, cx);
+                self.refresh_git(cx);
+            } else {
+                // Another program may have saved a file the same way.
+                self.symbols.stale = true;
+                // Brisk's own save refreshed Git already.
+                if !self.dir_stamps.saved_recently() {
+                    self.refresh_git(cx);
+                }
+            }
         }
         if reloaded || changed {
             cx.notify();

@@ -238,13 +238,16 @@ impl ProjectTree {
     /// Put a folder's fresh listing (from `read_entries`, which can run off the UI thread) in
     /// place, merging by name: an entry that was there keeps its node (so its expanded state,
     /// and the children of an expanded subfolder, stay), only new entries get nodes. A folder
-    /// of 50k files that gains one file costs one node, not 50k.
-    pub fn set_entries(&mut self, id: NodeId, entries: Vec<Entry>) {
+    /// of 50k files that gains one file costs one node, not 50k. True if the set of names
+    /// changed (an entry added, removed, or turned from a file into a folder); a file saved
+    /// through a temporary file changes the folder's time but not its names.
+    pub fn set_entries(&mut self, id: NodeId, entries: Vec<Entry>) -> bool {
         let depth = self.nodes[id].depth + 1;
         let parent_excluded = self.nodes[id].excluded;
         let mut old: std::collections::HashMap<String, NodeId> =
             self.nodes[id].children.take().unwrap_or_default().into_iter().map(|c| (std::mem::take(&mut self.nodes[c].name), c)).collect();
         let mut ids = Vec::with_capacity(entries.len());
+        let mut changed = false;
         for (name, path, is_dir) in entries {
             match old.remove(&name) {
                 Some(c) if self.nodes[c].is_dir == is_dir => {
@@ -257,6 +260,7 @@ impl ProjectTree {
                     ids.push(c);
                 }
                 gone => {
+                    changed = true;
                     if let Some(c) = gone {
                         self.nodes[c].expanded = false;
                         self.nodes[c].children = None;
@@ -269,11 +273,13 @@ impl ProjectTree {
         }
         // Removed entries: their nodes stay unreachable (ids are not reused).
         for c in old.into_values() {
+            changed = true;
             self.nodes[c].expanded = false;
             self.nodes[c].children = None;
         }
         self.nodes[id].children = Some(ids);
         self.rows_dirty = true;
+        changed
     }
 
     /// Expanded, loaded folders reachable from the root (the ones to watch for changes).
@@ -334,10 +340,59 @@ pub struct FileList {
 
 impl FileList {
     pub fn scan(root: &Path) -> Self {
-        let mut files = Vec::new();
+        let mut files = Self::walk(root, root);
+        files.sort();
+        Self { root: root.to_path_buf(), files }
+    }
+
+    /// The list after files were added or removed in `dirs` (absolute folders under the
+    /// root): each folder's part of the list is walked again, the rest is kept. A folder with
+    /// no files in the list (new, ignored or excluded, or empty before) and the root itself
+    /// fall back to a full scan, so the result is what `scan` would give.
+    pub fn rescan_dirs(&self, dirs: &[PathBuf]) -> Self {
+        let mut files = self.files.clone();
+        for d in dirs {
+            let Some(rel) = d.strip_prefix(&self.root).ok().map(|r| r.to_string_lossy().replace('\\', "/")).filter(|r| !r.is_empty()) else {
+                return Self::scan(&self.root);
+            };
+            // Paths under one prefix are contiguous in a sorted list.
+            let prefix = format!("{rel}/");
+            let start = files.partition_point(|f| f.as_str() < prefix.as_str());
+            let end = start + files[start..].partition_point(|f| f.starts_with(&prefix));
+            if start == end {
+                return Self::scan(&self.root);
+            }
+            let mut fresh = Self::walk(&self.root, d);
+            fresh.sort();
+            files.splice(start..end, fresh);
+        }
+        Self { root: self.root.clone(), files }
+    }
+
+    /// Paths in `new` but not in `self`, and in `self` but not in `new` (both sorted).
+    pub fn changes<'a>(&'a self, new: &'a FileList) -> (Vec<&'a str>, Vec<&'a str>) {
+        let (mut added, mut removed) = (Vec::new(), Vec::new());
+        let (mut a, mut b) = (self.files.iter().peekable(), new.files.iter().peekable());
+        loop {
+            match (a.peek(), b.peek()) {
+                (Some(x), Some(y)) if x == y => {
+                    a.next();
+                    b.next();
+                }
+                (Some(x), Some(y)) if x < y => removed.extend(a.next().map(String::as_str)),
+                (Some(_), Some(_)) | (None, Some(_)) => added.extend(b.next().map(String::as_str)),
+                (Some(_), None) => removed.extend(a.next().map(String::as_str)),
+                (None, None) => break,
+            }
+        }
+        (added, removed)
+    }
+
+    /// Files under `start` (the root or a folder in it), relative to `root`, unsorted.
+    fn walk(root: &Path, start: &Path) -> Vec<String> {
         let structure = Structure::load(root);
         let base = root.to_path_buf();
-        let walker = ignore::WalkBuilder::new(root)
+        let walker = ignore::WalkBuilder::new(start)
             .hidden(false)
             .git_ignore(true)
             .git_exclude(true)
@@ -365,9 +420,7 @@ impl FileList {
             })
         });
         drop(tx);
-        files.extend(rx);
-        files.sort();
-        Self { root: root.to_path_buf(), files }
+        rx.into_iter().collect()
     }
 
     /// Fuzzy match, best first. Filename matches rank above directory-only matches.
@@ -422,6 +475,56 @@ mod tests {
         assert_eq!(names.len(), 100);
         assert_eq!(names[0], "f001.py");
         assert!(names.contains(&"f050b.py".to_string()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn set_entries_reports_name_changes() {
+        let d = std::env::temp_dir().join(format!("brisk-names-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("a.py"), "").unwrap();
+        let mut t = super::ProjectTree::new(&d);
+        std::fs::write(d.join("a.py"), "x = 1").unwrap();
+        assert!(!t.set_entries(0, super::read_entries(&d)), "same names");
+        std::fs::write(d.join("b.py"), "").unwrap();
+        assert!(t.set_entries(0, super::read_entries(&d)), "added");
+        std::fs::remove_file(d.join("a.py")).unwrap();
+        assert!(t.set_entries(0, super::read_entries(&d)), "removed");
+        std::fs::remove_file(d.join("b.py")).unwrap();
+        std::fs::create_dir(d.join("b.py")).unwrap();
+        assert!(t.set_entries(0, super::read_entries(&d)), "file became a folder");
+        assert!(!t.set_entries(0, super::read_entries(&d)));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn rescan_dirs_matches_a_full_scan() {
+        let d = std::env::temp_dir().join(format!("brisk-rescan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for p in ["a/b", "a.b", "a-c", "z", "a/node_modules"] {
+            std::fs::create_dir_all(d.join(p)).unwrap();
+        }
+        for f in ["a/x.py", "a/b/y.py", "a.b/k.py", "a-c/k.py", "z/w.py", "top.py", "a/node_modules/m.js"] {
+            std::fs::write(d.join(f), "").unwrap();
+        }
+        let list = super::FileList::scan(&d);
+        assert!(!list.files.iter().any(|f| f.contains("node_modules")));
+        std::fs::write(d.join("a/new.py"), "").unwrap();
+        std::fs::create_dir_all(d.join("a/sub")).unwrap();
+        std::fs::write(d.join("a/sub/s.py"), "").unwrap();
+        std::fs::remove_file(d.join("a/b/y.py")).unwrap();
+        std::fs::write(d.join("a/node_modules/n.js"), "").unwrap();
+        let part = list.rescan_dirs(&[d.join("a")]);
+        let full = super::FileList::scan(&d);
+        assert_eq!(part.files, full.files);
+        let (added, removed) = list.changes(&part);
+        assert_eq!(added, vec!["a/new.py", "a/sub/s.py"]);
+        assert_eq!(removed, vec!["a/b/y.py"]);
+        // A folder that had no files in the list: a full scan.
+        std::fs::create_dir_all(d.join("fresh")).unwrap();
+        std::fs::write(d.join("fresh/f.py"), "").unwrap();
+        assert_eq!(part.rescan_dirs(&[d.join("fresh")]).files, super::FileList::scan(&d).files);
         let _ = std::fs::remove_dir_all(&d);
     }
 

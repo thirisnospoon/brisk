@@ -486,6 +486,8 @@ pub struct Workspace {
     status_log: status_ui::StatusLog,
     /// The newest file-list scan; older ones that finish later are dropped.
     reindex_gen: u64,
+    /// The `reindex_gen` of a full file-list scan still running.
+    reindex_full: Option<u64>,
     /// Where the Terminal's first shell starts when Open In → Terminal opens it.
     terminal_start: Option<PathBuf>,
     started: Instant,
@@ -664,6 +666,7 @@ impl Workspace {
             status: "Indexing…".into(),
             status_log: Default::default(),
             reindex_gen: 0,
+            reindex_full: None,
             terminal_start: None,
             started: Instant::now(),
         }
@@ -771,6 +774,7 @@ impl Workspace {
         }
         self.pyproject_saved(&saved_paths, cx);
         self.web_files_saved(&saved_paths, cx);
+        self.disk_files_saved(&saved_paths, cx);
         self.todo_files_saved(saved_paths, cx);
         if saved > 0 {
             self.persist_bookmarks(cx);

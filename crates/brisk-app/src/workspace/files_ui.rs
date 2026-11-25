@@ -415,18 +415,49 @@ impl Workspace {
     /// Scans may overlap (disk poll, file operations) and finish out of order: only the
     /// newest one is applied.
     pub(super) fn reindex_files(&mut self, cx: &mut Context<Self>) {
+        self.reindex(None, cx);
+    }
+
+    /// Files were added or removed in these folders (the disk poll): walk only them again,
+    /// unless a full scan is still running (its result would be dropped for this one).
+    pub(super) fn reindex_dirs(&mut self, dirs: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let dirs = Some(dirs).filter(|_| self.reindex_full.is_none() && self.files.is_some());
+        self.reindex(dirs, cx);
+    }
+
+    fn reindex(&mut self, dirs: Option<Vec<PathBuf>>, cx: &mut Context<Self>) {
         let root = self.root.clone();
         self.reindex_gen += 1;
         let gen = self.reindex_gen;
-        let task = cx.background_executor().spawn(async move { FileList::scan(&root) });
+        if dirs.is_none() {
+            self.reindex_full = Some(gen);
+        }
+        let old = self.files.clone();
+        // The scan and the list of Python files that appeared or went away (for ty) run off
+        // the UI thread.
+        let task = cx.background_executor().spawn(async move {
+            let list = match (&old, dirs) {
+                (Some(old), Some(dirs)) => old.rescan_dirs(&dirs),
+                _ => FileList::scan(&root),
+            };
+            let py = |f: &&str| f.ends_with(".py") || f.ends_with(".pyi");
+            let (created, deleted) = old.as_ref().map(|old| old.changes(&list)).unwrap_or_default();
+            let abs = |f: &str| list.root.join(f);
+            let created: Vec<PathBuf> = created.into_iter().filter(py).map(abs).collect();
+            let deleted: Vec<PathBuf> = deleted.into_iter().filter(py).map(abs).collect();
+            (list, old.is_some().then_some((created, deleted)))
+        });
         cx.spawn(async move |this, cx| {
-            let list = task.await;
+            let (list, py_changes) = task.await;
             let _ = this.update(cx, |this, cx| {
                 if gen != this.reindex_gen {
                     return;
                 }
+                this.reindex_full = None;
                 crate::stall::note("reindex: apply file list");
-                this.ty_files_rescanned(this.files.clone(), &list);
+                if let Some((created, deleted)) = py_changes {
+                    this.ty_files_rescanned(&created, &deleted);
+                }
                 this.files = Some(Arc::new(list));
                 this.symbols.stale = true;
                 this.ensure_symbols(cx);
