@@ -58,7 +58,7 @@ panic = "abort"
 [profile.dev.package."*"]
 opt-level = 2
 
-# Code that is not on a hot path (database drivers, TLS, compression, grammars of languages
+# Code that is not on a hot path (database drivers, TLS, compression, image codecs, grammars of languages
 # other than Python) is optimized for size: it keeps brisk.exe inside its budget.
 [profile.release.package.libsqlite3-sys]
 opt-level = "s"
@@ -95,4 +95,26 @@ opt-level = "s"
 [profile.release.package.tree-sitter-json]
 opt-level = "s"
 [profile.release.package.tree-sitter-toml-ng]
+opt-level = "s"
+[profile.release.package.tokio]
+opt-level = "s"
+[profile.release.package.brisk-db]
+opt-level = "s"
+[profile.release.package.image]
+opt-level = "s"
+[profile.release.package.exr]
+opt-level = "s"
+[profile.release.package.tiff]
+opt-level = "s"
+[profile.release.package.gif]
+opt-level = "s"
+[profile.release.package.image-webp]
+opt-level = "s"
+[profile.release.package.qoi]
+opt-level = "s"
+[profile.release.package.rav1e]
+opt-level = "s"
+[profile.release.package.ravif]
+opt-level = "s"
+[profile.release.package.zune-jpeg]
 opt-level = "s"
