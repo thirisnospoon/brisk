@@ -2286,8 +2286,9 @@ impl Element for EditorElement {
             let key = (b.version(), b.primary().head, b.selections.len());
             let mut look = ed.motion.caret_look(key, target, point(px(ed.scroll_x), px(ed.scroll_y)));
             // Behind another application the caret stays solid and nothing wakes the window
-            // (PyCharm stops blinking too); activation repaints it and the blink resumes.
-            if !window.is_window_active() {
+            // (PyCharm stops blinking too); activation repaints it and the blink resumes. Smoke
+            // windows run in the background without focus and still check the blink.
+            if !window.is_window_active() && !crate::smoke::active() {
                 look.alpha = 1.0;
                 look.wake_in = None;
             }

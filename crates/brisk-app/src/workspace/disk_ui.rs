@@ -91,7 +91,7 @@ impl Workspace {
     pub(super) fn start_disk_poll(&self, window: &mut Window, cx: &mut Context<Self>) {
         let bg = cx.background_executor().clone();
         // Smokes drive a window that often does not have the focus; they expect the 1.5 s poll.
-        let smoke = cfg!(feature = "smoke") && std::env::vars_os().any(|(k, _)| k.to_string_lossy().starts_with("BRISK_SMOKE_"));
+        let smoke = crate::smoke::active();
         cx.spawn_in(window, async move |this, cx| {
             let mut last = Instant::now();
             loop {
