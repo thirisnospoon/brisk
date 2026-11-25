@@ -171,6 +171,8 @@ pub struct TerminalPanel {
     /// The Test History list is open.
     pub history_open: bool,
     bar: crate::scrollbar::BarState,
+    /// The tab the console was last drawn with.
+    drawn_tab: Option<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -260,7 +262,13 @@ impl TerminalPanel {
                     batch.push(ev);
                 }
                 let alive = this.update(cx, |this, cx| {
+                    // Output of a tab that is not shown needs no redraw: the tab is drawn
+                    // from its session when it is selected. Everything else (exit, title)
+                    // changes the tab bar or Services, and a tab not drawn yet is drawn now.
+                    let visible = this.tabs.get(this.active).map(|t| t.id);
+                    let mut redraw = visible != this.drawn_tab;
                     for (id, ev) in batch {
+                        redraw |= Some(id) == visible || !matches!(ev, TermEvent::Wakeup | TermEvent::Bell);
                         match ev {
                             TermEvent::Title(t) => {
                                 if let Some(tab) = this.tabs.iter_mut().find(|t| t.id == id) {
@@ -304,9 +312,11 @@ impl TerminalPanel {
                             TermEvent::Wakeup | TermEvent::Bell => {}
                         }
                     }
-                    this.search_output_changed(cx);
-                    PUMP_NOTIFIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    cx.notify();
+                    if redraw {
+                        this.search_output_changed(cx);
+                        PUMP_NOTIFIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        cx.notify();
+                    }
                 });
                 last_notify = Some(std::time::Instant::now());
                 if alive.is_err() {
@@ -339,6 +349,7 @@ impl TerminalPanel {
             failed_first: false,
             history_open: false,
             bar: Default::default(),
+            drawn_tab: None,
         }
     }
 
@@ -1331,6 +1342,7 @@ impl Element for TerminalElement {
             p.h_scroll = if nowrap { p.h_scroll.min(cols.saturating_sub(fit)) } else { 0 };
             h_off = p.h_scroll;
             let tab = p.tabs.get_mut(p.active)?;
+            p.drawn_tab = Some(tab.id);
             tab.session.resize(cols, rows, f32::from(cell_w) as u16, CELL_H as u16);
             // After the resize: it re-wraps rows and moves lines into the history.
             p.refresh_search();
