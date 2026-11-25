@@ -65,7 +65,7 @@ fn main() {
         workspace::budget_probe::mark("app_run");
         // Fonts shipped next to the exe (or in BRISK_FONT_DIR): .ttf / .otf files are added to
         // the text system, so the UI does not depend on what Windows has installed.
-        for dir in fonts_dirs() {
+        for dir in brisk_platform::fonts::extra_dirs() {
             let fonts: Vec<std::borrow::Cow<'static, [u8]>> = std::fs::read_dir(&dir)
                 .into_iter()
                 .flatten()
@@ -96,13 +96,4 @@ fn main() {
         cx.activate(true);
         stall::start(cx);
     });
-}
-
-/// Folders whose fonts Brisk loads at start: `BRISK_FONT_DIR`, then `fonts` next to the exe.
-fn fonts_dirs() -> Vec<std::path::PathBuf> {
-    let mut v: Vec<std::path::PathBuf> = std::env::var_os("BRISK_FONT_DIR").map(Into::into).into_iter().collect();
-    if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("fonts"))) {
-        v.push(d);
-    }
-    v
 }

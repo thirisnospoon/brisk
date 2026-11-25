@@ -3,7 +3,7 @@
 
 use crate::{DataSource, Driver};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub const CONFIG_FILE: &str = ".brisk/dataSources.json";
 
@@ -13,38 +13,8 @@ struct File {
     data_sources: Vec<DataSource>,
 }
 
-/// Config dir of a portable install: `<exe dir>/data` when a file named `portable` sits next to the executable.
-pub fn portable_dir() -> Option<PathBuf> {
-    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    dir.join("portable").is_file().then(|| dir.join("data"))
-}
-
-/// Per-user config dir: the portable `data` folder if present, else `%APPDATA%\Brisk`, `~/.config/brisk`,
-/// `~/Library/Application Support/Brisk`.
-pub fn config_dir() -> PathBuf {
-    if let Some(p) = portable_dir() {
-        return p;
-    }
-    #[cfg(windows)]
-    {
-        if let Some(a) = std::env::var_os("APPDATA") {
-            return PathBuf::from(a).join("Brisk");
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(h) = std::env::var_os("HOME") {
-            return PathBuf::from(h).join("Library/Application Support/Brisk");
-        }
-    }
-    if let Some(x) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(x).join("brisk");
-    }
-    if let Some(h) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-        return PathBuf::from(h).join(".config/brisk");
-    }
-    std::env::temp_dir().join("brisk")
-}
+/// Brisk's settings folder (kept here for the callers that reach it through `brisk_db`).
+pub use brisk_platform::dirs::config_dir;
 
 /// Load data sources. Returns `(sources, imported_from_pycharm)`.
 pub fn load(root: &Path) -> (Vec<DataSource>, bool) {

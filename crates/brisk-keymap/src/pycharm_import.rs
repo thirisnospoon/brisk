@@ -255,8 +255,8 @@ pub fn import_xml(text: &str, others: &[(String, String)]) -> Result<Imported, S
 
 /// PyCharm's settings folders under `%APPDATA%\JetBrains`, newest version first.
 pub fn pycharm_config_dirs() -> Vec<PathBuf> {
-    let Some(appdata) = std::env::var_os("APPDATA") else { return Vec::new() };
-    let Ok(rd) = std::fs::read_dir(PathBuf::from(appdata).join("JetBrains")) else { return Vec::new() };
+    let Some(appdata) = brisk_platform::dirs::roaming_app_data() else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(appdata.join("JetBrains")) else { return Vec::new() };
     let mut v: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("PyCharm"))).collect();
     // "PyCharm2025.2" sorts after "PyCharm2024.3"; "PyCharmCE..." lands next to its version.
     v.sort_by_key(|p| std::cmp::Reverse(p.file_name().map(|n| n.to_string_lossy().replace("CE", "")).unwrap_or_default()));

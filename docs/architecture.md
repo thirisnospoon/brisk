@@ -637,6 +637,13 @@ Verify: tests (atomic write round trip, portable mode); DISK, SETTINGS smokes; b
 Risk: medium: a wrong settings folder looks like lost settings. Test portable and installed
 mode.
 
+Done on branch `batch2`. `fs::replace_atomic` uses `ReplaceFileW` on Windows when the target
+exists and falls back to copying the permissions and renaming. `dirs::config_dir` resolves as
+before (portable `data`, then `%APPDATA%\Brisk`, `~/Library/Application Support/Brisk` or the
+XDG folder); `brisk_db::config::config_dir` re-exports it, and the three `APPDATA` reads that
+were left go through `dirs::roaming_app_data`. The path logic takes the environment as a
+function, so portable and installed mode are unit tests.
+
 #### Step P5. `secrets`
 
 Move DPAPI into the crate. On other platforms, refuse to save a password without a keyring.

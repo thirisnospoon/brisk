@@ -251,11 +251,9 @@ pub fn find_tool(manager: Manager, project_python: Option<&Path>) -> Option<Path
         dirs.push(h.join(".local").join("bin"));
         dirs.push(h.join(".cargo").join("bin"));
     }
-    if cfg!(windows) {
-        if let Some(a) = std::env::var_os("APPDATA").map(PathBuf::from) {
-            dirs.push(a.join("Python").join("Scripts"));
-            dirs.push(a.join("pypoetry").join("venv").join("Scripts"));
-        }
+    if let Some(a) = brisk_platform::dirs::roaming_app_data() {
+        dirs.push(a.join("Python").join("Scripts"));
+        dirs.push(a.join("pypoetry").join("venv").join("Scripts"));
     }
     dirs.into_iter().map(|d| d.join(&exe)).find(|p| p.is_file())
 }

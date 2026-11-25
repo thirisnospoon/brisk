@@ -96,14 +96,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         return Err(e);
     }
     drop(f);
-    if meta.is_some() && replace_file(&path, &tmp) {
-        return Ok(());
-    }
-    // Unix mode bits (on Windows only the read-only flag, which is off here).
-    if let Some(m) = &meta {
-        let _ = std::fs::set_permissions(&tmp, m.permissions());
-    }
-    match std::fs::rename(&tmp, &path) {
+    match brisk_platform::fs::replace_atomic(&tmp, &path) {
         Ok(()) => Ok(()),
         Err(_) => {
             // E.g. another program holds the file open without delete sharing.
@@ -111,32 +104,6 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
             std::fs::write(&path, bytes)
         }
     }
-}
-
-#[cfg(windows)]
-fn replace_file(target: &Path, replacement: &Path) -> bool {
-    use std::os::windows::ffi::OsStrExt;
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn ReplaceFileW(
-            replaced: *const u16,
-            replacement: *const u16,
-            backup: *const u16,
-            flags: u32,
-            exclude: *mut std::ffi::c_void,
-            reserved: *mut std::ffi::c_void,
-        ) -> i32;
-    }
-    const REPLACEFILE_IGNORE_MERGE_ERRORS: u32 = 0x2;
-    let wide = |p: &Path| p.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>();
-    let (a, b) = (wide(target), wide(replacement));
-    // SAFETY: both paths are NUL-terminated UTF-16 buffers that outlive the call.
-    unsafe { ReplaceFileW(a.as_ptr(), b.as_ptr(), std::ptr::null(), REPLACEFILE_IGNORE_MERGE_ERRORS, std::ptr::null_mut(), std::ptr::null_mut()) != 0 }
-}
-
-#[cfg(not(windows))]
-fn replace_file(_: &Path, _: &Path) -> bool {
-    false
 }
 
 impl Editor {

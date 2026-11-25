@@ -726,6 +726,7 @@ dependencies = [
 name = "brisk-db"
 version = "0.3.0"
 dependencies = [
+ "brisk-platform",
  "mysql",
  "native-tls",
  "postgres",
@@ -748,6 +749,7 @@ dependencies = [
 name = "brisk-keymap"
 version = "0.3.0"
 dependencies = [
+ "brisk-platform",
  "roxmltree",
  "serde",
  "serde_json",

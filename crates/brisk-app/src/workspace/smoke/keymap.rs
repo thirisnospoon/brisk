@@ -36,7 +36,7 @@ impl Workspace {
         eprintln!("smoke-keymap: ctrl+d in the editor -> {:?}", text(self, cx));
 
         // A PyCharm settings folder with a custom keymap.
-        let jb = std::path::PathBuf::from(std::env::var_os("APPDATA").unwrap_or_default()).join("JetBrains").join("PyCharm2025.2");
+        let jb = brisk_platform::dirs::roaming_app_data().unwrap_or_default().join("JetBrains").join("PyCharm2025.2");
         let _ = std::fs::create_dir_all(jb.join("keymaps"));
         let _ = std::fs::create_dir_all(jb.join("options"));
         let _ = std::fs::write(
