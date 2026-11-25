@@ -3,7 +3,10 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\budget.ps1 [-Build] [-Package] [-Runs 3]
 #       [-Exe target\release\brisk.exe] [-Zip dist\x.zip] [-Project examples\demo_project]
-#       [-NoMembudget] [-Out results.json]
+#       [-NoMembudget] [-SizeOnly] [-Out results.json]
+#
+# -SizeOnly checks exe_mb and zip_mb and launches nothing. CI uses it: start time and memory
+# on shared runners vary too much to fail a build on.
 #
 # The limits are $Limits right below. Reported, not checked: start_cold_ms (the first launch),
 # the startup profile (named moments since process start), private bytes, and the peak working
@@ -18,6 +21,7 @@ param(
     [string]$Zip,
     [string]$Project,
     [switch]$NoMembudget,
+    [switch]$SizeOnly,
     [string]$Out
 )
 # MB are working sets.
@@ -174,6 +178,11 @@ function Median($xs) {
 $starts = @()
 $marks = [ordered]@{}
 $last = $null
+if ($SizeOnly) {
+    $Runs = 0
+    $NoMembudget = $true
+    foreach ($k in 'start_ms', 'idle_mb', 'membudget_mb') { $Limits.Remove($k) }
+}
 $probe = Test-Probe
 if (-not $probe) { $script:notes += "this exe has no BRISK_BUDGET probe: start_ms is process start -> main window created, idle measured from outside, no startup profile" }
 for ($i = 1; $i -le $Runs; $i++) {
@@ -188,10 +197,12 @@ for ($i = 1; $i -le $Runs; $i++) {
     if ($i -eq 1) { $r.start_cold_ms = $run.start_ms }
     $last = $run
 }
-$r.start_ms = Median $starts
-$r.idle_mb = $last.data.idle_ws_mb
-$r.idle_private_mb = $last.data.idle_private_mb
-if ($last.kids) { $r.idle_children_mb = [math]::Round($last.kids.ty + $last.kids.ruff + $last.kids.other, 1) }
+if (-not $SizeOnly) {
+    $r.start_ms = Median $starts
+    $r.idle_mb = $last.data.idle_ws_mb
+    $r.idle_private_mb = $last.data.idle_private_mb
+    if ($last.kids) { $r.idle_children_mb = [math]::Round($last.kids.ty + $last.kids.ruff + $last.kids.other, 1) }
+}
 
 # 2. MEMBUDGET on a copy of the project (its own verdict is switched off with a huge budget:
 #    the limit is checked here); ty and ruff are sampled while it runs.

@@ -449,8 +449,8 @@ Nothing starts before `ui-audit` is merged: it changes 34 files, including `work
 
 #### Step 1. Format the code once
 
-Add `rustfmt.toml` (`max_width = 140`, `use_small_heuristics = "Max"`, close to the current
-style so the diff is smaller). Run `cargo fmt --all` as a commit of its own and list it in
+Add `rustfmt.toml` (`max_width = 160`, `use_small_heuristics = "Max"`: the current style;
+at 160 the first run changes 174 files, at 140 it changes 195, at 120 it changes 219). Run `cargo fmt --all` as a commit of its own and list it in
 `.git-blame-ignore-revs`.
 Files: all `.rs` files. Verify: `cargo build`, `cargo test --workspace`; the commit has no
 change other than formatting. Risk: low for behaviour, high for conflicts, so it lands
