@@ -563,6 +563,21 @@ impl Handler for Buf {
         self.cursor = 0;
     }
 
+    // Moves within the line (progress output that redraws with CSI G / C / D instead of
+    // `\r`); columns are taken as characters. Like a terminal, a move never goes past the
+    // last column, unless the line is already longer than that.
+    fn goto_col(&mut self, col: usize) {
+        self.cursor = col.min(self.open_len().max(self.cols - 1));
+    }
+
+    fn move_backward(&mut self, n: usize) {
+        self.cursor = self.cursor.saturating_sub(n);
+    }
+
+    fn move_forward(&mut self, n: usize) {
+        self.goto_col(self.cursor.saturating_add(n));
+    }
+
     fn linefeed(&mut self) {
         self.new_line();
     }
@@ -1207,6 +1222,11 @@ mod tests {
         // Erase in line.
         feed(&mut l, "progress 99%\r\x1b[Kok\n");
         assert_eq!(l.text().lines().last(), Some("ok"));
+        // Cursor moves within the line.
+        feed(&mut l, "50%\x1b[1G75%\x1b[2Dx\n");
+        assert_eq!(l.text().lines().last(), Some("7x%"));
+        feed(&mut l, "ab\x1b[3Cc\x1b[9999Cz\n");
+        assert_eq!(l.text().lines().last().map(str::len), Some(l.cols));
     }
 
     #[test]
