@@ -21,6 +21,8 @@ pub struct CoverageView {
     pub name: String,
     pub selected: usize,
     pub focus: FocusHandle,
+    /// The list's scroll: Up / Down keep the selected row in view.
+    pub scroll: gpui::ScrollHandle,
 }
 
 /// A coverage run in progress: its tab name, interpreter and working directory.
@@ -58,7 +60,7 @@ impl Workspace {
                 if ok {
                     this.start_coverage_run(cfg, python, window, cx);
                 } else {
-                    this.cov_offer = Some(cfg);
+                    this.install_offer = Some(super::install_offer_ui::InstallOffer { package: "coverage", python, then: super::install_offer_ui::Then::Coverage(cfg) });
                     cx.notify();
                 }
             });
@@ -122,7 +124,7 @@ impl Workspace {
                     Ok(report) => {
                         this.status = format!("Coverage of '{name}': {:.0}% of lines in {} files", report.percent, report.files.len());
                         let focus = this.coverage.as_ref().map(|c| c.focus.clone()).unwrap_or_else(|| cx.focus_handle());
-                        this.coverage = Some(CoverageView { report, name, selected: 0, focus });
+                        this.coverage = Some(CoverageView { report, name, selected: 0, focus, scroll: gpui::ScrollHandle::new() });
                         this.bottom = Some(BottomTool::Coverage);
                         let eds: Vec<_> = this.editors().cloned().collect();
                         for ed in eds {
@@ -192,6 +194,9 @@ impl Workspace {
             }
             "escape" => self.focus_editor(window, cx),
             _ => return,
+        }
+        if let Some(c) = &self.coverage {
+            c.scroll.scroll_to_item(c.selected);
         }
         cx.notify();
     }
@@ -272,6 +277,7 @@ impl Workspace {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
+            .track_scroll(&c.scroll)
             .text_size(ui_px(13.))
             .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, w, cx| {
                 let k = e.keystroke.key.clone();
@@ -311,78 +317,6 @@ impl Workspace {
         div().id("coverage-window").size_full().flex().flex_col().child(toolbar).child(header).child(list).into_any_element()
     }
 
-    /// The balloon offering to install coverage.py into the run's interpreter.
-    pub(super) fn render_cov_offer(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let cfg = self.cov_offer.as_ref()?;
-        let label = self.config_python(cfg).map(|p| self.runs.lookup(&p).label(&self.root)).unwrap_or_default();
-        let button = |id: &'static str, text: &'static str, primary: bool| {
-            div()
-                .id(id)
-                .h(ui_px(24.))
-                .px(px(10.))
-                .flex()
-                .items_center()
-                .rounded(px(5.))
-                .cursor_pointer()
-                .when(primary, |d| d.bg(Theme::accent()).text_color(gpui::white()))
-                .when(!primary, |d| d.border_1().border_color(Theme::border()))
-                .map(|d| crate::ui_kit::button_states(d, primary))
-                .child(text)
-        };
-        Some(
-            div()
-                .id("cov-offer")
-                .occlude()
-                .absolute()
-                .bottom(ui_px(28.) + px(60.))
-                .right(super::toast_right())
-                .w(ui_px(420.))
-                .p(px(12.))
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .rounded(px(8.))
-                .bg(Theme::panel())
-                .border_1()
-                .border_color(Theme::divider())
-                .map(crate::ui_kit::floating)
-                .text_size(ui_px(13.))
-                .text_color(Theme::text())
-                .child(div().child(format!("coverage.py is not installed in {label}. Install it and run '{}' with coverage?", cfg.name)))
-                .child(
-                    div()
-                        .flex()
-                        .gap(px(8.))
-                        .child(button("cov-install", "Install coverage", true).on_click(cx.listener(|this, _, w, cx| this.install_coverage(w, cx))))
-                        .child(button("cov-cancel", "Cancel", false).on_click(cx.listener(|this, _, _, cx| {
-                            this.cov_offer = None;
-                            cx.notify();
-                        }))),
-                )
-                .into_any_element(),
-        )
-    }
-
-    fn install_coverage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(cfg) = self.cov_offer.take() else { return };
-        let Some(python) = self.config_python(&cfg) else { return };
-        self.status = "Installing coverage…".into();
-        let (py, root) = (python.clone(), self.root.clone());
-        let task = cx.background_executor().spawn(async move { crate::py_venv::install(&py, &root, &crate::py_venv::Requirements::Pyproject(vec!["coverage".into()])) });
-        cx.spawn_in(window, async move |this, cx| {
-            let res = task.await;
-            let _ = this.update_in(cx, |this, window, cx| match res {
-                Ok(()) => {
-                    this.status = "coverage installed".into();
-                    this.start_coverage_run(cfg, python, window, cx);
-                }
-                Err(e) => this.show_toast(format!("Installing coverage failed: {e}"), true, cx),
-            });
-        })
-        .detach();
-        cx.notify();
-    }
-
     // --- Smoke --------------------------------------------------------------------------
 
     /// BRISK_SMOKE_COVERAGE=1|hold on an empty folder: writes `calc.py` and `test_calc.py`,
@@ -408,11 +342,11 @@ impl Workspace {
                 let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::RunWithCoverage, window, cx));
                 for _ in 0..100 {
                     pause(100).await;
-                    if this.update(cx, |t, _| t.cov_offer.is_some()).unwrap_or(false) {
+                    if this.update(cx, |t, _| t.install_offer.is_some()).unwrap_or(false) {
                         break;
                     }
                 }
-                let _ = this.update(cx, |this, _| eprintln!("smoke-coverage: offer for {:?}, interpreter {:?}", this.cov_offer.as_ref().map(|c| c.name.clone()), this.interpreter_label()));
+                let _ = this.update(cx, |this, _| eprintln!("smoke-coverage: offer for {:?}, interpreter {:?}", this.install_offer.as_ref().and_then(|o| match &o.then { super::install_offer_ui::Then::Coverage(c) => Some(c.name.clone()), _ => None }), this.interpreter_label()));
                 return;
             }
             let marks = |this: &Workspace, cx: &gpui::App| {

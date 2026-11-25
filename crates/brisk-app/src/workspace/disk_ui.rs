@@ -32,6 +32,9 @@ struct Snapshot {
     editors: Vec<(Entity<Editor>, PathBuf)>,
     dirs: Vec<PathBuf>,
     stamps: HashMap<PathBuf, Option<SystemTime>>,
+    /// Re-read every expanded folder whether its time changed or not (Reload All from Disk:
+    /// some file systems and tools leave the folder's time alone).
+    all_dirs: bool,
 }
 
 /// What the background poll hands back.
@@ -49,7 +52,7 @@ impl Snapshot {
         let mut changed: Vec<PathBuf> = Vec::new();
         for p in &self.dirs {
             let now = dir_mtime(p);
-            if matches!(self.stamps.get(p), Some(old) if *old != now) {
+            if self.all_dirs || matches!(self.stamps.get(p), Some(old) if *old != now) {
                 changed.push(p.clone());
             }
             stamps.insert(p.clone(), now);
@@ -77,7 +80,24 @@ impl Workspace {
     fn disk_snapshot(&mut self, cx: &mut Context<Self>) -> Snapshot {
         let editors = self.editors().filter_map(|e| Some((e.clone(), e.read(cx).path.clone()?))).collect();
         let dirs = self.tree.expanded_dirs().into_iter().map(|i| self.tree.nodes[i].path.clone()).collect();
-        Snapshot { editors, dirs, stamps: self.dir_stamps.0.clone() }
+        Snapshot { editors, dirs, stamps: self.dir_stamps.0.clone(), all_dirs: false }
+    }
+
+    /// Reload All from Disk (Ctrl+Alt+Y): the disk poll now, re-reading every expanded folder.
+    /// Unsaved edits are kept; a file changed under them gets the conflict banner.
+    pub(super) fn reload_all_from_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let snap = Snapshot { all_dirs: true, ..self.disk_snapshot(cx) };
+        self.status = "Reloading from disk…".into();
+        let bg = cx.background_executor().clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let polled = bg.spawn(async move { snap.poll() }).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.apply_disk_poll(polled, window, cx);
+                this.status = "Reloaded all files from disk".into();
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn apply_disk_poll(&mut self, polled: Polled, window: &mut Window, cx: &mut Context<Self>) {
@@ -190,9 +210,13 @@ impl Workspace {
             let open = this.read_with(cx, |this, cx| this.editors().any(|e| e.read(cx).path.as_deref() == Some(a.as_path()))).unwrap_or(true);
             eprintln!("smoke-disk: deleted outside -> tab open={open}");
 
-            // windows-1251 file: kept in its encoding.
-            let w = root.join("disk_cp1251.py");
-            let (bytes, _, _) = brisk_text::encoding::encoding_rs::WINDOWS_1251.encode("# привет\n");
+            // A file in the ANSI code page, which non-UTF-8 files are read as: the label is
+            // this machine's code page (windows-1251 on Russian Windows, windows-1252 on
+            // English), the text one that code page has.
+            let legacy = brisk_text::encoding::system_legacy();
+            let sample = ["# привет\n", "# café\n"].into_iter().find(|s| !legacy.encode(s).2).unwrap_or("# x\n");
+            let w = root.join("disk_legacy.py");
+            let (bytes, _, _) = legacy.encode(sample);
             let _ = std::fs::write(&w, &bytes);
             let _ = this.update_in(cx, |this, window, cx| {
                 this.open_file(&w, window, cx);
@@ -206,7 +230,7 @@ impl Workspace {
                     let raw = std::fs::read(&w).unwrap_or_default();
                     let mut want = b"x = 1\n".to_vec();
                     want.extend_from_slice(&bytes);
-                    eprintln!("smoke-disk: cp1251 file -> label={label}, bytes kept after edit+save={}", raw == want);
+                    eprintln!("smoke-disk: {} file -> label={label}, bytes kept after edit+save={}", legacy.name(), raw == want);
                 }
                 let b = this.root.join("disk_blob.bin");
                 let _ = std::fs::write(&b, [0x89, b'P', b'N', b'G', 0, 0, 1, 2]);

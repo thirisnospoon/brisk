@@ -8,7 +8,7 @@ use crate::theme::{Theme, mono_font};
 use brisk_lint::{Diagnostic, Severity};
 use gpui::prelude::*;
 use gpui::{div, px, uniform_list, ClickEvent, Context, Entity, EntityId, FocusHandle, Focusable, UniformListScrollHandle, Window};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -126,6 +126,10 @@ pub(super) struct Problems {
     pub(super) intents: Vec<PopupItem>,
     /// Popup title when the list is not Alt+Enter's (Surround With, Insert Live Template).
     pub(super) intents_title: Option<&'static str>,
+    /// Actions on Save found no ruff and said so (once per window).
+    save_actions_warned: bool,
+    /// Project tab: files whose problems are folded under their header.
+    folded: HashSet<PathBuf>,
 }
 
 impl Problems {
@@ -142,22 +146,53 @@ impl Problems {
             lint_gen: HashMap::new(),
             intents: Vec::new(),
             intents_title: None,
+            save_actions_warned: false,
+            folded: HashSet::new(),
         }
     }
 
     pub fn set_project(&mut self, res: Option<Result<Vec<Diagnostic>, String>>) {
+        self.project = res;
+        self.rebuild_project_rows();
+    }
+
+    fn rebuild_project_rows(&mut self) {
         let mut rows = Vec::new();
-        if let Some(Ok(all)) = &res {
+        if let Some(Ok(all)) = &self.project {
             let mut i = 0;
             while i < all.len() {
                 let n = all[i..].iter().take_while(|d| d.file == all[i].file).count();
                 rows.push(Row::File(i, n));
-                rows.extend((i..i + n).map(Row::Problem));
+                if !self.folded.contains(&all[i].file) {
+                    rows.extend((i..i + n).map(Row::Problem));
+                }
                 i += n;
             }
         }
-        self.project = res;
         self.project_rows = std::rc::Rc::new(rows);
+    }
+
+    /// Fold or unfold the file of the Project tab's row `i` (a header or one of its
+    /// problems); the selection moves to the header.
+    fn toggle_fold(&mut self, i: usize) {
+        let Some(Ok(all)) = &self.project else { return };
+        let first = match self.project_rows.get(i) {
+            Some(Row::File(first, _)) => *first,
+            Some(Row::Problem(di)) => *di,
+            None => return,
+        };
+        let Some(file) = all.get(first).map(|d| d.file.clone()) else { return };
+        if !self.folded.remove(&file) {
+            self.folded.insert(file.clone());
+        }
+        self.rebuild_project_rows();
+        let Some(Ok(all)) = &self.project else { return };
+        self.selected = self.project_rows.iter().position(|r| matches!(r, Row::File(f, _) if all[*f].file == file)).unwrap_or(0);
+    }
+
+    /// Whether the Project tab's header row for `file` is folded.
+    fn is_folded(&self, file: &std::path::Path) -> bool {
+        self.folded.contains(file)
     }
 }
 
@@ -379,13 +414,28 @@ impl Workspace {
             "home" => self.problems.selected = 0,
             "end" => self.problems.selected = n.saturating_sub(1),
             "enter" | "f4" => {
-                if let Some(&Row::Problem(di)) = rows.get(self.problems.selected) {
-                    if let Some(d) = self.problem_at(di, cx) {
-                        self.open_problem(&d, window, cx);
+                match rows.get(self.problems.selected) {
+                    Some(&Row::Problem(di)) => {
+                        if let Some(d) = self.problem_at(di, cx) {
+                            self.open_problem(&d, window, cx);
+                        }
                     }
+                    Some(Row::File(..)) => self.problems.toggle_fold(self.problems.selected),
+                    None => {}
                 }
                 cx.notify();
                 return true;
+            }
+            // A header folds with Left and unfolds with Right; Left on a problem folds its file.
+            "left" | "right" if self.problems.tab == ProblemsTab::Project => {
+                let folded = match rows.get(self.problems.selected) {
+                    Some(&Row::File(first, _)) => self.problem_at(first, cx).is_some_and(|d| self.problems.is_folded(&d.file)),
+                    Some(Row::Problem(_)) => false,
+                    None => return true,
+                };
+                if folded == (k.key == "right") {
+                    self.problems.toggle_fold(self.problems.selected);
+                }
             }
             "escape" => {
                 self.focus_editor(window, cx);
@@ -515,13 +565,29 @@ impl Workspace {
                                         Some((d, n)) => (n.to_string(), d.to_string()),
                                         None => (rel.clone(), String::new()),
                                     };
+                                    let open = !this.problems.is_folded(&d.file);
                                     base.pl(px(10.))
-                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                        .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                                             this.problems.selected = i;
                                             window.focus(&this.problems.focus.clone());
+                                            if e.click_count() >= 2 {
+                                                this.problems.toggle_fold(i);
+                                            }
                                             cx.notify();
                                         }))
-                                        .child(crate::icons::tree_arrow(true, true, Theme::text_muted()))
+                                        .child(
+                                            div()
+                                                .id(("problem-fold", i))
+                                                .child(crate::icons::tree_arrow(true, open, Theme::text_muted()))
+                                                .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+                                                    cx.stop_propagation();
+                                                    if e.click_count() == 1 {
+                                                        window.focus(&this.problems.focus.clone());
+                                                        this.problems.toggle_fold(i);
+                                                        cx.notify();
+                                                    }
+                                                })),
+                                        )
                                         .child(name)
                                         .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(dir))
                                         .child(div().text_color(Theme::text_muted()).text_size(ui_px(12.)).child(format!("{count} problem{}", if count == 1 { "" } else { "s" })))
@@ -906,7 +972,7 @@ impl Workspace {
                     break;
                 }
             }
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 match &this.problems.project {
                     Some(Ok(v)) => {
                         let files: std::collections::BTreeSet<_> = v.iter().map(|d| d.file.clone()).collect();
@@ -914,6 +980,14 @@ impl Workspace {
                     }
                     other => eprintln!("smoke-lint: project {:?}", other.as_ref().map(|r| r.as_ref().err())),
                 }
+                // The first file's header folds with Enter and unfolds with Right.
+                window.focus(&this.problems.focus.clone());
+                this.problems.selected = 0;
+                let before = this.rows(cx).len();
+                this.smoke_press("enter", window, cx);
+                let folded = this.rows(cx).len();
+                this.smoke_press("right", window, cx);
+                eprintln!("smoke-lint: project rows {before}, folded {folded}, unfolded {}", this.rows(cx).len());
                 cx.notify();
             });
         })
@@ -943,7 +1017,14 @@ impl Workspace {
         if eds.is_empty() {
             return;
         }
-        let Some(ruff) = self.ruff() else { return };
+        let Some(ruff) = self.ruff() else {
+            // Before interpreter discovery ends, ruff may still turn up next to a Python.
+            if self.runs.all.is_some() && !self.problems.save_actions_warned {
+                self.problems.save_actions_warned = true;
+                self.show_toast("Actions on Save (Reformat code, Optimize imports) need ruff, which was not found. Install it into the project interpreter: pip install ruff".into(), true, cx);
+            }
+            return;
+        };
         for ed in eds {
             let (Some(path), text, version) = ({ let e = ed.read(cx); (e.path.clone(), e.text_string(), e.buffer.version()) }) else { continue };
             let (ruff, root) = (ruff.clone(), self.root.clone());

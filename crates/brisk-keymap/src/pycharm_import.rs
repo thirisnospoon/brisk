@@ -38,6 +38,7 @@ fn our_id(pycharm: &str) -> Option<&'static str> {
         "$SelectAll" => "SelectAll",
         "PasteMultiple" => "PasteFromHistory",
         "CopyPaths" => "CopyPath",
+        "$Delete" => "DeleteElement",
         "EditorDuplicate" => "DuplicateLine",
         "EditorDeleteLine" => "DeleteLine",
         "EditorJoinLines" => "JoinLines",

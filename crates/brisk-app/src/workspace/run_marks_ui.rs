@@ -118,13 +118,13 @@ impl Workspace {
                 label: format!("Run '{}'", cfg.name),
                 shortcut: "Ctrl+Shift+F10".into(),
                 enabled: true,
-                run: Rc::new(move |this: &mut Workspace, w: &mut Window, cx: &mut Context<Workspace>| this.run_config(run_cfg.clone(), w, cx)),
+                run: Rc::new(move |this: &mut Workspace, w: &mut Window, cx: &mut Context<Workspace>| this.launch_context(run_cfg.clone(), false, w, cx)),
             },
             Entry::Item {
                 label: format!("Debug '{}'", cfg.name),
                 shortcut: "Ctrl+Shift+F9".into(),
                 enabled: true,
-                run: Rc::new(move |this: &mut Workspace, w: &mut Window, cx: &mut Context<Workspace>| this.start_debug(debug_cfg.clone(), w, cx)),
+                run: Rc::new(move |this: &mut Workspace, w: &mut Window, cx: &mut Context<Workspace>| this.launch_context(debug_cfg.clone(), true, w, cx)),
             },
         ];
         for (label, status, c) in params {
@@ -138,7 +138,7 @@ impl Workspace {
                 label: format!("Run {glyph}{label}"),
                 shortcut: String::new(),
                 enabled: true,
-                run: Rc::new(move |this: &mut Workspace, w: &mut Window, cx: &mut Context<Workspace>| this.run_config(c.clone(), w, cx)),
+                run: Rc::new(move |this: &mut Workspace, w: &mut Window, cx: &mut Context<Workspace>| this.launch_context(c.clone(), false, w, cx)),
             });
         }
         self.open_menu(at, entries, cx);
@@ -168,10 +168,14 @@ impl Workspace {
 
     /// BRISK_SMOKE_RUNMARKS=1|hold on an empty folder: writes `app.py` (a `__main__` block)
     /// and `test_calc.py`, clicks the run icons with real mouse messages, runs a test class
-    /// from the menu and checks the icons turn ✓ / ✗.
+    /// from the menu and checks the icons turn ✓ / ✗. The ▶ of `app.py` must run its saved
+    /// configuration (its parameters reach the script), as PyCharm does.
     pub(super) fn run_marks_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
-        let _ = std::fs::write(root.join("app.py"), "def greet(name):\n    return f\"hi {name}\"\n\n\nif __name__ == \"__main__\":\n    print(greet(\"run icon\"))\n");
+        let _ = std::fs::write(root.join("app.py"), "def greet(name):\n    return f\"hi {name}\"\n\n\nif __name__ == \"__main__\":\n    import sys\n    print(greet(\"run icon\"), *sys.argv[1:])\n");
+        let saved = RunConfig { name: "app".into(), target: "app.py".into(), parameters: "from-config".into(), ..Default::default() };
+        let _ = brisk_run::save(&root, &brisk_run::RunFile { configurations: vec![saved], ..Default::default() });
+        self.reload_runs();
         let _ = std::fs::write(
             root.join("test_calc.py"),
             "def add(a, b):\n    return a + b\n\n\ndef test_add():\n    assert add(2, 2) == 4\n\n\nclass TestCalc:\n    def test_ok(self):\n        assert add(1, 1) == 2\n\n    def test_broken(self):\n        assert add(1, 1) == 3\n",
@@ -231,6 +235,7 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| {
                 let out = output(this, cx);
                 eprintln!("smoke-runmarks: run output has 'hi run icon': {} (after {waited} ms)", out.contains("hi run icon"));
+                eprintln!("smoke-runmarks: saved configuration used: {}", out.contains("hi run icon from-config"));
                 if !out.contains("hi run icon") {
                     eprintln!("smoke-runmarks: run output was {:?}, status {:?}", out.chars().take(400).collect::<String>(), this.status);
                 }

@@ -5,7 +5,8 @@
 use super::menu_ui::Entry;
 use super::{PopupItem, PopupKind, Tab, Target, Workspace};
 use brisk_project::{FileList, Mark, NodeId};
-use gpui::{Context, Keystroke, Pixels, Point, Window};
+use brisk_keymap::Action;
+use gpui::{Context, Pixels, Point, Window};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -430,32 +431,49 @@ impl Workspace {
         .detach();
     }
 
-    /// Keys in the Project view for file operations. True if handled.
-    pub(super) fn tree_file_key(&mut self, k: &Keystroke, cx: &mut Context<Self>) -> bool {
-        let m = &k.modifiers;
-        let Some((id, path, _)) = self.selected_path() else { return false };
-        let root = self.tree.is_root(id);
-        let op = match (k.key.as_str(), m.control, m.shift, m.alt) {
-            ("insert", false, false, true) => {
-                self.tree_new_menu(cx);
-                return true;
-            }
-            ("f6", false, true, false) if !root => FileOp::Rename(path),
-            ("f5", false, false, false) if !root => FileOp::Copy(path),
-            ("f6", false, false, false) if !root => FileOp::Move(path),
-            ("delete", false, false, false) if !root => FileOp::Delete(path),
+    /// Rename, Copy, Move and Delete from the keymap (Shift+F6, F5, F6, Delete by default):
+    /// on the selected row while the Project view has the focus; Copy and Delete also on the
+    /// active file from elsewhere. True if handled.
+    pub(super) fn file_action(&mut self, action: Action, window: &Window, cx: &mut Context<Self>) -> bool {
+        let in_tree = self.tree_focus.is_focused(window);
+        if !in_tree && !matches!(action, Action::CopyElement | Action::DeleteElement) {
+            return false;
+        }
+        let target = if in_tree {
+            self.selected_path().map(|(id, p, _)| (p, self.tree.is_root(id)))
+        } else {
+            self.active_editor().and_then(|e| e.read(cx).path.clone()).map(|p| (p, false))
+        };
+        let Some((path, root)) = target else {
+            return matches!(action, Action::CopyElement | Action::DeleteElement);
+        };
+        let op = match action {
+            Action::Rename => FileOp::Rename(path),
+            Action::CopyElement => FileOp::Copy(path),
+            Action::Move => FileOp::Move(path),
+            Action::DeleteElement => FileOp::Delete(path),
             _ => return false,
         };
-        self.start_file_op(op, cx);
+        if root {
+            self.status = format!("{}: not for the project root", op.title());
+        } else {
+            self.start_file_op(op, cx);
+        }
         true
     }
 
-    /// Alt+Insert in the tree: the "New" choices as a small menu under the selected row.
-    fn tree_new_menu(&mut self, cx: &mut Context<Self>) {
-        let dir = self.target_dir();
+    fn open_new_menu(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
         let pos = gpui::point(gpui::px(60.), gpui::px(120.));
         let entries = self.new_entries(dir);
         self.open_menu(pos, entries, cx);
+    }
+
+    /// File › New… (and Alt+Insert in the Project view with no row selected): into the
+    /// Project view's folder when it has the focus, else next to the active file.
+    pub(super) fn new_element_menu(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let beside_file = (!self.tree_focus.is_focused(window)).then(|| self.active_editor().and_then(|e| e.read(cx).path.as_deref()?.parent().map(Path::to_path_buf))).flatten();
+        let dir = beside_file.filter(|d| d.starts_with(&self.root)).unwrap_or_else(|| self.target_dir());
+        self.open_new_menu(dir, cx);
     }
 
     fn new_entries(&self, dir: PathBuf) -> Vec<Entry> {
@@ -471,12 +489,12 @@ impl Workspace {
         // PyCharm's New menu order: File, Scratch File, Directory, Python Package, Python File.
         let scratch = Entry::Item {
             label: "Scratch File".into(),
-            shortcut: "Ctrl+Alt+Shift+Insert".into(),
+            shortcut: self.resolver.keymap().shortcut_label(Action::NewScratchFile).unwrap_or_default(),
             enabled: true,
             run: Rc::new(|this: &mut Workspace, _, cx| this.start_new_scratch(cx)),
         };
         vec![
-            item("New File…", NewKind::File, "Alt+Insert".into()),
+            item("New File…", NewKind::File, self.resolver.keymap().shortcut_label(Action::NewElement).unwrap_or_default()),
             scratch,
             item("New Directory…", NewKind::Dir, String::new()),
             item("New Python Package…", NewKind::Package, String::new()),
@@ -532,9 +550,9 @@ impl Workspace {
         window.focus(&self.tree_focus);
         let Some((_, path, is_dir)) = self.selected_path() else { return };
         let root = self.tree.is_root(id);
-        let op = |label: &str, shortcut: &str, enabled: bool, op: FileOp| Entry::Item {
+        let op = |label: &str, action: Action, enabled: bool, op: FileOp| Entry::Item {
             label: label.into(),
-            shortcut: shortcut.into(),
+            shortcut: self.resolver.keymap().shortcut_label(action).unwrap_or_default(),
             enabled,
             run: Rc::new(move |this: &mut Workspace, _, cx| this.start_file_op(op.clone(), cx)),
         };
@@ -545,7 +563,7 @@ impl Workspace {
             let d = path.clone();
             v.push(Entry::Item {
                 label: "Find in Directory…".into(),
-                shortcut: self.resolver.keymap().shortcut_label(brisk_keymap::Action::FindInFiles).unwrap_or_default(),
+                shortcut: self.resolver.keymap().shortcut_label(Action::FindInFiles).unwrap_or_default(),
                 enabled: true,
                 run: Rc::new(move |this: &mut Workspace, window, cx| this.find_in_dir(&d, window, cx)),
             });
@@ -555,7 +573,7 @@ impl Workspace {
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 v.push(Entry::Item {
                     label: format!("Run Tests in '{name}'"),
-                    shortcut: self.resolver.keymap().shortcut_label(brisk_keymap::Action::RunContext).unwrap_or_default(),
+                    shortcut: self.resolver.keymap().shortcut_label(Action::RunContext).unwrap_or_default(),
                     enabled: true,
                     run: Rc::new(move |this: &mut Workspace, window, cx| {
                         let cfg = brisk_run::RunConfig::for_tests_with(&this.root, &d, &[], this.default_test_kind());
@@ -565,16 +583,16 @@ impl Workspace {
             }
             v.push(Entry::Separator);
         }
-        v.push(op("Rename…", "Shift+F6", !root, FileOp::Rename(path.clone())));
-        v.push(op("Copy…", "F5", !root, FileOp::Copy(path.clone())));
-        v.push(op("Move…", "F6", !root, FileOp::Move(path.clone())));
-        v.push(op("Delete…", "Delete", !root, FileOp::Delete(path.clone())));
+        v.push(op("Rename…", Action::Rename, !root, FileOp::Rename(path.clone())));
+        v.push(op("Copy…", Action::CopyElement, !root, FileOp::Copy(path.clone())));
+        v.push(op("Move…", Action::Move, !root, FileOp::Move(path.clone())));
+        v.push(op("Delete…", Action::DeleteElement, !root, FileOp::Delete(path.clone())));
         v.push(Entry::Separator);
         if !is_dir {
             let p = path.clone();
             v.push(Entry::Item {
                 label: "Open".into(),
-                shortcut: "F4".into(),
+                shortcut: self.resolver.keymap().shortcut_label(Action::OpenSelected).unwrap_or_default(),
                 enabled: true,
                 run: Rc::new(move |this: &mut Workspace, window, cx| this.open_file(&p, window, cx)),
             });

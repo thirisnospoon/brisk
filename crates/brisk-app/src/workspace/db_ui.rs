@@ -987,7 +987,19 @@ impl Workspace {
                             let row = this.db.rows[ix].clone();
                             let selected = ix == this.db.selected;
                             let open = this.db.expanded.contains(&row.key);
-                            let chevron = crate::icons::tree_arrow(row.expandable, open, Theme::text_muted());
+                            // A click on the arrow folds the node; the row's own click only selects.
+                            let chevron = div()
+                                .id(("db-fold", ix))
+                                .relative()
+                                .child(crate::icons::tree_arrow(row.expandable, open, Theme::text_muted()))
+                                .when(ix == 0, |d| d.child(track_fold()))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    window.focus(&this.db.focus);
+                                    this.db.selected = ix;
+                                    this.db_toggle(ix, window, cx);
+                                    cx.notify();
+                                }));
                             let (icon, icon_color, label, detail, label_color): (String, gpui::Hsla, String, String, gpui::Hsla) = match &row.kind {
                                 RowKind::Source(di) => {
                                     let ds = &this.db.sources[*di];
@@ -1040,8 +1052,6 @@ impl Workspace {
                                     this.db.selected = ix;
                                     if e.click_count() >= 2 {
                                         this.db_open_selected(window, cx);
-                                    } else if e.position().x < px(8. + row.depth as f32 * 16. + 14.) {
-                                        this.db_toggle(ix, window, cx);
                                     }
                                     cx.notify();
                                 }))
@@ -1331,10 +1341,37 @@ impl Workspace {
                     this.db.selected = ix;
                     this.db_open_selected(window, cx);
                 }
+                cx.notify();
             });
+            // A real click on the data source's fold arrow folds it, a second one unfolds it.
+            for step in ["fold", "unfold"] {
+                bg.timer(std::time::Duration::from_millis(400)).await;
+                let _ = this.update_in(cx, |this, window, _| match FOLD_BOUNDS.with(|c| c.get()) {
+                    Some(b) => {
+                        let s = window.scale_factor();
+                        super::win_input::click(f32::from(b.center().x) * s, f32::from(b.center().y) * s);
+                    }
+                    None => eprintln!("smoke-db: FAIL the fold arrow of {:?} was not painted", this.db.rows.first().map(|r| &r.key)),
+                });
+                bg.timer(std::time::Duration::from_millis(400)).await;
+                let _ = this.update(cx, |this, _| {
+                    let open = this.db.rows.first().is_some_and(|r| this.db.expanded.contains(&r.key));
+                    eprintln!("smoke-db: click the fold arrow ({step}) -> expanded {open}, tree rows {}", this.db.rows.len());
+                });
+            }
         })
         .detach();
     }
+}
+
+thread_local! {
+    /// Where the first tree row's fold arrow was painted: the smoke clicks it.
+    static FOLD_BOUNDS: std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>> = const { std::cell::Cell::new(None) };
+}
+
+/// A canvas filling its parent that records the parent's bounds in `FOLD_BOUNDS`.
+fn track_fold() -> impl IntoElement {
+    gpui::canvas(|b, _, _| FOLD_BOUNDS.with(|c| c.set(Some(b))), |_, _, _, _| {}).absolute().top_0().left_0().size_full()
 }
 
 fn window_focus_db(this: &mut Workspace, w: &mut Window) {

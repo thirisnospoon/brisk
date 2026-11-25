@@ -198,7 +198,12 @@ pub fn apply(s: &Settings) {
     STICKY_LINES.store(s.sticky_lines, Ordering::Relaxed);
     SHOW_WHITESPACES.store(s.show_whitespaces, Ordering::Relaxed);
     ANIMATIONS.store(s.animations, Ordering::Relaxed);
-    FONT_SIZE.store(s.font_size.to_bits(), Ordering::Relaxed);
+    // An editor zoom (Alt+Shift+. / Ctrl+wheel) lasts until the font size setting itself
+    // changes: editing another setting, or Cancel after not touching the size, keeps it.
+    let size_changed = CURRENT.read().ok().and_then(|c| c.as_ref().map(|c| c.font_size)) != Some(s.font_size);
+    if size_changed || FONT_SIZE.load(Ordering::Relaxed) == 0 {
+        FONT_SIZE.store(s.font_size.to_bits(), Ordering::Relaxed);
+    }
     SPACING.store(s.line_spacing.to_bits(), Ordering::Relaxed);
     if let Ok(mut c) = CURRENT.write() {
         *c = Some(s.clone());

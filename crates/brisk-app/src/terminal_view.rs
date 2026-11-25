@@ -125,6 +125,9 @@ pub struct TerminalPanel {
     run_mode: bool,
     /// The ▾ next to + is open: the shells to start a new tab with.
     shell_menu: bool,
+    /// Where the press that closed the shell menu from outside was: the menu closes on
+    /// mouse-down (capture phase), before the ▾'s click, which must not open it again.
+    shell_menu_closed_at: Option<Point<Pixels>>,
     /// Where the next new tab starts (Open in → Terminal); the project root otherwise.
     start_dir: Option<PathBuf>,
     /// Run window toggles: wrap long lines at the window edge / follow new output.
@@ -323,6 +326,7 @@ impl TerminalPanel {
             error: None,
             run_mode,
             shell_menu: false,
+            shell_menu_closed_at: None,
             start_dir: None,
             activation: None,
             soft_wrap: true,
@@ -521,6 +525,11 @@ sys.exit(r)";
         self.tabs.iter().any(|t| t.run.as_ref().is_some_and(|r| r.running))
     }
 
+    /// When the newest of the running processes started.
+    pub fn last_started_running(&self) -> Option<std::time::Instant> {
+        self.tabs.iter().filter_map(|t| t.run.as_ref()).filter(|r| r.running).map(|r| r.started).max()
+    }
+
     /// The environment for shells opened from now on.
     pub fn set_activation(&mut self, a: Option<crate::terminal_env::Activation>) {
         self.activation = a;
@@ -716,6 +725,10 @@ sys.exit(r)";
                 self.tabs[i].session.kill();
             }
             self.tabs.remove(i);
+            // Closing a tab left of the active one keeps the active tab selected.
+            if i < self.active {
+                self.active -= 1;
+            }
             if self.active >= self.tabs.len() {
                 self.active = self.tabs.len().saturating_sub(1);
             }
@@ -997,8 +1010,9 @@ impl TerminalPanel {
                     .shadow_md()
                     .text_size(px(13.))
                     .text_color(Theme::text())
-                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                    .on_mouse_down_out(cx.listener(|this, e: &MouseDownEvent, _, cx| {
                         this.shell_menu = false;
+                        this.shell_menu_closed_at = Some(e.position);
                         cx.notify();
                     }))
                     .children(rows),
@@ -1017,8 +1031,11 @@ impl TerminalPanel {
                     .hover(|s| s.bg(Theme::hover_row()))
                     .cursor_pointer()
                     .child(crate::icons::ui_icon("chevron-down", 12., Theme::text_muted()))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.shell_menu = !this.shell_menu;
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                        // This press already closed the open menu: ▾ toggles it shut.
+                        if this.shell_menu_closed_at.take() != Some(e.position) {
+                            this.shell_menu = true;
+                        }
                         cx.notify();
                     })),
             )
@@ -1070,6 +1087,7 @@ impl TerminalPanel {
                 let any_failed = self.tests().is_some_and(|t| t.finished && t.tree().tree.counts().failed > 0);
                 d.child(
                     button("run-rerun-failed", "rerun-failed", if any_failed { Theme::error() } else { Theme::text_dim().opacity(0.5) })
+                        .tooltip(tip("Rerun Failed Tests"))
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(RunEvent::RerunFailedRequested))),
                 )
             })
@@ -1121,6 +1139,8 @@ impl Render for TerminalPanel {
             .flex()
             .flex_col()
             .child(self.render_tabs(cx))
+            // Above the console and the test details alike, so neither hides it.
+            .when_some(self.error.clone(), |d, e| d.child(div().flex_shrink_0().px(px(8.)).py(px(2.)).text_color(rgb(0xf05d5d)).child(e)))
             .when(self.run_mode && self.tabs.is_empty(), |d| {
                 d.child(
                     div()
@@ -1156,7 +1176,6 @@ impl Render for TerminalPanel {
                     .on_mouse_move(cx.listener(Self::on_mouse_move))
                     .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| this.selecting = false))
                     .on_scroll_wheel(cx.listener(Self::on_scroll))
-                    .when_some(self.error.clone(), |d, e| d.child(div().text_color(rgb(0xf05d5d)).child(e)))
                     .child(TerminalElement { panel: cx.entity() }),
                 ).child(self.scrollbar(cx)),
             ))))))

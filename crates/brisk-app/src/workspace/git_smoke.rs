@@ -539,8 +539,10 @@ impl Workspace {
         let _ = this.update(cx, |this, _| eprintln!("smoke-gitx: log date last 30 days (clicks) -> {:?}", subjects(this)));
         Self::smoke_pick(this, cx, bg, 2, "All").await;
         // Paths: the menu, then one file's history.
+        // The menu opens once the folders are listed in the background.
+        let _ = this.update(cx, |this, cx| this.path_filter_menu(gpui::point(gpui::px(600.), gpui::px(500.)), cx));
+        wait_for(this, cx, bg, 5000, "the paths menu", |this, _| this.menu.is_some()).await;
         let _ = this.update(cx, |this, cx| {
-            this.path_filter_menu(gpui::point(gpui::px(600.), gpui::px(500.)), cx);
             eprintln!("smoke-gitx: paths menu -> {:?}", this.menu_labels());
             this.menu = None;
             this.set_log_path(Some("merge.py".into()), cx);
@@ -815,6 +817,23 @@ impl Workspace {
             eprintln!("smoke-gitx: current branch actions -> {ops:?}, log branch filter {q:?}");
         });
         pause(bg, 800).await;
+        // Amend with an empty message box: the last commit's message fills it; unchecking
+        // Amend with that text unedited empties the box again.
+        let message = |this: &Workspace, cx: &gpui::App| this.git.as_ref().map(|g| g.message.read(cx).text_string()).unwrap_or_default();
+        let head = sh(root, &["log", "-1", "--format=%B"]).trim_end().to_string();
+        let _ = this.update(cx, |this, cx| {
+            if let Some(g) = this.git.as_ref() {
+                g.message.update(cx, |e, cx| e.replace_all_text("", cx));
+            }
+            this.toggle_amend(cx);
+        });
+        let loaded = wait_for(this, cx, bg, 5000, "the amend message", |this, cx| !message(this, cx).is_empty()).await;
+        let _ = this.update(cx, |this, cx| {
+            let text = message(this, cx);
+            this.toggle_amend(cx);
+            let ok = loaded && text == head && message(this, cx).is_empty();
+            eprintln!("smoke-gitx: amend -> {}loaded {text:?}, after uncheck {:?}", if ok { "" } else { "FAIL " }, message(this, cx));
+        });
     }
 
     /// Labels of the open context menu (smoke tests).

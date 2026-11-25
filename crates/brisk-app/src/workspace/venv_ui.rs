@@ -258,6 +258,8 @@ impl Workspace {
             });
         })
         .detach();
+        // The balloon swaps its buttons for "Installing…" at once.
+        cx.notify();
     }
 
     /// The balloon offering to install requirements into the new environment.

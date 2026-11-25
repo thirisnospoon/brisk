@@ -23,6 +23,8 @@ pub struct ProfileView {
     pub desc: bool,
     pub selected: usize,
     pub focus: FocusHandle,
+    /// The list's scroll: Up / Down keep the selected row in view.
+    pub scroll: gpui::ScrollHandle,
 }
 
 pub struct Pending {
@@ -129,7 +131,7 @@ impl Workspace {
                         profile::sort(&mut rows, SortBy::Own, true, &this.root);
                         this.status = format!("Profile of '{name}': {} functions, {} ms", rows.len(), ms(total));
                         let focus = this.profile.as_ref().map(|p| p.focus.clone()).unwrap_or_else(|| cx.focus_handle());
-                        this.profile = Some(ProfileView { rows, total, name, sort: SortBy::Own, desc: true, selected: 0, focus });
+                        this.profile = Some(ProfileView { rows, total, name, sort: SortBy::Own, desc: true, selected: 0, focus, scroll: gpui::ScrollHandle::new() });
                         this.bottom = Some(BottomTool::Profiler);
                     }
                     Err(e) => this.show_toast(format!("Profile of '{name}': {e}"), true, cx),
@@ -184,6 +186,9 @@ impl Workspace {
             }
             "escape" => self.focus_editor(window, cx),
             _ => return,
+        }
+        if let Some(p) = &self.profile {
+            p.scroll.scroll_to_item(p.selected);
         }
         cx.notify();
     }
@@ -260,6 +265,7 @@ impl Workspace {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
+            .track_scroll(&p.scroll)
             .text_size(ui_px(12.5))
             .font_family(crate::theme::mono_font())
             .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, w, cx| {

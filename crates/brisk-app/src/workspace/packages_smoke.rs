@@ -107,18 +107,30 @@ impl Workspace {
                 let p = this.packages.as_ref().unwrap();
                 eprintln!("smoke-packages: tool {:?} python {:?} list {:?} error {:?}", p.tool, p.python, names(this, cx), p.error);
                 let name = p.name.clone();
+                // As if pip / uv were not detected yet: the install waits in the queue.
+                this.packages.as_mut().unwrap().tool = None;
                 window.focus(&name.read(cx).focus_handle(cx));
                 this.smoke_type("briskdemo", window, cx);
                 this.smoke_press("tab", window, cx);
                 this.smoke_type("1.0", window, cx);
                 this.smoke_press("enter", window, cx);
-                eprintln!("smoke-packages: install -> status {:?}", this.status);
+                let p = this.packages.as_ref().unwrap();
+                eprintln!("smoke-packages: install before the tool is known -> queued {:?}, detecting {}, status {:?}", p.queue, p.loading, this.status);
             });
             wait_idle(&this, cx).await;
             let _ = this.update_in(cx, |this, window, cx| {
                 eprintln!("smoke-packages: after install toast {:?} list {:?}", this.toast.as_ref().map(|t| t.0.clone()), names(this, cx));
+                // Down from the filter field selects a package; the caret blinking in the
+                // field must not move the selection back.
                 let f = this.packages.as_ref().unwrap().filter.clone();
                 window.focus(&f.read(cx).focus_handle(cx));
+                this.smoke_press("down", window, cx);
+            });
+            pause(1500).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let p = this.packages.as_ref().unwrap();
+                let want = 1.min(p.visible(cx).len().saturating_sub(1));
+                eprintln!("smoke-packages: down in the filter, 1.5 s later -> selected {}{}", p.selected, if p.selected == want { "" } else { " FAIL" });
                 this.smoke_type("demo", window, cx);
             });
             pause(300).await;

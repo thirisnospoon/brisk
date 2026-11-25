@@ -167,6 +167,12 @@ Checks the scrollbars of the Project tree and the Run console: hover, a click on
 
 Clicks the Search Everywhere tabs and outside the popup, prints the classes and symbols found and the project menu, then clicks the project widget.
 
+### `BRISK_SMOKE_ACTIONS=1`
+
+Folder: empty. Writes `a.py` and `b.py`.
+
+Checks keys and menu entries that go through the keymap: `Enter` and `F4` on a file in the Project view open it, `Shift+F6`, `F5`, `F6` and `Delete` there start Rename, Copy, Move and Delete (not on the project root), `Alt+Insert` with no row selected and File → New… show the New menu, Copy Path (`Ctrl+Shift+C`) in the editor puts the file's path on the clipboard, Reload All from Disk (`Ctrl+Alt+Y`) picks up an outside edit before the disk poll does, and Tools lists Python Console and Python Packages. Then a right click below the last row of the Project view (a real Windows mouse message) opens the project root's menu, with the shortcuts from the keymap. Exits with code 1 on a failure.
+
 ## Navigation and search
 
 ### `BRISK_SMOKE_FIND=<text>`
@@ -177,7 +183,7 @@ Searches the project for the text, prints the time to stderr (debug build) and o
 
 ### `BRISK_SMOKE_LINT=<file.py>`
 
-Opens the file, prints ruff's problems, presses `F2` and `Alt+Enter`, applies the first fix and checks the project.
+Opens the file, prints ruff's problems, presses `F2` and `Alt+Enter`, applies the first fix and checks the project, then folds and unfolds the file rows of Problems › Project. Does not exit by itself.
 
 ### `BRISK_SMOKE_LSP=<main.py>`
 
@@ -393,6 +399,10 @@ Sets a breakpoint, starts debugging and checks:
 - the Breakpoints window: a disabled breakpoint does not stop, On raised catches a caught exception, conditions, removal;
 - debugging pytest (one test and the whole file, stopping in a test, result `passed`).
 
+### `BRISK_SMOKE_DEBUGPY_OFFER=1`
+
+Starts debugging with an interpreter that has no debugpy, from an exe with no bundled copy (`lib\debugpy` next to it or `vendor\debugpy-lib` above it), and checks the offer to install debugpy, then presses Install; pip runs offline, so the check is that its error is shown. Prints `SKIP` when debugpy is found. `=offer` leaves the offer open.
+
 ### `BRISK_SMOKE_DEBUG_HOLD=1`
 
 Stays at the first stop, adds a watch, and prints every state change to stderr (`smoke-hold: …`). `scripts\debug-mouse-smoke.ps1` starts Brisk this way and drives its window with real Windows mouse messages (line numbers, right click on a breakpoint, variable rows, toolbar buttons, hover, drag, keys with modifiers), capturing the window with `PrintWindow`.
@@ -424,7 +434,7 @@ uv: syncs the environment from Add Interpreter, adds and removes `briskdemo` thr
 
 Folder: empty. Creates `.venv` with the first Python it finds and local wheels in `wheels/`; does not use the network.
 
-Shows the list, installs `briskdemo==1.0`, filters, and uninstalls the package through the confirmation. `=hold` stops on the confirmation.
+Shows the list, presses `Down` in the filter field and checks that the selection stays, installs `briskdemo==1.0` before the packaging tool is detected (the operation waits in the queue), filters, and uninstalls the package through the confirmation. `=hold` stops on the confirmation.
 
 ### `BRISK_SMOKE_PKGQUEUE=1`
 
@@ -462,13 +472,13 @@ Checks Annotate with Git Blame, Conflicts and Merge after a conflicting `git mer
 
 ### `BRISK_SMOKE_DB=<sql>`
 
-Runs the SQL in the console of the first data source, prints the result and opens the data of the first table. `examples/demo_project` has a SQLite data source `shop.db` (see [building.md](building.md)).
+Runs the SQL in the console of the first data source, prints the result and opens the data of the first table. Then folds and unfolds the first data source with real Windows mouse clicks on its arrow. `examples/demo_project` has a SQLite data source `shop.db` (see [building.md](building.md)).
 
 ## Settings, history and TODO
 
 ### `BRISK_SMOKE_SETTINGS=1`
 
-Checks the Settings dialog (live preview, `Esc`, OK and saving), font zoom, `.editorconfig` (creates and deletes it in the project root, writes `ec_smoke/ec.py` and `tabs.mk`) and Local History, then restores default settings.
+Checks the Settings dialog (live preview, `Esc`, OK and saving), font zoom (kept after an edit and Cancel), `.editorconfig` (creates and deletes it in the project root, writes `ec_smoke/ec.py` and `tabs.mk`) and Local History, then restores default settings.
 
 ### `BRISK_SMOKE_SETTINGS_HOLD=1`
 

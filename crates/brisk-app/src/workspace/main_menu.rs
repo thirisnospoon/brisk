@@ -8,6 +8,18 @@ use brisk_keymap::{Action, ALL_ACTIONS};
 use gpui::{Context, PathPromptOptions, Window};
 use std::rc::Rc;
 
+/// Actions with a PyCharm shortcut but no implementation yet: listed, greyed out, so the
+/// menu does not offer what only answers "not implemented yet".
+const NOT_YET: &[Action] = &[
+    Action::GotoImplementation,
+    Action::GotoSuperMethod,
+    Action::CompleteStatement,
+    Action::RefactorThis,
+    Action::ChangeSignature,
+    Action::Move,
+    Action::SafeDelete,
+];
+
 impl Workspace {
     pub(super) fn main_menu_entries(&self) -> Vec<Entry> {
         use Action as A;
@@ -15,6 +27,7 @@ impl Workspace {
         let file = vec![
             a("New Project…", A::NewProject),
             a("New…", A::NewElement),
+            a("Scratch File", A::NewScratchFile),
             Entry::Separator,
             a("Open…", A::OpenProject),
             a("Open File…", A::OpenFile),
@@ -42,7 +55,7 @@ impl Workspace {
                 if n > 0 {
                     v.push(Entry::Separator);
                 }
-                v.extend(ALL_ACTIONS.iter().filter(|x| x.info().group == *g).map(|x| self.action_entry(x.info().title, *x, true, editor)));
+                v.extend(ALL_ACTIONS.iter().filter(|x| x.info().group == *g).map(|x| self.action_entry(x.info().title, *x, !NOT_YET.contains(x), editor)));
             }
             v
         };
@@ -63,7 +76,7 @@ impl Workspace {
             sub("Refactor", group(&["Refactor"], true)),
             sub("Run", group(&["Run"], false)),
             sub("Git", group(&["Git"], false)),
-            sub("Tools", group(&["Python Environment", "Database"], false)),
+            sub("Tools", group(&["Tools", "Python Console", "Python Packages", "Python Environment", "Database"], false)),
             sub("Window", group(&["Window"], false)),
         ]
     }

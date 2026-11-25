@@ -36,12 +36,10 @@ impl Entry {
         matches!(self, Entry::Item { enabled: true, .. } | Entry::Submenu { .. })
     }
 
+    /// The painted height (rows are `ui_px`), so placement and submenus line up at any IDE zoom.
     fn height(&self) -> f32 {
-        if matches!(self, Entry::Separator) {
-            9.0
-        } else {
-            ITEM_H
-        }
+        let h = if matches!(self, Entry::Separator) { 9.0 } else { ITEM_H };
+        h * crate::theme::ui_scale()
     }
 }
 
@@ -197,10 +195,26 @@ impl Workspace {
             label: "Copy Path".into(),
             shortcut: self.resolver.keymap().shortcut_label(Action::CopyPath).unwrap_or_default(),
             enabled: true,
-            run: Rc::new(move |this, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(p.to_string_lossy().into_owned()));
-                this.status = format!("Copied {}", p.display());
-            }),
+            run: Rc::new(move |this, _, cx| this.copy_path(&p, cx)),
+        }
+    }
+
+    fn copy_path(&mut self, p: &std::path::Path, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(p.to_string_lossy().into_owned()));
+        self.status = format!("Copied {}", p.display());
+    }
+
+    /// Copy Path (Ctrl+Shift+C): the selected row's path in the Project view, else the
+    /// active file's.
+    pub(super) fn copy_current_path(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let path = if self.tree_focus.is_focused(window) {
+            self.selected_path().map(|(_, p, _)| p)
+        } else {
+            self.active_editor().and_then(|e| e.read(cx).path.clone())
+        };
+        match path {
+            Some(p) => self.copy_path(&p, cx),
+            None => self.status = "No file to copy the path of".into(),
         }
     }
 

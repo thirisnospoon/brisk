@@ -221,6 +221,8 @@ pub struct Debug {
     pub pending: bool,
     /// Bumped by every start and stop: a start that finishes late is dropped.
     gen: u64,
+    /// When the last session was started or attached (Ctrl+F2 stops the newer of it and a run).
+    started: Option<std::time::Instant>,
     /// Python Exception Breakpoint: stop on raised (even handled) / uncaught exceptions.
     pub exc_raised: bool,
     pub exc_uncaught: bool,
@@ -281,6 +283,7 @@ impl Debug {
             last: None,
             pending: false,
             gen: 0,
+            started: None,
             exc_raised: load_exc(root).0,
             exc_uncaught: load_exc(root).1,
             exc_classes: load_exc_classes(root),
@@ -930,7 +933,7 @@ impl Workspace {
             self.send_breakpoints(&p, cx);
         }
         if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) {
-            self.debug_request("setExceptionBreakpoints", self.debug.exception_args());
+            self.debug_request("setExceptionBreakpoints", self.debug.exception_args(), cx);
         }
         self.status = if muted { "Breakpoints muted".into() } else { "Breakpoints unmuted".into() };
         cx.notify();
@@ -1112,7 +1115,7 @@ impl Workspace {
         self.debug.exc_uncaught = uncaught;
         save_exc(&self.root, raised, uncaught, &self.debug.exc_classes);
         if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) {
-            self.debug_request("setExceptionBreakpoints", self.debug.exception_args());
+            self.debug_request("setExceptionBreakpoints", self.debug.exception_args(), cx);
         }
         cx.notify();
     }
@@ -1567,12 +1570,7 @@ impl Workspace {
                     self.status = "Debug: open a Python file first".into();
                     return true;
                 };
-                self.reload_runs();
-                let name = self.runs.file.use_for_file(ctx);
-                self.save_runs();
-                if let Some(cfg) = self.runs.file.get(&name).cloned() {
-                    self.start_debug(cfg, window, cx);
-                }
+                self.launch_context(ctx, true, window, cx);
             }
             A::Resume | A::StepOver | A::StepInto | A::StepOut | A::RunToCursor => {
                 let Some(thread) = self.debug.paused_thread() else {
@@ -1594,7 +1592,7 @@ impl Workspace {
                     }
                     self.send_breakpoints(&path, cx);
                 }
-                self.debug_request(command, json!({"threadId": thread}));
+                self.debug_request(command, json!({"threadId": thread}), cx);
                 self.set_running(cx);
             }
             A::Stop if self.debug.is_live() => self.stop_debug(cx),
@@ -1657,10 +1655,20 @@ impl Workspace {
         true
     }
 
-    fn debug_request(&self, command: &str, args: Value) {
-        if let Some(s) = &self.debug.session {
-            let _ = s.client.request(command, args);
-        }
+    /// Send a request; an error reply goes to the status bar (a refused step, a stale thread).
+    fn debug_request(&self, command: &'static str, args: Value, cx: &mut Context<Self>) {
+        let Some(s) = &self.debug.session else { return };
+        let reply = s.client.request(command, args);
+        cx.spawn(async move |this, cx| {
+            // A dropped reply means the adapter went away: the session's end says so.
+            if let Ok(Err(e)) = reply.await {
+                let _ = this.update(cx, |this, cx| {
+                    this.status = format!("Debugger: {command} failed: {e}");
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     fn set_running(&mut self, cx: &mut Context<Self>) {
@@ -1762,25 +1770,30 @@ impl Workspace {
         let root = self.root.clone();
         self.debug.gen += 1;
         self.debug.pending = true;
+        self.debug.started = Some(std::time::Instant::now());
         let gen = self.debug.gen;
         cx.spawn_in(window, async move |this, cx| {
-            let adapter = cx.background_executor().spawn(async move { brisk_dap::adapter_command(&python) }).await;
-            let started = adapter.and_then(|a| Client::start(&a.program, &a.args, &root, &[]).map_err(|e| format!("cannot start debugpy: {e}")));
+            let adapter = cx.background_executor().spawn({
+                let python = python.clone();
+                async move { brisk_dap::adapter_command(&python) }
+            }).await;
+            let started = adapter.map(|a| Client::start(&a.program, &a.args, &root, &[]).map_err(|e| format!("cannot start debugpy: {e}")));
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.debug.gen != gen {
                     // Stopped (or started again) while debugpy was starting.
-                    if let Ok((client, _)) = &started {
+                    if let Ok(Ok((client, _))) = &started {
                         client.kill();
                     }
                     return;
                 }
                 this.debug.pending = false;
                 match started {
-                Err(e) => {
-                    this.debug.info(e.clone());
-                    this.show_toast(e, true, cx);
-                }
-                    Ok((client, events)) => this.attach_session(client, events, name, ("launch", brisk_dap::launch_args(&launch)), window, cx),
+                    Err(missing) => this.offer_debugpy(missing, python, super::install_offer_ui::Then::Debug(cfg), cx),
+                    Ok(Err(e)) => {
+                        this.debug.info(e.clone());
+                        this.show_toast(e, true, cx);
+                    }
+                    Ok(Ok((client, events))) => this.attach_session(client, events, name, ("launch", brisk_dap::launch_args(&launch)), window, cx),
                 }
                 cx.notify();
             });
@@ -1882,8 +1895,8 @@ impl Workspace {
                 for (p, _) in self.all_breakpoints(cx) {
                     self.send_breakpoints(&p, cx);
                 }
-                self.debug_request("setExceptionBreakpoints", self.debug.exception_args());
-                self.debug_request("configurationDone", json!({}));
+                self.debug_request("setExceptionBreakpoints", self.debug.exception_args(), cx);
+                self.debug_request("configurationDone", json!({}), cx);
                 if let Some(s) = self.debug.session.as_mut() {
                     s.state = State::Running;
                 }
@@ -1932,7 +1945,7 @@ impl Workspace {
                     });
                 }
                 self.end_session(cx);
-                self.debug_request("disconnect", json!({}));
+                self.debug_request("disconnect", json!({}), cx);
             }
             _ => {}
         }
@@ -2028,11 +2041,11 @@ impl Workspace {
                 match targets.len() {
                     // Nothing to choose (or no support): a plain Step Into.
                     0 => {
-                        this.debug_request("stepIn", json!({"threadId": thread}));
+                        this.debug_request("stepIn", json!({"threadId": thread}), cx);
                         this.set_running(cx);
                     }
                     1 => {
-                        this.debug_request("stepIn", json!({"threadId": thread, "targetId": targets[0].0}));
+                        this.debug_request("stepIn", json!({"threadId": thread, "targetId": targets[0].0}), cx);
                         this.set_running(cx);
                     }
                     _ => this.debug.chooser = Some(Chooser { kind: ChooserKind::StepInto(thread), targets, sel: 0 }),
@@ -2050,7 +2063,7 @@ impl Workspace {
             match st.kind {
                 ChooserKind::StepInto(thread) => {
                     if self.debug.paused_thread() == Some(thread) {
-                        self.debug_request("stepIn", json!({"threadId": thread, "targetId": id}));
+                        self.debug_request("stepIn", json!({"threadId": thread, "targetId": id}), cx);
                         self.set_running(cx);
                     }
                 }
@@ -2136,8 +2149,32 @@ impl Workspace {
         .detach();
     }
 
+    /// Ctrl+F2 while a debug session is live: does it stop the debugger rather than a run?
+    /// The focused window decides (Debug or Run), else the one started last.
+    pub(super) fn stop_targets_debug(&self, window: &Window, cx: &gpui::App) -> bool {
+        let Some(panel) = self.runs.panel.as_ref().filter(|p| p.read(cx).is_running()) else { return true };
+        if self.debug.focus.contains_focused(window, cx) {
+            return true;
+        }
+        if gpui::Focusable::focus_handle(panel.read(cx), cx).contains_focused(window, cx) {
+            return false;
+        }
+        match (self.debug.started, panel.read(cx).last_started_running()) {
+            (Some(d), Some(r)) => d >= r,
+            _ => true,
+        }
+    }
+
+    /// No debugpy anywhere: offer to install it into `python`, then start `then` again.
+    fn offer_debugpy(&mut self, missing: brisk_dap::DebugpyMissing, python: PathBuf, then: super::install_offer_ui::Then, cx: &mut Context<Self>) {
+        self.debug.info(missing.to_string());
+        self.status = missing.to_string();
+        self.install_offer = Some(super::install_offer_ui::InstallOffer { package: "debugpy", python, then });
+        cx.notify();
+    }
+
     /// Rerun after an Attach: the same process again if it still runs.
-    fn reattach(&mut self, pid: u32, label: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn reattach(&mut self, pid: u32, label: String, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| {
             let ps = cx.background_executor().spawn(async move { process_lines() }).await;
             let alive = brisk_dap::python_processes(&ps, std::process::id()).iter().any(|p| p.0 == pid);
@@ -2179,24 +2216,29 @@ impl Workspace {
         let root = self.root.clone();
         self.debug.gen += 1;
         self.debug.pending = true;
+        self.debug.started = Some(std::time::Instant::now());
         let gen = self.debug.gen;
         cx.spawn_in(window, async move |this, cx| {
-            let adapter = cx.background_executor().spawn(async move { brisk_dap::adapter_command(&python) }).await;
-            let started = adapter.and_then(|a| Client::start(&a.program, &a.args, &root, &[]).map_err(|e| format!("cannot start debugpy: {e}")));
+            let adapter = cx.background_executor().spawn({
+                let python = python.clone();
+                async move { brisk_dap::adapter_command(&python) }
+            }).await;
+            let started = adapter.map(|a| Client::start(&a.program, &a.args, &root, &[]).map_err(|e| format!("cannot start debugpy: {e}")));
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.debug.gen != gen {
-                    if let Ok((client, _)) = &started {
+                    if let Ok(Ok((client, _))) = &started {
                         client.kill();
                     }
                     return;
                 }
                 this.debug.pending = false;
                 match started {
-                    Err(e) => {
+                    Err(missing) => this.offer_debugpy(missing, python, super::install_offer_ui::Then::Attach(pid, label), cx),
+                    Ok(Err(e)) => {
                         this.debug.info(e.clone());
                         this.show_toast(e, true, cx);
                     }
-                    Ok((client, events)) => this.attach_session(client, events, name, ("attach", brisk_dap::attach_args(pid, true)), window, cx),
+                    Ok(Ok((client, events))) => this.attach_session(client, events, name, ("attach", brisk_dap::attach_args(pid, true)), window, cx),
                 }
                 cx.notify();
             });
@@ -3052,6 +3094,17 @@ impl Workspace {
         let k = &e.keystroke;
         if self.debug.tab == DebugTab::Debugger {
             return self.vars_key(k, cx);
+        }
+        let m = k.modifiers;
+        let paste = ((m.control || m.platform) && !m.alt && !m.shift && k.key == "v") || (m.shift && !m.control && k.key == "insert");
+        if paste {
+            // A one-line input: the clipboard's first line, as the Run dialog's fields take it.
+            if let Some(t) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                self.debug.input.push_str(t.lines().next().unwrap_or(""));
+                self.refilter_completion();
+            }
+            cx.notify();
+            return true;
         }
         if k.modifiers.control || k.modifiers.alt || k.modifiers.platform {
             return false;

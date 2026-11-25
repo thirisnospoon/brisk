@@ -525,6 +525,13 @@ impl Workspace {
         eprintln!("smoke-settings: alt-shift-. x2 -> size {}", settings::font_size());
         self.smoke_press("alt-shift-,", window, cx);
         eprintln!("smoke-settings: alt-shift-, -> size {}", settings::font_size());
+        // The zoom survives editing another setting and Cancel.
+        let zoomed = settings::font_size();
+        self.dispatch(Action::Settings, window, cx);
+        self.settings_edit(|s| s.inlay_hints = !s.inlay_hints, window);
+        self.smoke_press("escape", window, cx);
+        let kept = settings::font_size();
+        eprintln!("smoke-settings: zoom {zoomed} after an edit and Cancel -> {kept}{}", if kept == zoomed { "" } else { " FAIL" });
         self.dispatch(Action::ResetFontSize, window, cx);
         eprintln!("smoke-settings: reset -> size {}", settings::font_size());
         // .editorconfig: indent from the config, trailing spaces and final newline on save.

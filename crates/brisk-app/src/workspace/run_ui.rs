@@ -201,15 +201,7 @@ impl Workspace {
                 }
             }
             RunEvent::RerunRequested => this.rerun_active(window, cx),
-            RunEvent::RunTests(cfg) => {
-                // A temporary configuration, as Ctrl+Shift+F10 makes.
-                this.reload_runs();
-                let name = this.runs.file.use_for_file((**cfg).clone());
-                this.save_runs();
-                if let Some(c) = this.runs.file.get(&name).cloned() {
-                    this.run_config(c, window, cx);
-                }
-            }
+            RunEvent::RunTests(cfg) => this.launch_context((**cfg).clone(), false, window, cx),
             RunEvent::OpenInTerminal(cmd) => this.open_in_terminal(cmd, window, cx),
         })
         .detach();
@@ -318,6 +310,21 @@ impl Workspace {
         }
         let cmd = brisk_run::build(&self.root, &cfg, &python);
         self.run_command(cfg, cmd, window, cx);
+    }
+
+    /// Run or debug what a context action points at (Ctrl+Shift+F10 / F9, a gutter ▶, a test
+    /// tree ▶) the way PyCharm does: through the saved configuration of the same target, with
+    /// its parameters, environment and interpreter, else a new temporary one from the template.
+    pub(super) fn launch_context(&mut self, ctx: RunConfig, debug: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.reload_runs();
+        let name = self.runs.file.use_for_file(ctx);
+        self.save_runs();
+        let Some(cfg) = self.runs.file.get(&name).cloned() else { return };
+        if debug {
+            self.start_debug(cfg, window, cx);
+        } else {
+            self.run_config(cfg, window, cx);
+        }
     }
 
     /// Without "Allow multiple instances", running a configuration that is still running asks
@@ -474,12 +481,7 @@ impl Workspace {
                     self.status = "Run: open a Python file first".into();
                     return;
                 };
-                self.reload_runs();
-                let name = self.runs.file.use_for_file(ctx);
-                self.save_runs();
-                if let Some(cfg) = self.runs.file.get(&name).cloned() {
-                    self.run_config(cfg, window, cx);
-                }
+                self.launch_context(ctx, false, window, cx);
             }
             A::Rerun => self.rerun_active(window, cx),
             A::Stop => {

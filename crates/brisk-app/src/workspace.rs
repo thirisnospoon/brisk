@@ -27,6 +27,7 @@ mod run_term_smoke;
 mod test_view_smoke;
 mod ansi_smoke;
 mod latency_smoke;
+mod actions_smoke;
 mod flood_smoke;
 mod motion_smoke;
 mod stripe_smoke;
@@ -82,6 +83,7 @@ mod venv_ui;
 mod run_anything_ui;
 mod terminal_env_ui;
 mod coverage_ui;
+mod install_offer_ui;
 mod profile_ui;
 mod before_launch_ui;
 mod web_smoke;
@@ -457,8 +459,8 @@ pub struct Workspace {
     coverage: Option<coverage_ui::CoverageView>,
     /// A coverage run whose report comes when its tab finishes.
     cov_pending: Option<coverage_ui::Pending>,
-    /// Offer to install coverage.py for this configuration.
-    cov_offer: Option<brisk_run::RunConfig>,
+    /// Offer to install a missing package (coverage.py, debugpy), then launch again.
+    install_offer: Option<install_offer_ui::InstallOffer>,
     /// The last profile (Run › Profile).
     profile: Option<profile_ui::ProfileView>,
     /// A profiled run whose stats come when its tab finishes.
@@ -636,6 +638,9 @@ impl Workspace {
         if std::env::var_os("BRISK_SMOKE_SETTINGS").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.settings_smoke(window, cx));
         }
+        if std::env::var_os("BRISK_SMOKE_ACTIONS").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.actions_smoke(window, cx));
+        }
         if std::env::var_os("BRISK_SMOKE_DISK").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.disk_smoke(window, cx));
         }
@@ -713,6 +718,9 @@ impl Workspace {
         }
         if std::env::var_os("BRISK_SMOKE_COVERAGE").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.coverage_smoke(window, cx));
+        }
+        if std::env::var_os("BRISK_SMOKE_DEBUGPY_OFFER").is_some() {
+            cx.defer_in(window, |this: &mut Self, window, cx| this.debugpy_offer_smoke(window, cx));
         }
         if std::env::var_os("BRISK_SMOKE_COMPOUND").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.compound_smoke(window, cx));
@@ -926,7 +934,7 @@ impl Workspace {
             ra_history: Vec::new(),
             coverage: None,
             cov_pending: None,
-            cov_offer: None,
+            install_offer: None,
             profile: None,
             prof_pending: None,
             before: None,
@@ -1420,10 +1428,6 @@ impl Workspace {
         if stroke.is_modifier_only() {
             return;
         }
-        if self.tree_focus.is_focused(window) && self.tree_file_key(&e.keystroke, cx) {
-            cx.stop_propagation();
-            return;
-        }
         if self.popup.is_none() && self.bookmark_jump_key(&e.keystroke, window, cx) {
             cx.stop_propagation();
             cx.notify();
@@ -1554,6 +1558,11 @@ impl Workspace {
         if crate::stall::enabled() {
             crate::stall::note(format!("action {action:?}"));
         }
+        // Before code insight: Shift+F6 in the Project view renames the file, not a symbol.
+        if self.file_action(action, window, cx) {
+            cx.notify();
+            return;
+        }
         if self.lsp_action(action, window, cx) {
             cx.notify();
             return;
@@ -1641,7 +1650,7 @@ impl Workspace {
                 }
                 self.status = "Cancelling the running statement…".into();
             }
-            A::Stop if self.debug.is_live() => {
+            A::Stop if self.debug.is_live() && self.stop_targets_debug(window, cx) => {
                 self.debug_action(action, window, cx);
             }
             A::Stop => self.run_action(action, window, cx),
@@ -1736,7 +1745,15 @@ impl Workspace {
             A::Settings | A::IncreaseFontSize | A::DecreaseFontSize | A::ResetFontSize | A::QuickSwitchTheme | A::ZoomInIde | A::ZoomOutIde | A::ResetIdeZoom => {
                 self.settings_action(action, window, cx);
             }
-            A::NewElement | A::ProjectStructure => {
+            // Enter / F4 in the Project view are bound to this action, so the resolver takes
+            // them before `tree_key` sees the key.
+            A::OpenSelected if self.tree_focus.is_focused(window) => {
+                self.tree_key("enter", window, cx);
+            }
+            A::NewElement => self.new_element_menu(window, cx),
+            A::CopyPath => self.copy_current_path(window, cx),
+            A::ReloadFromDisk => self.reload_all_from_disk(window, cx),
+            A::ProjectStructure => {
                 self.status = format!("{} — coming soon", action.info().title);
             }
             A::Undo if self.undo_refactor(window, cx) => {}
@@ -2409,7 +2426,10 @@ impl Workspace {
                                     .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
                                     .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
                                     .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| this.tree_press(id, e.click_count, false, window, cx)))
-                                    .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| this.tree_menu(id, e.position, window, cx)))
+                                    .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                                        cx.stop_propagation();
+                                        this.tree_menu(id, e.position, window, cx);
+                                    }))
                                     .child(
                                         div()
                                             .w(px(12.))
@@ -2432,7 +2452,9 @@ impl Workspace {
                     }),
                 )
                 .track_scroll(self.tree_scroll.clone())
-                .flex_1(),
+                .flex_1()
+                // Below the last row: the project root's menu, as in PyCharm.
+                .on_mouse_down(gpui::MouseButton::Right, cx.listener(|this, e: &gpui::MouseDownEvent, window, cx| this.tree_menu(0, e.position, window, cx))),
             ).child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&self.tree_scroll), self.tree_bar.clone())))
     }
 
@@ -3070,7 +3092,11 @@ impl Workspace {
             Target::Place(..) => ("◷", Theme::text_muted()),
             Target::BpCondition(_) | Target::BpRemove => ("●", Theme::breakpoint()),
         };
-        let branch = matches!(it.target, Target::Branch(_));
+        let branch_target = match &it.target {
+            Target::Branch(b) => Some(b.clone()),
+            _ => None,
+        };
+        let branch = branch_target.is_some();
         // A branch row has no room to spare: "tracks …" is shown only
         // when it fits whole next to the name (otherwise in the tooltip).
         let room = 680. - 12. - 16. - 16. - 84. - 3. * 8.;
@@ -3112,6 +3138,12 @@ impl Workspace {
                 let ev = KeyDownEvent { keystroke: gpui::Keystroke::parse("enter").unwrap(), is_held: false };
                 this.popup_key(&ev, window, cx);
             }))
+            .when_some(branch_target.clone(), |d, b| {
+                d.on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, _, _, cx| {
+                    this.open_branch_actions(&b);
+                    cx.notify();
+                }))
+            })
             // Fixed slots: the icon and the hint keep their size, the label
             // shrinks with an ellipsis, and the detail only takes what is
             // left (it goes first when the label is long).
@@ -3125,11 +3157,29 @@ impl Workspace {
                 div()
                     .flex_shrink_0()
                     .flex()
+                    .items_center()
                     .justify_end()
+                    .gap(px(2.))
                     .text_color(Theme::text_muted())
                     .text_size(ui_px(12.))
                     .when(branch, |d| d.w(px(84.)).font_family(crate::theme::mono_font()))
-                    .child(it.hint.clone()),
+                    .child(it.hint.clone())
+                    // A branch's → opens its actions (as the Right key does), not a checkout.
+                    .when_some(branch_target, |d, b| {
+                        d.child(
+                            div()
+                                .id(("branch-actions", i))
+                                .px(px(3.))
+                                .rounded(px(3.))
+                                .hover(|s| s.bg(Theme::hover_row()))
+                                .child("→")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.open_branch_actions(&b);
+                                    cx.notify();
+                                })),
+                        )
+                    }),
             );
         // A group's first row gets a line above it, inside the row (uniform_list rows keep one
         // height).
@@ -3314,7 +3364,7 @@ impl Render for Workspace {
             .child(self.render_status(cx))
             .children(self.render_toast().map(|e| fade_in("toast-in", e, Enter::Toast)))
             .children(self.render_venv_offer(cx).map(|e| fade_in("venv-offer-in", e, Enter::Toast)))
-            .children(self.render_cov_offer(cx).map(|e| fade_in("cov-offer-in", e, Enter::Toast)))
+            .children(self.render_install_offer(cx).map(|e| fade_in("install-offer-in", e, Enter::Toast)))
             .children(self.render_popup(cx).map(|e| fade_in("popup-in", e, Enter::Popup)))
             .children(self.render_find_popup(cx).map(|e| fade_in("find-in", e, Enter::Popup)))
             .children(self.render_ds_dialog(cx).map(|e| fade_in("ds-in", e, Enter::Dialog)))
