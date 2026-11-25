@@ -546,7 +546,7 @@ impl Workspace {
                 this.ensure_symbols(cx);
                 // The Endpoints stripe button shows only in a web project; the scan reads
                 // the Python files of this list.
-                this.scan_web(None, cx);
+                this.scan_web_from(this.files.clone(), None, cx);
                 this.status = format!("Indexed {n} files in {:.0?}", this.started.elapsed());
                 this.refresh_popup();
                 if this.find.open {

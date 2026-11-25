@@ -51,14 +51,39 @@ impl Workspace {
 
     /// Rescans the project (once at a time); callbacks waiting for it run when it ends.
     pub(super) fn scan_web(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
+        self.scan_web_from(None, window, cx);
+    }
+
+    /// [`Workspace::scan_web`] over `files` when given: the startup scan reads the file list
+    /// just built instead of walking the project a second time. Later rescans walk the disk,
+    /// which also sees files created in folders the disk poll does not watch.
+    pub(super) fn scan_web_from(&mut self, files: Option<Arc<brisk_project::FileList>>, window: Option<&mut Window>, cx: &mut Context<Self>) {
         if self.web.scanning {
+            // A scan without a window (the startup one) does not run the waiting callbacks:
+            // when it ends, scan again for them.
+            if let Some(window) = window {
+                let bg = cx.background_executor().clone();
+                cx.spawn_in(window, async move |this, cx| {
+                    while this.update(cx, |this, _| this.web.scanning).unwrap_or(false) {
+                        bg.timer(std::time::Duration::from_millis(50)).await;
+                    }
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        if !this.web.waiting.is_empty() {
+                            this.scan_web(Some(window), cx);
+                        }
+                    });
+                })
+                .detach();
+            }
             return;
         }
         self.web.scanning = true;
-        self.web.stale = false;
+        // A list built earlier does not show changes made since; whoever marked the index
+        // stale gets a scan of the disk.
+        if files.is_none() {
+            self.web.stale = false;
+        }
         let root = self.root.clone();
-        // The project's file list when it is built: no second walk of the project.
-        let files = self.files.clone();
         let task = cx.background_executor().spawn(async move {
             match files {
                 Some(list) => Index::scan_files(&list),
