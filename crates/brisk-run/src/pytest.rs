@@ -698,8 +698,17 @@ pub mod history {
                 Some(Entry { name: meta["name"].as_str()?.to_string(), time: meta["time"].as_i64()?, path })
             })
             .collect();
-        v.sort_by(|a, b| b.time.cmp(&a.time).then_with(|| b.path.cmp(&a.path)));
+        v.sort_by_key(|e| std::cmp::Reverse(order_key(&e.path)));
         v
+    }
+
+    /// Save order from a file name `<millis>[-<k>] <name>.jsonl`, compared as numbers: as
+    /// strings `-10` would sort before `-9` when many runs land in the same millisecond.
+    fn order_key(path: &Path) -> (u128, u32) {
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+        let stamp = stem.split(' ').next().unwrap_or_default();
+        let (millis, k) = stamp.split_once('-').unwrap_or((stamp, "0"));
+        (millis.parse().unwrap_or(0), k.parse().unwrap_or(0))
     }
 
     pub fn load(e: &Entry) -> Option<TestTree> {

@@ -953,3 +953,18 @@ fn broken_run_json_is_kept() {
     let _ = crate::config::load(&d);
     assert_eq!(std::fs::read_to_string(d.join(".brisk/run.json.bak")).unwrap(), broken);
 }
+
+/// Runs saved within the same millisecond get `-1`, `-2`, ... `-10` suffixes; the newest is
+/// still listed first.
+#[test]
+fn test_history_orders_same_millisecond_runs() {
+    let root = tmp("test-history-order");
+    let d = root.join(".brisk").join("test-history");
+    std::fs::create_dir_all(&d).unwrap();
+    for (file, name) in [("5 r.jsonl", "first"), ("5-9 r.jsonl", "ninth"), ("5-10 r.jsonl", "tenth"), ("4-11 r.jsonl", "older")] {
+        std::fs::write(d.join(file), format!("{{\"event\":\"meta\",\"name\":\"{name}\",\"time\":0}}\n")).unwrap();
+    }
+    let names: Vec<String> = pytest::history::list(&root).into_iter().map(|e| e.name).collect();
+    assert_eq!(names, ["tenth", "ninth", "first", "older"]);
+    let _ = std::fs::remove_dir_all(&root);
+}
