@@ -61,7 +61,14 @@ impl Workspace {
             }
             return;
         }
-        if self.lsp.state != TyState::Unknown || self.runs.all.is_none() {
+        if self.lsp.state != TyState::Unknown {
+            return;
+        }
+        // The project interpreter is known before every Python on the machine has been probed
+        // when it is configured or a project venv: ty need not wait for the rest. Without ty
+        // next to it or on PATH, the other interpreters are waited for.
+        let known = self.runs.file.interpreter.as_deref().is_some_and(|p| !p.starts_with(brisk_run::ssh::SCHEME)) || !self.runs.venvs.is_empty();
+        if self.runs.all.is_none() && !(known && self.ty_tool().is_some()) {
             return;
         }
         let Some(tool) = self.ty_tool() else {

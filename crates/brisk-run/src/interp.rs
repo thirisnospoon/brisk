@@ -200,22 +200,60 @@ pub fn discover_all(root: &Path) -> Vec<Interpreter> {
             }
         }
     }
+    probe_all(&mut out, candidates, probe);
+    out
+}
+
+/// Probe the candidates at the same time (each starts a Python, up to 3 s), then add the
+/// results in candidate order, leaving out ones already in `out`.
+fn probe_all(out: &mut Vec<Interpreter>, candidates: Vec<PathBuf>, probe: impl Fn(&Path) -> Option<Interpreter> + Sync) {
+    let mut fresh: Vec<PathBuf> = Vec::new();
     for c in candidates {
-        if !c.exists() || out.iter().any(|i| same_file(&i.path, &c)) {
-            continue;
-        }
-        if let Some(i) = probe(&c) {
-            if !out.iter().any(|o| same_file(&o.path, &i.path)) {
-                out.push(i);
-            }
+        if c.exists() && !out.iter().any(|i| same_file(&i.path, &c)) && !fresh.iter().any(|f| same_file(f, &c)) {
+            fresh.push(c);
         }
     }
-    out
+    let probe = &probe;
+    let found: Vec<Option<Interpreter>> = std::thread::scope(|s| {
+        let handles: Vec<_> = fresh.iter().map(|c| s.spawn(move || probe(c))).collect();
+        handles.into_iter().map(|h| h.join().ok().flatten()).collect()
+    });
+    for i in found.into_iter().flatten() {
+        if !out.iter().any(|o| same_file(&o.path, &i.path)) {
+            out.push(i);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn probes_run_together_and_keep_their_order() {
+        let d = std::env::temp_dir().join(format!("brisk-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let names = ["a.exe", "b.exe", "c.exe", "d.exe"];
+        for n in names {
+            std::fs::write(d.join(n), "").unwrap();
+        }
+        let interp = |p: &Path| Interpreter { path: p.to_path_buf(), version: "3.12".into(), kind: InterpKind::System };
+        let mut out = vec![interp(&d.join("a.exe"))];
+        let mut candidates: Vec<PathBuf> = names.iter().map(|n| d.join(n)).collect();
+        candidates.push(d.join("b.exe"));
+        candidates.push(d.join("missing.exe"));
+        let start = std::time::Instant::now();
+        let probe = |p: &Path| {
+            std::thread::sleep(Duration::from_millis(300));
+            // `d.exe` is a launcher for `b.exe`.
+            (!p.ends_with("c.exe")).then(|| interp(&if p.ends_with("d.exe") { d.join("b.exe") } else { p.to_path_buf() }))
+        };
+        probe_all(&mut out, candidates, probe);
+        assert!(start.elapsed() < Duration::from_millis(800), "in parallel: {:?}", start.elapsed());
+        let got: Vec<_> = out.iter().map(|i| i.path.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(got, ["a.exe", "b.exe"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn poetry_env_names() {
