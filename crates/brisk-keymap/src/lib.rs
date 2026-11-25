@@ -109,9 +109,7 @@ impl fmt::Display for Keystroke {
             "end" => "End".to_string(),
             "pageup" => "PageUp".to_string(),
             "pagedown" => "PageDown".to_string(),
-            k if k.starts_with('f') && k.len() > 1 && k[1..].chars().all(|c| c.is_ascii_digit()) => {
-                k.to_ascii_uppercase()
-            }
+            // Letters, digits and F-keys (f12 → F12) alike.
             k => k.to_ascii_uppercase(),
         };
         parts.push(key);
@@ -229,32 +227,34 @@ impl KeyResolver {
         self.pending.push(stroke);
 
         let mut best: Option<(usize, Action)> = None; // (context rank, action)
-        let mut is_prefix = false;
+        // The most specific context of a longer chord that starts with these strokes.
+        let mut prefix_rank: Option<usize> = None;
         for b in &self.keymap.bindings {
             let Trigger::Keys(ks) = &b.trigger else { continue };
             if !Keymap::context_matches(b.context, contexts) {
                 continue;
             }
+            // Prefer the most specific (innermost) context; global bindings rank last.
+            let rank = b.context.and_then(|c| contexts.iter().position(|x| *x == c)).unwrap_or(usize::MAX);
             if ks.len() == self.pending.len() && *ks == self.pending {
-                // Prefer the most specific (innermost) context; global bindings rank last.
-                let rank = b
-                    .context
-                    .and_then(|c| contexts.iter().position(|x| *x == c))
-                    .unwrap_or(usize::MAX);
                 if best.map_or(true, |(r, _)| rank < r) {
                     best = Some((rank, b.action));
                 }
             } else if ks.len() > self.pending.len() && ks[..self.pending.len()] == self.pending[..] {
-                is_prefix = true;
+                prefix_rank = Some(prefix_rank.map_or(rank, |r| r.min(rank)));
             }
         }
 
+        // A chord whose first stroke is also a shortcut of its own: the chord wins where it
+        // is at least as specific, else it could never fire (`Keymap::conflicts` reports it).
+        if let Some(p) = prefix_rank {
+            if best.map_or(true, |(r, _)| p <= r) {
+                return Resolution::Pending;
+            }
+        }
         if let Some((_, action)) = best {
             self.pending.clear();
             return Resolution::Action(action);
-        }
-        if is_prefix {
-            return Resolution::Pending;
         }
         self.pending.clear();
         Resolution::Unhandled
@@ -345,6 +345,20 @@ mod tests {
         let mut r = KeyResolver::new(km);
         assert_eq!(r.key_down(ks("ctrl-k"), &[]), Resolution::Pending);
         assert_eq!(r.key_down(ks("ctrl-c"), &[]), Resolution::Action(Action::CommentLine));
+    }
+
+    #[test]
+    fn chord_beats_its_first_stroke() {
+        let mut km = Keymap::default();
+        km.bind("ctrl-k", Action::Commit, None);
+        km.bind("ctrl-k ctrl-c", Action::CommentLine, None);
+        let mut r = KeyResolver::new(km.clone());
+        assert_eq!(r.key_down(ks("ctrl-k"), &[]), Resolution::Pending);
+        assert_eq!(r.key_down(ks("ctrl-c"), &[]), Resolution::Action(Action::CommentLine));
+        // A more specific single stroke still wins over a global chord.
+        km.bind("ctrl-k", Action::EditorNewline, Some("Editor"));
+        let mut r = KeyResolver::new(km);
+        assert_eq!(r.key_down(ks("ctrl-k"), &["Editor"]), Resolution::Action(Action::EditorNewline));
     }
 
     #[test]

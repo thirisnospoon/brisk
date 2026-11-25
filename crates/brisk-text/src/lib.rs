@@ -88,6 +88,9 @@ pub enum Movement {
 /// Each step holds the removed and inserted text, so an endless session of large pastes or
 /// reformats would otherwise grow without bound.
 pub const UNDO_LIMIT: usize = 1000;
+/// Total removed + inserted bytes kept in undo steps; the oldest steps go first. A step count
+/// alone lets a few reloads or reformats of a large file pin hundreds of megabytes.
+pub const UNDO_BYTES_LIMIT: usize = 64 << 20;
 
 pub struct Buffer {
     rope: Rope,
@@ -107,6 +110,8 @@ pub struct Buffer {
     pub comment_space: bool,
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
+    /// Sum of [`Transaction::bytes`] over `undo`.
+    undo_bytes: usize,
     version: u64,
     saved_version: u64,
     group_window: Duration,
@@ -115,6 +120,86 @@ pub struct Buffer {
     changes: std::collections::VecDeque<(u64, usize, usize, usize)>,
     /// Changes after this version are all in `changes`.
     changes_floor: u64,
+}
+
+/// The file's line ending: the more common of CRLF and LF, the first one seen on a tie, so one
+/// stray CRLF does not turn a whole LF file into CRLF on save.
+pub fn detect_line_ending(text: &str) -> LineEnding {
+    let (mut crlf, mut lf, mut first) = (0usize, 0usize, None);
+    let bytes = text.as_bytes();
+    for (i, _) in bytes.iter().enumerate().filter(|(_, b)| **b == b'\n') {
+        let e = if i > 0 && bytes[i - 1] == b'\r' {
+            crlf += 1;
+            LineEnding::CrLf
+        } else {
+            lf += 1;
+            LineEnding::Lf
+        };
+        first.get_or_insert(e);
+    }
+    match crlf.cmp(&lf) {
+        std::cmp::Ordering::Greater => LineEnding::CrLf,
+        std::cmp::Ordering::Less => LineEnding::Lf,
+        std::cmp::Ordering::Equal => first.unwrap_or(LineEnding::Lf),
+    }
+}
+
+/// Minimal char-range edits (in `old`'s coordinates) that turn `old` into `new`: a line diff,
+/// refined to chars inside small changed hunks. Whole-text replacement through these keeps
+/// positions anchored outside the changed lines (breakpoints, bookmarks, folds, carets).
+fn diff_edits(old: &str, new: &str) -> Vec<(Range<usize>, String)> {
+    use similar::{DiffTag, TextDiff};
+    // Past the deadline similar returns a coarser (still correct) diff.
+    let deadline = Instant::now() + Duration::from_millis(300);
+    let diff = TextDiff::configure().deadline(deadline).diff_lines(old, new);
+    let (ol, nl) = (diff.old_slices(), diff.new_slices());
+    let mut starts = Vec::with_capacity(ol.len() + 1);
+    starts.push(0usize);
+    for l in ol {
+        starts.push(starts.last().unwrap() + l.chars().count());
+    }
+    let mut edits = Vec::new();
+    for (tag, o, n) in contiguous(diff.ops()) {
+        if tag == DiffTag::Equal {
+            continue;
+        }
+        let base = starts[o.start];
+        let (removed, inserted) = (ol[o.clone()].concat(), nl[n].concat());
+        if tag != DiffTag::Replace || removed.len() + inserted.len() > 16 * 1024 {
+            edits.push((base..starts[o.end], inserted));
+            continue;
+        }
+        let cd = TextDiff::configure().deadline(deadline).diff_chars(&removed, &inserted);
+        let cn = cd.new_slices();
+        for (tag, o, n) in contiguous(cd.ops()) {
+            if tag != DiffTag::Equal {
+                edits.push((base + o.start..base + o.end, cn[n].concat()));
+            }
+        }
+    }
+    edits
+}
+
+/// The ops' ranges laid end to end. similar can report the index on the empty side of an
+/// insert or delete one off (an insert at old 18 right after an equal run ending at 19), and
+/// an edit placed there corrupts the text; the lengths are reliable, so count positions.
+fn contiguous(ops: &[similar::DiffOp]) -> Vec<(similar::DiffTag, Range<usize>, Range<usize>)> {
+    let (mut o, mut n) = (0usize, 0usize);
+    ops.iter()
+        .map(|op| {
+            let (tag, a, b) = op.as_tag_tuple();
+            let r = (tag, o..o + a.len(), n..n + b.len());
+            o += a.len();
+            n += b.len();
+            r
+        })
+        .collect()
+}
+
+impl Transaction {
+    fn bytes(&self) -> usize {
+        self.edits.iter().map(|e| e.removed.len() + e.inserted.len()).sum()
+    }
 }
 
 /// Move a char position through a list of edits from [`Buffer::changes_since`]. A position
@@ -132,9 +217,9 @@ pub fn map_through(mut pos: usize, changes: &[(usize, usize, usize)]) -> usize {
 
 impl Buffer {
     pub fn new(text: &str) -> Self {
-        let line_ending = if text.contains("\r\n") { LineEnding::CrLf } else { LineEnding::Lf };
-        // Normalize to LF internally; restore on save.
-        let normalized = if line_ending == LineEnding::CrLf { text.replace("\r\n", "\n") } else { text.to_string() };
+        let line_ending = detect_line_ending(text);
+        // Normalize to LF internally; save writes `line_ending` everywhere.
+        let normalized = if text.contains("\r\n") { text.replace("\r\n", "\n") } else { text.to_string() };
         Self {
             rope: Rope::from_str(&normalized),
             line_ending,
@@ -148,6 +233,7 @@ impl Buffer {
             comment_space: true,
             undo: Vec::new(),
             redo: Vec::new(),
+            undo_bytes: 0,
             version: 0,
             saved_version: 0,
             group_window: Duration::from_millis(1000),
@@ -325,6 +411,7 @@ impl Buffer {
         self.redo.clear();
 
         let now = Instant::now();
+        self.undo_bytes += records.iter().map(|e| e.removed.len() + e.inserted.len()).sum::<usize>();
         if let Some(last) = self.undo.last_mut() {
             if kind != EditKind::Other && last.kind == kind && now.duration_since(last.at) < self.group_window {
                 last.edits.extend(records);
@@ -334,9 +421,20 @@ impl Buffer {
             }
         }
         self.undo.push(Transaction { edits: records, before, after: self.selections.clone(), kind, at: now });
-        if self.undo.len() > UNDO_LIMIT {
-            self.undo.drain(..self.undo.len() - UNDO_LIMIT);
+        self.trim_undo();
+    }
+
+    /// Drop the oldest undo steps beyond [`UNDO_LIMIT`] or [`UNDO_BYTES_LIMIT`]; the newest
+    /// step always stays.
+    fn trim_undo(&mut self) {
+        let mut drop = self.undo.len().saturating_sub(UNDO_LIMIT);
+        let mut bytes = self.undo_bytes - self.undo[..drop].iter().map(Transaction::bytes).sum::<usize>();
+        while bytes > UNDO_BYTES_LIMIT && drop + 1 < self.undo.len() {
+            bytes -= self.undo[drop].bytes();
+            drop += 1;
         }
+        self.undo.drain(..drop);
+        self.undo_bytes = bytes;
     }
 
     /// Break typing grouping (e.g. after caret movement).
@@ -370,6 +468,7 @@ impl Buffer {
             return false;
         }
         let Some(t) = self.undo.pop() else { return false };
+        self.undo_bytes -= t.bytes();
         for e in t.edits.iter().rev() {
             let end = e.start + e.inserted.chars().count();
             self.rope.remove(e.start..end);
@@ -396,17 +495,21 @@ impl Buffer {
         self.selections = t.after.clone();
         self.version += 1;
         t.kind = EditKind::Other;
+        self.undo_bytes += t.bytes();
         self.undo.push(t);
+        self.trim_undo();
         true
     }
 
     /// Replace the whole text (e.g. reload from disk or formatter output) as one undoable step.
+    /// Only the differing parts are edited, so marks on unchanged lines keep their place.
     pub fn set_text(&mut self, text: &str) {
-        let len = self.len_chars();
+        let old = self.text();
+        if old == text {
+            return;
+        }
         let caret = self.primary().head;
-        self.apply(vec![(0..len, text.to_string())], EditKind::Other, |_, b| {
-            vec![Selection::caret(caret.min(b.len_chars()))]
-        });
+        self.apply(diff_edits(&old, text), EditKind::Other, |map, _| vec![Selection::caret(map(caret, false))]);
     }
 
     /// Apply non-overlapping replacements (char ranges in the current text) as one undoable
@@ -583,7 +686,7 @@ impl Buffer {
         self.apply(edits, EditKind::Other, |map, _| {
             targets
                 .iter()
-                .map(|&(p, n, after)| Selection::caret(if after { map(p, false) + n } else { map(p, false) + n }))
+                .map(|&(p, n, _)| Selection::caret(map(p, false) + n))
                 .collect()
         });
     }
@@ -593,8 +696,12 @@ impl Buffer {
             return self.delete_selections();
         }
         let mut edits = Vec::new();
+        // Each caret's place after the edit: its edit's start, or itself at offset 0 (it stays
+        // even when other carets delete).
+        let mut carets = Vec::with_capacity(self.selections.len());
         for s in &self.selections {
             let p = s.head;
+            carets.push(p);
             if p == 0 {
                 continue;
             }
@@ -605,6 +712,7 @@ impl Buffer {
                 let unit = self.indent_unit.chars().count().max(1);
                 let target = (col - 1) / unit * unit;
                 edits.push((p - (col - target)..p, String::new()));
+                *carets.last_mut().unwrap() = p - (col - target);
                 continue;
             }
             // Delete an empty auto-pair together: (|)
@@ -612,14 +720,9 @@ impl Buffer {
             let next = self.char_at(p);
             let pair = matches!((prev, next), ('(', Some(')')) | ('[', Some(']')) | ('{', Some('}')) | ('"', Some('"')) | ('\'', Some('\'')));
             edits.push((p - 1..if pair { p + 1 } else { p }, String::new()));
+            *carets.last_mut().unwrap() = p - 1;
         }
-        let starts: Vec<usize> = edits.iter().map(|(r, _): &(Range<usize>, String)| r.start).collect();
-        let carets: Vec<usize> = if starts.is_empty() { vec![] } else { starts.clone() };
-        let fallback: Vec<usize> = self.selections.iter().map(|s| s.head).collect();
-        self.apply(edits, EditKind::Deleting, |map, _| {
-            let src = if carets.is_empty() { &fallback } else { &carets };
-            src.iter().map(|&p| Selection::caret(map(p, false))).collect()
-        });
+        self.apply(edits, EditKind::Deleting, |map, _| carets.iter().map(|&p| Selection::caret(map(p, false))).collect());
     }
 
     pub fn delete_forward(&mut self) {
@@ -888,7 +991,6 @@ impl Buffer {
         });
     }
 
-    /// Ctrl+Shift+J.
     /// Ctrl+Shift+J, as in PyCharm: the caret's line with the next one, or all the lines a
     /// selection covers, for every caret. The next line's indent goes; a line continuation
     /// (`\`) goes; two string literals with the same quotes merge (`'a' 'b'` → `'ab'`); two

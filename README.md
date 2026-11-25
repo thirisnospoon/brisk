@@ -31,7 +31,7 @@ separate processes; [details](#performance-and-memory-usage)). Probably less tha
 browser tab you are reading this in.
 
 > [!WARNING]
-> **Brisk is in early development (version 0.2.x) and still raw.** Expect bugs, missing
+> **Brisk is in early development (version 0.3.x) and still raw.** Expect bugs, missing
 > features and rough edges. Only Windows builds exist. Settings and file formats may
 > change between versions. The full list of gaps is in
 > [What it does not do (yet)](#what-it-does-not-do-yet).
@@ -169,7 +169,7 @@ benchmark.
 | Remote development | SSH interpreters for runs (on `main`) | Yes | Yes |
 | Platforms | Windows 10/11 x64 | Windows, macOS, Linux | Windows, macOS, Linux |
 | License | MIT OR Apache-2.0 | Proprietary; free core features, paid Pro | Code - OSS is MIT; Microsoft's builds are proprietary |
-| Maturity | Early (0.2.x) | Mature | Mature |
+| Maturity | Early (0.3.x) | Mature | Mature |
 
 ## Download and installation
 
@@ -210,8 +210,8 @@ for the unit and UI smoke tests.
 ## Who is Brisk for?
 
 - Python developers who know PyCharm's shortcuts and want them in a lighter tool.
-- People on laptops or machines with limited memory, or who keep several projects
-  and other heavy apps open at once.
+- People on laptops or machines with limited memory who need a low-memory Python IDE,
+  or who keep several projects and other heavy apps open at once.
 - Developers who prefer native desktop applications to Electron or JVM ones.
 - Anyone who wants a free, open-source, portable Python IDE they can unpack and run.
 
@@ -276,9 +276,9 @@ Yes. Completion and navigation come from ty; Rename, Extract, Inline, Generate a
 other refactorings are built in.
 
 **Can Brisk run on low-end computers?**
-It is designed to be light on memory and CPU, but it has only been tested on modern
-hardware so far. Reports from older machines are welcome; we promise to read them
-faster than the old machine boots.
+It is meant to be a fast Python IDE that is light on memory and CPU, but it has only
+been tested on modern hardware so far. Reports from older machines are welcome; we
+promise to read them faster than the old machine boots.
 
 **Which operating systems does Brisk support?**
 Windows 10 and 11, 64-bit. macOS and Linux are not supported yet.
@@ -296,18 +296,9 @@ far less mature.
 
 - **Released:** everything in [docs/features.md](docs/features.md) that is in the
   latest release.
-- **On `main`, not released yet:** uv and Poetry projects (sync the environment from
-  the lock file, Python Packages edits `pyproject.toml`).
-- **On `main`, not released yet (continued):** Django, FastAPI and Flask navigation:
-  template and URL names, Go to Related between templates and views, an Endpoints
-  window, template tag highlighting.
-- **On `main`, not released yet (continued):** SSH interpreters: a Python on another
-  machine through `ssh`; the project is uploaded before each run and tracebacks open the
-  local files.
-- **On `main`, not released yet (continued):** Mark Directory as Sources Root, Test
-  Sources Root or Excluded, used by ty, runs and search, and read from PyCharm's `.iml`.
-- **On `main`, not released yet (continued):** a configurable keymap, with import of
-  your PyCharm keymap.
+- **New in 0.3.0:** uv and Poetry projects; Django, FastAPI and Flask navigation with an
+  Endpoints window; SSH interpreters; Mark Directory as; a configurable keymap with
+  PyCharm keymap import; animations and a round of interface polish.
 - **Next, the basics:** a new-version notice in the app.
 - **In progress:** remote debugging and tests over SSH; completion of template and URL
   names.

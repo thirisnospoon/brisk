@@ -178,7 +178,9 @@ impl Workspace {
             this.open_popup(PopupKind::Interpreters);
             cx.notify();
         })));
-        if let Some(b) = self.branch.clone() {
+        // The live branch (after a checkout), not the one read at startup.
+        if self.branch.is_some() {
+            let b = self.branch_label();
             right = right.child(
                 widget("sb-branch")
                     .cursor_pointer()

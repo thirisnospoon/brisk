@@ -28,6 +28,13 @@ fn overlaps(a: Option<&str>, b: Option<&str>) -> bool {
     a.is_none() || b.is_none() || a == b
 }
 
+/// Two shortcuts get in each other's way: the same, or one is the first stroke of the other
+/// (with Ctrl+K and Ctrl+K, Ctrl+C both bound, only the chord fires).
+fn clash(a: &[Keystroke], b: &[Keystroke]) -> bool {
+    let n = a.len().min(b.len());
+    a[..n] == b[..n]
+}
+
 impl Keymap {
     /// The keyboard shortcuts of an action (not Double Shift).
     pub fn chords_for(&self, action: Action) -> Vec<Vec<Keystroke>> {
@@ -46,14 +53,15 @@ impl Keymap {
         self.bindings.iter().find(|b| b.action == action).and_then(|b| b.context)
     }
 
-    /// Other actions that the chord would also trigger where `action` works.
+    /// Other actions whose shortcuts clash with the chord where `action` works: the same
+    /// keys, or one is the first stroke of the other.
     pub fn conflicts(&self, action: Action, chord: &[Keystroke]) -> Vec<Action> {
         let ctx = self.context_of(action);
         let mut v: Vec<Action> = self
             .bindings
             .iter()
             .filter(|b| b.action != action && overlaps(b.context, ctx))
-            .filter(|b| matches!(&b.trigger, Trigger::Keys(k) if k.as_slice() == chord))
+            .filter(|b| matches!(&b.trigger, Trigger::Keys(k) if clash(k, chord)))
             .map(|b| b.action)
             .collect();
         v.dedup();
@@ -98,7 +106,7 @@ impl UserKeymap {
         let current = self.apply(base);
         let taken = current.conflicts(action, &chord);
         for other in &taken {
-            let rest: Vec<_> = current.chords_for(*other).into_iter().filter(|c| *c != chord).collect();
+            let rest: Vec<_> = current.chords_for(*other).into_iter().filter(|c| !clash(c, &chord)).collect();
             self.set(base, *other, rest);
         }
         let mut mine = current.chords_for(action);
@@ -152,6 +160,25 @@ mod tests {
         // Setting the defaults back leaves nothing stored.
         u.set(&base, Action::Rename, base.chords_for(Action::Rename));
         assert!(u.is_empty());
+    }
+
+    #[test]
+    fn prefix_conflicts() {
+        // Ctrl+K is Commit by default.
+        let base = pycharm_keymap();
+        let mut u = UserKeymap::default();
+        // Either way round: the chord after the single stroke, or the single stroke after the chord.
+        assert_eq!(base.conflicts(Action::CommentLine, &ks("ctrl-k ctrl-c")), [Action::Commit]);
+        u.set(&base, Action::CommentLine, vec![ks("ctrl-k ctrl-c")]);
+        assert!(u.apply(&base).conflicts(Action::Commit, &ks("ctrl-k")).contains(&Action::CommentLine));
+        // Remove: the single stroke goes, the chord fires.
+        let taken = u.assign(&base, Action::CommentLine, ks("ctrl-k ctrl-c"));
+        assert_eq!(taken, [Action::Commit]);
+        let km = u.apply(&base);
+        assert!(km.chords_for(Action::Commit).is_empty());
+        let mut r = KeyResolver::new(km);
+        assert_eq!(r.key_down(ks("ctrl-k").remove(0), &["Editor"]), Resolution::Pending);
+        assert_eq!(r.key_down(ks("ctrl-c").remove(0), &["Editor"]), Resolution::Action(Action::CommentLine));
     }
 
     #[test]

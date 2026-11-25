@@ -2,7 +2,7 @@
 
 use crate::{parse_log, Commit, GitError, Repo, Result};
 
-const FORMAT: &str = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e";
+use crate::LOG_FORMAT as FORMAT;
 
 #[derive(Clone, Debug)]
 pub struct Outgoing {

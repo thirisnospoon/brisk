@@ -237,10 +237,33 @@ impl Workspace {
         let mut s = crate::settings::current();
         (s.reformat_on_save, s.optimize_imports_on_save) = (true, true);
         crate::settings::apply(&s);
-        ed.update(cx, |e, cx| e.replace_all_text("import sys\nimport os\nx=os.sep\n", cx));
-        self.dispatch(Action::SaveAll, window, cx);
-        let disk = std::fs::read_to_string(&file).unwrap_or_default();
-        eprintln!("smoke-edit2: actions on save -> disk {disk:?}, dirty {}", ed.read(cx).buffer.is_dirty());
+        // ruff runs in the background: the file is saved as typed, then the cleaned text is
+        // applied and saved. A file of its own, so the later steps do not edit it meanwhile.
+        let on_save = self.root.join("onsave.py");
+        let _ = std::fs::write(&on_save, "");
+        self.open_file(&on_save, window, cx);
+        if let Some(ed2) = self.active_editor().cloned() {
+            ed2.update(cx, |e, cx| e.replace_all_text("import sys\nimport os\nx=os.sep\n", cx));
+            self.dispatch(Action::SaveAll, window, cx);
+            let at_once = std::fs::read_to_string(&on_save).unwrap_or_default();
+            let bg = cx.background_executor().clone();
+            cx.spawn(async move |_, cx| {
+                let want = "import os\n\nx = os.sep\n";
+                let mut disk = String::new();
+                for _ in 0..50 {
+                    disk = std::fs::read_to_string(&on_save).unwrap_or_default().replace("\r\n", "\n");
+                    if disk == want {
+                        break;
+                    }
+                    bg.timer(std::time::Duration::from_millis(100)).await;
+                }
+                let dirty = ed2.read_with(cx, |e, _| e.buffer.is_dirty()).unwrap_or(true);
+                let verdict = if disk == want && !dirty { "" } else { " FAIL" };
+                eprintln!("smoke-edit2: actions on save -> saved at once {at_once:?}, then disk {disk:?}, dirty {dirty}{verdict}");
+            })
+            .detach();
+        }
+        self.open_file(&file, window, cx);
         (s.reformat_on_save, s.optimize_imports_on_save) = (false, false);
         crate::settings::apply(&s);
         // Code Cleanup: every safe ruff fix (the unused import goes).

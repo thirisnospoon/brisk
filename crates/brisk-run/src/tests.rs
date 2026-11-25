@@ -42,8 +42,25 @@ fn shell_line_for_the_terminal() {
         cwd: PathBuf::from(r"C:\p r"),
         env: [("PATH".to_string(), "x".to_string()), ("B".into(), "2".into()), ("A".into(), "o'k".into())].into_iter().collect(),
     };
-    assert_eq!(cmd.shell_line(true), r"Set-Location -LiteralPath 'C:\p r'; $env:A='o''k'; $env:B='2'; & 'C:\venv\python.exe' 'app.py' 'a b' 'it''s'");
+    assert_eq!(cmd.shell_line(true), r"Set-Location -LiteralPath 'C:\p r'; ${env:A}='o''k'; ${env:B}='2'; & 'C:\venv\python.exe' 'app.py' 'a b' 'it''s'");
     assert_eq!(cmd.shell_line(false), r"cd 'C:\p r' && A='o'\''k' B='2' 'C:\venv\python.exe' 'app.py' 'a b' 'it'\''s'");
+    // Names `$env:X` cannot take.
+    let cmd = Command { env: [("MY-VAR".to_string(), "1".to_string()), ("ProgramFiles(x86)".into(), "2".into()), ("a}b".into(), "3".into())].into_iter().collect(), ..cmd };
+    assert_eq!(cmd.shell_line(true), r"Set-Location -LiteralPath 'C:\p r'; ${env:MY-VAR}='1'; ${env:ProgramFiles(x86)}='2'; ${env:a`}b}='3'; & 'C:\venv\python.exe' 'app.py' 'a b' 'it''s'");
+}
+
+/// A cmd.exe line reaches cmd unchanged: inner quotes are not MSVC-escaped to `\"`.
+#[test]
+fn cmd_line_is_passed_raw() {
+    let cmd = shell_command(Path::new("."), &RunConfig::default(), Path::new("python"), r#"echo "a b" & echo x"#);
+    if cfg!(windows) {
+        assert_eq!(cmd.cmd_line(), Some(r#"echo "a b" & echo x"#));
+        let out = Command { cwd: std::env::temp_dir(), ..cmd }.to_std().output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(text.lines().map(str::trim).collect::<Vec<_>>(), vec![r#""a b""#, "x"]);
+    } else {
+        assert_eq!(cmd.cmd_line(), None);
+    }
 }
 
 #[test]
@@ -824,4 +841,22 @@ fn project_files_round_trip_and_sync() {
     assert_eq!(k.get("tests").map(|c| c.parameters.as_str()), Some("-q"));
     assert!(k.get("api").is_none());
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn link_after_a_no_break_space() {
+    let l = find_links("Erreur\u{a0}main.py:1");
+    assert_eq!(l.len(), 1);
+    let l = find_links("x\u{3000}app/x.py:3: boom");
+    assert_eq!(l.len(), 1);
+}
+
+#[test]
+fn broken_run_json_is_kept() {
+    let d = tmp("broken-run-json");
+    std::fs::create_dir_all(d.join(".brisk")).unwrap();
+    let broken = "{\"configurations\": [{\"name\": \"MyKeep\"},]}";
+    std::fs::write(d.join(".brisk/run.json"), broken).unwrap();
+    let _ = crate::config::load(&d);
+    assert_eq!(std::fs::read_to_string(d.join(".brisk/run.json.bak")).unwrap(), broken);
 }

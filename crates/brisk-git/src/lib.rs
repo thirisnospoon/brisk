@@ -161,8 +161,15 @@ impl Repo {
     pub fn rel(&self, abs: &Path) -> Option<String> {
         let abs = abs.to_string_lossy().replace('\\', "/");
         let root = self.root.to_string_lossy().replace('\\', "/");
-        let rest = if abs.len() > root.len() && abs[..root.len()].eq_ignore_ascii_case(&root) { &abs[root.len()..] } else { return None };
-        Some(rest.trim_start_matches('/').to_string())
+        let root = root.trim_end_matches('/');
+        // Byte-wise compare (no slicing inside a multi-byte character), and only at a path
+        // separator: `C:/proj` is not a prefix of `C:/proj2/x`.
+        let (head, rest) = (abs.as_bytes().get(..root.len())?, abs.get(root.len()..)?);
+        if !head.eq_ignore_ascii_case(root.as_bytes()) || !rest.starts_with('/') {
+            return None;
+        }
+        let rest = rest.trim_start_matches('/');
+        (!rest.is_empty()).then(|| rest.to_string())
     }
 
     pub fn abs(&self, rel: &str) -> PathBuf {
@@ -234,7 +241,7 @@ impl Repo {
             "--tags",
             "HEAD",
             &n,
-            "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e",
+            LOG_FORMAT,
         ]) {
             Ok(o) => o,
             Err(e) if e.0.contains("does not have any commits") || e.0.contains("unknown revision") => return Ok(Vec::new()),
@@ -248,31 +255,32 @@ impl Repo {
     }
 }
 
-/// Records of `git log --format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e`.
+/// The `git log` format [`parse_log`] reads.
+pub(crate) const LOG_FORMAT: &str = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e";
+
+/// Records of `git log` with [`LOG_FORMAT`].
 fn parse_log(out: &str) -> Vec<Commit> {
-    out
-            .split('\x1e')
-            .filter_map(|rec| {
-                let rec = rec.trim_start_matches(['\n', '\r']);
-                let f: Vec<&str> = rec.split('\x1f').collect();
-                if f.len() < 7 {
-                    return None;
-                }
-                Some(Commit {
-                    hash: f[0].to_string(),
-                    parents: f[1].split_whitespace().map(str::to_string).collect(),
-                    author: f[2].to_string(),
-                    email: f[3].to_string(),
-                    time: f[4].parse().unwrap_or(0),
-                    refs: f[5].split(", ").filter(|s| !s.is_empty()).map(str::to_string).collect(),
-                    subject: f[6].to_string(),
-                })
+    out.split('\x1e')
+        .filter_map(|rec| {
+            let rec = rec.trim_start_matches(['\n', '\r']);
+            let f: Vec<&str> = rec.split('\x1f').collect();
+            if f.len() < 7 {
+                return None;
+            }
+            Some(Commit {
+                hash: f[0].to_string(),
+                parents: f[1].split_whitespace().map(str::to_string).collect(),
+                author: f[2].to_string(),
+                email: f[3].to_string(),
+                time: f[4].parse().unwrap_or(0),
+                refs: f[5].split(", ").filter(|s| !s.is_empty()).map(str::to_string).collect(),
+                subject: f[6].to_string(),
             })
-            .collect()
+        })
+        .collect()
 }
 
 impl Repo {
-
     /// Files changed by a commit (vs its first parent).
     pub fn commit_files(&self, hash: &str) -> Result<Vec<FileChange>> {
         let out = self.git(&["show", "--format=", "--name-status", "-z", "--find-renames", "--first-parent", "-m", hash])?;
@@ -338,6 +346,10 @@ impl Repo {
                 args.retain(|a| *a != "-m" && *a != message);
                 args.push("--no-edit");
             }
+            // Amend with no files only rewords: `--only` keeps other staged changes out.
+            if files.is_empty() {
+                args.push("--only");
+            }
         }
         if !files.is_empty() {
             args.push("--");
@@ -350,10 +362,12 @@ impl Repo {
     /// Ctrl+Alt+Z: discard changes. Tracked files are restored from HEAD; added files are unstaged
     /// and kept on disk (like PyCharm's Rollback); untracked files are left alone.
     pub fn rollback(&self, changes: &[FileChange]) -> Result<()> {
+        // A rename is undone by restoring both names: the new one goes (it is not in HEAD),
+        // the old one comes back.
         let restore: Vec<&str> = changes
             .iter()
             .filter(|c| matches!(c.status, FileStatus::Modified | FileStatus::Deleted | FileStatus::Renamed | FileStatus::Conflict))
-            .map(|c| c.path.as_str())
+            .flat_map(|c| std::iter::once(c.path.as_str()).chain(c.old_path.as_deref().filter(|_| c.status == FileStatus::Renamed)))
             .collect();
         if !restore.is_empty() {
             let mut args = vec!["restore", "--staged", "--worktree", "--source=HEAD", "--"];

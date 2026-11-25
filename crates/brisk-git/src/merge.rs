@@ -156,12 +156,21 @@ fn merge_seq<T: PartialEq + Clone>(b: &[T], o: &[T], t: &[T]) -> Vec<Chunk<T>> {
     out
 }
 
-/// The stage of a conflicted file in the index (`:1:` base, `:2:` ours, `:3:` theirs).
+/// The stage of a conflicted file in the index (`:1:` base, `:2:` ours, `:3:` theirs), with
+/// `\n` line endings.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ConflictVersions {
     pub base: Option<String>,
     pub ours: Option<String>,
     pub theirs: Option<String>,
+    /// The file uses `\r\n`: the merged text is written back with it.
+    pub crlf: bool,
+}
+
+/// Mostly `\r\n` line endings? None when the text has no line break to tell.
+fn uses_crlf(text: &str) -> Option<bool> {
+    let lf = text.matches('\n').count();
+    (lf > 0).then(|| text.matches("\r\n").count() * 2 > lf)
 }
 
 impl Repo {
@@ -175,24 +184,30 @@ impl Repo {
         let get = |n: u8| -> Option<String> {
             let spec = format!(":{n}:{rel}");
             let out = self.run(&["show", &spec]).ok()?;
-            out.status.success().then(|| String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n"))
+            out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
         };
-        Ok(ConflictVersions { base: get(1), ours: get(2), theirs: get(3) })
+        let (base, ours, theirs) = (get(1), get(2), get(3));
+        // The file on disk first: git wrote it with the checkout's line endings (autocrlf
+        // keeps `\n` in the stages); then the sides.
+        let disk = std::fs::read(self.abs(rel)).ok().map(|b| String::from_utf8_lossy(&b).into_owned());
+        let crlf = [&disk, &ours, &theirs].into_iter().flatten().find_map(|t| uses_crlf(t)).unwrap_or(false);
+        let lf = |t: Option<String>| t.map(|t| t.replace("\r\n", "\n"));
+        Ok(ConflictVersions { base: lf(base), ours: lf(ours), theirs: lf(theirs), crlf })
     }
 
     /// Accept Yours / Accept Theirs for whole files. A side that deleted the file deletes it.
+    /// git checks the side out itself, so binary files and line endings stay byte-exact.
     pub fn accept(&self, files: &[String], ours: bool) -> Result<()> {
+        let stage = if ours { "2" } else { "3" };
         for f in files {
-            let v = self.conflict_versions(f)?;
-            let side = if ours { v.ours } else { v.theirs };
-            match side {
-                Some(text) => {
-                    std::fs::write(self.abs(f), text).map_err(|e| GitError(format!("{f}: {e}")))?;
-                    self.git(&["add", "--", f])?;
-                }
-                None => {
-                    self.git(&["rm", "--quiet", "--", f])?;
-                }
+            // `<mode> <object> <stage>\t<path>` per stage present; a deleted side has none.
+            let ls = self.git(&["ls-files", "-u", "-z", "--", f])?;
+            let present = ls.split('\0').any(|rec| rec.split('\t').next().and_then(|h| h.split(' ').nth(2)) == Some(stage));
+            if present {
+                self.git(&["checkout", if ours { "--ours" } else { "--theirs" }, "--", f])?;
+                self.git(&["add", "--", f])?;
+            } else {
+                self.git(&["rm", "--quiet", "--", f])?;
             }
         }
         Ok(())
@@ -246,6 +261,14 @@ mod tests {
         // Identical changes are not a conflict.
         let m = merge3("x\n", "y\n", "y\n");
         assert!(!m[0].is_conflict());
+    }
+
+    #[test]
+    fn line_endings() {
+        assert_eq!(uses_crlf("a\r\nb\r\n"), Some(true));
+        assert_eq!(uses_crlf("a\nb\n"), Some(false));
+        assert_eq!(uses_crlf("a\r\nb\nc\r\n"), Some(true));
+        assert_eq!(uses_crlf("no break"), None);
     }
 
     #[test]

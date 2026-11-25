@@ -59,7 +59,7 @@ impl Command {
         if powershell {
             let mut s = format!("Set-Location -LiteralPath {cwd}; ");
             for (k, v) in env {
-                s.push_str(&format!("$env:{k}={}; ", q(v)));
+                s.push_str(&format!("{}={}; ", ps_env_var(k), q(v)));
             }
             format!("{s}& {program} {}", args.join(" ")).trim_end().to_string()
         } else {
@@ -70,9 +70,41 @@ impl Command {
 
     pub fn to_std(&self) -> std::process::Command {
         let mut c = std::process::Command::new(&self.program);
-        c.args(&self.args).current_dir(&self.cwd).envs(&self.env);
+        c.current_dir(&self.cwd).envs(&self.env);
+        #[cfg(windows)]
+        if let Some(line) = self.cmd_line() {
+            // cmd.exe does not parse MSVC escaping (an inner `"` would arrive as `\"`): hand it
+            // the line as is. With /S, cmd strips exactly the outer pair of quotes.
+            use std::os::windows::process::CommandExt;
+            c.raw_arg(format!("/S /C \"{line}\""));
+            return c;
+        }
+        c.args(&self.args);
         c
     }
+
+    /// The line of a `cmd.exe /C <line>` command (see [`shell_command`]).
+    pub fn cmd_line(&self) -> Option<&str> {
+        let stem = self.program.file_stem()?.to_str()?;
+        match self.args.as_slice() {
+            [flag, line] if stem.eq_ignore_ascii_case("cmd") && flag.eq_ignore_ascii_case("/C") => Some(line),
+            _ => None,
+        }
+    }
+}
+
+/// `${env:NAME}`: the braced form takes any name (`MY-VAR`, `ProgramFiles(x86)`); inside the
+/// braces only `{`, `}` and the backtick need escaping.
+fn ps_env_var(name: &str) -> String {
+    let mut s = String::from("${env:");
+    for c in name.chars() {
+        if matches!(c, '{' | '}' | '`') {
+            s.push('`');
+        }
+        s.push(c);
+    }
+    s.push('}');
+    s
 }
 
 /// Expand `$PROJECT_DIR$` and resolve relative paths against the project root.

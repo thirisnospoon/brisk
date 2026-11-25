@@ -28,10 +28,7 @@ impl Tool {
 fn command(program: &Path) -> Command {
     let mut c = Command::new(program);
     c.env("PYTHONIOENCODING", "utf-8").env("PIP_DISABLE_PIP_VERSION_CHECK", "1").env("PIP_NO_INPUT", "1");
-    // Smokes never reach the network: without a local index of their own pip gets none.
-    if in_smoke() && std::env::var_os("PIP_INDEX_URL").is_none() {
-        c.env("PIP_NO_INDEX", "1");
-    }
+    offline_in_smoke(&mut c);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -141,6 +138,14 @@ pub fn parse_outdated(json: &str) -> std::collections::HashMap<String, String> {
 
 pub fn outdated(python: &Path, tool: &Tool) -> Result<std::collections::HashMap<String, String>, String> {
     run(python, tool, &["list", "--outdated", "--format=json"]).map(|s| parse_outdated(&s))
+}
+
+/// Smokes never reach the network: without a local index of their own pip gets none. Every
+/// pip call made under a smoke goes through this.
+pub(crate) fn offline_in_smoke(c: &mut Command) {
+    if in_smoke() && std::env::var_os("PIP_INDEX_URL").is_none() {
+        c.env("PIP_NO_INDEX", "1");
+    }
 }
 
 fn in_smoke() -> bool {

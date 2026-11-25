@@ -78,8 +78,6 @@ pub fn align(left: &str, right: &str) -> Vec<AlignedRow> {
     rows
 }
 
-/// Word tokens for an inline diff: identifier runs, whitespace runs, and single other chars
-/// (PyCharm highlights `foo(bar)` → `foo(baz)` as just `bar`→`baz`, not the whole word).
 /// The line-level edit from `old` to `new`, stretch by stretch: (old lines, new lines,
 /// unchanged). The merge window follows its ranges through the user's edits with it.
 pub fn line_ops(old: &str, new: &str) -> Vec<(Range<usize>, Range<usize>, bool)> {
@@ -87,6 +85,8 @@ pub fn line_ops(old: &str, new: &str) -> Vec<(Range<usize>, Range<usize>, bool)>
     diff.ops().iter().map(|op| (op.old_range(), op.new_range(), op.tag() == DiffTag::Equal)).collect()
 }
 
+/// Word tokens for an inline diff: identifier runs, whitespace runs, and single other chars
+/// (PyCharm highlights `foo(bar)` → `foo(baz)` as just `bar`→`baz`, not the whole word).
 pub(crate) fn tokens(s: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0;

@@ -210,7 +210,9 @@ impl Workspace {
                 return Err(String::new());
             }
         }
-        if !matches!(op, FileOp::Delete(_)) && t.exists() {
+        // Foo.py → foo.py on Windows: the "existing" file is the source itself.
+        let same_file = matches!(op, FileOp::Rename(src) if src.to_string_lossy().to_lowercase() == t.to_string_lossy().to_lowercase());
+        if !matches!(op, FileOp::Delete(_)) && t.exists() && !same_file {
             return Err(format!("{} already exists", self.rel(&t)));
         }
         if let FileOp::Move(src) | FileOp::Copy(src) = op {
@@ -244,7 +246,7 @@ impl Workspace {
                 vec![PopupItem { label: format!("{verb} {}", self.rel(&t)), detail: String::new(), hint: "Enter".into(), target: Target::FileDo(t) }]
             }
             Err(e) if e.is_empty() => Vec::new(),
-            Err(e) => vec![PopupItem { label: format!("✗ {e}"), detail: String::new(), hint: String::new(), target: Target::Cancel }],
+            Err(e) => vec![PopupItem { label: e, detail: String::new(), hint: String::new(), target: Target::Note }],
         }
     }
 
@@ -404,12 +406,19 @@ impl Workspace {
     }
 
     /// Rebuild the file list (Go to File, Find in Files, symbols) after files changed.
+    /// Scans may overlap (disk poll, file operations) and finish out of order: only the
+    /// newest one is applied.
     pub(super) fn reindex_files(&mut self, cx: &mut Context<Self>) {
         let root = self.root.clone();
+        self.reindex_gen += 1;
+        let gen = self.reindex_gen;
         let task = cx.background_executor().spawn(async move { FileList::scan(&root) });
         cx.spawn(async move |this, cx| {
             let list = task.await;
             let _ = this.update(cx, |this, cx| {
+                if gen != this.reindex_gen {
+                    return;
+                }
                 crate::stall::note("reindex: apply file list");
                 this.ty_files_rescanned(this.files.clone(), &list);
                 this.files = Some(Arc::new(list));

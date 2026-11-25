@@ -22,6 +22,22 @@ fn breakpoints_json_is_one_based() {
     assert_eq!(back, vec![Some(2), None]);
 }
 
+#[test]
+fn bootstrap_path_is_a_python_literal() {
+    // `{:?}` would write the zero-width space as `\u{200b}`, which Python rejects.
+    let boot = bootstrap(Path::new("C:\\Users\\a\"b\\lib\u{200b}"));
+    assert!(boot.contains("sys.path.insert(0, \"C:\\\\Users\\\\a\\\"b\\\\lib\u{200b}\");"), "{boot}");
+}
+
+#[test]
+fn bad_json_is_skipped() {
+    let data = b"Content-Length: 5\r\n\r\n{oops\r\nContent-Length: 2\r\n\r\n{}";
+    let mut r = std::io::Cursor::new(&data[..]);
+    assert_eq!(read_msg(&mut r), Some(Value::Null));
+    assert_eq!(read_msg(&mut r), Some(json!({})));
+    assert_eq!(read_msg(&mut r), None);
+}
+
 /// The whole flow against a real debugpy (skipped when there is none).
 #[test]
 fn debug_a_script() {

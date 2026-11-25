@@ -69,6 +69,12 @@ pub fn connect(ds: &DataSource, password: &str) -> Result<Pg, String> {
 }
 
 fn fmt_err(e: postgres::Error) -> String {
+    fmt_err_at(e, 0)
+}
+
+/// `fmt_err` for a statement sent with `shift` characters of wrapper before it: the error
+/// position points into the user's text.
+fn fmt_err_at(e: postgres::Error, shift: u32) -> String {
     if let Some(db) = e.as_db_error() {
         let mut s = format!("[{}] {}: {}", db.code().code(), db.severity(), db.message());
         if let Some(d) = db.detail() {
@@ -79,7 +85,7 @@ fn fmt_err(e: postgres::Error) -> String {
         }
         if let Some(p) = db.position() {
             if let postgres::error::ErrorPosition::Original(p) = p {
-                s.push_str(&format!("\nPosition: {p}"));
+                s.push_str(&format!("\nPosition: {}", p.saturating_sub(shift).max(1)));
             }
         }
         return s;
@@ -98,17 +104,29 @@ fn fmt_err(e: postgres::Error) -> String {
     s
 }
 
+/// The text before the user's statement in [`wrap`]. ASCII, so its length in bytes is its
+/// length in characters (what the server's error position counts).
+const WRAP_HEAD: &str = "select * from (\n";
+
 /// Can this statement be wrapped as `select * from (...) limit n`? Only plain reads; anything
-/// with locking clauses or data-modifying CTEs runs as written.
-fn wrappable(sql: &str) -> bool {
+/// with locking clauses (`for update`, `for share`, ...), `select ... into` or data-modifying
+/// CTEs runs as written. Words in strings, quoted names and comments do not count.
+pub(crate) fn wrappable(sql: &str, driver: crate::Driver) -> bool {
     let k = crate::first_keyword(sql);
     if !matches!(k.as_str(), "select" | "with" | "table" | "values") {
         return false;
     }
-    let l = sql.to_ascii_lowercase();
+    let l = crate::split::code_only(sql, driver).to_ascii_lowercase();
     let words: Vec<&str> = l.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).collect();
-    let bad = ["into", "insert", "update", "delete", "merge", "share", "nowait", "locked"];
-    !words.iter().any(|w| bad.contains(w)) && !l.contains("for update")
+    let bad = ["into", "insert", "update", "delete", "merge"];
+    // PostgreSQL / MySQL 8 `for update|share|no key update|key share`, MySQL `lock in share mode`.
+    let locking = words.windows(2).any(|w| (w[0] == "for" && matches!(w[1], "update" | "share" | "no" | "key")) || (w[0] == "lock" && w[1] == "in"));
+    !locking && !words.iter().any(|w| bad.contains(w))
+}
+
+/// `sql` capped at `limit + 1` rows (one more tells that there are more).
+pub(crate) fn wrap(sql: &str, limit: usize) -> String {
+    format!("{WRAP_HEAD}{sql}\n) brisk_q limit {}", limit + 1)
 }
 
 impl Connection for Pg {
@@ -119,13 +137,13 @@ impl Connection for Pg {
     fn run(&mut self, sql: &str, limit: usize) -> Result<QueryOutput, String> {
         // The simple protocol buffers the whole result; cap big reads on the server side.
         let wrapped;
-        let q = if limit < usize::MAX && wrappable(sql) {
-            wrapped = format!("select * from (\n{sql}\n) brisk_q limit {}", limit + 1);
-            wrapped.as_str()
+        let (q, shift) = if limit < usize::MAX && wrappable(sql, Driver::Postgres) {
+            wrapped = wrap(sql, limit);
+            (wrapped.as_str(), WRAP_HEAD.len() as u32)
         } else {
-            sql
+            (sql, 0)
         };
-        let msgs = self.client.simple_query(q).map_err(fmt_err)?;
+        let msgs = self.client.simple_query(q).map_err(|e| fmt_err_at(e, shift))?;
         let mut out = QueryOutput::default();
         for m in msgs {
             match m {
@@ -179,11 +197,25 @@ impl Connection for Pg {
 mod t {
     #[test]
     fn wrap_rules() {
-        assert!(super::wrappable("select * from t"));
-        assert!(super::wrappable("  -- c\nWITH x as (select 1) select * from x"));
-        assert!(!super::wrappable("select * from t for update"));
-        assert!(!super::wrappable("with d as (delete from t returning *) select * from d"));
-        assert!(!super::wrappable("select 1 into tmp"));
-        assert!(!super::wrappable("insert into t values (1)"));
+        let w = |s: &str| super::wrappable(s, crate::Driver::Postgres);
+        assert!(w("select * from t"));
+        assert!(w("  -- c\nWITH x as (select 1) select * from x"));
+        assert!(!w("select * from t for update"));
+        assert!(!w("select * from t for no key update skip locked"));
+        assert!(!w("select * from t FOR SHARE nowait"));
+        assert!(!w("with d as (delete from t returning *) select * from d"));
+        assert!(!w("select 1 into tmp"));
+        assert!(!w("insert into t values (1)"));
+        // The words in strings, quoted names and comments, or as part of a name, are data.
+        assert!(w("select * from log where action = 'insert into x' -- for update"));
+        assert!(w("select \"update\", locked_at, share from t /* delete */"));
+        assert!(w("select * from t where note = E'it\\'s insert'"));
+        assert!(w("select * from t where path = 'C:\\' and kind = 'locked'"));
+    }
+
+    #[test]
+    fn wrapper_head_length() {
+        let q = super::wrap("select 1", 10);
+        assert!(q.starts_with(super::WRAP_HEAD) && q[super::WRAP_HEAD.len()..].starts_with("select 1"));
     }
 }

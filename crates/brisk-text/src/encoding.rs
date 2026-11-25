@@ -32,7 +32,9 @@ impl TextEncoding {
 
 #[derive(Debug)]
 pub enum Decoded {
-    Text { text: String, encoding: TextEncoding },
+    /// `lossy`: some bytes were not valid in `encoding` and became U+FFFD; saving the text
+    /// would replace them for good.
+    Text { text: String, encoding: TextEncoding, lossy: bool },
     /// NUL bytes or other signs of a binary file.
     Binary,
 }
@@ -63,6 +65,12 @@ pub fn system_legacy() -> &'static Encoding {
     }
 }
 
+/// Whether `bytes` contain at least one valid UTF-8 multi-byte character. Text in a legacy
+/// code page practically never does by accident.
+fn has_utf8_sequences(bytes: &[u8]) -> bool {
+    bytes.utf8_chunks().any(|c| c.valid().chars().any(|ch| !ch.is_ascii()))
+}
+
 fn looks_binary(bytes: &[u8]) -> bool {
     let head = &bytes[..bytes.len().min(8192)];
     head.contains(&0)
@@ -71,17 +79,22 @@ fn looks_binary(bytes: &[u8]) -> bool {
 /// Decode file bytes. `legacy` is the fallback for non-UTF-8 files (see [`system_legacy`]).
 pub fn decode(bytes: &[u8], legacy: &'static Encoding) -> Decoded {
     if let Some((enc, bom_len)) = Encoding::for_bom(bytes) {
-        let (text, _) = enc.decode_without_bom_handling(&bytes[bom_len..]);
-        return Decoded::Text { text: text.into_owned(), encoding: TextEncoding { encoding: enc, bom: true } };
+        let (text, lossy) = enc.decode_without_bom_handling(&bytes[bom_len..]);
+        return Decoded::Text { text: text.into_owned(), encoding: TextEncoding { encoding: enc, bom: true }, lossy };
     }
     if looks_binary(bytes) {
         return Decoded::Binary;
     }
     match std::str::from_utf8(bytes) {
-        Ok(t) => Decoded::Text { text: t.to_string(), encoding: TextEncoding::default() },
+        Ok(t) => Decoded::Text { text: t.to_string(), encoding: TextEncoding::default(), lossy: false },
+        // UTF-8 with a few stray bytes (valid multi-byte characters elsewhere): read as the
+        // legacy code page it would turn every one of those characters into mojibake.
+        Err(_) if has_utf8_sequences(bytes) => {
+            Decoded::Text { text: String::from_utf8_lossy(bytes).into_owned(), encoding: TextEncoding::default(), lossy: true }
+        }
         Err(_) => {
-            let (text, _) = legacy.decode_without_bom_handling(bytes);
-            Decoded::Text { text: text.into_owned(), encoding: TextEncoding { encoding: legacy, bom: false } }
+            let (text, lossy) = legacy.decode_without_bom_handling(bytes);
+            Decoded::Text { text: text.into_owned(), encoding: TextEncoding { encoding: legacy, bom: false }, lossy }
         }
     }
 }
@@ -123,9 +136,25 @@ mod tests {
 
     fn text(d: Decoded) -> (String, TextEncoding) {
         match d {
-            Decoded::Text { text, encoding } => (text, encoding),
+            Decoded::Text { text, encoding, .. } => (text, encoding),
             Decoded::Binary => panic!("binary"),
         }
+    }
+
+    #[test]
+    fn undecodable_bytes_are_flagged() {
+        let lossy = |d: Decoded| matches!(d, Decoded::Text { lossy: true, .. });
+        // UTF-8 Cyrillic with one stray byte: UTF-8 (not cp1252 mojibake), flagged.
+        let mut b = "# \u{43f}\u{440}\u{438}\u{432}\u{435}\u{442}\n".as_bytes().to_vec();
+        b.push(0xE9);
+        let d = decode(&b, encoding_rs::WINDOWS_1252);
+        assert!(matches!(&d, Decoded::Text { encoding, .. } if encoding.encoding == UTF_8));
+        assert!(lossy(d));
+        // UTF-8 with BOM and a stray byte; UTF-16LE with a lone surrogate.
+        assert!(lossy(decode(&[0xEF, 0xBB, 0xBF, b'a', 0xE9], encoding_rs::WINDOWS_1252)));
+        assert!(lossy(decode(&[0xFF, 0xFE, b'a', 0, 0x00, 0xD8], encoding_rs::WINDOWS_1252)));
+        // A genuine cp1251 file is not lossy.
+        assert!(!lossy(decode(&[0xEF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2], encoding_rs::WINDOWS_1251)));
     }
 
     #[test]

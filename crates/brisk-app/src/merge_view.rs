@@ -236,6 +236,15 @@ fn words_per_line(base: &[String], side: &[String]) -> Vec<Vec<Range<usize>>> {
     out
 }
 
+/// `text` with `\r\n` line endings when `crlf`, else as it is.
+fn with_eol(text: &str, crlf: bool) -> String {
+    if crlf {
+        text.replace("\r\n", "\n").replace('\n', "\r\n")
+    } else {
+        text.to_string()
+    }
+}
+
 pub enum MergeEvent {
     /// Apply: write this text and mark the file resolved.
     Apply(String),
@@ -249,6 +258,8 @@ pub struct MergeView {
     pub theirs_label: String,
     pub model: MergeModel,
     final_newline: bool,
+    /// The file uses `\r\n`; the panes work with `\n`, Apply writes it back as it was.
+    crlf: bool,
     left: Side,
     right: Side,
     /// Per chunk: its lines in Yours, Theirs and the result (the result's follow the typing).
@@ -281,6 +292,7 @@ impl MergeView {
         let theirs = v.theirs.unwrap_or_default();
         let model = MergeModel::new(&base, &ours, &theirs);
         let final_newline = ours.is_empty() || ours.ends_with('\n');
+        let crlf = v.crlf;
         let lang = brisk_syntax::Lang::from_path(&path).filter(|_| ours.len().max(theirs.len()) <= 2_000_000);
         let (left, right) = (Side::new(&ours, lang), Side::new(&theirs, lang));
         let (mut ours_at, mut theirs_at, mut res_at) = (Vec::new(), Vec::new(), Vec::new());
@@ -315,6 +327,7 @@ impl MergeView {
             theirs_label,
             model,
             final_newline,
+            crlf,
             left,
             right,
             ours_at,
@@ -495,7 +508,7 @@ impl MergeView {
         if self.final_newline && !text.is_empty() && !text.ends_with('\n') {
             text.push('\n');
         }
-        cx.emit(MergeEvent::Apply(text));
+        cx.emit(MergeEvent::Apply(with_eol(&text, self.crlf)));
     }
 
     /// A change's color: conflicts red, else by what the side did (added, deleted, modified).
@@ -855,6 +868,13 @@ impl Render for MergeView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apply_keeps_crlf() {
+        assert_eq!(with_eol("a\nb\n", true), "a\r\nb\r\n");
+        assert_eq!(with_eol("a\r\nb\n", true), "a\r\nb\r\n");
+        assert_eq!(with_eol("a\nb\n", false), "a\nb\n");
+    }
 
     #[test]
     fn decisions_and_result() {

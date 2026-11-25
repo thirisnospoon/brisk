@@ -335,7 +335,7 @@ impl Workspace {
                 .occlude()
                 .absolute()
                 .bottom(ui_px(28.) + px(60.))
-                .right(px(12.))
+                .right(super::toast_right())
                 .w(ui_px(420.))
                 .p(px(12.))
                 .flex()

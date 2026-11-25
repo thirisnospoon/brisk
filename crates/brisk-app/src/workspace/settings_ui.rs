@@ -554,6 +554,16 @@ impl Workspace {
 
         // Local History: revisions on open and save, diff, revert.
         if let Some(ed) = self.active_editor().cloned() {
+            // Saves record their revision on the local-history thread: wait for both (the
+            // UI thread may block here, the recording does not run on it).
+            let wait_revisions = |want: usize| {
+                let t0 = std::time::Instant::now();
+                while crate::local_history::revisions(&file).len() < want && t0.elapsed() < std::time::Duration::from_secs(5) {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                crate::local_history::revisions(&file).len()
+            };
+            let before = wait_revisions(2);
             for line in ["y = 3\n", "z = 4\n"] {
                 ed.update(cx, |e, _| {
                     let end = e.buffer.len_chars();
@@ -561,6 +571,9 @@ impl Workspace {
                     e.buffer.insert(line);
                 });
                 self.dispatch(Action::SaveAll, window, cx);
+            }
+            if wait_revisions(before + 2) < before + 2 {
+                eprintln!("smoke-history: FAIL the two saves were not recorded within 5 s");
             }
             self.dispatch(Action::ShowLocalHistory, window, cx);
             let n = self.popup.as_ref().map(|p| p.items.len()).unwrap_or(0);

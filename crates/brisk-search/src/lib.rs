@@ -83,19 +83,31 @@ impl Query {
 
     /// All matches in one file's text.
     pub fn find_in(&self, file: usize, text: &str, out: &mut Vec<Match>, limit: usize) {
+        let bytes = text.as_bytes();
         let mut line = 0usize;
         let mut scanned = 0usize; // byte up to which newlines are counted
+        // The last match's line (start, and end at its `\n`) and a known char column in it:
+        // many matches on one long line must not rescan it from its start each time.
+        let (mut ls, mut le): (usize, Option<usize>) = (0, None);
+        let (mut col_at, mut col) = (0usize, 0usize);
         for m in self.re.find_iter(text) {
             if m.start() == m.end() {
                 continue; // `^`, `\b` and friends: nothing to show
             }
-            line += memchr::memchr_iter(b'\n', &text.as_bytes()[scanned..m.start()]).count();
+            line += memchr::memchr_iter(b'\n', &bytes[scanned..m.start()]).count();
             scanned = m.start();
-            let ls = memchr::memrchr(b'\n', &text.as_bytes()[..m.start()]).map(|i| i + 1).unwrap_or(0);
-            let le = memchr::memchr(b'\n', &text.as_bytes()[m.start()..]).map(|i| m.start() + i).unwrap_or(text.len());
+            if le.is_none_or(|e| m.start() > e) {
+                // A new line: it starts after the last one's end, so look back only to there.
+                let from = le.map_or(0, |e| e + 1);
+                ls = memchr::memrchr(b'\n', &bytes[from..m.start()]).map_or(from, |i| from + i + 1);
+                le = Some(memchr::memchr(b'\n', &bytes[m.start()..]).map_or(text.len(), |i| m.start() + i));
+                (col_at, col) = (ls, 0);
+            }
+            let le = le.unwrap_or(text.len());
             let le_match = m.end().min(le); // multi-line regex matches are shown on their first line
             let full = text[ls..le].trim_end_matches('\r');
-            let c0 = text[ls..m.start()].chars().count();
+            let c0 = col + text[col_at..m.start()].chars().count();
+            (col_at, col) = (m.start(), c0);
             let c1 = c0 + text[m.start()..le_match].chars().count();
             // A match starting on the CR or LF itself (regex `\n` on a CRLF file) lies past
             // the trimmed line: clamp so the highlight is never reversed.
@@ -112,6 +124,14 @@ impl Query {
     /// Byte ranges of all non-empty matches in `text`, at most `limit`.
     pub fn ranges(&self, text: &str, limit: usize) -> Vec<Range<usize>> {
         self.re.find_iter(text).filter(|m| m.start() != m.end()).take(limit).map(|m| m.range()).collect()
+    }
+
+    /// [`Query::ranges`] wholly inside the byte range `within` (Find "In Selection"); the
+    /// limit counts only those.
+    pub fn ranges_in(&self, text: &str, within: Range<usize>, limit: usize) -> Vec<Range<usize>> {
+        let all = self.re.find_iter(text).filter(|m| m.start() != m.end()).map(|m| m.range());
+        // Matches come in order: skip the ones before, stop at the first one past the end.
+        all.skip_while(|r| r.start < within.start).take_while(|r| r.end <= within.end).take(limit).collect()
     }
 
     /// The replacement for the match at `range` (found by [`Query::ranges`]): `$1`/`${name}`
@@ -301,6 +321,31 @@ mod tests {
         assert!(v[0].text.len() <= MAX_LINE_SHOWN + 10);
         assert_eq!(&v[0].text[v[0].hl.clone()], "needle");
         assert_eq!(v[0].col.start, 500);
+    }
+
+    #[test]
+    fn many_matches_on_long_lines() {
+        // Columns and lines stay right while the line is tracked incrementally.
+        let text = format!("{}\nжa a\n\nxa{}", "ba".repeat(50_000), "a".repeat(3));
+        let mut v = Vec::new();
+        Query::new(&opts("a")).unwrap().find_in(0, &text, &mut v, usize::MAX);
+        assert_eq!(v.len(), 50_000 + 2 + 4);
+        assert_eq!((v[0].line, v[0].col.clone()), (0, 1..2));
+        assert_eq!((v[49_999].line, v[49_999].col.clone()), (0, 99_999..100_000));
+        assert_eq!(v[50_000..].iter().map(|m| (m.line, m.col.start)).collect::<Vec<_>>(), [(1, 1), (1, 3), (3, 1), (3, 2), (3, 3), (3, 4)]);
+        // A multi-line match, then one on the line it ends on.
+        let mut v = Vec::new();
+        Query::new(&Options { regex: true, ..opts(r"b\nc|d") }).unwrap().find_in(0, "ab\ncd\n", &mut v, 10);
+        assert_eq!(v.iter().map(|m| (m.line, m.col.clone())).collect::<Vec<_>>(), [(0, 1..2), (1, 1..2)]);
+    }
+
+    #[test]
+    fn ranges_inside_a_scope() {
+        let q = Query::new(&opts("ab")).unwrap();
+        let text = "ab ab ab ab";
+        assert_eq!(q.ranges_in(text, 2..7, 10), [3..5]);
+        assert_eq!(q.ranges_in(text, 3..11, 2), [3..5, 6..8]);
+        assert_eq!(q.ranges_in(text, 0..text.len(), usize::MAX), q.ranges(text, usize::MAX));
     }
 
     #[test]

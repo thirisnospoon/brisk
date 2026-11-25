@@ -51,7 +51,7 @@ pub fn parse_uri(s: &str) -> Option<(String, String)> {
     let rest = s.strip_prefix(SCHEME)?;
     let slash = rest.find('/')?;
     let (host, python) = rest.split_at(slash);
-    (!host.is_empty()).then(|| (host.to_string(), python.to_string()))
+    check_host(host).ok().map(|_| (host.to_string(), python.to_string()))
 }
 
 /// The `ssh` program: on PATH, else Windows' built-in OpenSSH.
@@ -78,13 +78,15 @@ pub fn ssh_exe() -> PathBuf {
 
 /// Options for every connection: never prompt (no password or host key questions in a
 /// hidden process), give up on a dead host quickly. `user@host:port` becomes `-p port`.
+/// The host comes from the repository's `run.json`, so `--` ends the options before it: a
+/// host such as `-oProxyCommand=...` is then only a bad host name.
 pub fn connect_args(host: &str) -> Vec<String> {
     let mut a = vec!["-o".to_string(), "BatchMode=yes".into(), "-o".into(), "ConnectTimeout=15".into(), "-o".into(), "ServerAliveInterval=30".into()];
     match host.rsplit_once(':').filter(|(_, p)| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) {
         Some((h, port)) => {
-            a.extend(["-p".to_string(), port.to_string(), h.to_string()]);
+            a.extend(["-p".to_string(), port.to_string(), "--".into(), h.to_string()]);
         }
-        None => a.push(host.to_string()),
+        None => a.extend(["--".to_string(), host.to_string()]),
     }
     a
 }
@@ -95,6 +97,14 @@ pub fn quote(s: &str) -> String {
         return s.to_string();
     }
     format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// A host that ssh would read as an option is refused outright (see [`connect_args`]).
+pub fn check_host(host: &str) -> Result<(), String> {
+    if host.trim().is_empty() || host.starts_with('-') {
+        return Err(format!("invalid SSH host: {host:?}"));
+    }
+    Ok(())
 }
 
 fn ssh_command(host: &str) -> std::process::Command {
@@ -110,6 +120,7 @@ fn ssh_command(host: &str) -> std::process::Command {
 
 /// Runs a shell script on the host; its stdout, or the error ssh or the script printed.
 pub fn run_script(host: &str, script: &str, input: Option<&[u8]>) -> Result<String, String> {
+    check_host(host)?;
     let mut c = ssh_command(host);
     c.arg(script).stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = c.spawn().map_err(|e| format!("Cannot start ssh: {e}"))?;
@@ -271,7 +282,8 @@ fn tar_entry(out: &mut Vec<u8>, path: &str, data: &[u8], mtime: u64) -> Result<(
     let (prefix, name) = if bytes.len() <= 100 {
         (&b""[..], bytes)
     } else {
-        let split = path[..path.len().min(156)].rfind('/').filter(|&i| path.len() - i - 1 <= 100).ok_or_else(|| format!("path too long to upload: {path}"))?;
+        // On bytes: a multi-byte name may straddle byte 156, and `/` is never part of one.
+        let split = bytes[..bytes.len().min(156)].iter().rposition(|&b| b == b'/').filter(|&i| path.len() - i - 1 <= 100).ok_or_else(|| format!("path too long to upload: {path}"))?;
         (&bytes[..split], &bytes[split + 1..])
     };
     h[..name.len()].copy_from_slice(name);
@@ -419,8 +431,28 @@ mod tests {
 
     #[test]
     fn host_with_port() {
-        assert!(connect_args("dev@10.0.0.5:2222").ends_with(&["-p".to_string(), "2222".into(), "dev@10.0.0.5".into()]));
+        assert!(connect_args("dev@10.0.0.5:2222").ends_with(&["-p".to_string(), "2222".into(), "--".into(), "dev@10.0.0.5".into()]));
         assert_eq!(connect_args("dev-server").last().unwrap(), "dev-server");
+    }
+
+    #[test]
+    fn host_cannot_be_an_option() {
+        let a = connect_args("-oProxyCommand=calc");
+        assert_eq!(a[a.len() - 2..], ["--".to_string(), "-oProxyCommand=calc".into()]);
+        assert!(check_host("-oProxyCommand=calc").is_err());
+        assert!(run_script("-oProxyCommand=calc", "true", None).is_err());
+        assert_eq!(parse_uri("ssh://-oX=y/usr/bin/python3"), None);
+        assert!(check_host("dev@host:22").is_ok());
+    }
+
+    #[test]
+    fn long_tar_path_with_multibyte_names() {
+        // Byte 156 falls inside a two-byte 'я'.
+        let path = format!("a{}/b{}", "я".repeat(70), "я".repeat(20));
+        assert!(!path.is_char_boundary(156));
+        tar_entry(&mut Vec::new(), &path, b"x", 0).unwrap();
+        let path = format!("{}/{}", "я".repeat(100), "f".repeat(20));
+        assert!(tar_entry(&mut Vec::new(), &path, b"x", 0).is_err());
     }
 
     #[test]

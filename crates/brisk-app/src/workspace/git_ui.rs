@@ -48,6 +48,8 @@ pub struct Git {
     pub(super) busy: Option<&'static str>,
     /// A status refresh is running (the status bar's tasks indicator).
     pub(super) refreshing: bool,
+    /// Bumped per refresh: a slower, older refresh must not overwrite a newer one.
+    refresh_gen: u64,
     /// PyCharm: tracked changes are included by default, unversioned files are not.
     excluded: HashSet<String>,
     included_untracked: HashSet<String>,
@@ -94,6 +96,7 @@ impl Git {
             log_focus: cx.focus_handle(),
             busy: None,
             refreshing: false,
+            refresh_gen: 0,
             excluded: HashSet::new(),
             included_untracked: HashSet::new(),
             hunks: HashMap::new(),
@@ -335,6 +338,8 @@ impl Workspace {
     pub(super) fn refresh_git(&mut self, cx: &mut Context<Self>) {
         let Some(g) = self.git.as_mut() else { return };
         g.refreshing = true;
+        g.refresh_gen += 1;
+        let gen = g.refresh_gen;
         let repo = g.repo.clone();
         let want_log = self.bottom == Some(BottomTool::Git);
         let query = g.filter.query.clone();
@@ -351,6 +356,10 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let (st, br, log, query) = task.await;
             let _ = this.update(cx, |this, cx| {
+                // A newer refresh started while this ran: its result is the current one.
+                if this.git.as_ref().is_none_or(|g| g.refresh_gen != gen) {
+                    return;
+                }
                 // The filters changed while this ran: a newer refresh brings the right log.
                 let log = log.filter(|_| this.git.as_ref().is_some_and(|g| g.filter.query == query));
                 this.apply_git(st, br, log, cx)
@@ -453,36 +462,60 @@ impl Workspace {
         then: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) {
+        self.git_op_with(
+            title,
+            move |r| (op(r), ()),
+            move |this, ok, _, cx| {
+                if ok {
+                    then(this, cx)
+                }
+            },
+            cx,
+        );
+    }
+
+    /// `git_op` whose operation also hands back a value (read off the UI thread, whatever the
+    /// outcome); `done` gets it and whether the operation succeeded. False when the operation
+    /// did not start (another one is running).
+    pub(super) fn git_op_with<T: Send + 'static>(
+        &mut self,
+        title: &'static str,
+        op: impl FnOnce(&Repo) -> (brisk_git::Result<String>, T) + Send + 'static,
+        done: impl FnOnce(&mut Self, bool, T, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(g) = self.git.as_mut() else {
-            return self.show_toast("Version control is not enabled for this project".into(), true, cx);
+            self.show_toast("Version control is not enabled for this project".into(), true, cx);
+            return false;
         };
         if let Some(b) = g.busy {
-            return self.show_toast(format!("Wait for “{b}” to finish"), true, cx);
+            self.show_toast(format!("Wait for “{b}” to finish"), true, cx);
+            return false;
         }
         g.busy = Some(title);
         let repo = g.repo.clone();
         self.status = format!("{title}…");
         let task = cx.background_executor().spawn(async move { op(&repo) });
         cx.spawn(async move |this, cx| {
-            let res = task.await;
+            let (res, v) = task.await;
             let _ = this.update(cx, |this, cx| {
                 if let Some(g) = this.git.as_mut() {
                     g.busy = None;
                 }
                 this.status.clear();
+                let ok = res.is_ok();
                 match res {
-                    Ok(msg) => {
-                        this.show_toast(msg, false, cx);
-                        then(this, cx);
-                    }
+                    Ok(msg) => this.show_toast(msg, false, cx),
                     Err(e) => this.show_toast(format!("{title} failed: {e}"), true, cx),
                 }
+                done(this, ok, v, cx);
                 this.reload_editors(cx);
                 this.refresh_git(cx);
             });
         })
         .detach();
         cx.notify();
+        true
     }
 
     pub(super) fn checkout(&mut self, b: Branch, cx: &mut Context<Self>) {
@@ -502,9 +535,7 @@ impl Workspace {
                 self.git_op("Rollback", move |r| r.rollback(&files).map(|_| format!("Rolled back {n} file{}", if n == 1 { "" } else { "s" })), |_, _| {}, cx);
             }
             Pending::CreateBranch(name) => {
-                let n2 = name.clone();
-                self.git_op("New Branch", move |r| r.create_branch(&n2).map(|_| format!("Created and checked out {n2}")), |_, _| {}, cx);
-                let _ = name;
+                self.git_op("New Branch", move |r| r.create_branch(&name).map(|_| format!("Created and checked out {name}")), |_, _| {}, cx);
             }
             Pending::Branch(op) => self.run_branch_op(op, cx),
             Pending::Reset(hash, mode) => self.run_reset(hash, mode, cx),
@@ -1000,12 +1031,12 @@ impl Workspace {
     pub(super) fn render_toast(&self) -> Option<impl IntoElement> {
         let (msg, err) = self.toast.as_ref()?;
         Some(
-            // Bottom right, clear of the status bar and the window edge; at most 420 wide, a
+            // Bottom right, clear of the status bar and the right stripe; at most 420 wide, a
             // long message wraps onto more lines (never runs past the border).
             div()
                 .absolute()
                 .bottom(ui_px(28.) + px(12.))
-                .right(px(12.))
+                .right(super::toast_right())
                 .max_w(ui_px(420.))
                 .px(px(14.))
                 .py(px(10.))

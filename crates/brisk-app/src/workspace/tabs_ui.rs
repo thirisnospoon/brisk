@@ -98,6 +98,10 @@ impl Workspace {
             };
             self.open_file(&p, window, cx);
             self.active = Some(i);
+            // A tab limit of 1 closes the first tab on open: nothing left to split.
+            if self.tabs.len() < 2 || i >= self.tabs.len() {
+                return;
+            }
         }
         let tab = self.tabs.remove(i);
         self.active = Some(i.min(self.tabs.len() - 1));

@@ -223,13 +223,9 @@ pub fn shells() -> Vec<Shell> {
 }
 
 impl TerminalPanel {
-    /// The Terminal tool window; shells start with `activation` (the project interpreter's
-    /// environment) when it is known, else with the project's `.venv` on PATH.
-    pub fn new(root: PathBuf, activation: Option<crate::terminal_env::Activation>, cx: &mut Context<Self>) -> Self {
-        Self::new_in(root, activation, None, cx)
-    }
-
-    /// The Terminal tool window with its first shell started in `dir` (the root when None).
+    /// The Terminal tool window. Shells start with `activation` (the project interpreter's
+    /// environment) when it is known, else with the project's `.venv` on PATH; the first one
+    /// in `dir` (the project root when None).
     pub fn new_in(root: PathBuf, activation: Option<crate::terminal_env::Activation>, dir: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
         let mut panel = Self::with_mode(root, false, cx);
         panel.activation = activation;
@@ -373,13 +369,19 @@ impl TerminalPanel {
         let session = if cfg.emulate_terminal {
             // ConPTY drops the last output of a process that exits at once (the pipe closes
             // before it flushes): the interpreter runs the program as a child, waits for it,
-            // gives the console a moment, then exits with its code.
+            // gives the console a moment, then exits with its code. Only a Python can do that;
+            // anything else (ssh for a remote interpreter) runs directly.
             const WRAP: &str = "import subprocess, sys, time
 r = subprocess.call(sys.argv[1:])
 time.sleep(0.3)
 sys.exit(r)";
-            let mut args = vec!["-c".to_string(), WRAP.to_string(), spawn.program.display().to_string()];
-            args.extend(spawn.args.iter().cloned());
+            let args = if is_python(&spawn.program) {
+                let mut args = vec!["-c".to_string(), WRAP.to_string(), spawn.program.display().to_string()];
+                args.extend(spawn.args.iter().cloned());
+                args
+            } else {
+                spawn.args.clone()
+            };
             let opts = brisk_terminal::SpawnOptions { shell: Some((spawn.program.display().to_string(), args)), cwd: Some(spawn.cwd.clone()), env: spawn.env.clone() };
             Session::spawn_process_pty(opts, &short_command(&cmd, &self.root), cols, rows, on_event)
         } else {
@@ -596,9 +598,8 @@ sys.exit(r)";
                 Some((p, l)) if l.parse::<usize>().is_ok() => (p, l.parse().unwrap_or(1)),
                 _ => (path, 1),
             };
-            let path = percent_decode(path);
-            let path = if cfg!(windows) && path.as_bytes().get(2) == Some(&b':') { path[1..].to_string() } else { path };
-            return RunEvent::Open(PathBuf::from(path), line);
+            let path = brisk_lsp::uri_to_path(&format!("file://{path}")).unwrap_or_else(|| PathBuf::from(path));
+            return RunEvent::Open(path, line);
         }
         RunEvent::OpenUrl(uri.to_string())
     }
@@ -1366,21 +1367,36 @@ pub fn pin_button_center() -> Option<(f32, f32)> {
     PIN_BUTTON.with(|c| c.get()).map(|b| (f32::from(b.center().x), f32::from(b.center().y)))
 }
 
-/// `%20` and friends in a `file://` URI.
-fn percent_decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
+/// A Python interpreter (`python`, `python3.12`, `pythonw`, `py`, `pypy3`), judged by name.
+fn is_python(program: &std::path::Path) -> bool {
+    let Some(stem) = program.file_stem().and_then(|s| s.to_str()) else { return false };
+    let stem = stem.to_ascii_lowercase();
+    stem == "py" || stem.starts_with("python") || stem.starts_with("pypy")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_python_is_wrapped() {
+        for p in ["python", r"C:\venv\Scripts\python.exe", "/usr/bin/python3.12", "pythonw.exe", "py", "pypy3"] {
+            assert!(is_python(std::path::Path::new(p)), "{p}");
         }
-        out.push(b[i]);
-        i += 1;
+        for p in [r"C:\Windows\System32\OpenSSH\ssh.exe", "cmd.exe", "/usr/bin/pytest", "uv"] {
+            assert!(!is_python(std::path::Path::new(p)), "{p}");
+        }
     }
-    String::from_utf8_lossy(&out).into_owned()
+
+    #[test]
+    fn hyperlink_paths_are_decoded_on_bytes() {
+        // A '%' before a multi-byte character used to slice the str inside it.
+        for uri in ["file:///C:/a%ж.py", "file:///tmp/%яя", "file:///x%"] {
+            let _ = TerminalPanel::hyperlink_event(uri);
+        }
+        let RunEvent::Open(p, line) = TerminalPanel::hyperlink_event("file:///C:/a%20b/%D0%B6.py#L12") else { panic!("not a file") };
+        assert_eq!(line, 12);
+        let expected = if cfg!(windows) { r"C:\a b\ж.py" } else { "/C:/a b/ж.py" };
+        assert_eq!(p, PathBuf::from(expected));
+    }
 }

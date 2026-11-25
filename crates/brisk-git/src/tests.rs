@@ -139,8 +139,105 @@ fn stash_roundtrip() {
     repo.stash_apply("stash@{0}", false).unwrap();
     assert_eq!(fs::read_to_string(d.join("a.py")).unwrap(), "x = 2\n");
     assert_eq!(repo.stash_list().unwrap().len(), 1, "apply keeps the stash");
-    repo.stash_drop("stash@{0}").unwrap();
-    assert!(repo.stash_list().unwrap().is_empty());
+    let hash = repo.stash_list().unwrap()[0].hash.clone();
+    // A newer stash shifts the old one to stash@{1}: the drop still hits it, by hash.
+    fs::write(d.join("a.py"), "x = 3\n").unwrap();
+    repo.stash_push("newer", false).unwrap();
+    repo.stash_drop(&hash).unwrap();
+    let left = repo.stash_list().unwrap();
+    assert_eq!(left.len(), 1);
+    assert!(left[0].message.contains("newer"), "{}", left[0].message);
+    assert!(repo.stash_drop(&hash).is_err(), "already dropped");
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// A conflicted merge of `name` (contents: base, ours, theirs; None deletes the file there).
+fn conflicted(tag: &str, name: &str, base: &[u8], ours: Option<&[u8]>, theirs: Option<&[u8]>) -> (PathBuf, Repo) {
+    let (d, repo) = temp_repo(tag);
+    fs::write(d.join(name), base).unwrap();
+    sh(&d, &["add", "--", name]);
+    sh(&d, &["commit", "-q", "-m", "base"]);
+    sh(&d, &["switch", "-q", "-c", "other"]);
+    match theirs {
+        Some(t) => fs::write(d.join(name), t).unwrap(),
+        None => fs::remove_file(d.join(name)).unwrap(),
+    }
+    sh(&d, &["add", "-A", "--", name]);
+    sh(&d, &["commit", "-q", "-m", "theirs"]);
+    sh(&d, &["switch", "-q", "main"]);
+    match ours {
+        Some(o) => fs::write(d.join(name), o).unwrap(),
+        None => fs::remove_file(d.join(name)).unwrap(),
+    }
+    sh(&d, &["add", "-A", "--", name]);
+    sh(&d, &["commit", "-q", "-m", "ours"]);
+    let out = git_cmd().arg("-C").arg(&d).args(["merge", "--no-edit", "other"]).output().unwrap();
+    assert!(!out.status.success(), "the merge must conflict");
+    assert_eq!(repo.conflicts().unwrap(), vec![name.to_string()]);
+    (d, repo)
+}
+
+#[test]
+fn accept_keeps_bytes_and_handles_deleted_sides() {
+    // Binary content with CRLF and invalid UTF-8: taken byte for byte.
+    let theirs: &[u8] = b"\x00\xff\xfeA\r\nB\r\n";
+    let (d, repo) = conflicted("accept-bin", "data.bin", b"\x00base\r\n", Some(b"\x00ours\r\n"), Some(theirs));
+    repo.accept(&["data.bin".to_string()], false).unwrap();
+    assert_eq!(fs::read(d.join("data.bin")).unwrap(), theirs);
+    assert!(repo.conflicts().unwrap().is_empty());
+    let _ = fs::remove_dir_all(&d);
+
+    let (d, repo) = conflicted("accept-crlf", "t.txt", b"a\r\nb\r\n", Some(b"a\r\nours\r\n"), Some(b"a\r\ntheirs\r\n"));
+    let v = repo.conflict_versions("t.txt").unwrap();
+    assert!(v.crlf, "the merge window writes the result back with CRLF");
+    assert_eq!(v.ours.as_deref(), Some("a\nours\n"));
+    repo.accept(&["t.txt".to_string()], true).unwrap();
+    assert_eq!(fs::read(d.join("t.txt")).unwrap(), b"a\r\nours\r\n");
+    let _ = fs::remove_dir_all(&d);
+
+    // Deleted by them: Accept Theirs deletes, Accept Yours keeps ours.
+    let (d, repo) = conflicted("accept-del", "g.py", b"x\n", Some(b"y\n"), None);
+    repo.accept(&["g.py".to_string()], true).unwrap();
+    assert_eq!(fs::read(d.join("g.py")).unwrap(), b"y\n");
+    let _ = fs::remove_dir_all(&d);
+    let (d, repo) = conflicted("accept-del2", "g.py", b"x\n", Some(b"y\n"), None);
+    repo.accept(&["g.py".to_string()], false).unwrap();
+    assert!(!d.join("g.py").exists());
+    assert!(repo.conflicts().unwrap().is_empty());
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn path_at_follows_a_non_ascii_rename() {
+    let (d, repo) = temp_repo("pathat");
+    fs::write(d.join("модуль.py"), "x = 1\n").unwrap();
+    sh(&d, &["add", "--", "модуль.py"]);
+    sh(&d, &["commit", "-q", "-m", "add"]);
+    let first = repo.log(1).unwrap()[0].hash.clone();
+    sh(&d, &["mv", "модуль.py", "новый.py"]);
+    sh(&d, &["commit", "-q", "-m", "rename"]);
+    // A commit that touches nothing of the file's in between keeps the pairing.
+    sh(&d, &["commit", "-q", "--allow-empty", "-m", "empty"]);
+    fs::write(d.join("новый.py"), "x = 2\n").unwrap();
+    sh(&d, &["commit", "-q", "-am", "edit"]);
+    let head = repo.log(1).unwrap()[0].hash.clone();
+    assert_eq!(repo.path_in_commit(&first, "новый.py"), "модуль.py");
+    assert_eq!(repo.path_in_commit(&head, "новый.py"), "новый.py");
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn amend_without_files_only_rewords() {
+    let (d, repo) = temp_repo("amend");
+    fs::write(d.join("a.py"), "x = 1\n").unwrap();
+    fs::write(d.join("b.py"), "y = 1\n").unwrap();
+    let files = vec!["a.py".to_string()];
+    repo.commit("first", &files, false, &files).unwrap();
+    sh(&d, &["add", "b.py"]);
+    repo.commit("reworded", &[], true, &[]).unwrap();
+    assert_eq!(repo.commit_message("HEAD").unwrap(), "reworded");
+    assert_eq!(repo.file_at("HEAD", "b.py").unwrap(), None, "the staged file stays out");
+    assert!(repo.status().unwrap().changes.iter().any(|c| c.path == "b.py" && c.status == FileStatus::Added));
     let _ = fs::remove_dir_all(&d);
 }
 
@@ -320,4 +417,14 @@ fn log_actions() {
     repo.commit("add g (picked)", &g, false, &[]).unwrap();
     assert_eq!(repo.pending_operation(), None);
     assert_eq!(repo.file_at("HEAD", "g.py").unwrap().as_deref(), Some("resolved\n"));
+}
+
+#[test]
+fn rel_is_safe_with_non_ascii_and_sibling_folders() {
+    let r = Repo { root: PathBuf::from(r"C:\projects\app") };
+    assert_eq!(r.rel(Path::new(r"C:\projects\app\src\x.py")).as_deref(), Some("src/x.py"));
+    assert_eq!(r.rel(Path::new(r"C:\PROJECTS\APP\x.py")).as_deref(), Some("x.py"));
+    assert_eq!(r.rel(Path::new(r"C:\projects\app2\x.py")), None);
+    assert_eq!(r.rel(Path::new(r"C:\projects\приложение\x.py")), None);
+    assert_eq!(r.rel(Path::new(r"C:\projects\app")), None);
 }

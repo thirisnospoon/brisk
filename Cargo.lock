@@ -689,7 +689,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-app"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "brisk-dap",
  "brisk-db",
@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-dap"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "brisk-proc",
  "futures",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-db"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "mysql",
  "native-tls",
@@ -738,7 +738,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-git"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "brisk-proc",
  "similar",
@@ -746,7 +746,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-keymap"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "roxmltree",
  "serde",
@@ -755,7 +755,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-lint"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "brisk-proc",
  "brisk-run",
@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-lsp"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "brisk-lint",
  "brisk-proc",
@@ -775,14 +775,14 @@ dependencies = [
 
 [[package]]
 name = "brisk-proc"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "brisk-project"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "ignore",
  "nucleo-matcher",
@@ -792,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-run"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "brisk-project",
  "brisk-terminal",
@@ -803,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-search"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "globset",
  "memchr",
@@ -812,7 +812,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-syntax"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "streaming-iterator",
  "tree-sitter",
@@ -830,7 +830,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-terminal"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "alacritty_terminal",
  "brisk-proc",
@@ -838,22 +838,23 @@ dependencies = [
 
 [[package]]
 name = "brisk-text"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "encoding_rs",
  "ropey",
+ "similar",
 ]
 
 [[package]]
 name = "brisk-vm"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "brisk-web"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "brisk-project",
  "tree-sitter",

@@ -37,40 +37,78 @@ impl Workspace {
         self.show_toast(format!("Copied revision number {}", &hash[..hash.len().min(8)]), false, cx);
     }
 
-    /// Put `text` into the commit message; give back what was there.
-    fn swap_message(&mut self, text: &str, cx: &mut Context<Self>) -> String {
-        let Some(g) = self.git.as_ref() else { return String::new() };
-        let old = g.message.read(cx).text_string();
-        g.message.update(cx, |e, cx| e.replace_all_text(text, cx));
-        old
+    /// Put `text` into the commit message. With `keep_draft` a non-empty draft stays, with
+    /// `text` after it.
+    fn put_message(&mut self, text: &str, keep_draft: bool, cx: &mut Context<Self>) {
+        let Some(g) = self.git.as_ref() else { return };
+        let draft = g.message.read(cx).text_string();
+        let draft = draft.trim_end();
+        let new = if !keep_draft || draft.is_empty() {
+            text.to_string()
+        } else if draft.contains(text.trim()) {
+            return;
+        } else {
+            format!("{draft}\n\n{text}")
+        };
+        g.message.update(cx, |e, cx| e.replace_all_text(&new, cx));
     }
 
-    /// Cherry-Pick. On conflicts the commit message waits in the Commit window (PyCharm);
-    /// on success the message there is put back.
-    pub(super) fn cherry_pick(&mut self, c: Commit, cx: &mut Context<Self>) {
+    /// Cherry-Pick / Revert. The draft in the Commit window is left alone, except when the
+    /// command stops on conflicts: the commit that finishes it needs `message` (PyCharm).
+    fn history_command(
+        &mut self,
+        title: &'static str,
+        pending: &'static str,
+        message: String,
+        run: impl FnOnce(&brisk_git::Repo) -> brisk_git::Result<String> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
         self.save_all(cx);
-        let old = self.swap_message(&c.subject, cx);
+        self.git_op_with(
+            title,
+            move |r| {
+                let res = run(r);
+                let stopped = res.is_err() && r.pending_operation() == Some(pending);
+                (res, stopped)
+            },
+            move |this, _, stopped, cx| {
+                if stopped {
+                    this.put_message(&message, false, cx);
+                }
+            },
+            cx,
+        );
+    }
+
+    pub(super) fn cherry_pick(&mut self, c: Commit, cx: &mut Context<Self>) {
         let h = c.hash.clone();
-        self.git_op("Cherry-Pick", move |r| r.cherry_pick(&h), move |this, cx| {
-            this.swap_message(&old, cx);
-        }, cx);
+        self.history_command("Cherry-Pick", "cherry-pick", c.subject.clone(), move |r| r.cherry_pick(&h), cx);
     }
 
     pub(super) fn revert_commit(&mut self, c: Commit, cx: &mut Context<Self>) {
-        self.save_all(cx);
-        let old = self.swap_message(&format!("Revert \"{}\"\n\nThis reverts commit {}.", c.subject, c.hash), cx);
         let h = c.hash.clone();
-        self.git_op("Revert Commit", move |r| r.revert_commit(&h), move |this, cx| {
-            this.swap_message(&old, cx);
-        }, cx);
+        let message = format!("Revert \"{}\"\n\nThis reverts commit {}.", c.subject, c.hash);
+        self.history_command("Revert Commit", "revert", message, move |r| r.revert_commit(&h), cx);
     }
 
-    /// Undo Commit: its changes become local changes, its message goes back to the Commit window.
+    /// Undo Commit: its changes become local changes, its full message goes back to the
+    /// Commit window (after the draft, if there is one).
     pub(super) fn undo_commit(&mut self, c: Commit, cx: &mut Context<Self>) {
         let h = c.hash.clone();
-        self.git_op("Undo Commit", move |r| r.undo_commit(&h), move |this, cx| {
-            this.swap_message(&c.subject, cx);
-        }, cx);
+        let subject = c.subject.clone();
+        self.git_op_with(
+            "Undo Commit",
+            move |r| {
+                let message = r.commit_message(&h).unwrap_or(subject);
+                (r.undo_commit(&h), message)
+            },
+            move |this, ok, message, cx| {
+                if ok {
+                    this.put_message(&message, true, cx);
+                }
+            },
+            cx,
+        );
     }
 
     /// Reset Current Branch to Here…: the four modes with what each does (Mixed first chosen).

@@ -26,6 +26,24 @@ pub fn adopt_pid(pid: u32) {
     let _ = pid;
 }
 
+/// Kill a child and every process it started (`Child::kill` stops only the child, leaving
+/// e.g. debugpy's launcher or a console's subprocesses running). The caller holds the
+/// child's handle, so its pid cannot have been reused yet.
+pub fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    if matches!(child.try_wait(), Ok(None)) {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .status();
+    }
+    let _ = child.kill();
+}
+
 /// Number of live processes in the job (for the memory/handle smoke). `None` off Windows or
 /// before any child was adopted.
 pub fn live_children() -> Option<u32> {
@@ -132,6 +150,29 @@ mod tests {
             assert!(super::live_children().unwrap() >= 1);
             let _ = c.kill();
             let _ = c.wait();
+        }
+    }
+
+    /// The grandchild (ping under cmd) dies too: it holds the stdout pipe, so EOF comes only
+    /// once it is gone.
+    #[test]
+    fn kill_tree_takes_grandchildren() {
+        #[cfg(windows)]
+        {
+            use std::io::Read;
+            let mut c = std::process::Command::new("cmd")
+                .args(["/C", "ping -n 30 127.0.0.1"])
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let mut out = c.stdout.take().unwrap();
+            let t = std::time::Instant::now();
+            super::kill_tree(&mut c);
+            let _ = c.wait();
+            let mut sink = Vec::new();
+            let _ = out.read_to_end(&mut sink);
+            assert!(t.elapsed() < std::time::Duration::from_secs(10), "grandchild survived");
         }
     }
 }

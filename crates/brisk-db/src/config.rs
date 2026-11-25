@@ -48,9 +48,14 @@ pub fn config_dir() -> PathBuf {
 
 /// Load data sources. Returns `(sources, imported_from_pycharm)`.
 pub fn load(root: &Path) -> (Vec<DataSource>, bool) {
-    if let Ok(s) = std::fs::read_to_string(root.join(CONFIG_FILE)) {
-        if let Ok(f) = serde_json::from_str::<File>(&s) {
-            return (f.data_sources, false);
+    let path = root.join(CONFIG_FILE);
+    if let Ok(s) = std::fs::read_to_string(&path) {
+        match serde_json::from_str::<File>(&s) {
+            Ok(f) => return (f.data_sources, false),
+            // Broken by a hand edit: keep it before the next save replaces the data sources.
+            Err(_) => {
+                let _ = std::fs::copy(&path, path.with_extension("json.bak"));
+            }
         }
     }
     let imported = import_idea(root);
@@ -94,15 +99,31 @@ fn data_sources(xml: &str) -> Vec<(String, String, String)> {
         let after = &rest[i..];
         let Some(gt) = after.find('>') else { break };
         let open = &after[..gt];
-        let end = after.find("</data-source>").unwrap_or(after.len());
-        let inner = if open.ends_with('/') { "" } else { &after[gt + 1..end] };
+        let (inner, next) = if open.ends_with('/') {
+            // `<data-source …/>`: nothing inside; the next element starts right after it (its
+            // `</data-source>` is not this one's).
+            ("", gt + 1)
+        } else {
+            const CLOSE: &str = "</data-source>";
+            let end = after.find(CLOSE).unwrap_or(after.len());
+            (&after[gt + 1..end.max(gt + 1)], (end + CLOSE.len()).min(after.len()))
+        };
         out.push((attr(open, "uuid").unwrap_or_default(), attr(open, "name").unwrap_or_default(), inner.to_string()));
-        rest = &after[end.min(after.len())..];
-        if rest.len() == after.len() {
-            rest = &after[gt + 1..];
-        }
+        rest = &after[next..];
     }
     out
+}
+
+#[cfg(test)]
+#[test]
+fn self_closing_data_source_does_not_hide_the_next() {
+    let xml = r#"<component><data-source source="LOCAL" name="empty" uuid="1"/>
+<data-source source="LOCAL" name="pg" uuid="2"><jdbc-url>jdbc:postgresql://h/db</jdbc-url></data-source>
+<data-source name="third" uuid="3"><jdbc-url>x</jdbc-url></data-source></component>"#;
+    let v = data_sources(xml);
+    assert_eq!(v.iter().map(|(id, n, _)| (id.as_str(), n.as_str())).collect::<Vec<_>>(), [("1", "empty"), ("2", "pg"), ("3", "third")]);
+    assert_eq!(v[0].2, "");
+    assert_eq!(tag(&v[1].2, "jdbc-url").as_deref(), Some("jdbc:postgresql://h/db"));
 }
 
 /// Import PyCharm/DataGrip data sources: `.idea/dataSources.xml` (URL, driver) and

@@ -479,3 +479,112 @@ fn read_only_ignores_edits() {
     assert!(!b.undo());
     assert_eq!(b.version(), 0);
 }
+
+#[test]
+fn set_text_keeps_marks_on_unchanged_lines() {
+    let old: String = (0..150).map(|i| format!("line {i}\n")).collect();
+    let mut b = buf(&old);
+    let v = b.version();
+    let marks: Vec<usize> = [40, 80, 120].iter().map(|&l| b.line_start(l)).collect();
+    b.set_caret(b.line_col_to_pos(100, 3), false);
+    let new = old.replace("line 10\n", "changed ten\nand one more\n");
+    b.set_text(&new);
+    assert_eq!(b.text(), new);
+    let changes = b.changes_since(v).unwrap();
+    let lines: Vec<usize> = marks.iter().map(|&p| b.pos_to_line_col(map_through(p, &changes)).0).collect();
+    assert_eq!(lines, [41, 81, 121]);
+    assert_eq!(b.pos_to_line_col(b.primary().head), (101, 3), "the caret follows its line");
+    b.undo();
+    assert_eq!(b.text(), old);
+    b.set_text(&old);
+    assert_eq!(b.version(), v + 2, "same text: no edit");
+}
+
+#[test]
+fn set_text_char_refinement_round_trips() {
+    for (a, z) in [("", "x\n"), ("abc", ""), ("é1\nb\n", "é2\nb\nc"), ("a\nb\nc", "c\nb\na\n"), ("x = 1\n", "x  =  1\n")] {
+        let mut b = buf(a);
+        b.set_text(z);
+        assert_eq!(b.text(), z);
+        b.undo();
+        assert_eq!(b.text(), a);
+    }
+}
+
+#[test]
+fn undo_is_capped_by_bytes() {
+    let mut b = buf("");
+    let big = "x".repeat(UNDO_BYTES_LIMIT / 4);
+    for i in 0..8 {
+        b.set_text(&format!("{i}{big}"));
+    }
+    assert!(b.undo_bytes <= UNDO_BYTES_LIMIT, "{}", b.undo_bytes);
+    let mut steps = 0;
+    while b.undo() {
+        steps += 1;
+    }
+    assert!(steps >= 1 && steps < 8, "{steps}");
+    assert_eq!(b.undo_bytes, 0);
+}
+
+#[test]
+fn line_ending_is_the_majority() {
+    assert_eq!(detect_line_ending("a\nb\nc\r\n"), LineEnding::Lf);
+    assert_eq!(detect_line_ending("a\r\nb\r\nc\n"), LineEnding::CrLf);
+    assert_eq!(detect_line_ending("a\r\nb\n"), LineEnding::CrLf, "tie: the first one");
+    assert_eq!(detect_line_ending("a\nb\r\n"), LineEnding::Lf);
+    assert_eq!(detect_line_ending("abc"), LineEnding::Lf);
+    let b = buf("a\nb\r\nc\n");
+    assert_eq!(b.text(), "a\nb\nc\n");
+    assert_eq!(b.text_for_save(), "a\nb\nc\n");
+}
+
+#[test]
+fn only_lf_breaks_lines() {
+    let b = buf("a\u{b}b\u{c}c\u{85}d\u{2028}e\rf\ng");
+    assert_eq!(b.len_lines(), 2);
+    let b = buf("a\r\nb\r\n");
+    assert_eq!((b.len_lines(), b.line(0).as_str()), (3, "a"));
+    assert_eq!(b.text_for_save(), "a\r\nb\r\n");
+}
+
+#[test]
+fn backspace_keeps_a_caret_at_offset_zero() {
+    let mut b = buf("ab\ncd");
+    b.selections = vec![Selection::caret(0), Selection::caret(4)];
+    b.backspace();
+    assert_eq!(b.text(), "ab\nd");
+    let heads: Vec<usize> = b.selections.iter().map(|s| s.head).collect();
+    assert_eq!(heads, [0, 3]);
+}
+
+#[test]
+fn set_text_survives_off_by_one_insert_index() {
+    // similar reports the insert here at old index 18 though the equal run before it ends at
+    // 19: placing the edit by that index moved a space across the line break.
+    let old = "def f():\n        return 1\n  x = 2\ny = 3\nz = 4\n";
+    let new = "def f():\n        return 1   \nx = 2   ";
+    let mut b = buf(old);
+    b.set_text(new);
+    assert_eq!(b.text(), new);
+    b.set_text(old);
+    assert_eq!(b.text(), old);
+}
+#[test]
+fn set_text_random_pairs() {
+    // Small texts over a tiny alphabet hit similar's odd insert/delete indices often.
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let mut text = || -> String { let n = next() % 40; (0..n).map(|_| [' ', '\n', 'a', 'b', 'x'][(next() % 5) as usize]).collect() };
+    for _ in 0..3000 {
+        let (a, c) = (text(), text());
+        let mut b = buf(&a);
+        b.set_text(&c);
+        assert_eq!(b.text(), c, "from {a:?}");
+    }
+}

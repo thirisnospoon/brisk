@@ -7,3 +7,4 @@ license.workspace = true
 [dependencies]
 ropey.workspace = true
 encoding_rs = "0.8"
+similar = "2"

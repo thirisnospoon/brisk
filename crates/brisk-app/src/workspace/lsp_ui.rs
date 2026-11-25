@@ -911,7 +911,7 @@ impl Workspace {
     /// Whole-word `old` in comments and strings of the project's Python files, added to `files`.
     fn with_text_occurrences(&self, files: Vec<brisk_lsp::FileEdits>, old: &str, new: &str, cx: &gpui::App) -> Vec<brisk_lsp::FileEdits> {
         let mut groups = files;
-        for f in python_files_under(&self.root) {
+        for f in self.project_python_files(&self.root) {
             let open = self.editors().find(|e| e.read(cx).path.as_deref() == Some(f.as_path())).map(|e| e.read(cx).text_string());
             let Some(text) = open.or_else(|| std::fs::read_to_string(&f).ok().map(|t| t.replace("\r\n", "\n"))) else { continue };
             if !text.contains(old) {
@@ -1138,6 +1138,18 @@ impl Workspace {
 }
 
 impl Workspace {
+    /// Python files under `dir` from the project index (it honours `.gitignore` and Excluded
+    /// folders); a walk of the disk until the first scan is done.
+    pub(super) fn project_python_files(&self, dir: &Path) -> Vec<PathBuf> {
+        let Some(list) = &self.files else { return python_files_under(dir) };
+        list.files
+            .iter()
+            .filter(|f| f.ends_with(".py") || f.ends_with(".pyi"))
+            .map(|f| list.root.join(f))
+            .filter(|p| p.starts_with(dir))
+            .collect()
+    }
+
     /// Import updates for moving `src` to `target`, found by Brisk in the project's Python
     /// files (open ones with their unsaved text): `from`/`import` lines and `old.attr` uses.
     fn module_rename_edits(&self, src: &Path, target: &Path, cx: &gpui::App) -> Vec<brisk_lsp::FileEdits> {
@@ -1157,7 +1169,10 @@ impl Workspace {
     }
 }
 
-/// `.py` / `.pyi` files under `dir`, skipping hidden folders (`.venv`, `.git`) and caches.
+/// `.py` / `.pyi` files under `dir`, read from the disk: hidden folders (`.git`), caches
+/// and environments (any folder with `pyvenv.cfg`, `site-packages`) are skipped, so a
+/// refactoring never rewrites installed packages. For files the index already knows, use
+/// [`Workspace::project_python_files`].
 pub(super) fn python_files_under(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
@@ -1168,7 +1183,10 @@ pub(super) fn python_files_under(dir: &Path) -> Vec<PathBuf> {
             let name = e.file_name().to_string_lossy().into_owned();
             match e.file_type() {
                 Ok(t) if t.is_dir() => {
-                    if !name.starts_with('.') && name != "__pycache__" && name != "node_modules" {
+                    let skip = name.starts_with('.')
+                        || matches!(name.as_str(), "__pycache__" | "node_modules" | "site-packages" | "dist-packages")
+                        || p.join("pyvenv.cfg").is_file();
+                    if !skip {
                         stack.push(p);
                     }
                 }

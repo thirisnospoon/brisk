@@ -96,7 +96,7 @@ impl Repo {
     /// Commits that changed `rel` (following renames), newest first: Show History.
     pub fn file_log(&self, rel: &str, limit: usize) -> Result<Vec<Commit>> {
         let n = format!("-n{limit}");
-        let out = self.git(&["log", "--follow", &n, "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e", "--", rel])?;
+        let out = self.git(&["log", "--follow", &n, crate::LOG_FORMAT, "--", rel])?;
         Ok(crate::parse_log(&out))
     }
 
@@ -125,15 +125,21 @@ impl Repo {
 
     /// The same for `rel` as named at revision `from`.
     pub fn path_at(&self, from: Option<&str>, hash: &str, rel: &str) -> String {
-        let mut args = vec!["log", "--follow", "--format=%H", "--name-only"];
+        // -z: names unquoted and NUL-terminated; each record starts with \x1e, so a commit
+        // that lists no name does not shift the pairing.
+        let mut args = vec!["-c", "core.quotePath=false", "log", "--follow", "-z", "--format=%x1e%H", "--name-only"];
         args.extend(from);
         args.extend(["--", rel]);
         let out = self.git(&args).unwrap_or_default();
-        let mut lines = out.lines().filter(|l| !l.trim().is_empty());
-        while let Some(h) = lines.next() {
-            let path = lines.next().unwrap_or(rel);
+        // Newest first: a commit without a name keeps the name of the newer one.
+        let mut last = rel.to_string();
+        for rec in out.split('\x1e').filter(|r| !r.is_empty()) {
+            let (h, names) = rec.split_once(['\n', '\0']).unwrap_or((rec, ""));
+            if let Some(p) = names.split('\0').map(|n| n.trim_start_matches('\n')).find(|n| !n.is_empty()) {
+                last = p.to_string();
+            }
             if h.trim() == hash {
-                return path.trim().to_string();
+                return last;
             }
         }
         rel.to_string()

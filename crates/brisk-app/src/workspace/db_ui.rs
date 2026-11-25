@@ -22,7 +22,9 @@ pub struct Live {
 }
 
 pub enum ConnState {
-    Connecting,
+    /// The attempt's token: a connect that finishes after Disconnect, Delete or a newer
+    /// attempt finds another state (or token) and is dropped.
+    Connecting(u64),
     Live(Live),
     Failed(String),
 }
@@ -126,6 +128,8 @@ pub struct Db {
     pending: HashMap<String, Vec<After>>,
     delete_armed: Option<String>,
     last_used: Option<String>,
+    /// The last connect attempt's token.
+    connect_seq: u64,
 }
 
 impl Db {
@@ -147,6 +151,7 @@ impl Db {
             pending: HashMap::new(),
             delete_armed: None,
             last_used: None,
+            connect_seq: 0,
         };
         db.rebuild();
         (db, imported)
@@ -162,7 +167,7 @@ impl Db {
             }
             match self.states.get(&ds.id) {
                 None => {}
-                Some(ConnState::Connecting) => rows.push(Row { depth: 1, kind: RowKind::Message(di, "Connecting…".into(), false), key: String::new(), expandable: false }),
+                Some(ConnState::Connecting(_)) => rows.push(Row { depth: 1, kind: RowKind::Message(di, "Connecting…".into(), false), key: String::new(), expandable: false }),
                 Some(ConnState::Failed(e)) => rows.push(Row { depth: 1, kind: RowKind::Message(di, first_line(e), true), key: String::new(), expandable: false }),
                 Some(ConnState::Live(live)) => {
                     if live.schemas.is_empty() {
@@ -260,7 +265,7 @@ impl Workspace {
         let Some(ds) = self.db.sources.get(di).cloned() else { return };
         match self.db.states.get(&ds.id) {
             Some(ConnState::Live(_)) => return self.db_after(di, after, cx),
-            Some(ConnState::Connecting) => {
+            Some(ConnState::Connecting(_)) => {
                 self.db.pending.entry(ds.id.clone()).or_default().push(after);
                 return;
             }
@@ -272,7 +277,9 @@ impl Workspace {
             return;
         };
         self.db.pending.entry(ds.id.clone()).or_default().push(after);
-        self.db.states.insert(ds.id.clone(), ConnState::Connecting);
+        self.db.connect_seq += 1;
+        let token = self.db.connect_seq;
+        self.db.states.insert(ds.id.clone(), ConnState::Connecting(token));
         self.db.expanded.insert(format!("ds:{}", ds.id));
         self.db.rebuild();
         let root = self.root.clone();
@@ -286,6 +293,21 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
+                match this.db.states.get(&id) {
+                    Some(ConnState::Connecting(t)) if *t == token => {}
+                    // A newer attempt is under way: the waiting work is its.
+                    Some(ConnState::Connecting(_)) => return,
+                    // Disconnected or deleted meanwhile: the connection (if any) is dropped
+                    // here, which closes it, and the work that waited for it is told.
+                    _ => {
+                        for a in this.db.pending.remove(&id).unwrap_or_default() {
+                            if let After::Run { grid, .. } = a {
+                                grid.update(cx, |g, cx| g.set_error("Disconnected before the connection was made".into(), cx));
+                            }
+                        }
+                        return;
+                    }
+                }
                 let afters = this.db.pending.remove(&id).unwrap_or_default();
                 match res {
                     Ok((c, version, schemas)) => {
@@ -348,7 +370,7 @@ impl Workspace {
         let task = cx.background_executor().spawn(async move {
             let mut c = conn.lock().unwrap_or_else(|p| p.into_inner());
             let r = brisk_db::execute(c.as_mut(), &script, brisk_db::DEFAULT_LIMIT);
-            let ddl = brisk_db::split_statements(&script).into_iter().any(|r| brisk_db::is_ddl(&script[r]));
+            let ddl = brisk_db::split_statements(&script, c.driver()).into_iter().any(|r| brisk_db::is_ddl(&script[r]));
             let schemas = if ddl { brisk_db::introspect(c.as_mut()).ok() } else { None };
             (r, schemas)
         });
@@ -522,7 +544,7 @@ impl Workspace {
         let (sel, text, caret) = ed.update(cx, |e, _| e.sql_to_run());
         let sql = match sel {
             Some(s) => s,
-            None => match brisk_db::statement_at(&text, caret) {
+            None => match brisk_db::statement_at(&text, caret, self.db.sources[di].driver) {
                 Some(r) => {
                     // Flash the statement as a selection, as PyCharm highlights what it runs.
                     text[r].to_string()
@@ -608,7 +630,7 @@ impl Workspace {
         } else {
             self.db.expanded.insert(row.key.clone());
             if let RowKind::Source(di) = row.kind {
-                if !matches!(self.db.states.get(&self.db.sources[di].id), Some(ConnState::Live(_) | ConnState::Connecting)) {
+                if !matches!(self.db.states.get(&self.db.sources[di].id), Some(ConnState::Live(_) | ConnState::Connecting(_))) {
                     self.db.states.remove(&self.db.sources[di].id);
                     self.db_connect(di, After::Nothing, window, cx);
                 }
@@ -972,7 +994,7 @@ impl Workspace {
                                     let (b, c) = driver_badge(ds.driver);
                                     let detail = match this.db.states.get(&ds.id) {
                                         Some(ConnState::Live(l)) => l.version.clone(),
-                                        Some(ConnState::Connecting) => "connecting…".into(),
+                                        Some(ConnState::Connecting(_)) => "connecting…".into(),
                                         Some(ConnState::Failed(_)) => "failed".into(),
                                         None => match ds.driver {
                                             Driver::Sqlite => ds.file.clone(),

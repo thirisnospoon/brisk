@@ -147,18 +147,26 @@ pub fn render_template(body: &str, base: &str, unit: &str) -> Fields {
 
 /// The lines wrapped by a surrounder, with its fields.
 pub fn render_surround(lines: &[String], header: &str, footer: &str, unit: &str) -> Fields {
-    let base = lines
-        .iter()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| l.chars().take_while(|c| c.is_whitespace()).collect::<String>())
-        .min_by_key(|s| s.chars().count())
-        .unwrap_or_default();
+    // The indent all the lines share, char by char: with tabs and spaces mixed (or multibyte
+    // whitespace) the shortest indent is not a prefix of every line.
+    let mut base: Option<&str> = None;
+    for l in lines.iter().filter(|l| !l.trim().is_empty()) {
+        let ws = &l[..l.len() - l.trim_start().len()];
+        base = Some(match base {
+            None => ws,
+            Some(b) => {
+                let n: usize = b.chars().zip(ws.chars()).take_while(|(x, y)| x == y).map(|(x, _)| x.len_utf8()).sum();
+                &b[..n]
+            }
+        });
+    }
+    let base = base.unwrap_or_default().to_string();
     let mut out = format!("{base}{}", reindent(header, &base, unit));
     let unit = if header.starts_with('#') { "" } else { unit };
     for l in lines {
         out.push('\n');
         if !l.trim().is_empty() {
-            out.push_str(&format!("{base}{unit}{}", &l[base.len().min(l.len())..]));
+            out.push_str(&format!("{base}{unit}{}", l.strip_prefix(base.as_str()).unwrap_or(l)));
         }
     }
     if !footer.is_empty() {
@@ -166,6 +174,12 @@ pub fn render_surround(lines: &[String], header: &str, footer: &str, unit: &str)
         out.push_str(&format!("{base}{}", reindent(footer, &base, unit)));
     }
     parse_fields(&out)
+}
+
+/// The text between `open` and `close` when `t` is wrapped in them. The markers must not
+/// overlap: `/*/` and `<!-->` start and end with them but are not a comment around anything.
+fn block_inner<'a>(t: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    t.strip_prefix(open)?.strip_suffix(close)
 }
 
 /// Block comment markers by file type; `None` where the language has only line comments.
@@ -349,11 +363,7 @@ impl Editor {
             last -= 1;
         }
         let lines: Vec<usize> = (first..=last).filter(|&l| !self.buffer.line(l).trim().is_empty()).collect();
-        let all = !lines.is_empty() && lines.iter().all(|&l| {
-            let t = self.buffer.line(l);
-            let t = t.trim();
-            t.starts_with(open) && t.ends_with(close)
-        });
+        let all = !lines.is_empty() && lines.iter().all(|&l| block_inner(self.buffer.line(l).trim(), open, close).is_some());
         let mut edits = Vec::new();
         for &l in &lines {
             let text = self.buffer.line(l);
@@ -362,7 +372,7 @@ impl Editor {
             let body: String = text.chars().skip(ws).collect();
             let body = body.trim_end();
             let new = if all {
-                let inner = &body[open.len()..body.len() - close.len()];
+                let inner = block_inner(body, open, close).unwrap_or(body);
                 inner.strip_prefix(' ').and_then(|s| s.strip_suffix(' ')).unwrap_or(inner).to_string()
             } else {
                 format!("{open} {body} {close}")
@@ -418,5 +428,24 @@ mod tests {
         assert_eq!(f.text, "try:\n    a()\nexcept Exception as e:\n    raise");
         let f = render_surround(&["    a()".to_string()], "# region ${1:Description}", "# endregion", "    ");
         assert_eq!(f.text, "    # region Description\n    a()\n    # endregion");
+    }
+
+    #[test]
+    fn surround_mixed_indent() {
+        // Tab vs spaces: only the shared prefix ("") is the base; nothing is cut from a line.
+        let f = render_surround(&["\tx = 1".to_string(), "  y = 2".to_string()], "try:", "", "    ");
+        assert_eq!(f.text, "try:\n    \tx = 1\n      y = 2");
+        // Multibyte whitespace (U+3000) must not be cut in the middle.
+        let f = render_surround(&["\u{3000}a".to_string(), "\u{3000} b".to_string()], "try:", "", "    ");
+        assert_eq!(f.text, "\u{3000}try:\n\u{3000}    a\n\u{3000}     b");
+    }
+
+    #[test]
+    fn block_inner_needs_both_markers() {
+        assert_eq!(block_inner("/* a */", "/*", "*/"), Some(" a "));
+        assert_eq!(block_inner("/**/", "/*", "*/"), Some(""));
+        assert_eq!(block_inner("/*/", "/*", "*/"), None);
+        assert_eq!(block_inner("<!-->", "<!--", "-->"), None);
+        assert_eq!(block_inner("<!---->", "<!--", "-->"), Some(""));
     }
 }

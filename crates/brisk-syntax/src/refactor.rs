@@ -79,10 +79,18 @@ pub fn constant_row(tree: &Tree) -> (usize, bool) {
 }
 
 /// The identifiers of `n` in source order with whether each binds, not entering nested
-/// functions, lambdas or classes (their own name counts as a binding here).
+/// functions, lambdas or classes (their own name counts as a binding here). An explicit
+/// stack, not recursion: a generated file nested thousands deep must not overflow it.
 fn names<'t>(n: Node<'t>, out: &mut Vec<Node<'t>>) {
-    let mut c = n.walk();
-    for k in n.children(&mut c) {
+    // Children are pushed in reverse so they pop in source order.
+    fn push_children<'t>(n: Node<'t>, stack: &mut Vec<Node<'t>>) {
+        let mut c = n.walk();
+        let kids: Vec<Node<'t>> = n.children(&mut c).collect();
+        stack.extend(kids.into_iter().rev());
+    }
+    let mut stack = Vec::new();
+    push_children(n, &mut stack);
+    while let Some(k) = stack.pop() {
         if is_scope(k.kind()) {
             if let Some(name) = k.child_by_field_name("name") {
                 out.push(name);
@@ -90,10 +98,9 @@ fn names<'t>(n: Node<'t>, out: &mut Vec<Node<'t>>) {
             // Defaults and decorators run here, in the enclosing scope.
             if let Some(p) = k.child_by_field_name("parameters") {
                 let mut pc = p.walk();
-                for d in p.children(&mut pc) {
-                    if let Some(v) = d.child_by_field_name("value") {
-                        names(v, out);
-                    }
+                let values: Vec<Node<'t>> = p.children(&mut pc).filter_map(|d| d.child_by_field_name("value")).collect();
+                for v in values.into_iter().rev() {
+                    push_children(v, &mut stack);
                 }
             }
             continue;
@@ -104,7 +111,7 @@ fn names<'t>(n: Node<'t>, out: &mut Vec<Node<'t>>) {
             }
             continue;
         }
-        names(k, out);
+        push_children(k, &mut stack);
     }
 }
 
@@ -149,13 +156,17 @@ pub struct MethodPlan {
 
 /// Inside `n` (not in nested scopes) a node of one of `kinds`; loops stop break/continue.
 fn contains(n: Node, kinds: &[&str], loops_stop: bool) -> bool {
-    let mut c = n.walk();
-    for k in n.children(&mut c) {
-        if is_scope(k.kind()) || loops_stop && matches!(k.kind(), "for_statement" | "while_statement") {
-            continue;
-        }
-        if kinds.contains(&k.kind()) || contains(k, kinds, loops_stop) {
-            return true;
+    let mut stack = vec![n];
+    while let Some(n) = stack.pop() {
+        let mut c = n.walk();
+        for k in n.children(&mut c) {
+            if is_scope(k.kind()) || loops_stop && matches!(k.kind(), "for_statement" | "while_statement") {
+                continue;
+            }
+            if kinds.contains(&k.kind()) {
+                return true;
+            }
+            stack.push(k);
         }
     }
     false
@@ -173,8 +184,11 @@ pub fn extract_method(tree: &Tree, text: &str, sel: Range<usize>, name: &str) ->
     let (stmts, rows_r): (Vec<Node>, Range<usize>) = match expr {
         Some(e) => (vec![e], rows(&e)),
         None => {
-            let first = text[..sel.start].matches('\n').count();
-            let last = text[..sel.end.max(sel.start + 1).min(text.len())].trim_end_matches('\n').matches('\n').count();
+            // Byte-wise: an empty selection's `start + 1` may fall inside a character.
+            let lines_in = |b: &[u8]| b.iter().filter(|&&c| c == b'\n').count();
+            let first = lines_in(&text.as_bytes()[..sel.start.min(text.len())]);
+            let upto = &text.as_bytes()[..sel.end.max(sel.start + 1).min(text.len())];
+            let last = lines_in(&upto[..upto.iter().rposition(|&c| c != b'\n').map_or(0, |p| p + 1)]);
             let (r, _) = crate::statement_move(tree, first, last.max(first), true).ok_or("Select whole statements or an expression")?;
             let mut v = Vec::new();
             collect_statements(root, &r, &mut v);
@@ -266,7 +280,7 @@ pub fn extract_method(tree: &Tree, text: &str, sel: Range<usize>, name: &str) ->
                     def.push(String::new());
                 } else {
                     let ws = indent_of(l).len().min(own);
-                    def.push(format!("{def_indent}    {}", &l[ws..]));
+                    def.push(format!("{def_indent}    {}", l.get(ws..).unwrap_or_else(|| l.trim_start())));
                 }
             }
             match returns.len() {
@@ -486,6 +500,25 @@ pub fn text_occurrences(tree: &Tree, text: &str, name: &str) -> Vec<Range<usize>
 
 #[cfg(test)]
 mod tests {
+    /// Generated code nested thousands deep: an error or a plan, never a stack overflow.
+    #[test]
+    fn extract_survives_deep_nesting() {
+        let n = 20_000;
+        let src = format!("x = {}1{}\n", "(".repeat(n), ")".repeat(n));
+        let t = crate::parse_full(crate::Lang::Python, &src, None).unwrap();
+        let big = std::thread::Builder::new().stack_size(1 << 20);
+        let h = big.spawn(move || { let _ = extract_method(&t, &src, 0..src.len() - 1, "m"); }).unwrap();
+        assert!(h.join().is_ok());
+    }
+
+    #[test]
+    fn extract_with_an_empty_selection_before_a_wide_char() {
+        let src = "def f():\n    a = '\u{44f}'\n";
+        let t = crate::parse_full(crate::Lang::Python, src, None).unwrap();
+        let at = src.find('\u{44f}').unwrap();
+        let _ = extract_method(&t, src, at..at, "m");
+    }
+
     use super::*;
 
     fn tree(s: &str) -> Tree {

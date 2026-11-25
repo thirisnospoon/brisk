@@ -41,6 +41,7 @@ fn quiet(cmd: &mut std::process::Command) -> &mut std::process::Command {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
+    crate::py_packages::offline_in_smoke(cmd);
     cmd.stdin(std::process::Stdio::null())
 }
 

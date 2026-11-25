@@ -51,11 +51,92 @@ pub fn load(p: &Path) -> (String, TextEncoding, Option<String>) {
     }
     match std::fs::read(p) {
         Ok(bytes) => match encoding::decode(&bytes, encoding::system_legacy()) {
-            Decoded::Text { text, encoding } => (text, encoding, None),
+            // Read-only, so a save cannot turn those bytes into U+FFFD for good.
+            Decoded::Text { text, encoding, lossy: true } => {
+                (text, encoding, Some(format!("Contains bytes that are not valid {}: opened read-only so saving cannot change them", encoding.label())))
+            }
+            Decoded::Text { text, encoding, lossy: false } => (text, encoding, None),
             Decoded::Binary => (String::new(), TextEncoding::default(), Some("Binary file: not shown as text".into())),
         },
         Err(e) => (String::new(), TextEncoding::default(), Some(e.to_string())),
     }
+}
+
+/// Replace `path`'s contents without a window where a crash or full disk leaves it truncated:
+/// write a temp file next to it, flush it to disk, then swap it in. On Windows `ReplaceFileW`
+/// keeps the original's ACLs, attributes and creation time; elsewhere the permissions are
+/// copied. A read-only file fails with a clear error, as a plain write would.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    // Through a symlink: replace the target, not the link.
+    let path = match std::fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => std::fs::canonicalize(path)?,
+        _ => path.to_path_buf(),
+    };
+    let meta = std::fs::metadata(&path).ok();
+    if meta.as_ref().is_some_and(|m| m.permissions().readonly()) {
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, format!("{name} is read-only")));
+    }
+    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = dir.join(format!(".{name}.{}-{n}.brisk-tmp", std::process::id()));
+    let mut f = match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
+        Ok(f) => f,
+        // A folder where only the file itself is writable: write in place rather than not at all.
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return std::fs::write(&path, bytes),
+        Err(e) => return Err(e),
+    };
+    if let Err(e) = f.write_all(bytes).and_then(|_| f.sync_all()) {
+        // Disk full and the like: the original is untouched.
+        drop(f);
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    drop(f);
+    if meta.is_some() && replace_file(&path, &tmp) {
+        return Ok(());
+    }
+    // Unix mode bits (on Windows only the read-only flag, which is off here).
+    if let Some(m) = &meta {
+        let _ = std::fs::set_permissions(&tmp, m.permissions());
+    }
+    match std::fs::rename(&tmp, &path) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            // E.g. another program holds the file open without delete sharing.
+            let _ = std::fs::remove_file(&tmp);
+            std::fs::write(&path, bytes)
+        }
+    }
+}
+
+#[cfg(windows)]
+fn replace_file(target: &Path, replacement: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn ReplaceFileW(
+            replaced: *const u16,
+            replacement: *const u16,
+            backup: *const u16,
+            flags: u32,
+            exclude: *mut std::ffi::c_void,
+            reserved: *mut std::ffi::c_void,
+        ) -> i32;
+    }
+    const REPLACEFILE_IGNORE_MERGE_ERRORS: u32 = 0x2;
+    let wide = |p: &Path| p.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+    let (a, b) = (wide(target), wide(replacement));
+    // SAFETY: both paths are NUL-terminated UTF-16 buffers that outlive the call.
+    unsafe { ReplaceFileW(a.as_ptr(), b.as_ptr(), std::ptr::null(), REPLACEFILE_IGNORE_MERGE_ERRORS, std::ptr::null_mut(), std::ptr::null_mut()) != 0 }
+}
+
+#[cfg(not(windows))]
+fn replace_file(_: &Path, _: &Path) -> bool {
+    false
 }
 
 impl Editor {
@@ -93,8 +174,8 @@ impl Editor {
                 encoding::encode(&text, self.encoding).map_err(std::io::Error::other)?
             }
         };
-        std::fs::write(&p, bytes)?;
-        crate::local_history::record(&p, &self.buffer.text(), crate::local_history::Label::Saved);
+        write_atomic(&p, &bytes)?;
+        crate::local_history::record_later(p.clone(), self.buffer.text(), crate::local_history::Label::Saved);
         self.buffer.mark_saved();
         self.disk_stamp = stamp(&p);
         Ok(true)
@@ -111,14 +192,13 @@ impl Editor {
         self.disk_stamp = stamp(&p);
         self.disk_conflict = None;
         let text = text.replace("\r\n", "\n");
-        crate::local_history::record(&p, &text, crate::local_history::Label::External);
+        crate::local_history::record_later(p.clone(), text.clone(), crate::local_history::Label::External);
         if text == self.buffer.text() {
             self.buffer.mark_saved();
             return false;
         }
-        let caret = self.buffer.primary().head;
+        // Edits only the changed lines: the caret, breakpoints and bookmarks follow their text.
         self.buffer.set_text(&text);
-        self.buffer.set_caret(caret.min(self.buffer.len_chars()), false);
         self.buffer.mark_saved();
         true
     }
@@ -219,5 +299,35 @@ impl Editor {
                 .child(button("disk-keep", keep, false, cx))
                 .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn atomic_write_replaces_and_refuses_read_only() {
+        let dir = std::env::temp_dir().join(format!("brisk-atomic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("a.py");
+        write_atomic(&f, b"new file").unwrap();
+        assert_eq!(std::fs::read(&f).unwrap(), b"new file");
+        write_atomic(&f, b"second").unwrap();
+        assert_eq!(std::fs::read(&f).unwrap(), b"second");
+        // No temp files left behind.
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let mut p = std::fs::metadata(&f).unwrap().permissions();
+        p.set_readonly(true);
+        std::fs::set_permissions(&f, p.clone()).unwrap();
+        let e = write_atomic(&f, b"x").unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(e.to_string().contains("read-only"), "{e}");
+        assert_eq!(std::fs::read(&f).unwrap(), b"second");
+        #[allow(clippy::permissions_set_readonly_false)]
+        p.set_readonly(false);
+        std::fs::set_permissions(&f, p).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

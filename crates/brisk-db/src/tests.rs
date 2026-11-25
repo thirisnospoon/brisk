@@ -3,18 +3,37 @@ use crate::*;
 #[test]
 fn split_and_caret() {
     let sql = "select 1;\n-- comment; not a split\nselect 'a;b', \"x;y\" from t; /* ; */\n\ncreate function f() returns int as $$ begin return 1; end $$ language plpgsql;\nselect $1;";
-    let parts: Vec<&str> = split_statements(sql).into_iter().map(|r| &sql[r]).collect();
+    let parts: Vec<&str> = split_statements(sql, Driver::Postgres).into_iter().map(|r| &sql[r]).collect();
     assert_eq!(parts.len(), 4, "{parts:?}");
     assert_eq!(parts[0], "select 1");
     assert!(parts[1].starts_with("-- comment") && parts[1].ends_with("from t"));
     assert!(parts[2].contains("return 1; end $$"));
     assert_eq!(parts[3], "select $1");
     // Caret right after `;` belongs to the statement before it.
-    let r = statement_at(sql, 9).unwrap();
+    let r = statement_at(sql, 9, Driver::Postgres).unwrap();
     assert_eq!(&sql[r], "select 1");
-    let r = statement_at(sql, sql.find("from t").unwrap()).unwrap();
+    let r = statement_at(sql, sql.find("from t").unwrap(), Driver::Postgres).unwrap();
     assert!(sql[r].ends_with("from t"));
-    assert!(split_statements("  -- only a comment\n /* x */ ").is_empty());
+    assert!(split_statements("  -- only a comment\n /* x */ ", Driver::Sqlite).is_empty());
+}
+
+#[test]
+fn backslashes_in_strings_per_dialect() {
+    let parts = |sql: &str, d: Driver| -> Vec<String> { split_statements(sql, d).into_iter().map(|r| sql[r].to_string()).collect() };
+    // Standard strings (PostgreSQL, SQLite): a backslash is just a character.
+    let sql = r"select 'C:\'; select 2";
+    assert_eq!(parts(sql, Driver::Postgres), [r"select 'C:\'", "select 2"]);
+    assert_eq!(parts(sql, Driver::Sqlite), [r"select 'C:\'", "select 2"]);
+    // E'…' in PostgreSQL and every MySQL string: it escapes the quote.
+    let sql = r"select E'it\'s; fine'; select 2";
+    assert_eq!(parts(sql, Driver::Postgres), [r"select E'it\'s; fine'", "select 2"]);
+    let sql = r#"select 'it\'s; fine', "a\"; b"; select 2"#;
+    assert_eq!(parts(sql, Driver::Mysql), [r#"select 'it\'s; fine', "a\"; b""#, "select 2"]);
+    // `name'…'` is not an E string.
+    let sql = r"select note'x\'; select 2";
+    assert_eq!(parts(sql, Driver::Postgres).len(), 2);
+    // Non-ASCII text between the pieces.
+    assert_eq!(parts("select 'é;' as ключ; select 2", Driver::Postgres), ["select 'é;' as ключ", "select 2"]);
 }
 
 #[test]

@@ -38,6 +38,8 @@ fn write_msg(w: &mut impl Write, v: &Value) -> std::io::Result<()> {
     w.flush()
 }
 
+/// The next message; `Value::Null` for a body that is not JSON (skipped, the framing is
+/// intact), `None` once the stream ends or loses its framing.
 fn read_msg(r: &mut impl BufRead) -> Option<Value> {
     let mut len = None;
     loop {
@@ -60,7 +62,7 @@ fn read_msg(r: &mut impl BufRead) -> Option<Value> {
     }
     let mut body = vec![0u8; len?];
     r.read_exact(&mut body).ok()?;
-    serde_json::from_slice(&body).ok()
+    Some(serde_json::from_slice(&body).unwrap_or(Value::Null))
 }
 
 impl Client {
@@ -118,6 +120,10 @@ impl Client {
                 }
             }
             alive.store(false, Ordering::SeqCst);
+            // The adapter may still be running with its output unreadable: stop it.
+            if let Some(c) = weak.upgrade() {
+                c.kill();
+            }
             for (_, w) in pending.lock().unwrap_or_else(|e| e.into_inner()).drain() {
                 let _ = w.send(Err("the debugger exited".into()));
             }
@@ -157,8 +163,10 @@ impl Client {
         rx
     }
 
+    /// Stops the adapter and what it started (the debuggee's launcher and the debuggee).
     pub fn kill(&self) {
-        let _ = self.child.lock().unwrap_or_else(|e| e.into_inner()).kill();
+        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        brisk_proc::kill_tree(&mut child);
     }
 }
 
@@ -214,12 +222,14 @@ pub fn adapter_command(python: &Path) -> Result<AdapterCommand, String> {
         return Ok(AdapterCommand { program: python.to_path_buf(), args: vec!["-m".into(), "debugpy.adapter".into()], bundled: None });
     }
     let lib = bundled_debugpy().ok_or_else(|| "debugpy was not found: run `pip install debugpy` in the project interpreter".to_string())?;
-    // `-c` instead of PYTHONPATH, so the program being debugged keeps its own environment.
-    let boot = format!(
-        "import sys, runpy; sys.path.insert(0, {:?}); sys.argv = ['debugpy.adapter']; runpy.run_module('debugpy.adapter', run_name='__main__', alter_sys=True)",
-        lib.to_string_lossy()
-    );
-    Ok(AdapterCommand { program: python.to_path_buf(), args: vec!["-c".into(), boot], bundled: Some(lib) })
+    Ok(AdapterCommand { program: python.to_path_buf(), args: vec!["-c".into(), bootstrap(&lib)], bundled: Some(lib) })
+}
+
+/// `-c` instead of PYTHONPATH, so the program being debugged keeps its own environment. A
+/// JSON string is a valid Python literal (Rust's `{:?}` is not: `\u{..}` escapes).
+fn bootstrap(lib: &Path) -> String {
+    let lib = serde_json::to_string(&lib.to_string_lossy()).unwrap_or_default();
+    format!("import sys, runpy; sys.path.insert(0, {lib}); sys.argv = ['debugpy.adapter']; runpy.run_module('debugpy.adapter', run_name='__main__', alter_sys=True)")
 }
 
 // --- Requests ----------------------------------------------------------------------

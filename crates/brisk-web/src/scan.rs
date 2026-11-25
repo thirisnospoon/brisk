@@ -393,23 +393,32 @@ fn django_routes(idx: &Index, infos: &[FileInfo]) -> Vec<Route> {
         .filter_map(|p| by_path.get(p.as_path()).copied())
         .collect();
     let mut out = Vec::new();
-    let mut visited = vec![false; infos.len()];
+    let mut walk = Walk { seen: vec![false; infos.len()], stack: vec![false; infos.len()] };
     // Then every urls file nobody includes (a project without settings, a second site).
     roots.extend(url_files.iter().copied());
     for r in roots {
-        if !visited[r] {
-            walk_urls(idx, infos, &by_path, r, "", "", 0, &mut visited, &mut out);
+        if !walk.seen[r] {
+            walk_urls(idx, infos, &by_path, r, "", "", 0, &mut walk, &mut out);
         }
     }
     out
 }
 
+/// The urls files reached so far (not walked again as roots), and the ones on the current
+/// include chain (an include cycle stops there). The same urlconf included under two
+/// prefixes is walked once per prefix.
+struct Walk {
+    seen: Vec<bool>,
+    stack: Vec<bool>,
+}
+
 #[allow(clippy::too_many_arguments)]
-fn walk_urls(idx: &Index, infos: &[FileInfo], by_path: &HashMap<&Path, usize>, i: usize, prefix: &str, ns: &str, depth: usize, visited: &mut Vec<bool>, out: &mut Vec<Route>) {
-    if depth > 8 || visited[i] {
+fn walk_urls(idx: &Index, infos: &[FileInfo], by_path: &HashMap<&Path, usize>, i: usize, prefix: &str, ns: &str, depth: usize, walk: &mut Walk, out: &mut Vec<Route>) {
+    if depth > 8 || walk.stack[i] {
         return;
     }
-    visited[i] = true;
+    walk.seen[i] = true;
+    walk.stack[i] = true;
     let info = &infos[i];
     for e in &info.urls {
         let at = Loc { path: info.path.clone(), line: e.at.0, col: e.at.1 };
@@ -427,10 +436,11 @@ fn walk_urls(idx: &Index, infos: &[FileInfo], by_path: &HashMap<&Path, usize>, i
                     (true, Some(c)) => c,
                     (false, Some(c)) => format!("{ns}:{c}"),
                 };
-                walk_urls(idx, infos, by_path, child, &format!("{prefix}{}", e.route), &ns, depth + 1, visited, out);
+                walk_urls(idx, infos, by_path, child, &format!("{prefix}{}", e.route), &ns, depth + 1, walk, out);
             }
         }
     }
+    walk.stack[i] = false;
 }
 
 fn decorator_routes(idx: &Index, infos: &[FileInfo]) -> Vec<Route> {

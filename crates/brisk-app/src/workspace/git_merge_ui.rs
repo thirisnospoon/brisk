@@ -53,15 +53,59 @@ impl Workspace {
     /// Accept Yours / Accept Theirs for the selected file.
     pub(super) fn conflicts_accept(&mut self, ours: bool, cx: &mut Context<Self>) {
         let files = self.selected_conflicts();
-        let Some(g) = self.git.as_ref() else { return };
         if files.is_empty() {
             return;
         }
-        match g.repo.accept(&files, ours) {
-            Ok(()) => self.status = format!("Resolved {} using {}", files.join(", "), if ours { "yours" } else { "theirs" }),
-            Err(e) => self.show_toast(format!("Cannot resolve: {e}"), true, cx),
+        let Some(task) = self.resolve_in_background("Resolve", cx, move |r| {
+            r.accept(&files, ours).map(|_| format!("Resolved {} using {}", files.join(", "), if ours { "yours" } else { "theirs" }))
+        }) else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let (res, left) = task.await;
+            let _ = this.update(cx, |this, cx| this.finish_resolve(res, left, "Cannot resolve", cx));
+        })
+        .detach();
+    }
+
+    /// A resolve step off the UI thread (under the git busy guard), with the conflicts left
+    /// after it. None when another git operation is running.
+    fn resolve_in_background(
+        &mut self,
+        title: &'static str,
+        cx: &mut Context<Self>,
+        op: impl FnOnce(&brisk_git::Repo) -> brisk_git::Result<String> + Send + 'static,
+    ) -> Option<gpui::Task<(brisk_git::Result<String>, Vec<String>)>> {
+        let g = self.git.as_mut()?;
+        if let Some(b) = g.busy {
+            self.show_toast(format!("Wait for “{b}” to finish"), true, cx);
+            return None;
         }
-        self.after_resolve(cx);
+        g.busy = Some(title);
+        let repo = g.repo.clone();
+        Some(cx.background_executor().spawn(async move {
+            let res = op(&repo);
+            (res, repo.conflicts().unwrap_or_default())
+        }))
+    }
+
+    /// Clears the busy guard and reports the outcome; true when it succeeded. A failure
+    /// leaves the dialog (or the merge window) as it is.
+    fn finish_resolve(&mut self, res: brisk_git::Result<String>, left: Vec<String>, err: &str, cx: &mut Context<Self>) -> bool {
+        if let Some(g) = self.git.as_mut() {
+            g.busy = None;
+        }
+        match res {
+            Ok(msg) => {
+                self.status = msg;
+                self.after_resolve(left, cx);
+                true
+            }
+            Err(e) => {
+                self.show_toast(format!("{err}: {e}"), true, cx);
+                false
+            }
+        }
     }
 
     /// Merge…: the merge window for the selected file, in a tab.
@@ -101,19 +145,32 @@ impl Workspace {
         }
         cx.subscribe_in(&view, window, |this, view, ev: &MergeEvent, window, cx| {
             let rel = view.read(cx).rel.clone();
-            if let MergeEvent::Apply(text) = ev {
-                let Some(g) = this.git.as_ref() else { return };
-                match g.repo.resolve_with(&rel, text) {
-                    Ok(()) => this.status = format!("Merged {rel}"),
-                    Err(e) => return this.show_toast(format!("Cannot save the merge: {e}"), true, cx),
-                }
-            }
-            if let Some(i) = this.tabs.iter().position(|t| matches!(t, Tab::Merge(m) if m == view)) {
-                this.close_tab(i, window, cx);
-            }
             match ev {
-                MergeEvent::Apply(_) => this.after_resolve(cx),
-                MergeEvent::Cancel => this.open_conflicts(cx),
+                MergeEvent::Apply(text) => {
+                    let text = text.clone();
+                    let Some(task) = this.resolve_in_background("Merge", cx, move |r| r.resolve_with(&rel, &text).map(|_| format!("Merged {rel}"))) else {
+                        return;
+                    };
+                    let view = view.clone();
+                    cx.spawn_in(window, async move |this, cx| {
+                        let (res, left) = task.await;
+                        let _ = this.update_in(cx, |this, window, cx| {
+                            // A failed save keeps the merge window open with the user's work.
+                            if this.finish_resolve(res, left, "Cannot save the merge", cx) {
+                                if let Some(i) = this.tabs.iter().position(|t| matches!(t, Tab::Merge(m) if *m == view)) {
+                                    this.close_tab(i, window, cx);
+                                }
+                            }
+                        });
+                    })
+                    .detach();
+                }
+                MergeEvent::Cancel => {
+                    if let Some(i) = this.tabs.iter().position(|t| matches!(t, Tab::Merge(m) if m == view)) {
+                        this.close_tab(i, window, cx);
+                    }
+                    this.open_conflicts(cx);
+                }
             }
         })
         .detach();
@@ -128,12 +185,11 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Back to the Conflicts list, or close it when nothing is left.
-    fn after_resolve(&mut self, cx: &mut Context<Self>) {
+    /// Back to the Conflicts list of `files` (the conflicts left), or close it when none is.
+    fn after_resolve(&mut self, files: Vec<String>, cx: &mut Context<Self>) {
         self.reload_editors(cx);
         self.refresh_git(cx);
         let Some(g) = self.git.as_mut() else { return };
-        let files = g.repo.conflicts().unwrap_or_default();
         if files.is_empty() {
             g.dialog = None;
             self.show_toast("All conflicts are resolved. Commit to finish the merge.".into(), false, cx);
@@ -158,6 +214,9 @@ impl Workspace {
         let k = &e.keystroke;
         let key = k.key.as_str();
         if key == "escape" {
+            if self.stash_cancel_drop(cx) {
+                return;
+            }
             return self.close_git_dialog(window, cx);
         }
         match self.git_dialog() {

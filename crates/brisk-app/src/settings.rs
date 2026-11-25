@@ -99,9 +99,26 @@ pub fn current() -> Settings {
 
 /// Read the saved settings (at start-up).
 pub fn load() -> Settings {
+    let s = load_file();
+    if let Ok(mut l) = LOADED.lock() {
+        *l = Some(to_json(&s));
+    }
+    s
+}
+
+/// What this process last read or wrote: `save` writes only the keys that differ from it,
+/// so two Brisk windows (two processes) do not undo each other's changes.
+static LOADED: std::sync::Mutex<Option<serde_json::Value>> = std::sync::Mutex::new(None);
+
+fn load_file() -> Settings {
     let mut s = Settings::default();
     if let Ok(text) = std::fs::read_to_string(path()) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+        let parsed = serde_json::from_str::<serde_json::Value>(&text);
+        if parsed.is_err() && !text.trim().is_empty() {
+            // Hand-edited into invalid JSON: keep a copy before defaults overwrite it.
+            let _ = std::fs::copy(path(), path().with_extension("json.bak"));
+        }
+        if let Ok(v) = parsed {
             if let Some(t) = v.get("theme").and_then(|t| t.as_str()) {
                 s.light = t == "light";
             }
@@ -189,7 +206,31 @@ pub fn apply(s: &Settings) {
 }
 
 pub fn save(s: &Settings) -> std::io::Result<()> {
-    let v = serde_json::json!({
+    let new = to_json(s);
+    let p = path();
+    let mut merged = std::fs::read_to_string(&p)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let mut loaded = LOADED.lock().unwrap_or_else(|e| e.into_inner());
+    if let (Some(m), Some(n)) = (merged.as_object_mut(), new.as_object()) {
+        for (k, v) in n {
+            if loaded.as_ref().and_then(|l| l.get(k)) != Some(v) {
+                m.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    crate::editor::write_atomic(&p, serde_json::to_string_pretty(&merged).unwrap_or_default().as_bytes())?;
+    *loaded = Some(new);
+    Ok(())
+}
+
+fn to_json(s: &Settings) -> serde_json::Value {
+    serde_json::json!({
         "theme": if s.light { "light" } else { "dark" },
         "editor_font": s.editor_font,
         "font_size": (s.font_size as f64 * 10.0).round() / 10.0,
@@ -213,12 +254,7 @@ pub fn save(s: &Settings) -> std::io::Result<()> {
         "soft_wrap_extra_indent": s.soft_wrap_extra_indent,
         "line_comment_first_column": s.line_comment_first_column,
         "line_comment_space": s.line_comment_space,
-    });
-    let p = path();
-    if let Some(d) = p.parent() {
-        std::fs::create_dir_all(d)?;
-    }
-    std::fs::write(p, serde_json::to_string_pretty(&v).unwrap_or_default())
+    })
 }
 
 /// Whether a new editor for `path` starts with Soft-Wrap on ("Soft-wrap these files").

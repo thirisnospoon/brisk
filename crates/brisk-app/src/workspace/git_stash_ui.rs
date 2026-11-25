@@ -13,7 +13,8 @@ use gpui::{div, px, Context, KeyDownEvent, Window};
 
 pub enum StashDialog {
     Push { message: String, untracked: bool },
-    List { entries: Vec<StashEntry>, selected: usize, files: Vec<FileChange> },
+    /// `confirm_drop`: Drop was asked for; the dialog shows its confirmation (Enter / Esc).
+    List { entries: Vec<StashEntry>, selected: usize, files: Vec<FileChange>, confirm_drop: bool },
 }
 
 impl Workspace {
@@ -56,33 +57,26 @@ impl Workspace {
 
     /// Unstash Changes…: the stash list, the newest selected.
     pub(super) fn open_unstash(&mut self, cx: &mut Context<Self>) {
-        self.open_unstash_at(0, None, cx);
+        self.open_unstash_at(0, cx);
     }
 
-    /// The stash list with row `keep` selected; `drop` is dropped first. The git calls run
-    /// off the UI thread.
-    fn open_unstash_at(&mut self, keep: usize, drop: Option<String>, cx: &mut Context<Self>) {
+    /// The stash list with row `keep` selected. The git calls run off the UI thread.
+    fn open_unstash_at(&mut self, keep: usize, cx: &mut Context<Self>) {
         let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
         let task = cx.background_executor().spawn(async move {
-            let dropped = drop.map(|name| repo.stash_drop(&name).map(|_| name.clone()).map_err(|e| format!("Cannot drop {name}: {e}")));
             let entries = repo.stash_list().unwrap_or_default();
             let keep = keep.min(entries.len().saturating_sub(1));
             let files = entries.get(keep).map(|e| repo.stash_files(&e.name).unwrap_or_default()).unwrap_or_default();
-            (dropped, entries, keep, files)
+            (entries, keep, files)
         });
         cx.spawn(async move |this, cx| {
-            let (dropped, entries, selected, files) = task.await;
+            let (entries, selected, files) = task.await;
             let _ = this.update(cx, |this, cx| {
-                match dropped {
-                    Some(Ok(name)) => this.status = format!("Dropped {name}"),
-                    Some(Err(e)) => this.show_toast(e, true, cx),
-                    None => {}
-                }
                 if entries.is_empty() {
                     this.set_stash_dialog(None, cx);
                     return this.show_toast("There are no stashes".into(), false, cx);
                 }
-                this.set_stash_dialog(Some(StashDialog::List { entries, selected, files }), cx);
+                this.set_stash_dialog(Some(StashDialog::List { entries, selected, files, confirm_drop: false }), cx);
             });
         })
         .detach();
@@ -90,7 +84,8 @@ impl Workspace {
 
     fn stash_select(&mut self, i: usize, cx: &mut Context<Self>) {
         let repo = self.git.as_ref().map(|g| g.repo.clone());
-        if let (Some(repo), Some(StashDialog::List { entries, selected, files })) = (repo, self.stash_dialog()) {
+        if let (Some(repo), Some(StashDialog::List { entries, selected, files, confirm_drop })) = (repo, self.stash_dialog()) {
+            *confirm_drop = false;
             let i = i.min(entries.len().saturating_sub(1));
             if *selected != i || files.is_empty() {
                 *selected = i;
@@ -139,14 +134,36 @@ impl Workspace {
         self.git_op(title, move |r| r.stash_apply(&name, pop).map(|_| format!("{name} {}", if pop { "popped" } else { "applied" })), |_, _| {}, cx);
     }
 
+    /// Drop asks first (it cannot be undone), like Rollback.
     pub(super) fn stash_drop(&mut self, cx: &mut Context<Self>) {
-        let Some(name) = self.selected_stash() else { return };
+        if let Some(StashDialog::List { entries, confirm_drop, .. }) = self.stash_dialog() {
+            *confirm_drop = !entries.is_empty();
+        }
+        cx.notify();
+    }
+
+    /// Esc on the Drop confirmation cancels just that; true when there was one.
+    pub(super) fn stash_cancel_drop(&mut self, cx: &mut Context<Self>) -> bool {
+        match self.stash_dialog() {
+            Some(StashDialog::List { confirm_drop, .. }) if *confirm_drop => {
+                *confirm_drop = false;
+                cx.notify();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The confirmed Drop, through `git_op` (one git operation at a time). The stash is
+    /// addressed by its commit: `stash@{N}` may have shifted since the list was read.
+    fn stash_drop_confirmed(&mut self, cx: &mut Context<Self>) {
+        let Some(StashDialog::List { entries, selected, confirm_drop, .. }) = self.stash_dialog() else { return };
+        *confirm_drop = false;
+        let Some(e) = entries.get(*selected).cloned() else { return };
         // The list stays open on the next stash (or closes when none is left).
-        let keep = match self.stash_dialog() {
-            Some(StashDialog::List { selected, .. }) => *selected,
-            _ => 0,
-        };
-        self.open_unstash_at(keep, Some(name), cx);
+        let keep = *selected;
+        let name = e.name.clone();
+        self.git_op("Drop Stash", move |r| r.stash_drop(&e.hash).map(|_| format!("Dropped {name}")), move |this, cx| this.open_unstash_at(keep, cx), cx);
     }
 
     /// The diff of one file of the selected stash: the commit it was made on vs the stash.
@@ -203,6 +220,11 @@ impl Workspace {
                     }
                 }
             },
+            Some(StashDialog::List { confirm_drop: true, .. }) => {
+                if key == "enter" {
+                    self.stash_drop_confirmed(cx);
+                }
+            }
             Some(StashDialog::List { selected, .. }) => {
                 let sel = *selected;
                 match key {
@@ -226,7 +248,7 @@ impl Workspace {
         };
         Some(match d {
             StashDialog::Push { message, untracked } => self.render_stash_push(message, *untracked, cx),
-            StashDialog::List { entries, selected, files } => self.render_unstash(entries, *selected, files, cx),
+            StashDialog::List { entries, selected, files, confirm_drop } => self.render_unstash(entries, *selected, files, *confirm_drop, cx),
         })
     }
 
@@ -297,7 +319,7 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn render_unstash(&self, entries: &[StashEntry], selected: usize, files: &[FileChange], cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn render_unstash(&self, entries: &[StashEntry], selected: usize, files: &[FileChange], confirm_drop: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
         let rows = entries.iter().enumerate().map(|(i, e)| {
             let on = i == selected;
             div()
@@ -366,6 +388,25 @@ impl Workspace {
                     .p(px(4.))
                     .children(file_rows),
             )
+            .when(confirm_drop, |x| {
+                let what = entries.get(selected).map(|e| format!("{} “{}”", e.name, e.message)).unwrap_or_default();
+                x.child(
+                    div()
+                        .mt(px(12.))
+                        .p(px(8.))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .rounded(px(5.))
+                        .border_1()
+                        .border_color(Theme::divider())
+                        .child(div().flex_1().min_w_0().overflow_hidden().child(format!("Drop {what}? This cannot be undone.")))
+                        .child(button("st-drop-no", "Cancel", false).on_click(cx.listener(|this, _, _, cx| {
+                            this.stash_cancel_drop(cx);
+                        })))
+                        .child(button("st-drop-yes", "Drop", true).on_click(cx.listener(|this, _, _, cx| this.stash_drop_confirmed(cx)))),
+                )
+            })
             .child(
                 div()
                     .pt(px(12.))

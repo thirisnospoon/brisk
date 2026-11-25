@@ -355,10 +355,19 @@ pub fn compound_names(target: &str) -> Vec<String> {
 /// project files (`.run/*.run.xml`) are taken in either way.
 /// Returns the file and the number of imported configurations.
 pub fn load(root: &Path) -> (RunFile, usize) {
-    if let Ok(s) = std::fs::read_to_string(root.join(CONFIG_FILE)) {
-        if let Ok(mut f) = serde_json::from_str::<RunFile>(&s) {
-            crate::project_files::merge(root, &mut f);
-            return (f, 0);
+    let path = root.join(CONFIG_FILE);
+    if let Ok(s) = std::fs::read_to_string(&path) {
+        match serde_json::from_str::<RunFile>(&s) {
+            Ok(mut f) => {
+                crate::project_files::merge(root, &mut f);
+                return (f, 0);
+            }
+            // A hand edit that broke the JSON (a trailing comma): the next save would replace
+            // every configuration, so the file is kept next to it first.
+            Err(e) => {
+                let _ = std::fs::copy(&path, path.with_extension("json.bak"));
+                eprintln!("brisk: {} is not valid ({e}); kept as run.json.bak", path.display());
+            }
         }
     }
     let mut f = import_idea(root);
@@ -374,7 +383,10 @@ pub fn save(root: &Path, f: &RunFile) -> std::io::Result<()> {
         std::fs::create_dir_all(d)?;
     }
     let json = serde_json::to_string_pretty(f).map_err(std::io::Error::other)?;
-    std::fs::write(path, json + "\n")?;
+    // A temporary file moved over the old one: a crash mid-write leaves the old file whole.
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json + "\n")?;
+    std::fs::rename(&tmp, &path)?;
     crate::project_files::sync(root, f)
 }
 

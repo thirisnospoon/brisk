@@ -1288,7 +1288,16 @@ impl Workspace {
         self.dispatch(brisk_keymap::Action::EditRunConfigurations, window, cx);
         self.smoke_press("alt-insert enter", window, cx);
         self.rc_type("Both", window, cx);
-        self.smoke_press("tab right right right", window, cx); // Run: Script -> Compound
+        // Run: the new draft's kind (Kind::ALL[0]) -> Compound, one `right` per step in Kind::ALL.
+        let start = self.runs.dialog.as_ref().and_then(|d| d.drafts.get(d.current)).map(|dr| Kind::of(&dr.cfg)).unwrap_or(Kind::ALL[0]);
+        let from = Kind::ALL.iter().position(|k| *k == start).unwrap_or(0);
+        let to = Kind::ALL.iter().position(|k| *k == Kind::Compound).unwrap_or(0);
+        let steps = (to + Kind::ALL.len() - from) % Kind::ALL.len();
+        self.smoke_press(&format!("tab{}", " right".repeat(steps)), window, cx);
+        let kind_now = self.runs.dialog.as_ref().and_then(|d| d.drafts.get(d.current)).map(|dr| Kind::of(&dr.cfg));
+        if kind_now != Some(Kind::Compound) {
+            eprintln!("smoke-compound: FAIL kind after {steps} x right is {kind_now:?}, not Compound");
+        }
         let fields_shown = self.runs.dialog.as_ref().and_then(|d| d.drafts.get(d.current)).map(|dr| fields(Kind::of(&dr.cfg), false));
         self.smoke_press("tab", window, cx);
         self.rc_type("server;nope", window, cx);

@@ -339,7 +339,11 @@ impl Workspace {
 
     /// Starts Brisk on `p`. "This Window" saves everything and closes this one.
     fn open_project(&mut self, p: &Path, new_window: bool, cx: &mut Context<Self>) {
-        self.save_all(cx);
+        if new_window {
+            self.save_all(cx);
+        } else if !self.save_all_for_quit(cx) {
+            return;
+        }
         let exe = match std::env::current_exe() {
             Ok(e) => e,
             Err(e) => {

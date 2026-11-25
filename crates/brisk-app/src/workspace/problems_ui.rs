@@ -746,6 +746,9 @@ impl Workspace {
         let item = |label: String, detail: String, intent: Intent| PopupItem { label, detail, hint: String::new(), target: Target::Intention(Box::new(intent)) };
         // Brisk adds its own "Suppress for line"; ty's "Ignore ... for this line" is the same.
         actions.retain(|a| !a.title.starts_with("Ignore '"));
+        // ty also finds the stub copies other tools vendor (`mypy.typeshed.stdlib.collections`):
+        // not importable at run time.
+        actions.retain(|a| !(a.title.starts_with("import ") && a.title.contains(".typeshed.")));
         actions.sort_by_key(|a| !a.preferred);
         for a in actions {
             items.push(item(lsp_title(&a.title), "ty".into(), Intent::Lsp(a.title.clone(), a.edits)));
@@ -920,8 +923,10 @@ impl Workspace {
 
 impl Workspace {
     /// Settings › Tools › Actions on Save, as in PyCharm: Optimize imports, then Reformat code,
-    /// on the modified Python files about to be saved (Ctrl+S and the autosave on leaving the
-    /// window). A file ruff cannot parse is saved as it is.
+    /// on the modified Python files being saved (Ctrl+S and the autosave on leaving the
+    /// window). ruff runs in the background: the file is saved as typed now, and the cleaned
+    /// text is applied and saved when ruff answers, unless the file was edited meanwhile. A
+    /// file ruff cannot parse stays as it is.
     pub(super) fn actions_on_save(&mut self, cx: &mut Context<Self>) {
         let s = crate::settings::current();
         if !s.reformat_on_save && !s.optimize_imports_on_save {
@@ -940,18 +945,32 @@ impl Workspace {
         }
         let Some(ruff) = self.ruff() else { return };
         for ed in eds {
-            let (Some(path), text) = ({ let e = ed.read(cx); (e.path.clone(), e.text_string()) }) else { continue };
-            let mut out = text.clone();
-            let keep = |r: Result<String, String>, cur: &str| r.ok().filter(|t| !t.is_empty() || cur.is_empty());
-            if s.optimize_imports_on_save {
-                out = keep(brisk_lint::optimize_imports(&ruff, &self.root, &path, &out), &out).unwrap_or(out);
-            }
-            if s.reformat_on_save {
-                out = keep(brisk_lint::format_text(&ruff, &self.root, &path, &out, None), &out).unwrap_or(out);
-            }
-            if out.replace("\r\n", "\n") != text.replace("\r\n", "\n") {
-                ed.update(cx, |e, cx| e.replace_all_text(&out, cx));
-            }
+            let (Some(path), text, version) = ({ let e = ed.read(cx); (e.path.clone(), e.text_string(), e.buffer.version()) }) else { continue };
+            let (ruff, root) = (ruff.clone(), self.root.clone());
+            let (imports, reformat) = (s.optimize_imports_on_save, s.reformat_on_save);
+            let task = cx.background_executor().spawn(async move {
+                let keep = |r: Result<String, String>, cur: &str| r.ok().filter(|t| !t.is_empty() || cur.is_empty());
+                let mut out = text.clone();
+                if imports {
+                    out = keep(brisk_lint::optimize_imports(&ruff, &root, &path, &out), &out).unwrap_or(out);
+                }
+                if reformat {
+                    out = keep(brisk_lint::format_text(&ruff, &root, &path, &out, None), &out).unwrap_or(out);
+                }
+                (out.replace("\r\n", "\n") != text.replace("\r\n", "\n")).then_some(out)
+            });
+            cx.spawn(async move |_, cx| {
+                let Some(out) = task.await else { return };
+                let _ = ed.update(cx, |e, cx| {
+                    // Typed into since: ruff's text is outdated; the next save cleans it up.
+                    if e.buffer.version() != version {
+                        return;
+                    }
+                    e.replace_all_text(&out, cx);
+                    let _ = e.save();
+                });
+            })
+            .detach();
         }
     }
 
@@ -969,7 +988,7 @@ impl Workspace {
         let reformat = action == A::ReformatCode;
         let title = if reformat { "Reformat Code" } else { "Optimize Imports" };
         let files: Vec<PathBuf> = if path.is_dir() {
-            super::lsp_ui::python_files_under(&path)
+            self.project_python_files(&path)
         } else if matches!(path.extension().and_then(|e| e.to_str()), Some("py" | "pyi")) {
             vec![path.clone()]
         } else {

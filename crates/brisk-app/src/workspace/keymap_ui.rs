@@ -39,6 +39,9 @@ impl Workspace {
         // "ctrl+d", "Ctrl+Shift+A": the query is a shortcut.
         let as_keys = ql.replace(['+', ' '], "-");
         let mut v = Vec::new();
+        if let Some(e) = keymap_store::load_error() {
+            v.push(PopupItem { label: "Your keymap.json could not be read: the defaults are in use".into(), detail: e, hint: String::new(), target: Target::Note });
+        }
         if ql.is_empty() || "import pycharm keymap".contains(&ql) {
             v.push(PopupItem { label: "Import PyCharm Keymap".into(), detail: "your active custom keymap from PyCharm's settings".into(), hint: String::new(), target: Target::KeymapImport });
         }
@@ -89,17 +92,21 @@ impl Workspace {
         v
     }
 
-    fn keymap_change(&mut self, f: impl FnOnce(&mut brisk_keymap::UserKeymap), done: String, cx: &mut Context<Self>) {
-        let mut u = keymap_store::user();
-        f(&mut u);
-        match keymap_store::save(&u) {
-            Ok(()) => {
+    /// Applies `f` to the saved keymap; None (and a notification) when it cannot be saved.
+    fn keymap_change<R>(&mut self, f: impl FnOnce(&mut brisk_keymap::UserKeymap) -> R, done: String, cx: &mut Context<Self>) -> Option<R> {
+        let res = keymap_store::change(f);
+        cx.notify();
+        match res {
+            Ok(r) => {
                 self.sync_keymap();
                 self.status = done;
+                Some(r)
             }
-            Err(e) => self.show_toast(format!("Cannot save the keymap: {e}"), true, cx),
+            Err(e) => {
+                self.show_toast(format!("Cannot save the keymap: {e}"), true, cx);
+                None
+            }
         }
-        cx.notify();
     }
 
     pub(super) fn keymap_pick(&mut self, t: Target, window: &mut Window, cx: &mut Context<Self>) {
@@ -162,10 +169,9 @@ impl Workspace {
                 if let Some(p) = &imp.foreign_parent {
                     msg.push_str(&format!(". It is based on '{p}'; only its own changes were taken, on top of PyCharm's default keymap"));
                 }
-                let mut u = keymap_store::user();
-                u.bindings.extend(imp.keymap.bindings);
-                self.keymap_change(|x| *x = u, msg.clone(), cx);
-                self.show_toast(msg, false, cx);
+                if self.keymap_change(|u| u.bindings.extend(imp.keymap.bindings), msg.clone(), cx).is_some() {
+                    self.show_toast(msg, false, cx);
+                }
             }
             Err(e) => self.show_toast(format!("Cannot read the PyCharm keymap '{name}': {e}"), true, cx),
         }
@@ -188,13 +194,14 @@ impl Workspace {
             self.key_capture = None;
             let base = pycharm_keymap();
             let label = chord_label(&chord);
-            let mut taken = Vec::new();
-            self.keymap_change(|u| taken = u.assign(&base, a, chord), String::new(), cx);
-            self.status = if taken.is_empty() {
-                format!("{label}: {}", a.info().title)
-            } else {
-                format!("{label}: {} (removed from {})", a.info().title, taken.iter().map(|t| t.info().title).collect::<Vec<_>>().join(", "))
-            };
+            // A failed save says so (a notification) instead of "assigned".
+            if let Some(taken) = self.keymap_change(|u| u.assign(&base, a, chord), String::new(), cx) {
+                self.status = if taken.is_empty() {
+                    format!("{label}: {}", a.info().title)
+                } else {
+                    format!("{label}: {} (removed from {})", a.info().title, taken.iter().map(|t| t.info().title).collect::<Vec<_>>().join(", "))
+                };
+            }
             self.focus_editor(window, cx);
         } else {
             if cap.strokes.len() >= 2 {

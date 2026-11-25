@@ -15,6 +15,8 @@ const MAX_TOTAL: u64 = 200 * 1024 * 1024;
 /// Files and bytes kept when a folder is deleted.
 const MAX_TREE_FILES: usize = 2000;
 const MAX_TREE_BYTES: u64 = 32 * 1024 * 1024;
+/// Files and folders [`record_path`] looks at in all, kept or not.
+const MAX_TREE_ENTRIES: usize = 20_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Label {
@@ -157,6 +159,27 @@ fn revisions_in(dir: &Path) -> Vec<Revision> {
     v
 }
 
+/// [`record`] on a worker thread, for callers on the UI thread without a `Context` (save,
+/// reload): it reads the newest revision back and gzips. One thread keeps the order of
+/// revisions of a file.
+pub fn record_later(file: PathBuf, text: String, label: Label) {
+    use std::sync::{mpsc, OnceLock};
+    static TX: OnceLock<mpsc::Sender<(PathBuf, String, Label)>> = OnceLock::new();
+    let tx = TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<(PathBuf, String, Label)>();
+        // If the thread cannot start, `rx` is dropped and every send fails into the fallback.
+        let _ = std::thread::Builder::new().name("local-history".into()).spawn(move || {
+            for (f, t, l) in rx {
+                record(&f, &t, l);
+            }
+        });
+        tx
+    });
+    if let Err(mpsc::SendError((f, t, l))) = tx.send((file, text, label)) {
+        record(&f, &t, l);
+    }
+}
+
 /// Keep `text` (with '\n' line ends) as a revision of `file`, unless it equals the newest one.
 pub fn record(file: &Path, text: &str, label: Label) {
     if text.len() > MAX_BYTES || std::env::var_os("BRISK_NO_LOCAL_HISTORY").is_some() {
@@ -198,11 +221,18 @@ pub fn record(file: &Path, text: &str, label: Label) {
 
 /// Keep `file` (or every text file under it, for a folder) as it is on disk, before a delete,
 /// move or rename. Folders: at most [`MAX_TREE_FILES`] files, without VCS and venv folders.
+/// Symlinks and junctions are not followed (a delete removes the link, not its target, and a
+/// junction loop would never end), and the walk stops after [`MAX_TREE_ENTRIES`] entries so a
+/// folder of 50k images does not freeze the UI thread it runs on.
 pub fn record_path(path: &Path, label: Label) {
-    let (mut n, mut bytes) = (0, 0u64);
+    let (mut n, mut bytes, mut seen) = (0, 0u64, 0usize);
     let mut stack = vec![path.to_path_buf()];
     while let Some(p) = stack.pop() {
-        let Ok(meta) = std::fs::metadata(&p) else { continue };
+        seen += 1;
+        if seen > MAX_TREE_ENTRIES {
+            return;
+        }
+        let Ok(meta) = std::fs::symlink_metadata(&p) else { continue };
         if meta.is_dir() {
             let Ok(rd) = std::fs::read_dir(&p) else { continue };
             for e in rd.flatten() {

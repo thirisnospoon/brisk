@@ -370,7 +370,7 @@ pub fn connect(ds: &DataSource, password: &str, project_root: &Path) -> Result<B
 /// Returns the outputs so far and the error, if any.
 pub fn execute(conn: &mut dyn Connection, script: &str, limit: usize) -> (Vec<QueryOutput>, Option<String>) {
     let mut out = Vec::new();
-    for r in split_statements(script) {
+    for r in split_statements(script, conn.driver()) {
         let stmt = &script[r];
         let t0 = Instant::now();
         match conn.run(stmt, limit) {

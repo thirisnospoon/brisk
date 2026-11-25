@@ -479,15 +479,24 @@ impl Workspace {
                     let (new, n) = q.replace(&e.buffer.text(), &with);
                     if n > 0 {
                         e.buffer.set_text(&new);
-                        let _ = e.save();
                         cx.notify();
+                        // Not written (changed on disk, or an error): the edit stays in the
+                        // editor, and the file is reported rather than counted as done.
+                        if !matches!(e.save(), Ok(true)) {
+                            failed.push(files.files[fi].clone());
+                            return 0;
+                        }
                     }
                     n
                 }),
                 None => match brisk_search::read_text(&path) {
                     Some(text) => {
                         let (new, n) = q.replace(&text, &with);
-                        if n > 0 && std::fs::write(&path, new).is_err() {
+                        if n > 0 {
+                            // Closed files have no undo: Local History keeps the old text.
+                            crate::local_history::record(&path, &text, crate::local_history::Label::BeforeRefactor);
+                        }
+                        if n > 0 && crate::editor::write_atomic(&path, new.as_bytes()).is_err() {
                             failed.push(files.files[fi].clone());
                             0
                         } else {

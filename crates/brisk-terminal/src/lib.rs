@@ -20,6 +20,7 @@ use alacritty_terminal::Term;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 /// Events the UI cares about.
@@ -112,6 +113,17 @@ impl SpawnOptions {
     }
 }
 
+/// alacritty writes the program into the ConPTY command line verbatim (no application name
+/// is passed), so a path with spaces such as `C:\Program Files\Git\bin\bash.exe` must be
+/// quoted or Windows runs `C:\Program`.
+fn quote_program(p: String) -> String {
+    if cfg!(windows) && !p.starts_with('"') && p.contains([' ', '\t']) {
+        format!("\"{p}\"")
+    } else {
+        p
+    }
+}
+
 pub fn default_shell() -> Option<(String, Vec<String>)> {
     if cfg!(windows) {
         Some(("powershell.exe".into(), vec!["-NoLogo".into()]))
@@ -121,7 +133,8 @@ pub fn default_shell() -> Option<(String, Vec<String>)> {
 }
 
 enum Io {
-    Pty(EventLoopSender),
+    /// The flag is set once the child exited (its pid may then be reused).
+    Pty(EventLoopSender, Arc<AtomicBool>),
     /// Plain pipes (PyCharm's Run console without "Emulate terminal"): exact output, stderr
     /// in red, line-buffered input echoed locally.
     Pipe(pipe::PipeIo),
@@ -285,7 +298,15 @@ impl Session {
         on_event: impl Fn(TermEvent) + Send + Sync + 'static,
     ) -> std::io::Result<Self> {
         let size = Size { cols: cols.max(2), rows: rows.max(1) };
-        let listener = Listener { callback: Arc::new(on_event), sender: Arc::new(OnceLock::new()) };
+        let exited = Arc::new(AtomicBool::new(false));
+        let flag = exited.clone();
+        let callback: Callback = Arc::new(move |e: TermEvent| {
+            if matches!(e, TermEvent::ChildExit(_) | TermEvent::Exit) {
+                flag.store(true, Ordering::SeqCst);
+            }
+            on_event(e)
+        });
+        let listener = Listener { callback, sender: Arc::new(OnceLock::new()) };
         let config = Config { scrolling_history: history, ..Config::default() };
         let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
         if !header.is_empty() {
@@ -294,7 +315,7 @@ impl Session {
         }
 
         let pty_opts = Options {
-            shell: opts.shell.map(|(p, a)| Shell::new(p, a)),
+            shell: opts.shell.map(|(p, a)| Shell::new(quote_program(p), a)),
             working_directory: opts.cwd,
             drain_on_exit: true,
             env: opts.env,
@@ -315,7 +336,7 @@ impl Session {
         let tx = event_loop.channel();
         let _ = listener.sender.set(tx.clone());
         event_loop.spawn();
-        Ok(Self { term, io: Io::Pty(tx), size, pid })
+        Ok(Self { term, io: Io::Pty(tx, exited), size, pid })
     }
 
     pub fn write(&self, bytes: impl Into<Cow<'static, [u8]>>) {
@@ -326,7 +347,7 @@ impl Session {
         // Typing jumps back to the live screen, like every terminal.
         self.term.lock().scroll_display(Scroll::Bottom);
         match &self.io {
-            Io::Pty(tx) => {
+            Io::Pty(tx, _) => {
                 let _ = tx.send(Msg::Input(bytes));
             }
             Io::Pipe(p) => p.input(&self.term, &bytes),
@@ -354,7 +375,7 @@ impl Session {
         }
         self.size = Size { cols, rows };
         self.term.lock().resize(self.size);
-        if let Io::Pty(tx) = &self.io {
+        if let Io::Pty(tx, _) = &self.io {
             let _ = tx.send(Msg::Resize(WindowSize { num_lines: rows as u16, num_cols: cols as u16, cell_width: cell_w, cell_height: cell_h }));
         }
     }
@@ -414,10 +435,13 @@ impl Session {
     pub fn kill(&self) {
         let Some(pid) = self.pid else { return };
         // Never signal a finished process: its pid may already belong to someone else.
-        if let Io::Pipe(p) = &self.io {
-            if p.exited() {
-                return;
-            }
+        let exited = match &self.io {
+            Io::Pty(_, e) => e.load(Ordering::SeqCst),
+            Io::Pipe(p) => p.exited(),
+            Io::None => true,
+        };
+        if exited {
+            return;
         }
         #[cfg(windows)]
         {
@@ -544,7 +568,7 @@ impl Session {
 
     pub fn shutdown(&self) {
         match &self.io {
-            Io::Pty(tx) => {
+            Io::Pty(tx, _) => {
                 let _ = tx.send(Msg::Shutdown);
             }
             Io::Pipe(_) => self.kill(),
@@ -769,6 +793,57 @@ mod tests {
         assert_eq!(f.len(), 1);
         assert_eq!((f[0].line, f[0].cols.clone(), f[0].more.clone(), f[0].row), (5, 7..10, vec![(6, 0..3)], 5));
         assert_eq!(f[0].text, "xxxxxxxneedle yy");
+    }
+
+    #[test]
+    fn quotes_program_with_spaces() {
+        assert_eq!(quote_program("cmd.exe".into()), "cmd.exe");
+        let bash = r"C:\Program Files\Git\bin\bash.exe";
+        let quoted = quote_program(bash.into());
+        if cfg!(windows) {
+            assert_eq!(quoted, format!("\"{bash}\""));
+            assert_eq!(quote_program(quoted.clone()), quoted);
+        } else {
+            assert_eq!(quoted, bash);
+        }
+    }
+
+    /// A big paste into a program that never reads stdin must not block the caller (the UI).
+    #[test]
+    fn pipe_input_does_not_block() {
+        let mut cmd = if cfg!(windows) { std::process::Command::new("ping") } else { std::process::Command::new("sleep") };
+        if cfg!(windows) {
+            cmd.args(["-n", "10", "127.0.0.1"]);
+        } else {
+            cmd.arg("10");
+        }
+        let s = Session::spawn_process(cmd, "", 80, 24, |_| {}).expect("spawn");
+        let t = Instant::now();
+        // Far more than a pipe buffer holds.
+        let line = "x".repeat(256 * 1024);
+        for _ in 0..4 {
+            s.write(format!("{line}\r").into_bytes());
+        }
+        assert!(t.elapsed() < Duration::from_secs(8), "input blocked for {:?}", t.elapsed());
+        s.kill();
+    }
+
+    /// A PTY session remembers that its child exited, so Stop never hits a reused pid.
+    #[test]
+    fn pty_exit_is_tracked() {
+        let (tx, rx) = mpsc::channel();
+        let shell = if cfg!(windows) { ("cmd.exe".into(), vec!["/C".into(), "exit 3".into()]) } else { ("/bin/sh".into(), vec!["-c".into(), "exit 3".into()]) };
+        let opts = SpawnOptions { cwd: Some(std::env::temp_dir()), shell: Some(shell), ..SpawnOptions::default() };
+        let s = Session::spawn(opts, 80, 24, 8, 16, move |e| {
+            let _ = tx.send(e);
+        })
+        .expect("spawn");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !matches!(rx.recv_timeout(Duration::from_millis(200)), Ok(TermEvent::ChildExit(_) | TermEvent::Exit)) {
+            assert!(Instant::now() < deadline, "no exit event");
+        }
+        let Io::Pty(_, exited) = &s.io else { panic!("not a pty") };
+        assert!(exited.load(Ordering::SeqCst));
     }
 
     /// Spawns a real shell, runs a command and reads it back from the grid.

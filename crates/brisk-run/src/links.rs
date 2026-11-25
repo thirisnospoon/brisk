@@ -53,7 +53,12 @@ pub fn find_links(line: &str) -> Vec<Link> {
         if b[i] == b':' && b.get(i + 1).is_some_and(u8::is_ascii_digit) {
             let before = &line[..i];
             if let Some(ext) = EXTS.iter().find(|x| before.ends_with(*x)) {
-                let start = before.rfind(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '(').map(|p| p + 1).unwrap_or(0);
+                // Just after the separator, whatever its width (a no-break space is two bytes).
+                let start = before
+                    .char_indices()
+                    .rev()
+                    .find(|&(_, c)| c.is_whitespace() || c == '"' || c == '\'' || c == '(')
+                    .map_or(0, |(p, c)| p + c.len_utf8());
                 // A Windows drive letter "C:" is part of the path, not a separator.
                 let path = &line[start..i];
                 if path.len() > ext.len() {

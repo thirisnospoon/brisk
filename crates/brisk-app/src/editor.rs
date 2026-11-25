@@ -53,6 +53,7 @@ mod squiggle;
 mod whitespace;
 pub mod templates;
 pub use disk::{Conflict, DiskCheck};
+pub use disk::write_atomic;
 pub use lsp::Anchor;
 pub use quick_def::definition_source;
 
@@ -212,7 +213,6 @@ pub struct Editor {
     scope_cache: scope::ScopeCache,
 }
 
-/// Events for the workspace.
 /// Who reported a problem.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DiagSource {
@@ -220,6 +220,7 @@ pub enum DiagSource {
     Ty = 1,
 }
 
+/// Events for the workspace.
 pub enum EditorEvent {
     /// The inspection widget (✗ 1 ⚠ 3) was clicked.
     ShowProblems,
@@ -746,32 +747,19 @@ impl Editor {
         cx.notify();
     }
 
-    /// Replace the whole text (ruff `--fix` output) as one undoable step.
-    /// Replace the text with a new version (formatter, quick fixes) as one undoable edit of
-    /// only the part that differs, so the caret, folds and scroll position stay where they were.
+    /// Replace the text with a new version (formatter, ruff `--fix`, quick fixes) as one
+    /// undoable step editing only the parts that differ, so the caret, folds, breakpoints and
+    /// scroll position stay where they were.
     pub fn replace_all_text(&mut self, text: &str, cx: &mut Context<Self>) {
         self.replace_all_quiet(text);
         cx.notify();
     }
 
-    /// The same without a repaint: one undoable minimal edit, the caret keeps its line and column.
+    /// The same without a repaint. A line diff rather than one prefix/suffix edit: a
+    /// formatter touching the first and last lines would otherwise send every mark in between
+    /// to the start of the edit. The caret follows its text.
     pub(crate) fn replace_all_quiet(&mut self, text: &str) {
-        let new = text.replace("\r\n", "\n");
-        let old = self.text().to_string();
-        if new == old {
-            return;
-        }
-        let (line, col) = self.caret_line_col();
-        let prefix = old.chars().zip(new.chars()).take_while(|(a, b)| a == b).count();
-        let (old_n, new_n) = (old.chars().count(), new.chars().count());
-        let max_suffix = old_n.min(new_n) - prefix;
-        let suffix = old.chars().rev().zip(new.chars().rev()).take(max_suffix).take_while(|(a, b)| a == b).count();
-        let middle: String = new.chars().skip(prefix).take(new_n - prefix - suffix).collect();
-        self.buffer.replace_ranges(vec![(prefix..old_n - suffix, middle)]);
-        let line = line.min(self.buffer.len_lines().saturating_sub(1));
-        let col = col.min(self.buffer.line_len(line));
-        let pos = self.buffer.line_col_to_pos(line, col);
-        self.buffer.set_caret(pos, false);
+        self.buffer.set_text(&text.replace("\r\n", "\n"));
     }
 
     /// "4 spaces" / "2 spaces" / "Tab" for the status bar.
@@ -1571,11 +1559,21 @@ impl EntityInputHandler for Editor {
         cx.notify();
     }
 
-    fn replace_and_mark_text_in_range(&mut self, _range: Option<Range<usize>>, text: &str, _sel: Option<Range<usize>>, _: &mut Window, cx: &mut Context<Self>) {
+    fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, text: &str, _sel: Option<Range<usize>>, _: &mut Window, cx: &mut Context<Self>) {
+        let len = self.buffer.len_chars();
         if let Some(m) = self.marked.take() {
             // The buffer may have shrunk under an open composition (reload, undo): clamp.
-            let len = self.buffer.len_chars();
             self.buffer.selections = vec![Selection { anchor: m.start.min(len), head: m.end.min(len), goal_col: None }];
+        } else if let Some(r) = range {
+            // The IME names the text it recomposes (UTF-16 offsets).
+            let rope = self.buffer.rope();
+            let total = rope.len_utf16_cu();
+            let (a, b) = (rope.utf16_cu_to_char(r.start.min(total)), rope.utf16_cu_to_char(r.end.min(total)));
+            self.buffer.selections = vec![Selection { anchor: a.min(b), head: a.max(b), goal_col: None }];
+        } else {
+            // A composition starts: one marked range, so only the primary caret composes.
+            // Inserting at every caret would shift the primary and mark the wrong text.
+            self.buffer.selections = vec![self.buffer.primary()];
         }
         let start = self.buffer.primary().range().start;
         self.buffer.insert(text);

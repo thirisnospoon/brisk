@@ -97,6 +97,21 @@ fn cell(v: Value) -> Option<String> {
     })
 }
 
+/// A plain read without a `limit` of its own, with `limit + 1` added (one more tells that
+/// there are more). Not wrapped in a derived table as for PostgreSQL: MySQL may drop the
+/// ORDER BY of a derived table and rejects duplicate column names in one. The limit goes on
+/// its own line so a trailing `--` comment does not swallow it.
+fn capped_read(sql: &str, limit: usize) -> Option<String> {
+    if limit == usize::MAX || !crate::pg::wrappable(sql, Driver::Mysql) {
+        return None;
+    }
+    let code = crate::split::code_only(sql, Driver::Mysql).to_ascii_lowercase();
+    if code.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == "limit") {
+        return None;
+    }
+    Some(format!("{sql}\nlimit {}", limit + 1))
+}
+
 impl Connection for My {
     fn driver(&self) -> Driver {
         Driver::Mysql
@@ -104,7 +119,17 @@ impl Connection for My {
 
     fn run(&mut self, sql: &str, limit: usize) -> Result<QueryOutput, String> {
         let mut out = QueryOutput::default();
-        let mut res = self.conn.query_iter(sql).map_err(fmt_err)?;
+        // The rows past the limit would still be read (and dropped) to finish the result:
+        // cap plain reads on the server side.
+        let capped;
+        let q = match capped_read(sql, limit) {
+            Some(c) => {
+                capped = c;
+                capped.as_str()
+            }
+            None => sql,
+        };
+        let mut res = self.conn.query_iter(q).map_err(fmt_err)?;
         // A statement may return several sets (CALL); show the first one that has columns.
         while let Some(set) = res.iter() {
             let cols: Vec<String> = set.columns().as_ref().iter().map(|c| c.name_str().into_owned()).collect();
@@ -144,5 +169,22 @@ impl Connection for My {
         let (a, b, c) = self.conn.server_version();
         let maria = self.conn.query_first::<String, _>("select version()").ok().flatten().is_some_and(|v| v.to_lowercase().contains("mariadb"));
         format!("{} {a}.{b}.{c}", if maria { "MariaDB" } else { "MySQL" })
+    }
+}
+
+#[cfg(test)]
+mod t {
+    #[test]
+    fn caps_plain_reads() {
+        let c = |s: &str| super::capped_read(s, 10);
+        assert_eq!(c("select * from t order by id -- newest").as_deref(), Some("select * from t order by id -- newest\nlimit 11"));
+        assert_eq!(c("select * from t limit 5"), None, "its own limit");
+        assert_eq!(c("select * from t for update"), None);
+        assert_eq!(c("select * from t lock in share mode"), None);
+        assert_eq!(c("select 1 into @x"), None);
+        assert_eq!(c("update t set a = 1"), None);
+        // Words in strings do not count.
+        assert!(c("select * from t where note = 'no limit, into the wild'").is_some());
+        assert_eq!(super::capped_read("select 1", usize::MAX), None);
     }
 }

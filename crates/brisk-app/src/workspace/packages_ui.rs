@@ -221,10 +221,15 @@ impl Workspace {
             let list = py_packages::list(&py, &tool);
             (tool, project, list)
         });
+        let ran_for = p.python.clone();
         cx.spawn(async move |this, cx| {
             let (tool, project, list) = task.await;
             let _ = this.update(cx, |this, cx| {
                 let Some(p) = this.packages.as_mut() else { return };
+                // The interpreter changed meanwhile: its own refresh is on the way.
+                if p.python != ran_for {
+                    return;
+                }
                 p.loading = false;
                 p.tool = Some(tool);
                 p.project = Some(project);
@@ -252,12 +257,16 @@ impl Workspace {
             return;
         }
         p.outdated_loading = true;
+        let ran_for = Some(py.clone());
         let task = cx.background_executor().spawn(async move { py_packages::outdated(&py, &tool) });
         cx.spawn(async move |this, cx| {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
                 if let Some(p) = this.packages.as_mut() {
                     p.outdated_loading = false;
+                    if p.python != ran_for {
+                        return;
+                    }
                     // Offline or no index: no upgrade information, nothing to report.
                     if let Ok(o) = res {
                         p.outdated = o;

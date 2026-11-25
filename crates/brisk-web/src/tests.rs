@@ -61,6 +61,24 @@ fn django_routes_follow_include_and_namespace() {
 }
 
 #[test]
+fn django_include_under_two_prefixes_and_cycles() {
+    let files: &[(&str, &str)] = &[
+        ("mysite/settings.py", "ROOT_URLCONF = \"mysite.urls\"\n"),
+        ("mysite/__init__.py", ""),
+        ("mysite/urls.py", "from django.urls import include, path\n\nurlpatterns = [\n    path(\"api/\", include(\"api.urls\")),\n    path(\"v2/api/\", include(\"api.urls\")),\n]\n"),
+        ("api/__init__.py", ""),
+        // Includes itself: the walk stops instead of recursing.
+        ("api/urls.py", "from django.urls import include, path\n\nfrom . import views\n\nurlpatterns = [\n    path(\"items/\", views.items),\n    path(\"again/\", include(\"api.urls\")),\n]\n"),
+        ("api/views.py", "def items(request):\n    pass\n"),
+    ];
+    let root = project("django-twice", files);
+    let idx = Index::scan(&root);
+    let paths: Vec<&str> = idx.routes.iter().map(|r| r.path.as_str()).collect();
+    assert_eq!(paths, ["/api/items/", "/v2/api/items/"]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn django_references_resolve() {
     let root = project("django-refs", DJANGO);
     let idx = Index::scan(&root);

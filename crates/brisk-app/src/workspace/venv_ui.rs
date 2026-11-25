@@ -211,14 +211,7 @@ impl Workspace {
                 this.venv_busy = false;
                 match res {
                     Ok((python, req)) => {
-                        this.runs.venvs = brisk_run::project_venvs(&this.root);
-                        this.runs.file.interpreter = Some(brisk_run::relativize(&this.root, &python));
-                        this.save_runs();
-                        this.restart_ty(cx);
-                        this.sync_terminal_env(cx);
-                        let msg = format!("Created {name}: it is the project interpreter now");
-                        this.status = msg.clone();
-                        this.show_toast(msg, false, cx);
+                        this.use_new_environment(python.clone(), format!("Created {name}"), cx);
                         this.venv_offer = req.map(|req| VenvOffer { python, what: OfferKind::Install(req), installing: false });
                     }
                     Err(e) => {
@@ -292,7 +285,7 @@ impl Workspace {
                 .occlude()
                 .absolute()
                 .bottom(ui_px(28.) + px(60.))
-                .right(px(12.))
+                .right(super::toast_right())
                 .w(ui_px(420.))
                 .p(px(12.))
                 .flex()

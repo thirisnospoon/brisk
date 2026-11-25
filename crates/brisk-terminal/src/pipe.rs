@@ -8,13 +8,15 @@ use alacritty_terminal::vte::ansi::Processor;
 use alacritty_terminal::Term;
 use std::io::{Read, Write};
 use std::process::{ChildStdin, Command, Stdio};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 type SharedTerm = Arc<FairMutex<Term<Listener>>>;
 
 pub(crate) struct PipeIo {
-    stdin: Mutex<Option<ChildStdin>>,
+    /// Lines for the stdin writer thread; `None` once input is closed (Ctrl+D or a dead pipe).
+    stdin: Mutex<Option<Sender<Vec<u8>>>>,
     line: Mutex<String>,
     parser: Arc<Mutex<Processor>>,
     exited: Arc<std::sync::atomic::AtomicBool>,
@@ -50,6 +52,21 @@ fn complete_prefix(buf: &[u8]) -> usize {
         Err(e) if e.error_len().is_none() => e.valid_up_to(),
         Err(_) => buf.len(),
     }
+}
+
+/// Writes on its own thread: a program that does not read stdin fills the pipe, and a
+/// blocking write on the UI thread would freeze the IDE. Dropping the sender closes stdin
+/// once the queued lines are written.
+fn stdin_writer(mut stdin: ChildStdin) -> Sender<Vec<u8>> {
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        for data in rx {
+            if stdin.write_all(&data).and_then(|_| stdin.flush()).is_err() {
+                break;
+            }
+        }
+    });
+    tx
 }
 
 impl PipeIo {
@@ -183,7 +200,7 @@ impl PipeIo {
             });
         }
         let exited = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let io = PipeIo { stdin: Mutex::new(child.stdin.take()), line: Mutex::new(String::new()), parser, exited: exited.clone() };
+        let io = PipeIo { stdin: Mutex::new(child.stdin.take().map(stdin_writer)), line: Mutex::new(String::new()), parser, exited: exited.clone() };
         std::thread::spawn(move || {
             let code = child.wait().ok().and_then(|s| s.code());
             exited.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -223,9 +240,8 @@ impl PipeIo {
                     echo.push_str("\r\n");
                     feed(term, &self.parser, std::mem::take(&mut echo).as_bytes());
                     let mut stdin = self.stdin.lock().unwrap_or_else(|e| e.into_inner());
-                    if let Some(s) = stdin.as_mut() {
-                        let data = format!("{line}\n");
-                        if s.write_all(data.as_bytes()).and_then(|_| s.flush()).is_err() {
+                    if let Some(tx) = stdin.as_ref() {
+                        if tx.send(format!("{line}\n").into_bytes()).is_err() {
                             *stdin = None;
                         }
                     }

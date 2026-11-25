@@ -53,6 +53,41 @@ async fn pause(bg: &gpui::BackgroundExecutor, ms: u64) {
     bg.timer(Duration::from_millis(ms)).await;
 }
 
+/// Many actions finish on a background task: poll `done` every 100 ms, up to `ms`. Prints a
+/// FAIL line naming `what` when it never becomes true.
+async fn wait_for(
+    this: &WeakEntity<Workspace>,
+    cx: &mut AsyncWindowContext,
+    bg: &gpui::BackgroundExecutor,
+    ms: u64,
+    what: &str,
+    done: impl Fn(&Workspace, &gpui::App) -> bool,
+) -> bool {
+    for _ in 0..ms.div_ceil(100) {
+        if this.update(cx, |this, cx| done(this, cx)).unwrap_or(false) {
+            return true;
+        }
+        pause(bg, 100).await;
+    }
+    let ok = this.update(cx, |this, cx| done(this, cx)).unwrap_or(false);
+    if !ok {
+        eprintln!("smoke-gitx: FAIL timed out after {ms} ms waiting for {what}");
+    }
+    ok
+}
+
+/// The title of the active tab when it is a diff.
+fn active_diff(this: &Workspace, cx: &gpui::App) -> Option<String> {
+    match this.active.and_then(|i| this.tabs.get(i)) {
+        Some(super::Tab::Diff(d)) => Some(d.read(cx).title.clone()),
+        _ => None,
+    }
+}
+
+fn toast_text(this: &Workspace) -> String {
+    this.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default()
+}
+
 impl Workspace {
     pub(super) fn gitx_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
@@ -118,24 +153,31 @@ impl Workspace {
             this.open_file(&root.join("blame.py"), window, cx);
             this.dispatch(Action::Annotate, window, cx);
         });
-        pause(bg, 1500).await;
+        wait_for(this, cx, bg, 5000, "annotations", |this, cx| this.active_editor().is_some_and(|e| e.read(cx).annotation.is_some())).await;
+        let ed = this
+            .update_in(cx, |this, window, cx| {
+                eprintln!("smoke-gitx: annotate -> {}", show(this, cx));
+                let ed = this.active_editor().cloned()?;
+                // The gutter menu offers to close them now.
+                this.open_gutter_menu(ed.clone(), gpui::point(gpui::px(30.), gpui::px(120.)), cx);
+                eprintln!("smoke-gitx: gutter menu -> {:?}", this.menu_labels());
+                this.menu = None;
+                // A click on Bob's line opens that commit's diff of the file (in the background).
+                let hash = ed.read(cx).annotation.as_ref().and_then(|a| a.lines.get(1).cloned().flatten()).map(|l| l.hash);
+                match hash {
+                    Some(h) => this.show_annotation_commit(ed.clone(), h, window, cx),
+                    None => eprintln!("smoke-gitx: FAIL no annotation on line 2"),
+                }
+                Some(ed)
+            })
+            .ok()
+            .flatten();
+        let Some(ed) = ed else {
+            return eprintln!("smoke-gitx: FAIL no editor for blame.py");
+        };
+        wait_for(this, cx, bg, 5000, "the commit diff tab", |this, cx| active_diff(this, cx).is_some()).await;
         let _ = this.update_in(cx, |this, window, cx| {
-            eprintln!("smoke-gitx: annotate -> {}", show(this, cx));
-            let Some(ed) = this.active_editor().cloned() else { return };
-            // The gutter menu offers to close them now.
-            this.open_gutter_menu(ed.clone(), gpui::point(gpui::px(30.), gpui::px(120.)), cx);
-            eprintln!("smoke-gitx: gutter menu -> {:?}", this.menu_labels());
-            this.menu = None;
-            // A click on Bob's line opens that commit's diff of the file.
-            let hash = ed.read(cx).annotation.as_ref().and_then(|a| a.lines.get(1).cloned().flatten()).map(|l| l.hash);
-            if let Some(h) = hash {
-                this.show_annotation_commit(ed.clone(), h, window, cx);
-                let tab = this.active.and_then(|i| match this.tabs.get(i) {
-                    Some(super::Tab::Diff(d)) => Some(d.read(cx).title.clone()),
-                    _ => None,
-                });
-                eprintln!("smoke-gitx: click on line 2 -> diff tab {tab:?}");
-            }
+            eprintln!("smoke-gitx: click on line 2 -> diff tab {:?}", active_diff(this, cx));
             // Edit and save: the new line is not committed, the others shift down.
             this.open_file(&root.join("blame.py"), window, cx);
             ed.update(cx, |e, _| {
@@ -220,7 +262,8 @@ impl Workspace {
             eprintln!("smoke-gitx: non-conflicting, >> then << -> {:?}, unresolved {}", m.read(cx).text(), m.read(cx).model.unresolved());
             this.smoke_press("ctrl-enter", window, cx);
         });
-        pause(bg, 600).await;
+        // Apply saves the result off the UI thread, then closes the tab.
+        wait_for(this, cx, bg, 5000, "the merge to be applied", |this, _| merge_tab(this).is_none() && this.git.as_ref().is_some_and(|g| g.busy.is_none())).await;
         let _ = this.update_in(cx, |this, _, cx| {
             eprintln!("smoke-gitx: merge.py on disk -> {:?}, merge tab open {}", std::fs::read_to_string(this.root.join("merge.py")).unwrap_or_default(), merge_tab(this).is_some());
             let left = match this.git.as_ref().and_then(|g| g.dialog.as_ref()) {
@@ -229,7 +272,11 @@ impl Workspace {
             };
             eprintln!("smoke-gitx: back in the list -> {left:?}");
             this.conflicts_accept(false, cx);
-            eprintln!("smoke-gitx: accept theirs -> other.py {:?}, dialog open {}", std::fs::read_to_string(this.root.join("other.py")).unwrap_or_default(), this.git_dialog_open());
+        });
+        // Accept Theirs also runs in the background.
+        wait_for(this, cx, bg, 5000, "Accept Theirs", |this, _| this.git.as_ref().is_some_and(|g| g.busy.is_none()) && !this.git_dialog_open()).await;
+        let _ = this.update(cx, |this, _| {
+            eprintln!("smoke-gitx: accept theirs -> other.py {:?}, dialog open {}, status {:?}", std::fs::read_to_string(this.root.join("other.py")).unwrap_or_default(), this.git_dialog_open(), this.status);
         });
         eprintln!("smoke-gitx: git status -> {:?}", sh(root, &["status", "--porcelain"]));
         sh(root, &["commit", "-q", "--no-edit"]);
@@ -262,15 +309,20 @@ impl Workspace {
             }
             this.smoke_press("enter", window, cx);
         });
-        pause(bg, 1500).await;
+        let idle = |this: &Workspace, _: &gpui::App| this.git.as_ref().is_some_and(|g| g.busy.is_none());
+        let listed = |this: &Workspace, _: &gpui::App| matches!(dialog(this), Some(StashDialog::List { .. }));
+        pause(bg, 200).await;
+        wait_for(this, cx, bg, 5000, "the stash", idle).await;
         eprintln!(
             "smoke-gitx: after stash -> other.py {:?}, note.py exists {}, list {:?}",
             std::fs::read_to_string(root.join("other.py")).unwrap_or_default(),
             root.join("note.py").exists(),
             sh(root, &["stash", "list"])
         );
-        let _ = this.update_in(cx, |this, window, cx| {
-            this.dispatch(Action::UnstashChanges, window, cx);
+        // Unstash Changes… reads the list off the UI thread.
+        let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::UnstashChanges, window, cx));
+        wait_for(this, cx, bg, 5000, "the unstash dialog", listed).await;
+        let _ = this.update(cx, |this, _| {
             if let Some(StashDialog::List { entries, files, .. }) = dialog(this) {
                 let names: Vec<String> = entries.iter().map(|e| format!("{} {}", e.name, e.message)).collect();
                 let paths: Vec<String> = files.iter().map(|f| format!("{:?} {}", f.status, f.path)).collect();
@@ -280,27 +332,48 @@ impl Workspace {
         if hold("stash") {
             return;
         }
-        let _ = this.update_in(cx, |this, window, cx| {
-            // A file row opens its diff (stash^ vs stash) and closes the dialog.
-            this.stash_file_diff(0, window, cx);
-            eprintln!("smoke-gitx: file diff -> dialog open {}, tabs {}", this.git_dialog_open(), this.tabs.len());
-            // Apply keeps the stash.
-            this.dispatch(Action::UnstashChanges, window, cx);
-            this.smoke_press("enter", window, cx);
+        let tabs_before = this
+            .update_in(cx, |this, window, cx| {
+                let n = this.tabs.len();
+                // A file row opens its diff (stash^ vs stash) and closes the dialog.
+                this.stash_file_diff(0, window, cx);
+                n
+            })
+            .unwrap_or(0);
+        wait_for(this, cx, bg, 5000, "the stash file diff", |this, cx| active_diff(this, cx).is_some_and(|t| t.contains("stash@"))).await;
+        let _ = this.update(cx, |this, cx| {
+            eprintln!("smoke-gitx: file diff -> dialog open {}, tabs {tabs_before} -> {}, active diff {:?}", this.git_dialog_open(), this.tabs.len(), active_diff(this, cx));
         });
-        pause(bg, 1500).await;
+        // Apply keeps the stash.
+        let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::UnstashChanges, window, cx));
+        wait_for(this, cx, bg, 5000, "the unstash dialog", listed).await;
+        let _ = this.update_in(cx, |this, window, cx| this.smoke_press("enter", window, cx));
+        pause(bg, 200).await;
+        wait_for(this, cx, bg, 5000, "the stash apply", idle).await;
         eprintln!(
             "smoke-gitx: after apply -> other.py {:?}, note.py exists {}, list {:?}",
             std::fs::read_to_string(root.join("other.py")).unwrap_or_default(),
             root.join("note.py").exists(),
             sh(root, &["stash", "list"])
         );
+        // Drop asks first inside the dialog: Esc cancels only the question, Enter drops.
+        let confirming = |this: &Workspace| matches!(dialog(this), Some(StashDialog::List { confirm_drop: true, .. }));
+        let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::UnstashChanges, window, cx));
+        wait_for(this, cx, bg, 5000, "the unstash dialog", listed).await;
         let _ = this.update_in(cx, |this, window, cx| {
-            this.dispatch(Action::UnstashChanges, window, cx);
             this.smoke_press("delete", window, cx);
-            eprintln!("smoke-gitx: drop -> dialog open {}, toast {:?}, list {:?}", this.git_dialog_open(), this.toast.as_ref().map(|t| t.0.clone()), sh(&this.root, &["stash", "list"]));
+            let asked = confirming(this);
+            this.smoke_press("escape", window, cx);
+            let after_esc = (confirming(this), matches!(dialog(this), Some(StashDialog::List { .. })));
+            eprintln!("smoke-gitx: drop -> confirmation {asked}; esc -> confirmation {}, list still open {}, stashes {:?}", after_esc.0, after_esc.1, sh(&this.root, &["stash", "list"]));
+            this.smoke_press("delete enter", window, cx);
         });
-        pause(bg, 300).await;
+        pause(bg, 200).await;
+        // The last stash dropped: the list closes with "There are no stashes".
+        wait_for(this, cx, bg, 5000, "the stash drop", |this, _| this.git.as_ref().is_some_and(|g| g.busy.is_none()) && dialog(this).is_none()).await;
+        let _ = this.update(cx, |this, _| {
+            eprintln!("smoke-gitx: drop confirmed -> dialog open {}, toast {:?}, list {:?}", this.git_dialog_open(), toast_text(this), sh(&this.root, &["stash", "list"]));
+        });
     }
 
     async fn smoke_history(this: &WeakEntity<Self>, cx: &mut AsyncWindowContext, bg: &gpui::BackgroundExecutor, root: &Path) {
@@ -340,14 +413,17 @@ impl Workspace {
         if hold("history") {
             return;
         }
+        let tabs = this
+            .update_in(cx, |this, window, cx| {
+                let tabs = this.tabs.len();
+                // Ctrl+D: the selected commit's diff of the file, read in the background.
+                this.smoke_press("ctrl-d", window, cx);
+                tabs
+            })
+            .unwrap_or(0);
+        wait_for(this, cx, bg, 5000, "the history diff tab", |this, cx| active_diff(this, cx).is_some_and(|t| t.contains("blame.py"))).await;
         let _ = this.update_in(cx, |this, window, cx| {
-            let tabs = this.tabs.len();
-            this.smoke_press("ctrl-d", window, cx);
-            let tab = this.active.and_then(|i| match this.tabs.get(i) {
-                Some(super::Tab::Diff(d)) => Some(d.read(cx).title.clone()),
-                _ => None,
-            });
-            eprintln!("smoke-gitx: ctrl-d -> dialog open {}, tabs {tabs} -> {}, active diff {tab:?}", this.git_dialog_open(), this.tabs.len());
+            eprintln!("smoke-gitx: ctrl-d -> dialog open {}, tabs {tabs} -> {}, active diff {:?}", this.git_dialog_open(), this.tabs.len(), active_diff(this, cx));
             // Show History for Selection: line 1 ("a = 1") only changed in the first commit.
             this.open_file(&file, window, cx);
             if let Some(ed) = this.active_editor().cloned() {
@@ -673,21 +749,65 @@ impl Workspace {
             let ops = this.smoke_branch_op("topic", "Merge", window, cx);
             eprintln!("smoke-gitx: branch topic actions -> {ops:?}");
         });
-        pause(bg, 1800).await;
-        let _ = this.update_in(cx, |this, window, cx| {
+        pause(bg, 200).await;
+        wait_for(this, cx, bg, 5000, "the merge of topic", |this, _| this.git.as_ref().is_some_and(|g| g.busy.is_none())).await;
+        let _ = this.update(cx, |this, _| {
             eprintln!("smoke-gitx: merge topic -> toast {:?}, topic.py {}", toast(this), this.root.join("topic.py").exists());
+            this.popup = None;
+        });
+        // Cherry-Pick spike's commit with a draft in the Commit window: the draft stays.
+        let commit = |hash: &str, subject: &str| brisk_git::Commit {
+            hash: hash.trim().to_string(),
+            parents: Vec::new(),
+            author: "Bob".into(),
+            email: "bob@example.com".into(),
+            time: 0,
+            refs: Vec::new(),
+            subject: subject.into(),
+        };
+        let message = |this: &Workspace, cx: &gpui::App| this.git.as_ref().map(|g| g.message.read(cx).text_string()).unwrap_or_default();
+        let idle = |this: &Workspace, _: &gpui::App| this.git.as_ref().is_some_and(|g| g.busy.is_none());
+        let spike = commit(&sh(root, &["rev-parse", "spike"]), "Work on spike");
+        let _ = this.update(cx, |this, cx| {
+            if let Some(g) = this.git.as_ref() {
+                g.message.update(cx, |e, cx| e.replace_all_text("my draft", cx));
+            }
+            this.cherry_pick(spike, cx);
+        });
+        pause(bg, 200).await;
+        wait_for(this, cx, bg, 5000, "the cherry-pick", idle).await;
+        let _ = this.update(cx, |this, cx| {
+            eprintln!("smoke-gitx: cherry-pick spike -> toast {:?}, spike.py {}, draft {:?}", toast(this), this.root.join("spike.py").exists(), message(this, cx));
+        });
+        // Undo Commit of it: the changes become local, its message goes after the draft.
+        let head = commit(&sh(root, &["rev-parse", "HEAD"]), "Work on spike");
+        let _ = this.update(cx, |this, cx| this.undo_commit(head, cx));
+        pause(bg, 200).await;
+        wait_for(this, cx, bg, 5000, "the undo commit", idle).await;
+        let _ = this.update_in(cx, |this, window, cx| {
+            eprintln!(
+                "smoke-gitx: undo commit -> toast {:?}, status {:?}, draft {:?}",
+                toast(this),
+                sh(&this.root, &["status", "--porcelain", "spike.py"]).trim(),
+                message(this, cx)
+            );
             this.smoke_branch_op("spike", "Delete", window, cx);
+        });
+        // Whether it is merged is read in the background, then the confirmation opens.
+        let confirm_open = |this: &Workspace, _: &gpui::App| this.popup.as_ref().is_some_and(|p| matches!(p.kind, super::PopupKind::Confirm));
+        wait_for(this, cx, bg, 5000, "the Force Delete confirmation", confirm_open).await;
+        let _ = this.update_in(cx, |this, window, cx| {
             let confirm: Vec<String> = this.popup.as_ref().map(|p| p.items.iter().map(|i| format!("{} | {}", i.label, i.detail)).collect()).unwrap_or_default();
             eprintln!("smoke-gitx: delete unmerged spike -> {confirm:?}, selected {:?}", this.popup.as_ref().map(|p| p.selected));
             // Up to Force Delete, Enter.
             this.smoke_press("up enter", window, cx);
         });
-        pause(bg, 1500).await;
+        wait_for(this, cx, bg, 5000, "the force delete of spike", |this, _| toast_text(this).contains("spike")).await;
         let _ = this.update_in(cx, |this, window, cx| {
             eprintln!("smoke-gitx: force delete spike -> toast {:?}", toast(this));
             this.smoke_branch_op("topic", "Delete", window, cx);
         });
-        pause(bg, 1500).await;
+        wait_for(this, cx, bg, 5000, "the delete of topic", |this, _| toast_text(this).contains("topic") && this.git.as_ref().is_some_and(|g| g.busy.is_none())).await;
         let _ = this.update_in(cx, |this, window, cx| {
             eprintln!("smoke-gitx: delete merged topic -> toast {:?}, branches {:?}", toast(this), sh(&this.root, &["branch", "--format=%(refname:short)"]).lines().collect::<Vec<_>>());
             let ops = this.smoke_branch_op("main", "Show in Log", window, cx);

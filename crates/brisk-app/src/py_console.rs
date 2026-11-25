@@ -62,15 +62,7 @@ impl Console {
         let tx2 = tx.clone();
         std::thread::spawn(move || read_stdout(stdout, tx));
         // C-level writes to the real stderr (extension modules, the interpreter itself).
-        std::thread::spawn(move || {
-            let mut r = stderr;
-            let mut buf = [0u8; 4096];
-            while let Ok(n) = r.read(&mut buf) {
-                if n == 0 || tx2.send(Event::Err(String::from_utf8_lossy(&buf[..n]).into_owned())).is_err() {
-                    break;
-                }
-            }
-        });
+        std::thread::spawn(move || read_stderr(stderr, tx2));
         Ok(Self { child, stdin, rx, exited: false })
     }
 
@@ -112,8 +104,9 @@ impl Console {
         v
     }
 
+    /// Also stops what the code started (`subprocess`, multiprocessing workers).
     pub fn kill(&mut self) {
-        let _ = self.child.kill();
+        brisk_proc::kill_tree(&mut self.child);
         let _ = self.child.wait();
     }
 }
@@ -144,6 +137,39 @@ fn read_stdout(mut r: impl Read, tx: Sender<Event>) {
     }
 }
 
+fn read_stderr(mut r: impl Read, tx: Sender<Event>) {
+    let mut pending: Vec<u8> = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let n = match r.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        pending.extend_from_slice(&buf[..n]);
+        if let Some(text) = take_complete(&mut pending) {
+            if tx.send(Event::Err(text)).is_err() {
+                return;
+            }
+        }
+    }
+    if !pending.is_empty() {
+        let _ = tx.send(Event::Err(String::from_utf8_lossy(&pending).into_owned()));
+    }
+}
+
+/// The decodable front of `pending`; a UTF-8 character split across reads stays for the next.
+fn take_complete(pending: &mut Vec<u8>) -> Option<String> {
+    let valid = match std::str::from_utf8(pending) {
+        Ok(_) => pending.len(),
+        Err(e) if e.error_len().is_none() => e.valid_up_to(),
+        Err(_) => pending.len(),
+    };
+    (valid > 0).then(|| {
+        let text: Vec<u8> = pending.drain(..valid).collect();
+        String::from_utf8_lossy(&text).into_owned()
+    })
+}
+
 /// Take the complete output and events off the front of `pending`; an unfinished event line
 /// or a split UTF-8 character stays for the next read.
 pub fn split_events(pending: &mut Vec<u8>) -> Vec<Event> {
@@ -163,15 +189,7 @@ pub fn split_events(pending: &mut Vec<u8>) -> Vec<Event> {
                 out.push(Event::Out(String::from_utf8_lossy(&text).into_owned()));
             }
             None => {
-                let valid = match std::str::from_utf8(pending) {
-                    Ok(_) => pending.len(),
-                    Err(e) if e.error_len().is_none() => e.valid_up_to(),
-                    Err(_) => pending.len(),
-                };
-                if valid > 0 {
-                    let text: Vec<u8> = pending.drain(..valid).collect();
-                    out.push(Event::Out(String::from_utf8_lossy(&text).into_owned()));
-                }
+                out.extend(take_complete(pending).map(Event::Out));
                 break;
             }
         }
@@ -249,6 +267,18 @@ mod tests {
         let v = split_events(&mut p);
         assert_eq!(v, vec![Event::Done { vars: vec![Var { name: "x".into(), ty: "int".into(), value: "1".into(), size: None }], exit: false }]);
         assert!(p.is_empty());
+    }
+
+    #[test]
+    fn stderr_keeps_split_characters() {
+        let (tx, rx) = channel();
+        // 'ж' is split across the 4 KB reads.
+        let mut data = vec![b'a'; 4095];
+        data.extend_from_slice("ж!".as_bytes());
+        read_stderr(std::io::Cursor::new(data), tx);
+        let text: String = rx.try_iter().map(|e| if let Event::Err(s) = e { s } else { panic!("{e:?}") }).collect();
+        assert!(text.ends_with("aж!"), "{:?}", &text[text.len() - 8..]);
+        assert!(!text.contains('\u{fffd}'));
     }
 
     /// Needs `python` on PATH; skipped otherwise.

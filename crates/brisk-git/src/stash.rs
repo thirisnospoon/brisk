@@ -1,11 +1,13 @@
 //! Stash Changes / Unstash Changes.
 
-use crate::{FileChange, Repo, Result};
+use crate::{FileChange, GitError, Repo, Result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StashEntry {
-    /// `stash@{0}`
+    /// `stash@{0}`: shifts when a newer stash is made or an older one dropped.
     pub name: String,
+    /// The stash commit: stable, for addressing it after the list may have changed.
+    pub hash: String,
     /// "On main: message" / "WIP on main: …"
     pub message: String,
     pub time: i64,
@@ -13,12 +15,17 @@ pub struct StashEntry {
 
 impl Repo {
     pub fn stash_list(&self) -> Result<Vec<StashEntry>> {
-        let out = self.git(&["stash", "list", "--format=%gd%x1f%gs%x1f%ct"])?;
+        let out = self.git(&["stash", "list", "--format=%gd%x1f%H%x1f%gs%x1f%ct"])?;
         Ok(out
             .lines()
             .filter_map(|l| {
                 let f: Vec<&str> = l.split('\x1f').collect();
-                (f.len() >= 3).then(|| StashEntry { name: f[0].to_string(), message: f[1].to_string(), time: f[2].trim().parse().unwrap_or(0) })
+                (f.len() >= 4).then(|| StashEntry {
+                    name: f[0].to_string(),
+                    hash: f[1].to_string(),
+                    message: f[2].to_string(),
+                    time: f[3].trim().parse().unwrap_or(0),
+                })
             })
             .collect())
     }
@@ -40,8 +47,11 @@ impl Repo {
         self.git(&["stash", if pop { "pop" } else { "apply" }, name])
     }
 
-    pub fn stash_drop(&self, name: &str) -> Result<String> {
-        self.git(&["stash", "drop", name])
+    /// Drop the stash whose commit is `hash`. `git stash drop` takes only `stash@{N}`, so the
+    /// index is looked up right before dropping.
+    pub fn stash_drop(&self, hash: &str) -> Result<String> {
+        let e = self.stash_list()?.into_iter().find(|e| e.hash == hash).ok_or_else(|| GitError("The stash no longer exists".into()))?;
+        self.git(&["stash", "drop", &e.name])
     }
 
     /// Files a stash changes (relative to the commit it was made on).

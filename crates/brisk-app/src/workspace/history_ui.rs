@@ -164,10 +164,12 @@ impl Workspace {
     }
 
     pub(super) fn put_label(&mut self, name: String, cx: &mut Context<Self>) {
-        // The open editors' text is the state the label marks: keep it first.
+        // The label marks the files as saved now: save first, and record only what is on disk
+        // (an editor that could not be saved is not "Saved").
+        self.save_all(cx);
         for ed in self.editors() {
             let e = ed.read(cx);
-            if let Some(p) = e.path.as_deref() {
+            if let Some(p) = e.path.as_deref().filter(|_| !e.buffer.is_dirty()) {
                 local_history::record(p, &e.buffer.text(), Label::Saved);
             }
         }

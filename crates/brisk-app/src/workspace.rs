@@ -301,6 +301,8 @@ impl SeTab {
 
 #[derive(Clone)]
 enum Target {
+    /// A row that only explains (a name that cannot be used): Enter keeps the popup open.
+    Note,
     File(PathBuf),
     /// A folder in the folder-crumb popup: Enter or → steps into it.
     Dir(PathBuf),
@@ -515,6 +517,8 @@ pub struct Workspace {
     /// What the status bar shows of `status`: a new message stays 6 s, then fades; the last
     /// 20 are kept for the history popup (a click on the message area).
     status_log: status_ui::StatusLog,
+    /// The newest file-list scan; older ones that finish later are dropped.
+    reindex_gen: u64,
     /// Where the Terminal's first shell starts when Open In → Terminal opens it.
     terminal_start: Option<PathBuf>,
     started: Instant,
@@ -840,10 +844,7 @@ impl Workspace {
         cx.defer_in(window, |this: &mut Self, window, cx| this.start_disk_poll(window, cx));
         // Closing the window saves everything first (PyCharm never asks).
         let me = cx.entity().downgrade();
-        window.on_window_should_close(cx, move |_, cx| {
-            let _ = me.update(cx, |this, cx| this.save_all(cx));
-            true
-        });
+        window.on_window_should_close(cx, move |_, cx| me.update(cx, |this, cx| this.save_all_for_quit(cx)).unwrap_or(true));
         if std::env::var_os("BRISK_OPEN_TERMINAL").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.toggle_terminal(window, cx));
         }
@@ -960,6 +961,7 @@ impl Workspace {
             settings_dialog: None,
             status: "Indexing…".into(),
             status_log: Default::default(),
+            reindex_gen: 0,
             terminal_start: None,
             started: Instant::now(),
         }
@@ -1013,6 +1015,26 @@ impl Workspace {
         let console = self.pyc.as_ref().map(|p| p.input.clone());
         let packages = self.packages.as_ref().map(|p| p.fields()).into_iter().flatten();
         git_fields.chain(console).chain(packages).find(|m| m.read(cx).focus_handle(cx).is_focused(window))
+    }
+
+    /// Save All before the window closes. False (stay open) when an editor still has edits
+    /// that could not be written: a conflict with the disk or a write error. Quitting then
+    /// would lose them, as closing that tab would.
+    pub(crate) fn save_all_for_quit(&mut self, cx: &mut Context<Self>) -> bool {
+        self.save_all(cx);
+        let stuck = self.editors().find_map(|e| {
+            let ed = e.read(cx);
+            (ed.buffer.is_dirty() && ed.read_error.is_none() && ed.path.is_some()).then(|| (ed.title(), ed.disk_conflict.is_some()))
+        });
+        let Some((title, conflict)) = stuck else { return true };
+        let msg = if conflict {
+            format!("{title} changed on disk: choose Reload or Keep Mine before closing")
+        } else {
+            format!("{title} could not be saved: its edits would be lost on close")
+        };
+        self.show_toast(msg, true, cx);
+        cx.notify();
+        false
     }
 
     fn save_all(&mut self, cx: &mut Context<Self>) {
@@ -1086,6 +1108,10 @@ impl Workspace {
             self.adopt_bookmarks(&ed, cx);
             self.adopt_breakpoints(&ed, cx);
             ed.update(cx, |e, _| e.collapse_imports());
+            // Read-only text (undecodable bytes): say why typing does nothing.
+            if let Some(err) = ed.read(cx).read_error.clone().filter(|_| ed.read(cx).buffer.len_chars() > 0) {
+                self.show_toast(format!("{}: {err}", ed.read(cx).title()), true, cx);
+            }
             if ed.read(cx).is_big() {
                 let msg = format!("Large file ({} lines): inlay hints are off; fold markers and completion words update lazily", ed.read(cx).buffer.len_lines());
                 self.status = msg.clone();
@@ -1160,6 +1186,17 @@ impl Workspace {
             None => window.focus(&self.tree_focus),
         }
         cx.notify();
+    }
+
+    /// A popup closed without acting: back to where it was opened from. File operations
+    /// (Rename, Copy, Move, Delete, New) come from the Project tree; the editor otherwise, or
+    /// the tree when no file is open.
+    fn focus_after_popup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.file_op.take().is_some() || self.active.is_none() {
+            window.focus(&self.tree_focus);
+        } else {
+            self.focus_editor(window, cx);
+        }
     }
 
     fn focus_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1951,7 +1988,7 @@ impl Workspace {
         match k.key.as_str() {
             "escape" => {
                 self.popup = None;
-                self.focus_editor(window, cx);
+                self.focus_after_popup(window, cx);
             }
             "up" => {
                 p.selected = p.selected.saturating_sub(1);
@@ -1990,6 +2027,9 @@ impl Workspace {
                     cx.notify();
                     return;
                 }
+                if let Some(Target::Note) = target {
+                    return;
+                }
                 self.popup = None;
                 match target {
                     Some(Target::File(path)) => self.open_file(&path, window, cx),
@@ -2022,7 +2062,8 @@ impl Workspace {
                         self.focus_editor(window, cx);
                         self.run_pending(p, cx);
                     }
-                    Some(Target::Cancel) => self.focus_editor(window, cx),
+                    Some(Target::Cancel) => self.focus_after_popup(window, cx),
+                    Some(Target::Note) => {}
                     Some(Target::StopAndRerun(c)) => self.stop_and_rerun(*c, window, cx),
                     Some(t @ (Target::RunConfig(..) | Target::EditRunConfigs | Target::SaveRunConfig(_) | Target::Interpreter(_))) => self.run_popup_pick(t, window, cx),
                     Some(Target::AddInterpreter) => {
@@ -2297,7 +2338,7 @@ impl Workspace {
 
     fn render_right_stripe(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .w(px(40.))
+            .w(px(RIGHT_STRIPE_W))
             .h_full()
             .flex()
             .flex_col()
@@ -2999,6 +3040,7 @@ impl Workspace {
             Target::NewBranch => ("+", Theme::text_muted()),
             Target::Confirm(_) => ("✓", Theme::file_added()),
             Target::Cancel => ("×", Theme::text_muted()),
+            Target::Note => ("✗", Theme::error()),
             Target::Task => ("◷", Theme::accent()),
             Target::Tab(_) => file_icon(&it.label, false),
             Target::RunConfig(None, _) => ("▤", Theme::text_muted()),
@@ -3372,6 +3414,15 @@ mod short_dir_tests {
         assert_eq!(super::short_dir(std::path::Path::new(r"D:\a\b")), r"D:\a\b");
         assert_eq!(super::short_dir(std::path::Path::new(r"D:\a\b\c\d\e")), r"D:\…\d\e");
     }
+}
+
+/// Width of the right tool window stripe.
+const RIGHT_STRIPE_W: f32 = 40.;
+
+/// Toasts and offers sit this far from the window's right edge: clear of the right stripe,
+/// with the same 12 px gap they keep above the status bar.
+pub(crate) fn toast_right() -> gpui::Pixels {
+    px(RIGHT_STRIPE_W + 12.)
 }
 
 /// How an overlay comes in. Short enough never to hold up the next keystroke; the input goes

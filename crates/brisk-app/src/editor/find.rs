@@ -141,6 +141,11 @@ impl Editor {
         if let Some((v, r)) = f.scope.clone() {
             if v != version {
                 f.scope = self.buffer.changes_since(v).map(|ch| (version, brisk_text::map_through(r.start, &ch)..brisk_text::map_through(r.end, &ch)));
+                if f.scope.is_none() {
+                    // Too many edits to follow the range: drop "In Selection" (the toggle shows
+                    // it) rather than quietly searching, and replacing in, the whole file.
+                    f.opts.in_selection = false;
+                }
             }
         }
         let f = self.find.as_ref().unwrap();
@@ -157,8 +162,8 @@ impl Editor {
             match brisk_search::Query::new(&o) {
                 Ok(q) => {
                     let rope = self.buffer.rope();
-                    let all = q.ranges(&text, MAX_MATCHES).into_iter().map(|r| rope.byte_to_char(r.start)..rope.byte_to_char(r.end));
-                    (all.filter(|m| scope.as_ref().is_none_or(|s| m.start >= s.start && m.end <= s.end)).collect(), None)
+                    let all = q.ranges_in(&text, byte_scope(rope, scope.as_ref()), MAX_MATCHES);
+                    (all.into_iter().map(|r| rope.byte_to_char(r.start)..rope.byte_to_char(r.end)).collect(), None)
                 }
                 Err(e) => (Vec::new(), Some(e.trim_start_matches("error: ").to_string())),
             }
@@ -260,12 +265,31 @@ impl Editor {
         cx.notify();
     }
 
-    /// Replace every match as one undoable step.
+    /// Replace every match in scope as one undoable step: all of them, not only the
+    /// [`MAX_MATCHES`] that are highlighted. The query is compiled and the text copied once.
     pub fn replace_all(&mut self, cx: &mut Context<Self>) -> usize {
         self.refresh_find(false, cx);
         let Some(f) = self.find.as_ref() else { return 0 };
-        let n = f.matches.len();
-        let edits: Vec<(Range<usize>, String)> = (0..n).map(|i| (self.find.as_ref().unwrap().matches[i].clone(), self.replacement_for(i, cx))).collect();
+        if f.opts.query.is_empty() {
+            return 0;
+        }
+        let with = f.replace.as_ref().map(|r| r.read(cx).buffer.text()).unwrap_or_default();
+        let opts = f.opts.clone();
+        let scope = f.scope.as_ref().filter(|_| opts.in_selection).map(|(_, r)| r.clone());
+        let o = brisk_search::Options { query: opts.query.clone(), case_sensitive: opts.case_sensitive, whole_words: opts.whole_words, regex: opts.regex, file_mask: String::new() };
+        let Ok(q) = brisk_search::Query::new(&o) else { return 0 };
+        let text = self.text().to_string();
+        let rope = self.buffer.rope();
+        let edits: Vec<(Range<usize>, String)> = q
+            .ranges_in(&text, byte_scope(rope, scope.as_ref()), usize::MAX)
+            .into_iter()
+            .map(|r| {
+                let w = q.expand(&text, r.clone(), &with);
+                let w = if opts.preserve_case { preserve_case(&text[r.clone()], &w) } else { w };
+                (rope.byte_to_char(r.start)..rope.byte_to_char(r.end), w)
+            })
+            .collect();
+        let n = edits.len();
         if !edits.is_empty() {
             self.buffer.replace_ranges(edits);
             self.refresh_find(false, cx);
@@ -486,6 +510,12 @@ impl Editor {
 
 /// `with` in the case of `found` (Replace with "Preserve case"): all upper, capitalized or all
 /// lower; mixed case leaves the replacement as typed.
+/// The char range `scope` as bytes of the rope's text; the whole text without one.
+fn byte_scope(rope: &brisk_text::TextRope, scope: Option<&Range<usize>>) -> Range<usize> {
+    let len = rope.len_chars();
+    scope.map_or(0..rope.len_bytes(), |s| rope.char_to_byte(s.start.min(len))..rope.char_to_byte(s.end.min(len)))
+}
+
 pub fn preserve_case(found: &str, with: &str) -> String {
     let letters: Vec<char> = found.chars().filter(|c| c.is_alphabetic()).collect();
     if letters.is_empty() {

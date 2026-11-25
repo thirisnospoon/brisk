@@ -149,14 +149,16 @@ fn self_assignments(n: Node, text: &str, out: &mut Vec<String>) {
 /// caret at the end of the class's last line (just past its node) counts as inside.
 pub fn class_at(tree: &Tree, text: &str, byte: usize) -> Option<ClassInfo> {
     let found = class_from(tree, text, byte);
-    found.or_else(|| class_from(tree, text, byte.checked_sub(1)?))
+    // One character back, not one byte: the line may end in `ñ`.
+    found.or_else(|| class_from(tree, text, text.get(..byte.min(text.len()))?.char_indices().next_back()?.0))
 }
 
 fn class_from(tree: &Tree, text: &str, byte: usize) -> Option<ClassInfo> {
     let mut n = tree.root_node().descendant_for_byte_range(byte, byte);
     while let Some(c) = n {
         if c.kind() == "class_definition" {
-            return info(c, text, Some(text[..byte.min(text.len())].matches('\n').count()));
+            let line = text.as_bytes()[..byte.min(text.len())].iter().filter(|&&b| b == b'\n').count();
+            return info(c, text, Some(line));
         }
         n = c.parent();
     }
@@ -328,6 +330,14 @@ pub fn object_methods() -> Vec<Method> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn caret_after_a_non_ascii_last_line() {
+        for src in ["class C:\n    x = \u{f1}", "class C:\n    x = 1  # \u{43f}\u{440}\u{438}\u{432}\u{435}\u{442}"] {
+            let t = crate::parse_full(crate::Lang::Python, src, None).unwrap();
+            assert_eq!(class_at(&t, src, src.len()).map(|c| c.name), Some("C".to_string()), "{src:?}");
+        }
+    }
+
     use super::*;
 
     const SRC: &str = "class Point(Base, mod.Mixin):\n    x: int\n    y: int = 0\n    label = \"p\"\n\n    def __init__(self, x, y):\n        self.x = x\n        self._hidden = 1\n\n    def area(self) -> float:\n        return 0\n";

@@ -207,7 +207,21 @@ impl Workspace {
             pause(250).await;
             let menu_open = this.read_with(cx, |this, _| this.menu.is_some()).unwrap_or(true);
             eprintln!("smoke-edit: click outside the menu -> menu open={menu_open}");
-            let _ = this.update_in(cx, |this, window, cx| this.files_smoke(window, cx));
+            // A Python rename / move first asks ty for the import updates and finishes later:
+            // wait (bounded) for each such step before the next.
+            let mut pending = this.update_in(cx, |this, window, cx| this.files_smoke(0, window, cx)).unwrap_or(false);
+            for stage in 1..=2 {
+                let mut waited = 0;
+                while pending && waited < 100 {
+                    pause(100).await;
+                    waited += 1;
+                    pending = this.read_with(cx, |this, _| this.file_op.is_some() || this.lsp.moved.is_some()).unwrap_or(false);
+                }
+                if pending {
+                    eprintln!("smoke-edit: FAIL file operation still pending after {} ms", waited * 100);
+                }
+                pending = this.update_in(cx, |this, window, cx| this.files_smoke(stage, window, cx)).unwrap_or(false);
+            }
             // Right click on a Project view row (scan down the panel until a menu opens).
             let mut y = 50.;
             while y < 260. {
@@ -252,10 +266,23 @@ impl Workspace {
         window.focus(&self.tree_focus);
     }
 
-    /// New / rename / copy / move / delete through the Project view's keys.
-    fn files_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// New / rename / copy / move / delete through the Project view's keys, in stages: 0 ends
+    /// with the rename and 1 with the move, which may finish later (ty is asked about imports
+    /// first). Returns whether the caller should wait for a file operation before the next.
+    fn files_smoke(&mut self, stage: u8, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let root = self.root.clone();
         let exists = |p: &str| root.join(p).exists();
+        match stage {
+            0 => {}
+            1 => {
+                self.files_smoke_after_rename(window, cx);
+                return self.file_op.is_some();
+            }
+            _ => {
+                self.files_smoke_after_move(window, cx);
+                return false;
+            }
+        }
         self.smoke_select(&root.join("models.py"), window);
         self.smoke_press("alt-insert", window, cx);
         // File, Scratch File, Directory, Python Package, Python File.
@@ -273,6 +300,12 @@ impl Workspace {
         eprintln!("smoke-edit: rename popup -> {}", self.smoke_popup());
         self.smoke_query("util.py");
         self.smoke_press("enter", window, cx);
+        self.file_op.is_some()
+    }
+
+    fn files_smoke_after_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let root = self.root.clone();
+        let exists = |p: &str| root.join(p).exists();
         let tab = self.active_editor().and_then(|e| e.read(cx).path.clone());
         let saved = std::fs::read_to_string(root.join("pkg/util.py")).unwrap_or_default();
         eprintln!("smoke-edit: renamed -> helper.py={} util.py={} (content {saved:?}) tab now {:?}", exists("pkg/helper.py"), exists("pkg/util.py"), tab.as_ref().map(|p| p.strip_prefix(&root).unwrap_or(p).to_path_buf()));
@@ -287,6 +320,11 @@ impl Workspace {
         self.smoke_press("f6", window, cx);
         self.smoke_query(".");
         self.smoke_press("enter", window, cx);
+    }
+
+    fn files_smoke_after_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let root = self.root.clone();
+        let exists = |p: &str| root.join(p).exists();
         eprintln!("smoke-edit: moved to root -> pkg/util_copy.py={} util_copy.py={}", exists("pkg/util_copy.py"), exists("util_copy.py"));
         self.smoke_select(&root.join("util_copy.py"), window);
         self.smoke_press("delete", window, cx);

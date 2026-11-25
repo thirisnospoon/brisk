@@ -75,7 +75,7 @@ Checks Find / Replace, scrolling, mouse drag, the context menu and file operatio
 
 ### `BRISK_SMOKE_EDIT2=1`
 
-Creates `stage2.py`, `messy.py`, `third.py` and `moves.py` in the project. Checks bracket and occurrence highlighting, folding, Reformat Code and Optimize Imports, Actions on Save, Code Cleanup, Move Statement, Unwrap/Remove, `Ctrl+W` inside brackets, method navigation, File Structure, bookmarks, extend selection, caret cloning, Paste from History, tabs and split editors.
+Creates `stage2.py`, `messy.py`, `onsave.py`, `third.py` and `moves.py` in the project. Checks bracket and occurrence highlighting, folding, Reformat Code and Optimize Imports, Actions on Save (the file is saved as typed, then ruff's result is saved from the background, waited for up to 5 s), Code Cleanup, Move Statement, Unwrap/Remove, `Ctrl+W` inside brackets, method navigation, File Structure, bookmarks, extend selection, caret cloning, Paste from History, tabs and split editors.
 
 ### `BRISK_SMOKE_W7=1`
 
@@ -454,7 +454,7 @@ Opens the file, the Commit and Git windows, a diff and the branches popup.
 
 Folder: empty only. Creates a repository in it and commits.
 
-Checks Annotate with Git Blame, Conflicts and Merge after a conflicting `git merge`, Stash / Unstash, Show History for a file and a selection, Git log filters (including real clicks on the Branch and User filters), Compare with Branch, Show Diff with Working Tree, Rollback of one of two files, Push to a bare repository next to the folder (`<folder>-origin.git`), Fetch and Update Project from a second clone, Merge into Current, Delete and Force Delete of branches.
+Checks Annotate with Git Blame, Conflicts and Merge after a conflicting `git merge`, Stash / Unstash (a file's diff, Apply, and Drop with its confirmation: `Esc` cancels only the question, `Enter` drops), Show History for a file and a selection, Git log filters (including real clicks on the Branch and User filters), Compare with Branch, Show Diff with Working Tree, Rollback of one of two files, Push to a bare repository next to the folder (`<folder>-origin.git`), Fetch and Update Project from a second clone, Merge into Current, Cherry-Pick and Undo Commit with a draft in the Commit window (the draft stays; Undo Commit adds the commit's message after it), Delete and Force Delete of branches. Steps that finish in the background are waited for (up to 5 s each); a step that never finishes prints `FAIL timed out …`.
 
 `BRISK_SMOKE_GITX_HOLD=annotate|merge|stash|history|log|logmenu|push` stops at that phase.
 
