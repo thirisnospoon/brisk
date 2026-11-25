@@ -24,6 +24,27 @@ use std::path::Path;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{InputEdit, Language, Parser, Point, Query, QueryCursor};
 
+/// Python nodes that can contain a `class` or `def` (besides definitions themselves). An
+/// `ERROR` node can hold anything while a statement is half typed.
+const PY_DEF_CONTAINERS: &[&str] = &[
+    "module",
+    "block",
+    "decorated_definition",
+    "if_statement",
+    "elif_clause",
+    "else_clause",
+    "for_statement",
+    "while_statement",
+    "try_statement",
+    "except_clause",
+    "except_group_clause",
+    "finally_clause",
+    "with_statement",
+    "match_statement",
+    "case_clause",
+    "ERROR",
+];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Highlight {
     Keyword,
@@ -264,6 +285,11 @@ pub struct SyntaxTree {
     parsed: String,
     /// `tree` is the previous tree, edited to `parsed` but not reparsed (see `parse_within`).
     stale: bool,
+    /// Changes whenever `tree` or `preview` does.
+    generation: u64,
+    /// Highlights of the last few byte ranges (the view, sticky lines) for `generation`: a
+    /// frame that only blinks the caret does not run the query again.
+    hl_cache: std::cell::RefCell<(u64, Vec<((Range<usize>, usize), Vec<Span>)>)>,
 }
 
 /// A complete parse with its own parser (for a background thread), reusing `old` edited to
@@ -300,7 +326,7 @@ impl SyntaxTree {
             }
         };
         drop(cache);
-        Self { lang, parser, query, names, preview: None, tree: None, parsed: String::new(), stale: false }
+        Self { lang, parser, query, names, preview: None, tree: None, parsed: String::new(), stale: false, generation: 0, hl_cache: Default::default() }
     }
 
     pub fn lang(&self) -> Lang {
@@ -323,6 +349,7 @@ impl SyntaxTree {
         if let Some(tree) = self.tree.as_mut() {
             tree.edit(&text_edit(&self.parsed, text));
         }
+        self.generation += 1;
         self.stale = true;
         self.parsed.clear();
         self.parsed.push_str(text);
@@ -336,6 +363,7 @@ impl SyntaxTree {
         let prefix = (0..=prefix.min(text.len())).rev().find(|&i| text.is_char_boundary(i)).unwrap_or(0);
         self.preview = self.parser.parse(&text[..prefix], None).map(|t| (prefix, t));
         self.tree = None;
+        self.generation += 1;
         self.stale = true;
         self.parsed.clear();
         self.parsed.push_str(text);
@@ -380,6 +408,7 @@ impl SyntaxTree {
             self.preview = None;
         }
         self.tree = parsed.or(old);
+        self.generation += 1;
         self.parsed.clear();
         self.parsed.push_str(text);
     }
@@ -411,6 +440,7 @@ impl SyntaxTree {
         }
         self.preview = None;
         self.tree = Some(tree);
+        self.generation += 1;
     }
 
     pub fn tree(&self) -> Option<&Tree> {
@@ -419,6 +449,29 @@ impl SyntaxTree {
 
     /// Spans intersecting `bytes`, non-overlapping and sorted. Innermost capture wins.
     pub fn highlights(&self, text: &str, bytes: Range<usize>) -> Vec<Span> {
+        const KEEP: usize = 8;
+        let key = (bytes.clone(), text.len());
+        {
+            let c = self.hl_cache.borrow();
+            if c.0 == self.generation {
+                if let Some((_, v)) = c.1.iter().find(|(k, _)| *k == key) {
+                    return v.clone();
+                }
+            }
+        }
+        let v = self.highlights_uncached(text, bytes);
+        let mut c = self.hl_cache.borrow_mut();
+        if c.0 != self.generation {
+            *c = (self.generation, Vec::new());
+        }
+        if c.1.len() >= KEEP {
+            c.1.remove(0);
+        }
+        c.1.push((key, v.clone()));
+        v
+    }
+
+    fn highlights_uncached(&self, text: &str, bytes: Range<usize>) -> Vec<Span> {
         let (tree, bytes) = match (&self.tree, &self.preview) {
             (Some(t), _) => (t, bytes),
             // Only the previewed prefix has a tree yet.
@@ -609,35 +662,48 @@ impl SyntaxTree {
     }
 
     /// Top-level and nested classes/functions for the Structure tool window (Alt+7).
+    ///
+    /// It runs on every edit (sticky lines, breadcrumbs), so it walks with one cursor and, in
+    /// Python, descends only into statements that can hold a definition: expressions, strings
+    /// and argument lists, most of the tree's nodes, are skipped.
     pub fn outline(&self, text: &str) -> Vec<OutlineItem> {
         let mut out = Vec::new();
-        if let Some(tree) = &self.tree {
-            let mut stack = vec![(tree.root_node(), 0usize)];
-            while let Some((node, depth)) = stack.pop() {
-                let kind = match node.kind() {
-                    "class_definition" => Some(OutlineKind::Class),
-                    "function_definition" => Some(if depth > 0 { OutlineKind::Method } else { OutlineKind::Function }),
-                    _ => None,
-                };
-                let child_depth = if kind.is_some() { depth + 1 } else { depth };
-                if let (Some(kind), Some(name)) = (kind, node.child_by_field_name("name")) {
-                    out.push(OutlineItem {
-                        name: text[name.byte_range()].to_string(),
-                        kind,
-                        depth,
-                        byte: name.start_byte(),
-                        line: name.start_position().row,
-                        end_line: node.end_position().row,
-                    });
+        let Some(tree) = &self.tree else { return out };
+        let python = self.lang == Lang::Python;
+        let mut cur = tree.walk();
+        // The definition depth of the node under the cursor, one entry per level.
+        let mut depths: Vec<usize> = vec![0];
+        loop {
+            let node = cur.node();
+            let depth = depths.last().copied().unwrap_or(0);
+            let kind = match node.kind() {
+                "class_definition" => Some(OutlineKind::Class),
+                "function_definition" => Some(if depth > 0 { OutlineKind::Method } else { OutlineKind::Function }),
+                _ => None,
+            };
+            if let (Some(kind), Some(name)) = (kind, node.child_by_field_name("name")) {
+                out.push(OutlineItem {
+                    name: text[name.byte_range()].to_string(),
+                    kind,
+                    depth,
+                    byte: name.start_byte(),
+                    line: name.start_position().row,
+                    end_line: node.end_position().row,
+                });
+            }
+            let child_depth = if kind.is_some() { depth + 1 } else { depth };
+            let descend = !python || kind.is_some() || PY_DEF_CONTAINERS.contains(&node.kind());
+            if descend && cur.goto_first_child() {
+                depths.push(child_depth);
+                continue;
+            }
+            while !cur.goto_next_sibling() {
+                if !cur.goto_parent() {
+                    return out;
                 }
-                let mut c = node.walk();
-                let children: Vec<_> = node.children(&mut c).collect();
-                for ch in children.into_iter().rev() {
-                    stack.push((ch, child_depth));
-                }
+                depths.pop();
             }
         }
-        out
     }
 
     /// Module-level assignments (`NAME = ...`, `x: int = ...`, `a, b = ...`), each name once,
@@ -1018,34 +1084,164 @@ class A:
         assert_eq!((o[0].name.as_str(), o[0].kind), ("User", OutlineKind::Class));
         assert_eq!((o[1].name.as_str(), o[1].kind, o[1].depth), ("name", OutlineKind::Method, 1));
     }
+
+    /// The pruned walk finds what a walk over every node finds, in the same order.
+    #[test]
+    fn outline_matches_full_walk() {
+        fn full(s: &SyntaxTree, text: &str) -> Vec<(String, usize, usize)> {
+            let mut out = Vec::new();
+            let mut stack = vec![(s.tree.as_ref().unwrap().root_node(), 0usize)];
+            while let Some((node, depth)) = stack.pop() {
+                let def = matches!(node.kind(), "class_definition" | "function_definition");
+                if def {
+                    if let Some(n) = node.child_by_field_name("name") {
+                        out.push((text[n.byte_range()].to_string(), depth, n.start_position().row));
+                    }
+                }
+                let mut c = node.walk();
+                let ch: Vec<_> = node.children(&mut c).collect();
+                for k in ch.into_iter().rev() {
+                    stack.push((k, depth + def as usize));
+                }
+            }
+            out
+        }
+        let src = "import os\n\
+@dec\nclass A(B):\n    x = [1, 2]\n    def f(self):\n        def inner():\n            pass\n        return lambda: 1\n\
+if os.name:\n    def g(): pass\nelif x:\n    class C: pass\nelse:\n    def h(): ...\n\
+try:\n    def t(): pass\nexcept E:\n    def e(): pass\nfinally:\n    def fi(): pass\n\
+with open(p) as f:\n    def w(): pass\nfor i in r:\n    def lo(): pass\nwhile 1:\n    def wh(): pass\n\
+match v:\n    case 1:\n        def m(): pass\n\
+def broken(:\n    def after(): pass\n";
+        let mut s = SyntaxTree::new(Lang::Python);
+        s.parse(src);
+        let got: Vec<_> = s.outline(src).into_iter().map(|o| (o.name, o.depth, o.line)).collect();
+        assert_eq!(got, full(&s, src));
+        assert!(got.len() >= 14, "{got:?}");
+    }
 }
 
 /// The single edit that turns `old` into `new`: the common prefix and suffix stay, the
 /// middle changed. Byte offsets; rows and columns as tree-sitter counts them.
 fn text_edit(old: &str, new: &str) -> InputEdit {
     let (o, n) = (old.as_bytes(), new.as_bytes());
-    let mut prefix = o.iter().zip(n).take_while(|(a, b)| a == b).count();
+    // Runs on every edit over the whole text: slices are compared a block at a time and
+    // newlines counted with memchr, then only the changed middle is looked at byte by byte.
+    let mut prefix = common_prefix(o, n);
     // Keep the edit on character boundaries.
     while prefix > 0 && !(old.is_char_boundary(prefix) && new.is_char_boundary(prefix)) {
         prefix -= 1;
     }
     let max_suffix = o.len().min(n.len()) - prefix;
-    let mut suffix = o.iter().rev().zip(n.iter().rev()).take(max_suffix).take_while(|(a, b)| a == b).count();
+    let mut suffix = common_suffix(&o[prefix..], &n[prefix..]).min(max_suffix);
     while suffix > 0 && !(old.is_char_boundary(o.len() - suffix) && new.is_char_boundary(n.len() - suffix)) {
         suffix -= 1;
     }
-    let point = |s: &[u8], at: usize| {
-        let row = s[..at].iter().filter(|&&c| c == b'\n').count();
-        let col = at - s[..at].iter().rposition(|&c| c == b'\n').map_or(0, |p| p + 1);
-        Point { row, column: col }
-    };
+    let (old_end, new_end) = (o.len() - suffix, n.len() - suffix);
+    let lines = |s: &[u8]| memchr::memchr_iter(b'\n', s).count();
+    let column = |s: &[u8], at: usize| at - memchr::memrchr(b'\n', &s[..at]).map_or(0, |p| p + 1);
+    let row = lines(&n[..prefix]);
     InputEdit {
         start_byte: prefix,
-        old_end_byte: o.len() - suffix,
-        new_end_byte: n.len() - suffix,
-        start_position: point(n, prefix),
-        old_end_position: point(o, o.len() - suffix),
-        new_end_position: point(n, n.len() - suffix),
+        old_end_byte: old_end,
+        new_end_byte: new_end,
+        start_position: Point { row, column: column(n, prefix) },
+        old_end_position: Point { row: row + lines(&o[prefix..old_end]), column: column(o, old_end) },
+        new_end_position: Point { row: row + lines(&n[prefix..new_end]), column: column(n, new_end) },
+    }
+}
+
+/// Length of the common prefix of `a` and `b`.
+fn common_prefix(a: &[u8], b: &[u8]) -> usize {
+    const BLOCK: usize = 64;
+    let len = a.len().min(b.len());
+    let mut i = 0;
+    while i + BLOCK <= len && a[i..i + BLOCK] == b[i..i + BLOCK] {
+        i += BLOCK;
+    }
+    while i < len && a[i] == b[i] {
+        i += 1;
+    }
+    i
+}
+
+/// Length of the common suffix of `a` and `b`.
+fn common_suffix(a: &[u8], b: &[u8]) -> usize {
+    const BLOCK: usize = 64;
+    let len = a.len().min(b.len());
+    let (ea, eb) = (a.len(), b.len());
+    let mut i = 0;
+    while i + BLOCK <= len && a[ea - i - BLOCK..ea - i] == b[eb - i - BLOCK..eb - i] {
+        i += BLOCK;
+    }
+    while i < len && a[ea - i - 1] == b[eb - i - 1] {
+        i += 1;
+    }
+    i
+}
+
+#[cfg(test)]
+mod text_edit_tests {
+    use super::*;
+
+    /// The block-wise version gives the edit the byte-by-byte one gave.
+    #[test]
+    fn matches_the_bytewise_edit() {
+        fn slow(old: &str, new: &str) -> InputEdit {
+            let (o, n) = (old.as_bytes(), new.as_bytes());
+            let mut prefix = o.iter().zip(n).take_while(|(a, b)| a == b).count();
+            while prefix > 0 && !(old.is_char_boundary(prefix) && new.is_char_boundary(prefix)) {
+                prefix -= 1;
+            }
+            let max_suffix = o.len().min(n.len()) - prefix;
+            let mut suffix = o.iter().rev().zip(n.iter().rev()).take(max_suffix).take_while(|(a, b)| a == b).count();
+            while suffix > 0 && !(old.is_char_boundary(o.len() - suffix) && new.is_char_boundary(n.len() - suffix)) {
+                suffix -= 1;
+            }
+            let point = |s: &[u8], at: usize| {
+                let row = s[..at].iter().filter(|&&c| c == b'\n').count();
+                let col = at - s[..at].iter().rposition(|&c| c == b'\n').map_or(0, |p| p + 1);
+                Point { row, column: col }
+            };
+            InputEdit {
+                start_byte: prefix,
+                old_end_byte: o.len() - suffix,
+                new_end_byte: n.len() - suffix,
+                start_position: point(n, prefix),
+                old_end_position: point(o, o.len() - suffix),
+                new_end_position: point(n, n.len() - suffix),
+            }
+        }
+        let long: String = (0..300).map(|i| format!("line {i} = ({i}, 'é')\n")).collect();
+        let mut cases: Vec<(String, String)> = vec![
+            (String::new(), String::new()),
+            ("a".into(), "ab".into()),
+            ("ab".into(), "a".into()),
+            ("aaaa".into(), "aa".into()),
+            ("x\ny\n".into(), "x\nzy\n".into()),
+            ("é".into(), "è".into()),
+            ("ab\ncd".into(), "\n".into()),
+        ];
+        for at in [0, 1, 63, 64, 65, 500, long.len() / 2, long.len() - 1] {
+            let at = (0..=at).rev().find(|&i| long.is_char_boundary(i)).unwrap();
+            let mut ins = long.clone();
+            ins.insert_str(at, "new\ntext");
+            cases.push((long.clone(), ins.clone()));
+            cases.push((ins, long.clone()));
+            let mut del = long.clone();
+            let end = (at + 70).min(long.len());
+            let end = (end..=long.len()).find(|&i| long.is_char_boundary(i)).unwrap();
+            del.replace_range(at..end, "");
+            cases.push((long.clone(), del));
+        }
+        for (a, b) in &cases {
+            let (x, y) = (text_edit(a, b), slow(a, b));
+            assert_eq!(
+                (x.start_byte, x.old_end_byte, x.new_end_byte, x.start_position, x.old_end_position, x.new_end_position),
+                (y.start_byte, y.old_end_byte, y.new_end_byte, y.start_position, y.old_end_position, y.new_end_position),
+                "{a:?} -> {b:?}"
+            );
+        }
     }
 }
 

@@ -17,3 +17,5 @@ tree-sitter-toml-ng = "0.7.0"
 tree-sitter-yaml = "0.7.2"
 tree-sitter-md = "0.5.4"
 tree-sitter-bash = "0.25.1"
+# Already in the binary (regex, ignore): newline counts for the edit passed to the parser.
+memchr = "2"
