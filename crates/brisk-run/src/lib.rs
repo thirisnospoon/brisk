@@ -175,8 +175,8 @@ pub fn split_args(s: &str) -> Vec<String> {
 /// in the configuration's working directory and environment (so `pip` is the venv's).
 pub fn shell_command(root: &Path, cfg: &RunConfig, python: &Path, line: &str) -> Command {
     let base = build(root, &RunConfig { kind: RunKind::Python, ..cfg.clone() }, python);
-    let (program, flag) = if cfg!(windows) { ("cmd.exe", "/C") } else { ("sh", "-c") };
-    Command { program: program.into(), args: vec![flag.into(), line.to_string()], cwd: base.cwd, env: base.env }
+    let (program, args) = brisk_platform::shell::command_line(line);
+    Command { program: program.into(), args, cwd: base.cwd, env: base.env }
 }
 
 pub fn build(root: &Path, cfg: &RunConfig, python: &Path) -> Command {

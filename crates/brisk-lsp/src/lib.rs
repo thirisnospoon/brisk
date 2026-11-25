@@ -586,21 +586,15 @@ pub fn ty_settings(extra_paths: &[std::path::PathBuf], exclude: &[String]) -> Va
 }
 
 fn exe(name: &str) -> String {
-    if cfg!(windows) {
-        format!("{name}.exe")
-    } else {
-        name.to_string()
-    }
+    brisk_platform::python::Layout::host().exe(name)
 }
 
 /// A tool installed next to a Python interpreter (`.venv\Scripts\ty.exe`); with `None`, on
 /// PATH, else the copy bundled with Brisk.
 pub fn find_tool(name: &str, python: Option<&Path>) -> Option<PathBuf> {
     if let Some(dir) = python.and_then(Path::parent) {
-        for p in [dir.join(exe(name)), dir.join("Scripts").join(exe(name))] {
-            if p.is_file() {
-                return Some(p);
-            }
+        if let Some(p) = brisk_platform::python::Layout::host().tool_dirs(dir).into_iter().map(|d| d.join(exe(name))).find(|p| p.is_file()) {
+            return Some(p);
         }
     }
     if python.is_some() {

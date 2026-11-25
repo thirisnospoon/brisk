@@ -95,10 +95,7 @@ pub fn shell_command(root: &Path, line: &str, activation: HashMap<String, String
     env.insert("PYTHONUNBUFFERED".into(), "1".into());
     env.insert("PYTHONIOENCODING".into(), "UTF-8".into());
     env.extend(activation);
-    #[cfg(windows)]
-    let (program, args) = (std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into()), vec!["/C".to_string(), line.to_string()]);
-    #[cfg(not(windows))]
-    let (program, args) = ("/bin/sh".to_string(), vec!["-c".to_string(), line.to_string()]);
+    let (program, args) = brisk_platform::shell::command_line(line);
     Command { program: program.into(), args, cwd: root.to_path_buf(), env }
 }
 

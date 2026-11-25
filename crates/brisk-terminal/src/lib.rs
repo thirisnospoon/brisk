@@ -100,9 +100,9 @@ impl SpawnOptions {
         env.insert("TERMINAL_EMULATOR".into(), "Brisk".into());
         for name in [".venv", "venv"] {
             let venv = root.join(name);
-            let bin = if cfg!(windows) { venv.join("Scripts") } else { venv.join("bin") };
+            let bin = brisk_platform::python::Layout::host().scripts_dir(&venv);
             if bin.is_dir() {
-                let sep = if cfg!(windows) { ";" } else { ":" };
+                let sep = brisk_platform::shell::path_separator();
                 let old = std::env::var("PATH").unwrap_or_default();
                 env.insert("PATH".into(), format!("{}{sep}{old}", bin.display()));
                 env.insert("VIRTUAL_ENV".into(), venv.display().to_string());
@@ -124,13 +124,7 @@ fn quote_program(p: String) -> String {
     }
 }
 
-pub fn default_shell() -> Option<(String, Vec<String>)> {
-    if cfg!(windows) {
-        Some(("powershell.exe".into(), vec!["-NoLogo".into()]))
-    } else {
-        None // alacritty uses $SHELL / passwd entry
-    }
-}
+pub use brisk_platform::shell::default_shell;
 
 enum Io {
     /// The flag is set once the child exited (its pid may then be reused).

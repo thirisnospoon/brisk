@@ -226,32 +226,7 @@ fn took(d: std::time::Duration) -> String {
     }
 }
 
-/// A shell the Terminal can start.
-#[derive(Clone)]
-pub struct Shell {
-    pub label: &'static str,
-    pub program: String,
-    pub args: Vec<String>,
-}
-
-/// The shells on this machine, the default (Windows PowerShell) first. WSL is not offered:
-/// starting it boots its virtual machine.
-pub fn shells() -> Vec<Shell> {
-    let mut v = vec![Shell { label: "PowerShell", program: "powershell.exe".into(), args: vec!["-NoLogo".into()] }];
-    if !cfg!(windows) {
-        return v;
-    }
-    let pf =
-        |sub: &str| ["ProgramFiles", "ProgramW6432"].iter().filter_map(std::env::var_os).map(|d| std::path::PathBuf::from(d).join(sub)).find(|p| p.is_file());
-    if let Some(p) = pf(r"PowerShell\7\pwsh.exe") {
-        v.push(Shell { label: "PowerShell 7", program: p.display().to_string(), args: vec!["-NoLogo".into()] });
-    }
-    v.push(Shell { label: "Command Prompt", program: "cmd.exe".into(), args: Vec::new() });
-    if let Some(p) = pf(r"Git\bin\bash.exe") {
-        v.push(Shell { label: "Git Bash", program: p.display().to_string(), args: vec!["--login".into(), "-i".into()] });
-    }
-    v
-}
+pub use brisk_platform::shell::shells;
 
 impl TerminalPanel {
     /// The Terminal tool window. Shells start with `activation` (the project interpreter's

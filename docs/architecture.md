@@ -620,6 +620,13 @@ Files: `brisk-run/src/interp.rs`, `pyproj.rs`, `ssh.rs`, `terminal_env.rs`,
 `debug_ui.rs`. Verify: unit tests for both layouts; venv, packages, LSP, RUN, Terminal
 smokes; an SSH interpreter still resolves `bin/python`. Risk: medium.
 
+Done on branch `batch2`. `python::Layout` is a value (`Windows` or `Unix`, `Layout::host()` for
+this machine), so both layouts are tested on every OS and an SSH interpreter can use the Unix
+one on a Windows host. `shell` holds the Terminal's shell list, the default shell,
+`command_line` (`%ComSpec% /C` or `/bin/sh -c`) and the `PATH` separator. What is left of the
+literals is test data and the `%APPDATA%` tool folders of `pyproj.rs`, which only exist on
+Windows.
+
 #### Step P4. `fs`, `dirs` and `fonts`
 
 `replace_atomic` from `editor/disk.rs` (`crate::editor::write_atomic` keeps its name and

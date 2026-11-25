@@ -1,6 +1,7 @@
 //! Code inspections through ruff, UI-free: finding the executable, checking unsaved text or
 //! the whole project, PyCharm-style severities, quick fixes and `# noqa` suppression.
 
+use brisk_platform::python::Layout;
 use serde::Deserialize;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -140,11 +141,7 @@ pub fn parse(json: &str) -> Result<Vec<Diagnostic>, String> {
 }
 
 fn exe(name: &str) -> String {
-    if cfg!(windows) {
-        format!("{name}.exe")
-    } else {
-        name.to_string()
-    }
+    Layout::host().exe(name)
 }
 
 /// A tool shipped with Brisk: `lib/<name>.exe` next to the executable (the portable
@@ -164,13 +161,7 @@ pub fn bundled_tool(name: &str) -> Option<PathBuf> {
 /// virtualenv or Scripts folder), then on `PATH`; `None` also tries the bundled copy.
 pub fn find_ruff(python: Option<&Path>) -> Option<PathBuf> {
     if let Some(dir) = python.and_then(Path::parent) {
-        let p = dir.join(exe("ruff"));
-        if p.is_file() {
-            return Some(p);
-        }
-        // A system python.exe sits next to Scripts\.
-        let p = dir.join("Scripts").join(exe("ruff"));
-        if p.is_file() {
+        if let Some(p) = Layout::host().tool_dirs(dir).into_iter().map(|d| d.join(exe("ruff"))).find(|p| p.is_file()) {
             return Some(p);
         }
     }

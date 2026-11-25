@@ -2,6 +2,8 @@
 //! (wherever it lives) or a conda environment goes first on PATH with VIRTUAL_ENV /
 //! CONDA_PREFIX set, and PowerShell's prompt starts with `(name)` as after `activate`.
 
+use brisk_platform::python::Layout;
+use brisk_platform::shell::path_separator as sep;
 use brisk_run::{InterpKind, Interpreter};
 use std::collections::HashMap;
 use std::path::Path;
@@ -11,14 +13,6 @@ pub struct Activation {
     pub env: HashMap<String, String>,
     /// The `(name)` the prompt shows; `None` for a plain interpreter.
     pub prompt: Option<String>,
-}
-
-fn sep() -> &'static str {
-    if cfg!(windows) {
-        ";"
-    } else {
-        ":"
-    }
 }
 
 /// `prompt = …` of pyvenv.cfg (`venv --prompt`), else the folder name, like activate scripts.
@@ -44,20 +38,8 @@ pub fn activation(python: &Path, kind: InterpKind) -> Activation {
         env.insert("VIRTUAL_ENV_PROMPT".into(), name.clone());
         Some(name)
     } else if kind == InterpKind::Conda {
-        // python.exe sits in the prefix on Windows, in <prefix>/bin elsewhere.
-        let prefix = if cfg!(windows) { python.parent() } else { python.parent().and_then(Path::parent) };
-        let Some(prefix) = prefix else { return Activation::default() };
-        let dirs = if cfg!(windows) {
-            vec![
-                prefix.to_path_buf(),
-                prefix.join("Library").join("mingw-w64").join("bin"),
-                prefix.join("Library").join("usr").join("bin"),
-                prefix.join("Library").join("bin"),
-                prefix.join("Scripts"),
-            ]
-        } else {
-            vec![prefix.join("bin")]
-        };
+        let Some(prefix) = Layout::host().prefix_of(python) else { return Activation::default() };
+        let dirs = Layout::host().conda_path_dirs(prefix);
         let name = prefix.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let dirs: Vec<String> = dirs.iter().map(|d| d.display().to_string()).collect();
         env.insert("PATH".into(), format!("{}{}{old}", dirs.join(sep()), sep()));
@@ -90,7 +72,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("brisk-tenv-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let venv = dir.join("envs").join("work");
-        let bin = venv.join(if cfg!(windows) { "Scripts" } else { "bin" });
+        let bin = Layout::host().scripts_dir(&venv);
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(venv.join("pyvenv.cfg"), "home = x\nprompt = 'proj'\n").unwrap();
         let a = activation(&bin.join("python.exe"), InterpKind::Venv);
@@ -101,7 +83,7 @@ mod tests {
         assert_eq!(activation(&bin.join("python.exe"), InterpKind::Venv).prompt.as_deref(), Some("work"));
 
         let conda = dir.join("miniconda3").join("envs").join("ds");
-        let py = if cfg!(windows) { conda.join("python.exe") } else { conda.join("bin").join("python") };
+        let py = Layout::host().prefix_python(&conda);
         let a = activation(&py, InterpKind::Conda);
         assert_eq!(a.prompt.as_deref(), Some("ds"));
         assert_eq!(a.env["CONDA_PREFIX"], conda.display().to_string());

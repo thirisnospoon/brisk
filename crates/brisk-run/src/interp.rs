@@ -1,6 +1,7 @@
 //! Python interpreter discovery: project virtualenvs (instant, from `pyvenv.cfg`), then
 //! conda / `py -0p` / `PATH` (probed in the background, each with a 3 s limit).
 
+use brisk_platform::python::Layout;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -55,8 +56,7 @@ impl Interpreter {
 
 /// `<dir>/Scripts/python.exe` on Windows, `<dir>/bin/python` elsewhere, if it exists.
 pub fn venv_python(dir: &Path) -> Option<PathBuf> {
-    let candidates: &[(&str, &str)] = if cfg!(windows) { &[("Scripts", "python.exe")] } else { &[("bin", "python"), ("bin", "python3")] };
-    candidates.iter().map(|(d, f)| dir.join(d).join(f)).find(|p| p.is_file())
+    Layout::host().venv_pythons(dir).into_iter().find(|p| p.is_file())
 }
 
 /// The project name in a Poetry environment's folder name, `<project>-<8-char hash>-py3.12`.
@@ -176,7 +176,7 @@ pub fn discover_all(root: &Path) -> Vec<Interpreter> {
     for var in ["VIRTUAL_ENV", "CONDA_PREFIX"] {
         if let Some(d) = std::env::var_os(var) {
             let d = PathBuf::from(d);
-            candidates.extend(venv_python(&d).or_else(|| Some(d.join(if cfg!(windows) { "python.exe" } else { "bin/python" }))));
+            candidates.extend(venv_python(&d).or_else(|| Some(Layout::host().prefix_python(&d))));
         }
     }
     if cfg!(windows) {
@@ -189,7 +189,7 @@ pub fn discover_all(root: &Path) -> Vec<Interpreter> {
             }
         }
     }
-    let names: &[&str] = if cfg!(windows) { &["python.exe", "python3.exe"] } else { &["python3", "python"] };
+    let names = Layout::host().python_names();
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
             for n in names {
