@@ -90,7 +90,19 @@ impl Workspace {
         t.scanning = true;
         t.generation += 1;
         let gen = t.generation;
-        let task = cx.background_executor().spawn(async move { todo_scan::scan_project(&root) });
+        // The project's file list, when it is built, instead of walking the project again.
+        let files = self.files.clone();
+        let task = cx.background_executor().spawn(async move {
+            let Some(list) = files else { return todo_scan::scan_project(&root) };
+            list.files
+                .iter()
+                .filter_map(|rel| {
+                    let p = list.root.join(rel);
+                    let items = todo_scan::scan_file(&p);
+                    (!items.is_empty()).then_some((p, items))
+                })
+                .collect()
+        });
         cx.spawn(async move |this, cx| {
             let groups = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -111,11 +123,16 @@ impl Workspace {
             return;
         }
         let root = self.root.clone();
+        let files = self.files.clone();
         let task = cx.background_executor().spawn(async move {
-            // Ignored files stay out, as in the full scan.
-            let list = brisk_project::FileList::scan(&root);
-            let known: HashSet<PathBuf> = list.files.iter().map(|r| root.join(r)).collect();
-            paths.into_iter().filter(|p| known.contains(p)).map(|p| (p.clone(), todo_scan::scan_file(&p))).collect::<Vec<_>>()
+            // Ignored files stay out, as in the full scan: only files in the project's list
+            // (sorted) count. A file not in it yet (just created) takes a fresh list.
+            let listed = |list: &brisk_project::FileList, p: &PathBuf| brisk_project::rel_path(&list.root, p).is_some_and(|rel| list.files.binary_search(&rel).is_ok());
+            let list = match files {
+                Some(l) if paths.iter().all(|p| listed(&l, p)) => l,
+                _ => std::sync::Arc::new(brisk_project::FileList::scan(&root)),
+            };
+            paths.into_iter().filter(|p| listed(&list, p)).map(|p| (p.clone(), todo_scan::scan_file(&p))).collect::<Vec<_>>()
         });
         cx.spawn(async move |this, cx| {
             let fresh = task.await;
