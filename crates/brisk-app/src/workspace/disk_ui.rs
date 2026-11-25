@@ -90,12 +90,14 @@ impl Snapshot {
 impl Workspace {
     pub(super) fn start_disk_poll(&self, window: &mut Window, cx: &mut Context<Self>) {
         let bg = cx.background_executor().clone();
+        // Smokes drive a window that often does not have the focus; they expect the 1.5 s poll.
+        let smoke = std::env::vars_os().any(|(k, _)| k.to_string_lossy().starts_with("BRISK_SMOKE_"));
         cx.spawn_in(window, async move |this, cx| {
             let mut last = Instant::now();
             loop {
                 bg.timer(POLL).await;
                 let Ok(active) = this.update_in(cx, |_, window, _| window.is_window_active()) else { break };
-                if !active && last.elapsed() < POLL_INACTIVE {
+                if !active && !smoke && last.elapsed() < POLL_INACTIVE {
                     continue;
                 }
                 last = Instant::now();
