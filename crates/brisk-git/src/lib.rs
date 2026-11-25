@@ -133,6 +133,35 @@ fn git_cmd() -> Command {
     c
 }
 
+/// `abs` relative to `root` with '/' separators, comparing ASCII case-insensitively.
+fn rel_to(root: &Path, abs: &Path) -> Option<String> {
+    let abs = abs.to_string_lossy().replace('\\', "/");
+    let root = root.to_string_lossy().replace('\\', "/");
+    let root = root.trim_end_matches('/');
+    // Byte-wise compare (no slicing inside a multi-byte character), and only at a path
+    // separator: `C:/proj` is not a prefix of `C:/proj2/x`.
+    let (head, rest) = (abs.as_bytes().get(..root.len())?, abs.get(root.len()..)?);
+    if !head.eq_ignore_ascii_case(root.as_bytes()) || !rest.starts_with('/') {
+        return None;
+    }
+    let rest = rest.trim_start_matches('/');
+    (!rest.is_empty()).then(|| rest.to_string())
+}
+
+/// `path` with its deepest existing ancestor canonicalized; the rest (a file that is not
+/// there yet, or was deleted) is appended as is.
+fn canonical_prefix(path: &Path) -> Option<PathBuf> {
+    let mut missing = Vec::new();
+    for dir in path.ancestors() {
+        if let Ok(mut canon) = std::fs::canonicalize(dir) {
+            canon.extend(missing.iter().rev());
+            return Some(canon);
+        }
+        missing.push(dir.file_name()?);
+    }
+    None
+}
+
 impl Repo {
     /// Find the repository containing `path`.
     pub fn discover(path: &Path) -> Option<Repo> {
@@ -159,17 +188,12 @@ impl Repo {
 
     /// Path relative to the repo root with '/' separators.
     pub fn rel(&self, abs: &Path) -> Option<String> {
-        let abs = abs.to_string_lossy().replace('\\', "/");
-        let root = self.root.to_string_lossy().replace('\\', "/");
-        let root = root.trim_end_matches('/');
-        // Byte-wise compare (no slicing inside a multi-byte character), and only at a path
-        // separator: `C:/proj` is not a prefix of `C:/proj2/x`.
-        let (head, rest) = (abs.as_bytes().get(..root.len())?, abs.get(root.len()..)?);
-        if !head.eq_ignore_ascii_case(root.as_bytes()) || !rest.starts_with('/') {
-            return None;
-        }
-        let rest = rest.trim_start_matches('/');
-        (!rest.is_empty()).then(|| rest.to_string())
+        rel_to(&self.root, abs).or_else(|| {
+            // The same folder spelled differently: git reports long names, while the path may
+            // hold an 8.3 short name (`C:\Users\RUNNER~1`), a junction or a mapped drive.
+            let root = std::fs::canonicalize(&self.root).ok()?;
+            rel_to(&root, &canonical_prefix(abs)?)
+        })
     }
 
     pub fn abs(&self, rel: &str) -> PathBuf {

@@ -463,3 +463,20 @@ fn rel_is_safe_with_non_ascii_and_sibling_folders() {
     assert_eq!(r.rel(Path::new(r"C:\projects\приложение\x.py")), None);
     assert_eq!(r.rel(Path::new(r"C:\projects\app")), None);
 }
+
+/// The same folder through its 8.3 short name (as `%TEMP%` is on some machines): git reports
+/// the long name, and the paths still have to resolve.
+#[cfg(windows)]
+#[test]
+fn rel_through_a_short_name() {
+    let (d, repo) = temp_repo("long-folder-name");
+    fs::create_dir_all(d.join("sub")).unwrap();
+    let out = Command::new("cmd").args(["/c", "for", "%I", "in", "(.)", "do", "@echo", "%~sI"]).current_dir(&d).output().unwrap();
+    let short = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+    if short == d || !short.is_dir() {
+        return; // 8.3 names are switched off on this volume
+    }
+    assert_eq!(repo.rel(&short.join("sub").join("c.py")).as_deref(), Some("sub/c.py"));
+    assert_eq!(repo.rel(&short.join("..").join("elsewhere.py")), None);
+    let _ = fs::remove_dir_all(&d);
+}
