@@ -44,6 +44,18 @@ pub fn convert(k: &gpui::Keystroke) -> Keystroke {
     Keystroke { mods, key }
 }
 
+/// The text a key press types, for views that read keys themselves (popups, the terminal,
+/// small fields) instead of through an input handler. On Windows gpui gives Space no
+/// `key_char`: the space comes as a character message, which only reaches an input handler.
+pub fn typed_text(k: &gpui::Keystroke) -> Option<&str> {
+    let m = &k.modifiers;
+    match k.key_char.as_deref() {
+        Some(t) if !t.is_empty() && !t.chars().any(char::is_control) => Some(t),
+        None if k.key == "space" && !(m.control || m.alt || m.platform) => Some(" "),
+        _ => None,
+    }
+}
+
 /// True if the key event should be treated as text for the editor (no shortcut modifiers).
 pub fn is_text_input(k: &gpui::Keystroke) -> bool {
     !(k.modifiers.control || k.modifiers.platform) || (k.modifiers.control && k.modifiers.alt)

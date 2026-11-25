@@ -178,9 +178,9 @@ impl Workspace {
             _ if self.settings_dialog.as_ref().is_some_and(|d| d.mask_edit)
                 && !k.modifiers.control
                 && !k.modifiers.alt
-                && k.key_char.as_ref().is_some_and(|t| t.chars().all(|c| !c.is_control())) =>
+                && crate::keys::typed_text(k).is_some() =>
             {
-                let t = k.key_char.clone().unwrap_or_default();
+                let t = crate::keys::typed_text(k).unwrap_or_default().to_string();
                 self.settings_edit(|s| s.soft_wrap_files.push_str(&t), window);
             }
             "space" => {

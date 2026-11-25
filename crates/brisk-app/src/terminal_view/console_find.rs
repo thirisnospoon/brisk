@@ -226,7 +226,7 @@ impl TerminalPanel {
                 self.search.case = !self.search.case;
                 self.search_changed();
             }
-            _ if plain => match k.key_char.as_deref().filter(|c| !c.chars().any(char::is_control)) {
+            _ if plain => match crate::keys::typed_text(k) {
                 Some(c) => self.search_type(c),
                 None => return false,
             },

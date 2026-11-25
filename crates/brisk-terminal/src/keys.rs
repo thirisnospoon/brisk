@@ -58,6 +58,8 @@ pub fn encode_key(key: &str, text: Option<&str>, m: KeyMods, app_cursor: bool) -
         "backspace" if m.ctrl => alt_prefix(vec![0x17]), // delete word, like most terminals
         "backspace" => alt_prefix(vec![0x7f]),
         "space" if m.ctrl => vec![0],
+        // gpui on Windows gives Space no text (the space comes as a character message).
+        "space" => alt_prefix(vec![b' ']),
         "up" => csi_mod('A'),
         "down" => csi_mod('B'),
         "right" => csi_mod('C'),
@@ -129,5 +131,10 @@ mod tests {
         assert_eq!(encode_key("b", Some("b"), m(false, true, false), false), Some(b"\x1bb".to_vec()));
         assert_eq!(encode_key("f", Some("ж"), KeyMods::default(), false), Some("ж".as_bytes().to_vec()));
         assert_eq!(encode_key("tab", None, m(false, false, true), false), Some(b"\x1b[Z".to_vec()));
+        // Space, with or without the text gpui may leave out.
+        assert_eq!(encode_key("space", None, KeyMods::default(), false), Some(b" ".to_vec()));
+        assert_eq!(encode_key("space", Some(" "), m(false, false, true), false), Some(b" ".to_vec()));
+        assert_eq!(encode_key("space", None, m(false, true, false), false), Some(b"\x1b ".to_vec()));
+        assert_eq!(encode_key("space", None, m(true, false, false), false), Some(vec![0]));
     }
 }

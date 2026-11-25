@@ -304,6 +304,12 @@ Folder: empty. Writes `a.py` and `big.py`.
 
 Pins the `a` tab with a real click, checks that a second run opens a second tab and that Rerun in the pinned tab stays in it. Then prints 150,000 lines and checks that the last 20,000 remain. `=hold` leaves the window open.
 
+### `BRISK_SMOKE_SPACE=1`
+
+Folder: empty.
+
+Types `12 34` with real key presses (posted WM_KEYDOWN, WM_CHAR and WM_KEYUP) into the Search Everywhere field and into a Terminal shell, and checks that the space arrives in both. gpui on Windows gives Space no text, so views that read keys themselves used to drop it. Only digits are typed: letters would follow the active keyboard layout.
+
 ### `BRISK_SMOKE_SERVICES=1`
 
 Folder: empty. Writes `long.py`, `quick.py` and `fail.py`.

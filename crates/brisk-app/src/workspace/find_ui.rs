@@ -631,7 +631,7 @@ impl Workspace {
             "a" if m.control => self.find.seed_selected = true,
             _ => {
                 if !(m.control || m.alt || m.platform) {
-                    if let Some(ch) = &k.key_char {
+                    if let Some(ch) = crate::keys::typed_text(k) {
                         if !ch.chars().any(|c| c.is_control()) {
                             let f = &mut self.find;
                             if f.seed_selected {

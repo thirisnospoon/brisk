@@ -775,7 +775,7 @@ impl Workspace {
             }
             _ => {
                 if text && !(m.control || m.alt || m.platform) {
-                    if let Some(ch) = &k.key_char {
+                    if let Some(ch) = crate::keys::typed_text(k) {
                         if !ch.chars().any(|c| c.is_control()) {
                             d.insert(ch);
                         }

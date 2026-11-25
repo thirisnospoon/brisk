@@ -129,3 +129,53 @@ pub(in crate::workspace) fn right_click(x: f32, y: f32) {
     post(Mouse::RightDown, x, y, false);
     post(Mouse::RightUp, x, y, false);
 }
+
+/// Types `text` as real key presses posted to our own window: WM_KEYDOWN, the WM_CHAR that
+/// TranslateMessage would add, WM_KEYUP. Letters, digits, space and Enter only.
+#[cfg(windows)]
+pub(in crate::workspace) fn type_keys(text: &str) {
+    #[link(name = "user32")]
+    extern "system" {
+        fn EnumThreadWindows(thread: u32, f: extern "system" fn(isize, isize) -> i32, l: isize) -> i32;
+        fn IsWindowVisible(h: isize) -> i32;
+        fn PostMessageW(h: isize, msg: u32, w: usize, l: isize) -> i32;
+        fn MapVirtualKeyW(code: u32, map: u32) -> u32;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentThreadId() -> u32;
+    }
+    extern "system" fn found(h: isize, out: isize) -> i32 {
+        unsafe {
+            if IsWindowVisible(h) != 0 {
+                *(out as *mut isize) = h;
+                return 0;
+            }
+        }
+        1
+    }
+    let mut hwnd: isize = 0;
+    unsafe {
+        EnumThreadWindows(GetCurrentThreadId(), found, &mut hwnd as *mut isize as isize);
+        if hwnd == 0 {
+            return;
+        }
+        for c in text.chars() {
+            let vk = match c {
+                ' ' => 0x20,
+                '\n' => 0x0d,
+                c if c.is_ascii_alphanumeric() => c.to_ascii_uppercase() as u32,
+                _ => continue,
+            };
+            let scan = MapVirtualKeyW(vk, 0) as isize; // MAPVK_VK_TO_VSC
+            let down = 1 | (scan << 16);
+            let up = down | (1 << 30) | (1 << 31);
+            PostMessageW(hwnd, 0x0100, vk as usize, down); // WM_KEYDOWN
+            PostMessageW(hwnd, 0x0102, if c == '\n' { 0x0d } else { c as usize }, down); // WM_CHAR
+            PostMessageW(hwnd, 0x0101, vk as usize, up); // WM_KEYUP
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub(in crate::workspace) fn type_keys(_: &str) {}

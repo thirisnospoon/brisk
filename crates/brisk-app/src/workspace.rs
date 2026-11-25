@@ -1962,7 +1962,7 @@ impl Workspace {
             }
             _ => {
                 if !(k.modifiers.control || k.modifiers.alt || k.modifiers.platform) {
-                    if let Some(ch) = &k.key_char {
+                    if let Some(ch) = crate::keys::typed_text(k) {
                         if !ch.chars().any(|c| c.is_control()) {
                             p.query.push_str(ch);
                             p.selected = 0;

@@ -586,8 +586,13 @@ sys.exit(r)";
 
     /// Type a line into the active shell and press Enter (smoke tests).
     pub fn type_line(&self, line: &str) {
+        self.type_text(&format!("{line}\r"));
+    }
+
+    /// Type text into the active shell (smoke tests).
+    pub fn type_text(&self, text: &str) {
         if let Some(s) = self.session() {
-            s.write(format!("{line}\r").into_bytes());
+            s.write(text.as_bytes().to_vec());
         }
     }
 

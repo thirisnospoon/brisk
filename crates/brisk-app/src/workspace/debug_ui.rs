@@ -1279,7 +1279,7 @@ impl Workspace {
                     return;
                 }
                 // Typing edits the selected breakpoint's condition.
-                if let (Some(BpRow::Line(p, l, b)), Some(t)) = (row, k.key_char.as_deref().filter(|t| !t.chars().any(char::is_control))) {
+                if let (Some(BpRow::Line(p, l, b)), Some(t)) = (row, crate::keys::typed_text(k)) {
                     d.editing = true;
                     let mut c = b.condition.unwrap_or_default();
                     c.push_str(t);
@@ -3219,8 +3219,8 @@ impl Workspace {
                     self.debug.input.clear();
                 }
             }
-            _ => match k.key_char.as_deref() {
-                Some(t) if !t.chars().any(char::is_control) => self.debug.input.push_str(t),
+            _ => match crate::keys::typed_text(k) {
+                Some(t) => self.debug.input.push_str(t),
                 _ => return false,
             },
         }
