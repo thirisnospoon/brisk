@@ -6,7 +6,7 @@ use super::lsp_ui::NavPos;
 use super::{PopupItem, PopupKind, Target, Workspace};
 use brisk_project::FileList;
 use brisk_syntax::{Lang, OutlineKind, SyntaxTree};
-use gpui::{Context, PathPromptOptions, Window};
+use gpui::{Context, Window};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -295,40 +295,15 @@ impl Workspace {
             .collect()
     }
 
-    pub(super) fn project_cmd(&mut self, cmd: ProjectCmd, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn project_cmd(&mut self, cmd: ProjectCmd, cx: &mut Context<Self>) {
         match cmd {
-            ProjectCmd::Open => {
-                let rx = cx.prompt_for_paths(PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some("Open".into()) });
-                cx.spawn_in(window, async move |this, cx| {
-                    if let Ok(Ok(Some(paths))) = rx.await {
-                        if let Some(p) = paths.into_iter().next() {
-                            let _ = this.update(cx, |this, cx| this.ask_open_where(p, cx));
-                        }
-                    }
-                })
-                .detach();
-            }
-            ProjectCmd::New => {
-                let parent = self.root.parent().map(Path::to_path_buf).unwrap_or_else(|| self.root.clone());
-                let rx = cx.prompt_for_new_path(&parent, Some("untitled"));
-                cx.spawn_in(window, async move |this, cx| {
-                    if let Ok(Ok(Some(p))) = rx.await {
-                        let _ = this.update(cx, |this, cx| match std::fs::create_dir_all(&p) {
-                            Ok(()) => this.ask_open_where(p, cx),
-                            Err(e) => {
-                                this.status = format!("Cannot create {}: {e}", p.display());
-                                cx.notify();
-                            }
-                        });
-                    }
-                })
-                .detach();
-            }
+            ProjectCmd::Open => self.open_folder_picker(super::folder_picker_ui::Purpose::Open, cx),
+            ProjectCmd::New => self.open_folder_picker(super::folder_picker_ui::Purpose::New, cx),
             ProjectCmd::Go(p, new_window) => self.open_project(&p, new_window, cx),
         }
     }
 
-    fn ask_open_where(&mut self, p: PathBuf, cx: &mut Context<Self>) {
+    pub(super) fn ask_open_where(&mut self, p: PathBuf, cx: &mut Context<Self>) {
         if same_path(&p, &self.root) {
             self.status = "This project is already open".into();
             cx.notify();

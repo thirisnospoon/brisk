@@ -94,7 +94,7 @@ impl Workspace {
                 let _ = this.update_in(cx, |this, window, cx| {
                     for p in paths {
                         if p.is_dir() {
-                            this.project_cmd(super::project_ui::ProjectCmd::Go(p, true), window, cx);
+                            this.project_cmd(super::project_ui::ProjectCmd::Go(p, true), cx);
                         } else {
                             this.open_file(&p, window, cx);
                         }

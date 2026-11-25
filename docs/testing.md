@@ -292,6 +292,12 @@ Folder: empty. Writes `srv.py`.
 
 Checks Show in Services, the Stop and Rerun / Cancel question on a second run, two parallel tabs with Allow multiple instances, console focus, and Don't show. `=dialog` leaves the dialog with these fields open.
 
+### `BRISK_SMOKE_PICKER=1`
+
+Folder: empty. Writes `picker/alpha/.git`, `picker/beta` and `picker/.hidden`.
+
+Checks the folder picker of Open… and New Project…: the listing (the hidden folder left out, `alpha` marked as a project), that typing `be` selects `beta` and Tab completes it, and that New Project creates the typed folder and asks This Window / New Window. With `BRISK_TOUR_SYNC=<dir>` it asks for screenshots the way the tour does.
+
 ### `BRISK_SMOKE_PIN=1`
 
 Folder: empty. Writes `a.py` and `big.py`.

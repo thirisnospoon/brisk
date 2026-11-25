@@ -26,6 +26,7 @@ mod mouse;
 mod multi;
 mod open;
 mod packages;
+mod picker;
 mod pin;
 mod pycon;
 mod pyproj;
@@ -223,6 +224,9 @@ pub(super) fn schedule(window: &mut Window, cx: &mut Context<Workspace>) {
     }
     if std::env::var_os("BRISK_SMOKE_RUNANYTHING").is_some() {
         cx.defer_in(window, |this: &mut Workspace, window, cx| this.run_anything_smoke(window, cx));
+    }
+    if std::env::var_os("BRISK_SMOKE_PICKER").is_some() {
+        cx.defer_in(window, |this: &mut Workspace, window, cx| this.picker_smoke(window, cx));
     }
     if std::env::var_os("BRISK_SMOKE_TOUR").is_some() {
         cx.defer_in(window, |this: &mut Workspace, window, cx| this.tour_smoke(window, cx));

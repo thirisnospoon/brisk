@@ -5,6 +5,7 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::path::{Path, PathBuf};
 
+pub mod folders;
 mod structure;
 pub use structure::{rel_path, Mark, Structure};
 
