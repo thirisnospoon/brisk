@@ -182,6 +182,7 @@ impl Editor {
     }
 
     /// Window position (logical pixels) of the icon of `line`, if it is on screen.
+    #[cfg(feature = "smoke")]
     pub fn run_icon_point(&self, line: usize) -> Option<(f32, f32)> {
         let l = self.layout.as_ref()?;
         if !self.run_marks_now().iter().any(|m| m.line == line) {

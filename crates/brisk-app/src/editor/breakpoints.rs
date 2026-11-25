@@ -291,12 +291,14 @@ impl Editor {
 
     /// Smoke checks: the breakpoint zone line under the pointer, the line with a faint
     /// breakpoint, the hand cursor, the tooltip.
+    #[cfg(feature = "smoke")]
     pub fn gutter_state_for_smoke(&self) -> (Option<usize>, Option<usize>, bool, Option<String>) {
         (self.breakpoints.hover.map(|h| h.0), self.breakpoint_preview_line(), self.breakpoints.hand, self.breakpoint_tip_lines().map(|v| v.join(" | ")))
     }
 
     /// Smoke screenshots: the pointer over the gutter at `p` (window, logical pixels), held
     /// although the real pointer is outside the window and Windows reports it left.
+    #[cfg(feature = "smoke")]
     pub fn hold_gutter_hover_for_smoke(&mut self, p: (f32, f32)) {
         self.gutter_hover = true;
         self.breakpoints.hover = None;
@@ -304,6 +306,7 @@ impl Editor {
     }
 
     /// Smoke checks: window position (logical pixels) of `line`'s breakpoint circle.
+    #[cfg(feature = "smoke")]
     pub fn breakpoint_point(&self, line: usize) -> Option<(f32, f32)> {
         let l = self.layout.as_ref()?;
         let lh = super::line_height();

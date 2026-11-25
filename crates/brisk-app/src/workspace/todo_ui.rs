@@ -6,6 +6,7 @@ use super::{BottomTool, Workspace};
 use crate::theme::ui_px;
 use crate::theme::{mono_font, Theme};
 use crate::todo_scan::{self, Item};
+#[cfg(feature = "smoke")]
 use brisk_keymap::Action;
 use gpui::prelude::*;
 use gpui::{div, px, uniform_list, Context, FocusHandle, KeyDownEvent, ScrollStrategy, UniformListScrollHandle, Window};
@@ -317,6 +318,7 @@ impl Workspace {
 
     /// BRISK_SMOKE_TODO=1|hold on a scratch folder: writes files with TODO / FIXME (and an
     /// ignored one), opens the window, adds a TODO through the editor and saves, opens an item.
+    #[cfg(feature = "smoke")]
     pub(super) fn todo_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let _ = std::fs::create_dir_all(root.join("pkg"));

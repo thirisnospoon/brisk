@@ -1264,6 +1264,7 @@ impl Workspace {
     }
 
     /// Type text into the dialog as key presses with characters.
+    #[cfg(feature = "smoke")]
     pub(super) fn rc_type(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         for ch in text.chars() {
             let key = if ch == ' ' { "space".to_string() } else { ch.to_lowercase().to_string() };
@@ -1278,6 +1279,7 @@ impl Workspace {
     /// configuration with Environment `B=explicit` and `.env` in Paths to .env files, runs it
     /// (A and C from the file, B from the form), checks the debug launch environment and that
     /// a missing .env file stops the run with a message.
+    #[cfg(feature = "smoke")]
     pub(super) fn envfile_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let _ = std::fs::write(root.join("show_env.py"), "import os\nprint('env:', ' '.join(k + '=' + os.environ.get(k, '-') for k in 'ABC'))\n");
@@ -1346,6 +1348,7 @@ impl Workspace {
     /// configurations, makes a Compound in the dialog (Alt+Insert, Run: → Compound), checks
     /// that an unknown member is refused, selects and runs it (two Run tabs), and that Debug
     /// refuses it with a message.
+    #[cfg(feature = "smoke")]
     pub(super) fn compound_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let _ = std::fs::write(root.join("server.py"), "import time\nprint('server up', flush=True)\ntime.sleep(1)\nprint('server down')\n");
@@ -1420,6 +1423,7 @@ impl Workspace {
         .detach();
     }
 
+    #[cfg(feature = "smoke")]
     pub(super) fn run_dialog_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let show = |this: &Self| {
             let d = this.runs.dialog.as_ref();
@@ -1629,6 +1633,7 @@ mod tests {
 impl Workspace {
     /// The targets "+ FastAPI" and "+ Flask" get in a freshly opened dialog (smoke tests).
     /// `keep` leaves the dialog open on the last one (for a screenshot).
+    #[cfg(feature = "smoke")]
     pub(super) fn web_dialog_probe(&mut self, keep: bool, cx: &mut Context<Self>) -> Vec<(String, String)> {
         self.open_run_dialog(cx);
         let Some(d) = self.runs.dialog.as_mut() else { return Vec::new() };

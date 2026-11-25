@@ -1,16 +1,23 @@
 //! The Terminal follows the project interpreter: new shells start with its venv or conda
 //! environment activated (see `terminal_env`).
 
-use super::{BottomTool, Workspace};
+#[cfg(feature = "smoke")]
+use super::BottomTool;
+use super::Workspace;
 use crate::terminal_env::{self, Activation};
+#[cfg(feature = "smoke")]
 use brisk_keymap::Action;
-use gpui::{Context, Window};
+use gpui::Context;
+#[cfg(feature = "smoke")]
+use gpui::Window;
 
+#[cfg(feature = "smoke")]
 fn terminal_text(t: &Workspace, cx: &gpui::App) -> String {
     t.terminal.as_ref().and_then(|p| p.read(cx).active_text()).unwrap_or_default()
 }
 
 /// Wait until the active terminal tab shows `needle` (up to `ms`).
+#[cfg(feature = "smoke")]
 async fn wait_text(this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindowContext, needle: &str, ms: u32) -> bool {
     let mut waited = 0;
     while waited < ms {
@@ -42,6 +49,7 @@ impl Workspace {
     /// BRISK_SMOKE_TERMVENV=1|hold on a folder with a `.venv` (made with the first base Python
     /// if missing): opens the Terminal and checks the prompt, VIRTUAL_ENV and which python
     /// runs; then switches the interpreter to a system one and checks a new tab is plain.
+    #[cfg(feature = "smoke")]
     pub(super) fn terminal_env_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| {
             let bg = cx.background_executor().clone();

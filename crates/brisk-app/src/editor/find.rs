@@ -601,6 +601,7 @@ mod tests {
 
 impl Editor {
     /// Smoke checks: (match count, current index, query, bar open).
+    #[cfg(feature = "smoke")]
     pub fn find_state(&self) -> (usize, Option<usize>, String, bool) {
         match &self.find {
             Some(f) => {

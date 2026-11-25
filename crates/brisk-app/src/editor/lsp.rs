@@ -265,6 +265,7 @@ impl Editor {
     }
 
     /// Smoke tests: type like the keyboard does (auto-pairs, events).
+    #[cfg(feature = "smoke")]
     pub fn type_for_smoke(&mut self, text: &str, cx: &mut Context<Self>) {
         self.insight.doc = None;
         for c in text.chars() {
@@ -281,6 +282,7 @@ impl Editor {
     }
 
     /// Smoke tests: what the code-insight popups show.
+    #[cfg(feature = "smoke")]
     pub fn insight_summary(&self) -> String {
         let c = self.insight.completion.as_ref().map(|c| {
             c.shown
@@ -297,6 +299,7 @@ impl Editor {
 
     /// What Quick Documentation and the completion panel show as text, after Markdown:
     /// for smokes checking that no `&gt;` or `\_` leaks through.
+    #[cfg(feature = "smoke")]
     pub fn doc_shown_text(&self) -> (Option<String>, Option<String>) {
         let plain = |blocks: &[DocBlock]| {
             blocks
@@ -344,6 +347,7 @@ impl Editor {
     }
 
     /// The Quick Documentation's definition link and the Parameter Info lines, for smokes.
+    #[cfg(feature = "smoke")]
     pub fn insight_for_smoke(&self) -> (Option<String>, Vec<String>) {
         // The current parameter in **bold**.
         let sig = self

@@ -24,6 +24,7 @@ pub(super) enum Entry {
 
 impl Entry {
     /// Labels of the items, a submenu's own items in brackets (smoke tests).
+    #[cfg(feature = "smoke")]
     pub(super) fn labels(&self) -> Vec<String> {
         match self {
             Entry::Item { label, .. } => vec![label.clone()],

@@ -41,6 +41,7 @@ fn track(i: usize) -> impl IntoElement {
     gpui::canvas(move |b, _, _| HEADERS.with(|c| c.borrow_mut()[i] = Some(b)), |_, _, _, _| {}).absolute().top_0().left_0().size_full()
 }
 
+#[cfg(feature = "smoke")]
 fn header_center(i: usize) -> Option<(f32, f32)> {
     HEADERS.with(|c| c.borrow()[i]).map(|b| (f32::from(b.center().x), f32::from(b.center().y)))
 }
@@ -338,6 +339,7 @@ impl Workspace {
     /// BRISK_SMOKE_PROFILE=1|hold on an empty folder: writes `prof.py` (a slow loop, a
     /// recursive fib, many cheap calls), profiles it, checks the top rows, sorts by real
     /// clicks on the Call Count and Name headers, and opens a function by Enter.
+    #[cfg(feature = "smoke")]
     pub(super) fn profile_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let _ = std::fs::write(

@@ -30,6 +30,7 @@ fn track(id: u64, what: &'static str) -> impl IntoElement {
     gpui::canvas(move |b, _, _| BUTTONS.with(|c| c.borrow_mut().insert((id, what), b)), |_, _, _, _| {}).absolute().top_0().left_0().size_full()
 }
 
+#[cfg(feature = "smoke")]
 fn button_center(id: u64, what: &'static str) -> Option<(f32, f32)> {
     BUTTONS.with(|c| c.borrow().get(&(id, what)).map(|b| (f32::from(b.center().x), f32::from(b.center().y))))
 }
@@ -277,6 +278,7 @@ impl Workspace {
     /// BRISK_SMOKE_SERVICES=1|hold on an empty folder: starts `long.py` (runs 60 s), `quick.py`
     /// (exit 0) and `fail.py` (exit 2), opens Services and checks the statuses, then really
     /// clicks ■ on `long` and ↻ on `fail`.
+    #[cfg(feature = "smoke")]
     pub(super) fn services_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let w = |n: &str, s: &str| {

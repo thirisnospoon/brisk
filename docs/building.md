@@ -69,7 +69,9 @@ Saved database passwords are encrypted with DPAPI for the current Windows user. 
 powershell -ExecutionPolicy Bypass -File scripts\budget.ps1
 ```
 
-Options: `-Build` (build first), `-Package` (rebuild the zip), `-Runs 3`, `-NoMembudget`, `-Out results.json`, and `-Exe`, `-Zip`, `-Project` to measure something other than the defaults (`target\release\brisk.exe`, the newest `dist\*.zip`, `examples\demo_project`).
+Options: `-Build` (build first), `-Package` (rebuild the zip), `-Runs 3`, `-NoMembudget`, `-SizeOnly` (sizes only, as in CI), `-Out results.json`, and `-Exe`, `-SmokeExe`, `-Zip`, `-Project` to measure something other than the defaults (`target\release\brisk.exe`, `target\smoke\release\brisk.exe`, the newest `dist\*.zip`, `examples\demo_project`).
+
+`BRISK_SMOKE_MEMBUDGET` is a smoke, so it runs on the build with the `smoke` feature; the release exe has no smokes. `-Build` builds both, the smoke one with `--target-dir target\smoke`.
 
 One run takes under a minute on an already built `target\release\brisk.exe`. It measures:
 

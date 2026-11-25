@@ -8,7 +8,9 @@ use brisk_keymap::Action;
 use brisk_run::{InterpKind, Interpreter, RunConfig, RunFile, RunKind};
 use gpui::prelude::*;
 use gpui::{Context, Entity, Focusable, Window};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "smoke")]
+use std::path::PathBuf;
 
 pub(super) struct Runs {
     pub file: RunFile,
@@ -169,7 +171,7 @@ impl Workspace {
                 let url = url.replacen("://0.0.0.0", "://127.0.0.1", 1);
                 this.status = format!("Opening {url}");
                 // Smokes record the address instead of opening a browser.
-                if !std::env::vars_os().any(|(k, _)| k.to_string_lossy().starts_with("BRISK_SMOKE_")) {
+                if !crate::smoke::active() {
                     cx.open_url(&url);
                 }
                 this.last_url = Some(url);
@@ -679,6 +681,7 @@ impl Workspace {
 
     /// `BRISK_SMOKE_RUN=<file>`: Ctrl+Shift+F10 on the file, wait for it, print the console
     /// and follow the first traceback link.
+    #[cfg(feature = "smoke")]
     pub(super) fn run_smoke(&mut self, file: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let t0 = std::time::Instant::now();
         self.open_file(&file, window, cx);
@@ -741,6 +744,7 @@ impl Workspace {
     /// `BRISK_SMOKE_RUNWIN=1` (on an empty folder): writes `ask.py` (input()), `main.py`,
     /// `sleep.py` and `w1.py`…`w5.py` into the project root and checks stdin,
     /// save-before-run, tabs, toggles, Clear All and saving a temporary configuration.
+    #[cfg(feature = "smoke")]
     pub(super) fn run_window_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let bg = cx.background_executor().clone();
         let root = self.root.clone();

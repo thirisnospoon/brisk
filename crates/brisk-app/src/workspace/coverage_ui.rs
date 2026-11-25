@@ -10,6 +10,7 @@ use crate::theme::Theme;
 use brisk_keymap::Action;
 use brisk_run::{RunConfig, RunKind};
 use gpui::prelude::*;
+#[cfg(feature = "smoke")]
 use gpui::EntityInputHandler;
 use gpui::{div, px, Context, Entity, FocusHandle, Window};
 use std::path::PathBuf;
@@ -335,6 +336,7 @@ impl Workspace {
     /// BRISK_SMOKE_COVERAGE=1|hold on an empty folder: writes `calc.py` and `test_calc.py`,
     /// runs the script and then pytest with coverage, prints the report and the gutter marks;
     /// checks that an edit hides the marks and ✕ clears them.
+    #[cfg(feature = "smoke")]
     pub(super) fn coverage_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let _ = std::fs::write(

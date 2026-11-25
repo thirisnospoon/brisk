@@ -70,6 +70,7 @@ mod tests {
 
 impl super::Editor {
     /// Smoke: open the find bar with `query` (its hits are drawn rounded).
+    #[cfg(feature = "smoke")]
     pub fn find_for_smoke(&mut self, query: &str, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
         self.open_find(false, window, cx);
         if let Some(f) = &self.find {
@@ -83,6 +84,7 @@ impl super::Editor {
 
     /// Smoke: one selection from `anchor` to `head` (chars), the editor focused so the caret,
     /// its bracket match and the active indent guide show.
+    #[cfg(feature = "smoke")]
     pub fn select_for_smoke(&mut self, anchor: usize, head: usize, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
         self.buffer.selections = vec![brisk_text::Selection { anchor, head, goal_col: None }];
         window.focus(&self.focus);
@@ -90,11 +92,13 @@ impl super::Editor {
     }
 
     /// Smoke: the caret's block guide as (column, first line, last line), 1-based lines.
+    #[cfg(feature = "smoke")]
     pub fn active_guide_for_smoke(&self) -> Option<(usize, usize, usize)> {
         self.guides.active.map(|(c, a, z)| (c, a + 1, z + 1))
     }
 
     /// Smoke: the find hits' count.
+    #[cfg(feature = "smoke")]
     pub fn find_hits_for_smoke(&self) -> usize {
         self.find.as_ref().map_or(0, |f| f.matches.len())
     }

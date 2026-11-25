@@ -3803,6 +3803,7 @@ impl Workspace {
 
     /// BRISK_SMOKE_DEBUG=<file.py>: breakpoint, debug, frames, variables, evaluate, steps,
     /// run to cursor, conditional breakpoint, finish.
+    #[cfg(feature = "smoke")]
     pub(super) fn debug_smoke(&mut self, file: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         self.open_file(&file, window, cx);
         let Some(ed) = self.active_editor().cloned() else { return };

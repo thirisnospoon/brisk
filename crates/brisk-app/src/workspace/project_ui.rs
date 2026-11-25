@@ -396,6 +396,7 @@ mod tests {
 // outside the popup, then lists the Classes/Symbols results and the project widget's menu.
 
 impl Workspace {
+    #[cfg(feature = "smoke")]
     fn smoke_state(&self) -> String {
         match &self.popup {
             None => "closed".into(),
@@ -403,6 +404,7 @@ impl Workspace {
         }
     }
 
+    #[cfg(feature = "smoke")]
     pub(super) fn ui_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let bg = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
@@ -491,6 +493,7 @@ impl Workspace {
         .detach();
     }
 
+    #[cfg(feature = "smoke")]
     fn dispatch_smoke(&mut self, a: brisk_keymap::Action, cx: &mut Context<Self>) {
         self.ensure_symbols(cx);
         if a == brisk_keymap::Action::SearchEverywhere {

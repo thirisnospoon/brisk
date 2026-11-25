@@ -7,7 +7,9 @@
 use super::{line_height, scroll::BAR, Editor};
 use crate::theme::Theme;
 use brisk_lint::Severity;
-use gpui::{point, px, Context, Hsla, Pixels, Point};
+#[cfg(feature = "smoke")]
+use gpui::point;
+use gpui::{px, Context, Hsla, Pixels, Point};
 
 /// Files with more lines are not scanned for TODO comments on every edit.
 const TODO_MAX_LINES: usize = 50_000;
@@ -319,17 +321,20 @@ impl Editor {
     }
 
     /// Smoke: how many times the marks were rebuilt.
+    #[cfg(feature = "smoke")]
     pub fn stripe_builds_for_smoke(&self) -> usize {
         self.stripe.builds
     }
 
     /// Smoke: the marks as (kind, line), painted order.
+    #[cfg(feature = "smoke")]
     pub fn stripe_for_smoke(&mut self) -> Vec<(String, usize)> {
         self.update_stripe();
         self.stripe.marks.iter().map(|m| (format!("{:?}", m.kind), m.line + 1)).collect()
     }
 
     /// Smoke: the editor-relative y of the first mark of this kind ("Error", "Todo"...).
+    #[cfg(feature = "smoke")]
     pub fn stripe_point_for_smoke(&self, kind: &str) -> Option<Point<Pixels>> {
         let l = self.layout.as_ref()?;
         let (top, vh, total) = self.stripe_track()?;
@@ -339,11 +344,13 @@ impl Editor {
     }
 
     /// Smoke: hover / click the stripe at a window point.
+    #[cfg(feature = "smoke")]
     pub fn stripe_hover_for_smoke(&mut self, p: Point<Pixels>, cx: &mut Context<Self>) -> Vec<String> {
         self.stripe_hover(Some(p), cx);
         self.stripe.hover.as_ref().map(|(h, _)| h.iter().map(|&i| self.stripe.marks[i].tip.clone()).collect()).unwrap_or_default()
     }
 
+    #[cfg(feature = "smoke")]
     pub fn stripe_click_for_smoke(&mut self, p: Point<Pixels>, cx: &mut Context<Self>) -> bool {
         self.stripe_click(p, cx)
     }

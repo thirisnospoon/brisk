@@ -310,6 +310,7 @@ impl Editor {
     }
 
     /// Smoke checks: (collapsed regions as line pairs, display rows).
+    #[cfg(feature = "smoke")]
     pub fn fold_state(&self) -> (Vec<(usize, usize)>, usize) {
         let b = &self.buffer;
         (self.folds.regions.iter().map(|&(s, e)| (b.pos_to_line_col(s).0, b.pos_to_line_col(e).0)).collect(), self.display_rows())
@@ -372,6 +373,7 @@ impl Editor {
 
 impl Editor {
     /// Smoke checks: the window point of a line's fold marker, if the line is on screen.
+    #[cfg(feature = "smoke")]
     pub fn fold_marker_point(&self, line: usize) -> Option<gpui::Point<gpui::Pixels>> {
         let l = self.layout.as_ref()?;
         l.rows.binary_search(&line).ok()?;
@@ -380,6 +382,7 @@ impl Editor {
     }
 
     /// Smoke checks: brackets and occurrences around the caret, as (line, column) pairs.
+    #[cfg(feature = "smoke")]
     pub fn caret_marks_for_smoke(&mut self) -> (Vec<(usize, usize)>, usize) {
         self.reparse();
         self.fill_occurrences();

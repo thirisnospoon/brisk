@@ -588,6 +588,7 @@ impl Workspace {
     }
 
     /// Smoke checks: the groups as file names, the focused one first, and the split direction.
+    #[cfg(feature = "smoke")]
     pub(super) fn panes_for_smoke(&self, cx: &gpui::App) -> String {
         let names = |tabs: &[Tab], active: Option<usize>| {
             tabs.iter()

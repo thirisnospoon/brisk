@@ -11,6 +11,7 @@ use gpui::{Context, Window};
 use std::time::Duration;
 
 impl Workspace {
+    #[cfg(feature = "smoke")]
     pub(super) fn w7_smoke2(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // --- E4 ---------------------------------------------------------------------------
         self.dispatch(Action::NewScratchFile, window, cx);

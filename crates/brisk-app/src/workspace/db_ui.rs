@@ -1341,6 +1341,7 @@ impl Workspace {
 
     /// Smoke hook: run `sql` in a console of the first data source, print the outcome, open
     /// the first table's data.
+    #[cfg(feature = "smoke")]
     pub(super) fn db_smoke(&mut self, sql: String, window: &mut Window, cx: &mut Context<Self>) {
         if self.db.sources.is_empty() {
             eprintln!("smoke-db: no data sources in {}", brisk_db::CONFIG_FILE);

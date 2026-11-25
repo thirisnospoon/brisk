@@ -647,6 +647,7 @@ impl Workspace {
 
     /// BRISK_SMOKE_PYCONSOLE=1: opens the console, types statements (a block over several
     /// lines, an error, `input()`), walks the history and restarts.
+    #[cfg(feature = "smoke")]
     pub(super) fn python_console_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.dispatch(Action::TogglePythonConsole, window, cx);
         cx.spawn_in(window, async move |this, cx| {

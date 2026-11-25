@@ -132,6 +132,7 @@ impl Workspace {
     /// has no debugpy and a build without a bundled copy (prints SKIP otherwise): debugging
     /// `hello.py` shows the install offer instead of an error toast; Install runs pip (offline
     /// under a smoke, so it reports pip's error). `=offer` stops on the offer.
+    #[cfg(feature = "smoke")]
     pub(super) fn debugpy_offer_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let file = self.root.join("hello.py");
         let _ = std::fs::write(&file, "print('hello')\n");

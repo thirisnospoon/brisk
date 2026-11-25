@@ -62,6 +62,7 @@ pub(super) fn status_icon(s: TestStatus) -> gpui::Svg {
     crate::icons::icon(name, 14., color)
 }
 
+#[cfg(feature = "smoke")]
 pub(super) fn status_glyph(s: TestStatus) -> (&'static str, Hsla) {
     match s {
         TestStatus::Passed => ("✓", rgb(0x5fb865).into()),
@@ -237,6 +238,7 @@ impl TerminalPanel {
     }
 
     /// The active tab's test summary (smoke tests, status bar).
+    #[cfg(feature = "smoke")]
     pub fn tests_summary(&self) -> Option<String> {
         let t = self.tests()?;
         let s = t.tree().tree.summary(t.finished);
@@ -244,6 +246,7 @@ impl TerminalPanel {
     }
 
     /// The tree as indented text with status glyphs (smoke tests).
+    #[cfg(feature = "smoke")]
     pub fn tests_tree_text(&self) -> Option<String> {
         let t = self.tests()?;
         let f = t.tree();
@@ -261,6 +264,7 @@ impl TerminalPanel {
     }
 
     /// The active tab's selected test and where it is defined (smoke tests).
+    #[cfg(feature = "smoke")]
     pub fn selected_test(&self) -> Option<(String, Option<(PathBuf, usize)>)> {
         let t = self.tests()?;
         let f = t.tree();
@@ -359,6 +363,7 @@ impl TerminalPanel {
     }
 
     /// Select the tree node named `name` (smoke tests).
+    #[cfg(feature = "smoke")]
     pub fn select_test_named(&mut self, name: &str) -> Option<usize> {
         let t = self.tests_mut()?;
         let i = t.tree().tree.nodes.iter().position(|n| n.name == name)?;

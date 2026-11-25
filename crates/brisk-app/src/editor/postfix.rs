@@ -80,6 +80,7 @@ pub fn postfix_range(line: &[char], dot: usize, statement: bool) -> Option<std::
 
 impl Editor {
     /// Smoke checks: accept the shown postfix item `key`, as a click on it does.
+    #[cfg(feature = "smoke")]
     pub fn accept_postfix(&mut self, key: &str, cx: &mut gpui::Context<Self>) -> bool {
         let Some(c) = self.insight.completion.as_mut() else { return false };
         let Some(k) = c.shown.iter().position(|&i| c.items[i].label == key && c.items[i].kind == 15) else { return false };

@@ -505,6 +505,7 @@ sys.exit(r)";
     }
 
     /// Columns of the active session (smoke tests: soft wrap off widens the grid).
+    #[cfg(feature = "smoke")]
     pub fn columns(&self) -> usize {
         self.session().map(|s| s.size().0).unwrap_or(0)
     }
@@ -544,11 +545,13 @@ sys.exit(r)";
     }
 
     /// Run tabs as (name, pinned) and the lines each keeps above its screen (smoke tests).
+    #[cfg(feature = "smoke")]
     pub fn run_tabs_detail(&self) -> Vec<(String, bool, usize)> {
         self.tabs.iter().filter_map(|t| t.run.as_ref().map(|r| (r.name.clone(), r.pinned, t.session.history_lines()))).collect()
     }
 
     /// Stop every running process (smoke tests).
+    #[cfg(feature = "smoke")]
     pub fn stop_all(&mut self) {
         for t in self.tabs.iter_mut().filter(|t| t.run.as_ref().is_some_and(|r| r.running)) {
             t.stop_run();
@@ -590,6 +593,7 @@ sys.exit(r)";
     }
 
     /// Text of the active tab (smoke tests).
+    #[cfg(feature = "smoke")]
     pub fn active_text(&self) -> Option<String> {
         self.session().map(|s| s.text())
     }
@@ -608,17 +612,20 @@ sys.exit(r)";
     }
 
     /// First link in the active tab that points to an existing file (smoke tests).
+    #[cfg(feature = "smoke")]
     pub fn first_link(&self) -> Option<(PathBuf, usize)> {
         let text = self.active_text()?;
         text.lines().flat_map(brisk_run::find_links).find_map(|l| self.link_target(&l.path, l.line))
     }
 
     /// First `http(s)://` link in the active tab (smoke tests).
+    #[cfg(feature = "smoke")]
     pub fn first_url(&self) -> Option<String> {
         self.active_text()?.lines().flat_map(brisk_run::find_urls).map(|(_, u)| u).next()
     }
 
     /// Open the first `http(s)://` link as a click would (smoke tests).
+    #[cfg(feature = "smoke")]
     pub fn click_first_url(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(u) = self.first_url() else { return false };
         cx.emit(RunEvent::OpenUrl(u));
@@ -665,6 +672,7 @@ sys.exit(r)";
     }
 
     /// Foreground color of the first on-screen cell of `needle` (smoke tests).
+    #[cfg(feature = "smoke")]
     pub fn fg_of(&self, needle: &str) -> Option<[u8; 3]> {
         let snap = self.session()?.snapshot();
         for r in 0..snap.rows {
@@ -678,6 +686,7 @@ sys.exit(r)";
     }
 
     /// OSC 8 hyperlinks in the active tab's screen: their URIs (smoke tests).
+    #[cfg(feature = "smoke")]
     pub fn hyperlinks(&self) -> Vec<String> {
         let Some(s) = self.session() else { return Vec::new() };
         let snap = s.snapshot();
@@ -696,6 +705,7 @@ sys.exit(r)";
 
     /// Click the first OSC 8 hyperlink whose URI starts with `osc8` (or, with `None`, the
     /// first file link) on screen as the mouse would (smoke tests).
+    #[cfg(feature = "smoke")]
     pub fn click_first(&mut self, osc8: Option<&str>, cx: &mut Context<Self>) -> bool {
         let Some(s) = self.session() else { return false };
         let snap = s.snapshot();
@@ -1503,6 +1513,7 @@ fn pin_track() -> impl IntoElement {
 }
 
 /// Center of the Pin Tab button in window pixels (smoke tests).
+#[cfg(feature = "smoke")]
 pub fn pin_button_center() -> Option<(f32, f32)> {
     PIN_BUTTON.with(|c| c.get()).map(|b| (f32::from(b.center().x), f32::from(b.center().y)))
 }

@@ -1,4 +1,5 @@
 param([string]$Exe, [string]$Project, [string]$AppData, [string]$OutDir, [string]$Steps, [string]$Env = "", [int]$StartWait = 4000)
+# $Exe has to be a build with the smoke feature, target/smoke/release/brisk.exe (docs/testing.md).
 # Starts brisk on $Project (optionally with "NAME=value,NAME2=value" in $Env), waits $StartWait ms,
 # then runs $Steps against its window like debug-mouse-smoke.ps1: "shot:name; click:x,y; dbl:x,y;
 # rclick:x,y; key:vk; skey:vk; mkey:SCA,vk; char:text; move:x,y; drag:x1,y1,x2,y2; wait:ms".

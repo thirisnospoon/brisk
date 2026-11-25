@@ -958,6 +958,7 @@ impl Workspace {
 
     /// `BRISK_SMOKE_LINT=<file.py>`: open, wait for ruff, print the problems, apply the first
     /// quick fix, wait for the re-check, open the Problems window on the project.
+    #[cfg(feature = "smoke")]
     pub(super) fn lint_smoke(&mut self, file: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let t0 = std::time::Instant::now();
         self.open_file(&file, window, cx);

@@ -62,6 +62,7 @@ impl Editor {
     }
 
     /// Smoke checks: rows, the caret, its row, scrolling, the first wrapped line's breaks.
+    #[cfg(feature = "smoke")]
     pub fn wrap_smoke(&self) -> String {
         let (l, c) = self.caret_line_col();
         let vh = self.layout.as_ref().map(|l| f32::from(l.bounds.size.height)).unwrap_or(0.0);
@@ -83,6 +84,7 @@ impl Editor {
     }
 
     /// Smoke checks: what a click at display row `row`, `cols` columns into the text, hits.
+    #[cfg(feature = "smoke")]
     pub fn wrap_click(&self, row: usize, cols: f32) -> Option<(usize, usize)> {
         let l = self.layout.as_ref()?;
         let y = l.bounds.top() + gpui::px((row as f32 + 0.5) * super::line_height() - self.scroll_y);

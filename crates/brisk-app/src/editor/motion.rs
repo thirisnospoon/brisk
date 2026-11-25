@@ -55,6 +55,7 @@ pub(super) struct Motion {
 
 /// What a smoke sees of the motion (`Editor::motion_probe`).
 #[derive(Clone, Copy, Debug)]
+#[cfg(feature = "smoke")]
 pub struct MotionProbe {
     pub scroll_y: f32,
     /// Where a glide in progress is going.
@@ -167,6 +168,7 @@ impl Editor {
         true
     }
 
+    #[cfg(feature = "smoke")]
     pub fn motion_probe(&self) -> MotionProbe {
         MotionProbe {
             scroll_y: self.scroll_y,

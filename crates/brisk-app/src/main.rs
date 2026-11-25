@@ -24,6 +24,7 @@ mod py_venv;
 mod run_anything;
 mod scrollbar;
 mod settings;
+mod smoke;
 mod stall;
 mod terminal_env;
 mod terminal_view;

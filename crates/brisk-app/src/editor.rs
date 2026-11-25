@@ -552,6 +552,7 @@ impl Editor {
     }
 
     /// Append text at the end and put the caret there (used to seed a new console).
+    #[cfg(feature = "smoke")]
     pub fn set_initial_text(&mut self, text: &str, cx: &mut Context<Self>) {
         if self.buffer.text().trim().is_empty() {
             self.buffer.set_text(text);
@@ -839,6 +840,7 @@ impl Editor {
     }
 
     /// Smoke checks: (scroll x, scroll y, max x, max y) and the text area's bounds.
+    #[cfg(feature = "smoke")]
     pub fn scroll_state(&self) -> (f32, f32, f32, f32, Option<Bounds<Pixels>>) {
         (self.scroll_x, self.scroll_y, self.max_scroll_x(), self.max_scroll_y(), self.layout.as_ref().map(|l| l.bounds))
     }

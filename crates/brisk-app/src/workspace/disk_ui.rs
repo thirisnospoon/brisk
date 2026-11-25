@@ -156,6 +156,7 @@ impl Workspace {
 impl Workspace {
     /// Smoke check (BRISK_SMOKE_DISK=1, run on a scratch project): external edits, conflicts,
     /// files appearing in the tree, legacy encodings, binary files.
+    #[cfg(feature = "smoke")]
     pub(super) fn disk_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let a = root.join("disk_a.py");

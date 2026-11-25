@@ -130,6 +130,7 @@ impl FindWindow {
     }
 
     /// The visible tree as indented text, for smokes.
+    #[cfg(feature = "smoke")]
     pub fn rows_text(&self) -> Vec<String> {
         self.rows
             .iter()

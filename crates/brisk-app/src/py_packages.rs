@@ -146,13 +146,9 @@ pub fn outdated(python: &Path, tool: &Tool) -> Result<std::collections::HashMap<
 /// Smokes never reach the network: without a local index of their own pip gets none. Every
 /// pip call made under a smoke goes through this.
 pub(crate) fn offline_in_smoke(c: &mut Command) {
-    if in_smoke() && std::env::var_os("PIP_INDEX_URL").is_none() {
+    if crate::smoke::active() && std::env::var_os("PIP_INDEX_URL").is_none() {
         c.env("PIP_NO_INDEX", "1");
     }
-}
-
-fn in_smoke() -> bool {
-    std::env::vars_os().any(|(k, _)| k.to_string_lossy().starts_with("BRISK_SMOKE_"))
 }
 
 const PYPI: &str = "https://pypi.org/simple/";
@@ -203,7 +199,7 @@ fn names_cache(url: &str) -> PathBuf {
 pub fn index_file(python: &Path) -> Result<PathBuf, String> {
     let url = index_url();
     // Smokes never reach the network: they pass a local index or get no suggestions.
-    if in_smoke() && !url.starts_with("file:") {
+    if crate::smoke::active() && !url.starts_with("file:") {
         return Err("No PyPI index in smoke tests (set BRISK_PYPI_INDEX to a file:// URL)".into());
     }
     let cache = names_cache(&url);

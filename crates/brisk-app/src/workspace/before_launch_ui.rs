@@ -2,6 +2,7 @@
 //! after another, each in its own Run tab; a non-zero exit (or Stop) cancels the launch.
 
 use super::Workspace;
+#[cfg(feature = "smoke")]
 use brisk_keymap::Action;
 use brisk_run::{BeforeStep, RunConfig};
 use gpui::{Context, Window};
@@ -134,6 +135,7 @@ impl Workspace {
     /// BRISK_SMOKE_BEFORE=1 on an empty folder: `app` runs `prep` and a command first (both
     /// pass, then app starts and sees what they wrote); `bad` has a failing command and
     /// must not start; a Compound or missing name before launch is refused.
+    #[cfg(feature = "smoke")]
     pub(super) fn before_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let w = |n: &str, s: &str| {

@@ -237,6 +237,7 @@ impl Editor {
 
     /// Smoke checks: a left press at `at` (line, column) with these modifiers and click count,
     /// a drag to `to`, and the release, through the same handlers as the mouse.
+    #[cfg(feature = "smoke")]
     pub fn smoke_mouse(
         &mut self,
         at: (usize, usize),

@@ -36,6 +36,7 @@ impl Hint {
     }
 
     /// The label as drawn, without the padding.
+    #[cfg(feature = "smoke")]
     fn label(&self) -> &str {
         &self.shown[PAD.len()..self.shown.len() - PAD.len()]
     }
@@ -189,11 +190,13 @@ impl Editor {
     }
 
     /// Lines that have hints: for smokes.
+    #[cfg(feature = "smoke")]
     pub fn inlay_line_count(&self) -> usize {
         self.inlays.lines.len()
     }
 
     /// Hints shown on `line`, as text (shortened ones as drawn): for smokes.
+    #[cfg(feature = "smoke")]
     pub fn inlay_labels(&self, line: usize) -> Vec<String> {
         let text = self.buffer.line(line);
         self.hints_on(line, &text).iter().map(|h| h.label().to_string()).collect()

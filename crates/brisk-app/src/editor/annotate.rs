@@ -169,6 +169,7 @@ impl Editor {
     }
 
     /// A window point on the annotation of `line` (smokes: the right-click menu there).
+    #[cfg(feature = "smoke")]
     pub fn annotation_point(&self, line: usize) -> Option<Point<Pixels>> {
         let l = self.layout.as_ref()?;
         let y = l.bounds.top() + px((self.row_of(line) as f32 + 0.5) * line_height() - self.scroll_y);
@@ -176,6 +177,7 @@ impl Editor {
     }
 
     /// Annotation of a buffer line (smoke tests): (short hash, label).
+    #[cfg(feature = "smoke")]
     pub fn annotation_line(&self, line: usize) -> Option<(String, String)> {
         let a = self.annotation.as_ref()?.lines.get(line)?.as_ref()?;
         Some((a.hash[..8.min(a.hash.len())].to_string(), a.label()))

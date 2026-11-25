@@ -32,3 +32,7 @@ flate2 = "1"
 
 [build-dependencies]
 embed-resource = "3"
+
+[features]
+# Smoke tests and screenshot helpers (docs/testing.md). Off in release builds.
+smoke = []

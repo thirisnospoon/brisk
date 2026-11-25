@@ -26,9 +26,7 @@ fn now_ms() -> u64 {
 
 pub fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        cfg!(debug_assertions) || std::env::var_os("BRISK_WATCHDOG").is_some() || std::env::var_os("BRISK_SMOKE_HANG").is_some() || frames_enabled()
-    })
+    *ON.get_or_init(|| cfg!(debug_assertions) || std::env::var_os("BRISK_WATCHDOG").is_some() || crate::smoke::on("BRISK_SMOKE_HANG") || frames_enabled())
 }
 
 /// Frame timing for `BRISK_SMOKE_SCROLL`: the CPU time of each window frame, from the start of
@@ -36,11 +34,12 @@ pub fn enabled() -> bool {
 /// element placed last in the tree. Nothing is recorded, and no probe is added, otherwise.
 pub fn frames_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("BRISK_SMOKE_SCROLL").is_some() || std::env::var_os("BRISK_SMOKE_OPEN").is_some())
+    *ON.get_or_init(|| crate::smoke::on("BRISK_SMOKE_SCROLL") || crate::smoke::on("BRISK_SMOKE_OPEN"))
 }
 
 /// The next frame is timed from `t` (an action before the render, e.g. opening a file), not
 /// from the start of its Workspace render.
+#[cfg(feature = "smoke")]
 pub fn pin_frame_start(t: Instant) {
     if let Ok(mut s) = FRAME_START.lock() {
         *s = Some(t);
@@ -83,6 +82,7 @@ pub fn frame_probe() -> Option<gpui::AnyElement> {
 }
 
 /// Frame times (ms) recorded since the last call.
+#[cfg(feature = "smoke")]
 pub fn take_frames() -> Vec<f32> {
     FRAMES.lock().map(|mut f| std::mem::take(&mut *f)).unwrap_or_default()
 }
@@ -95,10 +95,12 @@ pub fn note(what: impl Into<Cow<'static, str>>) {
 }
 
 /// Longest stall since the last [`reset`], with its note.
+#[cfg(feature = "smoke")]
 pub fn worst() -> (u64, String) {
     (MAX_MS.load(Ordering::Relaxed), MAX_NOTE.lock().map(|s| s.clone()).unwrap_or_default())
 }
 
+#[cfg(feature = "smoke")]
 pub fn reset() {
     MAX_MS.store(0, Ordering::Relaxed);
     if let Ok(mut s) = MAX_NOTE.lock() {

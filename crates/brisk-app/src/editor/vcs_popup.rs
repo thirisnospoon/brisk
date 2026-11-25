@@ -32,6 +32,7 @@ impl Editor {
     }
 
     /// A window point on the marker of `line` (smokes).
+    #[cfg(feature = "smoke")]
     pub fn vcs_marker_point(&self, line: usize) -> Option<Point<Pixels>> {
         let l = self.layout.as_ref()?;
         let y = l.bounds.top() + px((self.row_of(line) as f32 + 0.5) * line_height() - self.scroll_y);
@@ -61,6 +62,7 @@ impl Editor {
     }
 
     /// Open the popup on change `i` (smokes; the marker click does the same).
+    #[cfg(feature = "smoke")]
     pub fn open_vcs_popup(&mut self, i: usize, cx: &mut gpui::Context<Self>) {
         if i < self.vcs_changes.len() {
             self.vcs_popup = Some((i, self.buffer.version()));
@@ -68,6 +70,7 @@ impl Editor {
         }
     }
 
+    #[cfg(feature = "smoke")]
     pub fn vcs_change_count(&self) -> usize {
         self.vcs_changes.len()
     }

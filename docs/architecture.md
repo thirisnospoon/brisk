@@ -385,10 +385,13 @@ can be tested without starting the binary.
 
 - `brisk-app` gets a `smoke` cargo feature, off by default. Release builds and the portable
   zip are built without it.
-- All smoke code moves to `brisk-app/src/smoke/`, compiled only with the feature. One
-  function, `smoke::schedule(workspace, window, cx)`, called once from `Workspace::new`,
-  reads the environment and starts the matching smoke. Without the feature it does not
-  exist and `Workspace::new` has no smoke code.
+- All smoke code moves to `brisk-app/src/workspace/smoke/`, compiled only with the feature.
+  It stays a child of `workspace` until the sub-models of phase 4 give the smokes a public
+  API to drive. One function, `workspace::smoke::schedule(window, cx)`, called once at the
+  end of `Workspace::new`, reads the environment and starts the matching smoke. Without the
+  feature it does not exist and `Workspace::new` has no smoke code. What production code
+  needs to know (`crate::smoke::active()`, `crate::smoke::on(name)`) answers no without the
+  feature.
 - The production checks for "a smoke is running" (`py_packages.rs:152`, `run_ui.rs:169`)
   become `smoke::active()`, which is `false` without the feature.
 - Smokes drive the app through actions and sub-model methods, not private `Workspace`
@@ -540,25 +543,20 @@ Files: wherever clippy points. Verify: tests, CI. Risk: low to medium; clippy fi
 
 #### Step 4. Add the `smoke` feature and `smoke::schedule`
 
-Create `brisk-app/src/smoke/mod.rs` with `schedule` and `active`. Move the 72 environment reads (`if
-env::var_os(...)` blocks) from `Workspace::new` into `schedule` unchanged; replace the two
-production checks with `smoke::active()`. The smoke files stay where they are for now and
-are gated with `#[cfg(feature = "smoke")]`. Update `docs/testing.md`, `budget.ps1` (builds
-with `--features smoke` for MEMBUDGET) and `debug-mouse-smoke.ps1`.
-Files: `workspace.rs` (`new`), `workspace/*_smoke.rs` (cfg only), `py_packages.rs`,
-`workspace/run_ui.rs`, `Cargo.toml` of `brisk-app`, scripts, `docs/testing.md`.
-Verify: a release build without the feature has no `BRISK_SMOKE` string
-(`findstr BRISK_SMOKE target\release\brisk.exe` finds nothing); every smoke in
-`testing.md` still runs on a `--features smoke` build; budget, where the exe should shrink.
-Risk: medium, because each smoke has to be checked once; the moved code itself does not
-change.
+Done on branch `smoke-feature`. The hooks of `Workspace::new` moved unchanged into
+`workspace/smoke.rs` (`schedule`); `crate::smoke` (`smoke.rs`) answers `active()` and
+`on(name)` for production code. The 41 smoke files, `win_input.rs`, 55 smoke functions and
+70 probe methods in ordinary files are behind `#[cfg(feature = "smoke")]`; the compiler's
+dead-code warnings found the probes. `budget.ps1` runs MEMBUDGET on the smoke build
+(`-SmokeExe`, default `target\smoke\release\brisk.exe`). Measured: the release exe went from
+25.99 to 21.58 MB and contains no `BRISK_SMOKE` string; with a `BRISK_SMOKE_*` variable set
+it starts normally. Start-up time is unchanged against `main` on the same machine.
 
-#### Step 5. Move the smoke files into `smoke/`
+#### Step 5. Move the smoke files into `workspace/smoke/`
 
-Pure file moves of the 41 `*_smoke.rs` files and the smoke functions inside ordinary files
-(`debug_ui.rs:3584`, `run_ui.rs:637` and `698`, `find_ui.rs:400`, `project_ui.rs:486`).
-Methods they need from `Workspace` become `pub(crate)`; nothing else changes.
-Files: listed. Verify: tests, all smokes. Risk: low.
+Pure file moves of the 41 `*_smoke.rs` files and `win_input.rs` into `workspace/smoke/`,
+then the smoke functions and probes now gated in ordinary files, where they only use public
+methods. Files: listed. Verify: tests, all smokes. Risk: low.
 
 
 ### Phase 1b: `brisk-platform`

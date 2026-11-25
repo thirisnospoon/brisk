@@ -67,6 +67,7 @@ impl Editor {
     }
 
     /// Smoke: (shown, cached lines, spaces and tabs on this line).
+    #[cfg(feature = "smoke")]
     pub fn whitespace_for_smoke(&self, line: usize) -> (bool, usize, usize, usize) {
         let cols = self.whitespace_of(line);
         let (s, t) = cols.map_or((0, 0), |c| (c.iter().filter(|x| !x.1).count(), c.iter().filter(|x| x.1).count()));

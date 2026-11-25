@@ -1255,6 +1255,7 @@ impl Workspace {
     /// `BRISK_SMOKE_LSP=<main.py>`: with ty, check diagnostics, Ctrl+B and back, Ctrl+Q,
     /// completion, parameter info, find usages and rename. `main.py` must call `add` from
     /// `pkg/util.py` on line 4 (see the README).
+    #[cfg(feature = "smoke")]
     pub(super) fn lsp_smoke(&mut self, file: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         use brisk_keymap::Action as A;
         let t0 = std::time::Instant::now();

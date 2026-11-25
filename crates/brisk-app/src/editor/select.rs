@@ -115,6 +115,7 @@ impl Editor {
         cx.notify();
     }
 
+    #[cfg(feature = "smoke")]
     pub fn carets_for_smoke(&self) -> Vec<(usize, usize, usize, usize)> {
         let b = &self.buffer;
         let mut v: Vec<_> = b

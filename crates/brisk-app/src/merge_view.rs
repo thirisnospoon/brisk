@@ -362,6 +362,7 @@ impl MergeView {
         self.editor.clone()
     }
 
+    #[cfg(feature = "smoke")]
     pub fn text(&self) -> &str {
         &self.text
     }

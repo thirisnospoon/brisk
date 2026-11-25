@@ -3,7 +3,10 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\budget.ps1 [-Build] [-Package] [-Runs 3]
 #       [-Exe target\release\brisk.exe] [-Zip dist\x.zip] [-Project examples\demo_project]
-#       [-NoMembudget] [-SizeOnly] [-Out results.json]
+#       [-SmokeExe target\smoke\release\brisk.exe] [-NoMembudget] [-SizeOnly] [-Out results.json]
+#
+# MEMBUDGET is a smoke, so it runs on a build with the smoke feature (-SmokeExe); the release
+# exe has no smokes. -Build builds both, the smoke one in target\smoke.
 #
 # -SizeOnly checks exe_mb and zip_mb and launches nothing. CI uses it: start time and memory
 # on shared runners vary too much to fail a build on.
@@ -18,6 +21,7 @@ param(
     [switch]$Package,
     [int]$Runs = 3,
     [string]$Exe,
+    [string]$SmokeExe,
     [string]$Zip,
     [string]$Project,
     [switch]$NoMembudget,
@@ -35,8 +39,10 @@ $Limits = [ordered]@{
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $Exe) { $Exe = Join-Path $root 'target\release\brisk.exe' }
+if (-not $SmokeExe) { $SmokeExe = Join-Path $root 'target\smoke\release\brisk.exe' }
 if (-not $Project) { $Project = Join-Path $root 'examples\demo_project' }
 $Exe = [IO.Path]::GetFullPath($Exe)
+$SmokeExe = [IO.Path]::GetFullPath($SmokeExe)
 $Project = [IO.Path]::GetFullPath($Project)
 
 if ($Build) {
@@ -44,6 +50,10 @@ if ($Build) {
     try {
         cargo build --release -p brisk-app
         if ($LASTEXITCODE -ne 0) { Write-Host "cargo build failed"; exit 2 }
+        if (-not $NoMembudget -and -not $SizeOnly) {
+            cargo build --release -p brisk-app --features smoke --target-dir target\smoke
+            if ($LASTEXITCODE -ne 0) { Write-Host "cargo build --features smoke failed"; exit 2 }
+        }
     } finally { Pop-Location }
 }
 if (-not (Test-Path $Exe)) { Write-Host "No $Exe (pass -Build, or -Exe)"; exit 2 }
@@ -87,9 +97,9 @@ function Get-ChildMemory([int]$parent) {
     $m
 }
 
-function New-Launch([string]$dir, [string]$project, [hashtable]$envs) {
+function New-Launch([string]$dir, [string]$project, [hashtable]$envs, [string]$exe = $Exe) {
     New-Item -ItemType Directory -Force (Join-Path $dir 'appdata') | Out-Null
-    $psi = New-Object System.Diagnostics.ProcessStartInfo $Exe
+    $psi = New-Object System.Diagnostics.ProcessStartInfo $exe
     $psi.Arguments = '"' + $project + '"'
     $psi.UseShellExecute = $false
     $psi.WorkingDirectory = $dir
@@ -207,11 +217,12 @@ if (-not $SizeOnly) {
 # 2. MEMBUDGET on a copy of the project (its own verdict is switched off with a huge budget:
 #    the limit is checked here); ty and ruff are sampled while it runs.
 if (-not $NoMembudget) {
+    if (-not (Test-Path $SmokeExe)) { Write-Host "No $SmokeExe for MEMBUDGET (pass -Build, -SmokeExe or -NoMembudget)"; exit 2 }
     $tmp = Join-Path $env:TEMP ('brisk-budget-mb-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
     $proj = Join-Path $tmp 'project'
     New-Item -ItemType Directory -Force $tmp | Out-Null
     Copy-Item -Recurse $Project $proj
-    $psi = New-Launch $tmp $proj @{ BRISK_SMOKE_MEMBUDGET = '100000' }
+    $psi = New-Launch $tmp $proj @{ BRISK_SMOKE_MEMBUDGET = '100000' } $SmokeExe
     $psi.RedirectStandardError = $true
     $psi.RedirectStandardOutput = $true
     $p = [Diagnostics.Process]::Start($psi)

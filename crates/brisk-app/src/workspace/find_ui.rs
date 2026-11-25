@@ -73,6 +73,7 @@ pub struct Find {
 }
 
 impl FindWindow {
+    #[cfg(feature = "smoke")]
     pub fn rows_len(&self) -> usize {
         self.rows.len()
     }
@@ -80,6 +81,7 @@ impl FindWindow {
 
 impl Find {
     /// The results list (the scroll smoke points the wheel at its bounds).
+    #[cfg(feature = "smoke")]
     pub(super) fn list_handle(&self) -> UniformListScrollHandle {
         self.scroll.clone()
     }
@@ -126,14 +128,17 @@ impl Find {
         }
     }
 
+    #[cfg(feature = "smoke")]
     pub fn set_query_for_smoke(&mut self, q: &str) {
         self.opts.query = q.to_string();
     }
 
+    #[cfg(feature = "smoke")]
     pub fn idle(&self) -> bool {
         !self.searching && self.error.is_none()
     }
 
+    #[cfg(feature = "smoke")]
     pub fn summary(&self) -> String {
         format!(
             "{} matches in {} files (searched {}), {:.1?}, error={:?}",
@@ -413,10 +418,12 @@ impl Workspace {
     }
 
     /// The Find window's tree as text and a key pressed in it, for smokes.
+    #[cfg(feature = "smoke")]
     pub(super) fn find_window_rows(&self) -> Vec<String> {
         self.find.window.as_ref().map(|w| w.rows_text()).unwrap_or_default()
     }
 
+    #[cfg(feature = "smoke")]
     pub(super) fn dispatch_find_window_for_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_in_find_window(window, cx);
     }

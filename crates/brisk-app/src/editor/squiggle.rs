@@ -96,6 +96,7 @@ mod tests {
 
 impl super::Editor {
     /// Smoke: the waves as (1-based line, first column, past the last column), per problem.
+    #[cfg(feature = "smoke")]
     pub fn waves_for_smoke(&self) -> Vec<(String, Vec<(usize, usize, usize)>)> {
         self.diagnostics
             .iter()

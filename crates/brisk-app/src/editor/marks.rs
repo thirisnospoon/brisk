@@ -122,6 +122,7 @@ impl Editor {
     }
 
     /// Smokes: how many usages are highlighted now (none until the caret has rested).
+    #[cfg(feature = "smoke")]
     pub fn shown_occurrences(&self) -> usize {
         self.caret_marks(0..self.text_cache.1.len()).occurrences.len()
     }

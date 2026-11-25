@@ -6,6 +6,7 @@ use super::{PopupItem, PopupKind, Target, Workspace};
 use crate::editor::templates::{SURROUNDERS, TEMPLATES};
 use brisk_keymap::Action;
 use gpui::{Context, Window};
+#[cfg(feature = "smoke")]
 use std::time::Duration;
 
 impl Workspace {
@@ -59,6 +60,7 @@ impl Workspace {
     /// `BRISK_SMOKE_TEMPLATES=1`: writes `tpl.py`, `tpl.toml`, `tpl.yaml`, `tpl.json` and
     /// `tpl.css` in the project and presses real keys: abbreviations + Tab, Ctrl+J, Ctrl+Alt+T,
     /// Ctrl+/ and Ctrl+Shift+/. Prints each result.
+    #[cfg(feature = "smoke")]
     pub(super) fn templates_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let files = [
             ("tpl.py", "x = 1\nprint(x)\n"),

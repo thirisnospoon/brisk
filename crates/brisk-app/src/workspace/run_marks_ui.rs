@@ -3,7 +3,9 @@
 
 use super::menu_ui::Entry;
 use super::Workspace;
-use crate::editor::run_marks::{scope_key, RunTarget};
+#[cfg(feature = "smoke")]
+use crate::editor::run_marks::scope_key;
+use crate::editor::run_marks::RunTarget;
 use crate::editor::Editor;
 use brisk_run::{RunConfig, TestStatus};
 use gpui::{Context, Entity, Pixels, Point, Window};
@@ -170,6 +172,7 @@ impl Workspace {
     /// and `test_calc.py`, clicks the run icons with real mouse messages, runs a test class
     /// from the menu and checks the icons turn ✓ / ✗. The ▶ of `app.py` must run its saved
     /// configuration (its parameters reach the script), as PyCharm does.
+    #[cfg(feature = "smoke")]
     pub(super) fn run_marks_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let _ = std::fs::write(

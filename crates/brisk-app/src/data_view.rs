@@ -292,20 +292,24 @@ impl DataView {
     }
 
     /// Smoke hooks: a row's cells (when its page came), and loading a row's page.
+    #[cfg(feature = "smoke")]
     pub fn row_text(&self, r: usize) -> Option<(String, Vec<String>)> {
         let p = self.pages.get(&(r / PAGE))?;
         Some((p.index.get(r % PAGE)?.clone(), p.rows.get(r % PAGE)?.clone()))
     }
 
+    #[cfg(feature = "smoke")]
     pub fn ensure_row(&mut self, r: usize, cx: &mut Context<Self>) {
         self.fetch(r / PAGE, cx);
     }
 
+    #[cfg(feature = "smoke")]
     pub fn is_loading(&self) -> bool {
         !self.inflight.is_empty()
     }
 
     /// Filter and format as if typed (without the typing delay).
+    #[cfg(feature = "smoke")]
     pub fn set_query(&mut self, filter: &str, format: &str, cx: &mut Context<Self>) {
         self.applied = (filter.to_string(), format.to_string());
         self.reset(cx);

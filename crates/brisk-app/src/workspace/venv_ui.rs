@@ -10,7 +10,9 @@ use crate::theme::Theme;
 use brisk_run::pyproj::{self, Manager};
 use brisk_run::InterpKind;
 use gpui::prelude::*;
-use gpui::{div, px, Context, Window};
+#[cfg(feature = "smoke")]
+use gpui::Window;
+use gpui::{div, px, Context};
 use std::path::PathBuf;
 
 /// "Install requirements?" after a new environment was created.
@@ -56,6 +58,7 @@ fn track(i: usize) -> impl IntoElement {
 }
 
 /// The center of a painted offer button (window logical pixels).
+#[cfg(feature = "smoke")]
 fn offer_button_center(i: usize) -> Option<(f32, f32)> {
     OFFER_BUTTONS.with(|c| c.borrow()[i]).map(|b| (f32::from(b.center().x), f32::from(b.center().y)))
 }
@@ -334,6 +337,7 @@ impl Workspace {
     /// offline runs PIP_NO_INDEX / PIP_FIND_LINKS point at a local wheel): Add Interpreter,
     /// the first base Python, wait for .venv, then real clicks on Install requirements and,
     /// on the offer shown again, Not now.
+    #[cfg(feature = "smoke")]
     pub(super) fn venv_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         OFFER_BUTTONS.with(|c| *c.borrow_mut() = [None, None]);
         cx.spawn_in(window, async move |this, cx| {

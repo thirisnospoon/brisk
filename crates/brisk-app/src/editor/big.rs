@@ -92,11 +92,13 @@ impl Editor {
     }
 
     /// Smokes: a complete syntax tree for the current text (highlighting is not stale).
+    #[cfg(feature = "smoke")]
     pub fn syntax_ready(&self) -> bool {
         self.syntax.as_ref().is_some_and(|s| s.tree().is_some() && !s.is_stale())
     }
 
     /// Smokes: the fold markers are up to date with the text.
+    #[cfg(feature = "smoke")]
     pub fn folds_fresh(&self) -> bool {
         self.folds.candidates.0 == Some(self.buffer.version())
     }

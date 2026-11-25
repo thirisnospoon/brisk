@@ -521,6 +521,7 @@ impl Workspace {
     }
 
     /// Smoke hook (BRISK_SMOKE_SETTINGS): the dialog, live preview, Cancel, OK, zoom.
+    #[cfg(feature = "smoke")]
     pub(super) fn settings_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let show = || {
             let s = settings::current();

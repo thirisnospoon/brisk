@@ -131,6 +131,7 @@ impl Editor {
     }
 
     /// For smokes: the sticky lines shown (buffer lines, top offsets).
+    #[cfg(feature = "smoke")]
     pub fn sticky_shown(&self) -> Vec<(usize, f32)> {
         self.sticky.shown.clone()
     }
@@ -138,6 +139,7 @@ impl Editor {
 
 impl Editor {
     /// For smokes: a press in the middle of sticky line `k`, as a click would do it.
+    #[cfg(feature = "smoke")]
     pub fn click_sticky_for_smoke(&mut self, k: usize, cx: &mut Context<Self>) -> bool {
         let (Some(l), Some(&(_, y))) = (self.layout.as_ref(), self.sticky.shown.get(k)) else { return false };
         let p = gpui::point(l.text_left + gpui::px(40.), l.bounds.top() + gpui::px(y.max(0.0) + line_height() / 2.0));
@@ -145,6 +147,7 @@ impl Editor {
     }
 
     /// For smokes: put the view's top at `y` (no glide).
+    #[cfg(feature = "smoke")]
     pub fn set_scroll_for_smoke(&mut self, y: f32, cx: &mut Context<Self>) {
         self.motion.glide = None;
         self.scroll_y = y.clamp(0.0, self.max_scroll_y());
@@ -152,6 +155,7 @@ impl Editor {
     }
 
     /// For smokes: where `line` is drawn, from the editor's top.
+    #[cfg(feature = "smoke")]
     pub fn line_top_for_smoke(&self, line: usize) -> f32 {
         self.row_of(line) as f32 * line_height() - self.scroll_y
     }
@@ -159,6 +163,7 @@ impl Editor {
 
 impl Editor {
     /// For smokes: the mouse over sticky line `k`.
+    #[cfg(feature = "smoke")]
     pub fn hover_sticky_for_smoke(&mut self, k: usize, cx: &mut Context<Self>) {
         self.sticky.hover = (k < self.sticky.shown.len()).then_some(k);
         cx.notify();

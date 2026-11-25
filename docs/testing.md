@@ -24,12 +24,18 @@ cargo test -p brisk-db -- --ignored
 
 A smoke test starts Brisk on a project folder, performs a scripted sequence of actions, prints what it observes to stderr, and quits.
 
-To run one, set the variable and pass the project folder as the argument:
+Smokes and the `BRISK_OPEN_*` helpers are compiled only with the `smoke` feature; the release exe has none of them. Build the smoke exe in its own target folder, so it does not replace the release one:
+
+```powershell
+cargo build --release -p brisk-app --features smoke --target-dir target\smoke
+```
+
+To run a smoke, set the variable and pass the project folder as the argument:
 
 ```powershell
 $env:APPDATA = "$env:TEMP\brisk-smoke-appdata"
 $env:BRISK_SMOKE_SCOPE = "1"
-target\release\brisk.exe C:\tmp\empty-folder
+target\smoke\release\brisk.exe C:\tmp\empty-folder
 ```
 
 - Point `APPDATA` at a temporary folder. Several smokes change settings, local history or run configurations, and a fresh `APPDATA` keeps your own settings out of the result.
@@ -459,6 +465,14 @@ Opens Terminal and checks the `(.venv) PS` prompt, `sys.executable` and `VIRTUAL
 ### `BRISK_SMOKE_GIT=<file>`
 
 Opens the file, the Commit and Git windows, a diff and the branches popup.
+
+### `BRISK_SMOKE_VCS=1`
+
+Folder: empty only. Creates a repository in it and commits.
+
+Checks the diff viewer (side by side and unified, live while the file changes) and the merge window, then Annotate and Annotate Previous Revision, a change marker's popup, a commit that leaves one diff block out, and a commit's menu in the Git log.
+
+`BRISK_SMOKE_VCS_HOLD=diff|unified|merge|merged|annotate|previous|popup|partial|log` stops at that phase.
 
 ### `BRISK_SMOKE_GITX=1`
 

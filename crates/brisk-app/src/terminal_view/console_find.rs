@@ -151,6 +151,7 @@ impl TerminalPanel {
     }
 
     /// Where the current match is and whether it is on screen (smoke tests).
+    #[cfg(feature = "smoke")]
     pub fn search_probe(&self) -> String {
         let Some(f) = self.search.found.get(self.search.current) else { return "no match".into() };
         let snap = self.session().map(|s| s.snapshot());

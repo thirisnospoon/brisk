@@ -48,6 +48,7 @@ impl TerminalPanel {
 
     /// For smokes: (metrics, hovered, dragging, track bounds, thumb).
     #[allow(dead_code)]
+    #[cfg(feature = "smoke")]
     pub fn bar_state_for_smoke(&self) -> (Option<Metrics>, bool, bool, Option<gpui::Bounds<gpui::Pixels>>, Option<(f32, f32)>) {
         let b = self.bar.borrow();
         (self.scroll_metrics(), b.hover, b.drag.is_some(), b.bounds, b.thumb)

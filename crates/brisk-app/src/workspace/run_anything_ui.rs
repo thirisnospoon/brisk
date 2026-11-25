@@ -75,6 +75,7 @@ impl Workspace {
     /// a run configuration, opens Run Anything by double Ctrl and runs a script, pytest,
     /// pip, a shell command and the configuration; checks the history and that Ctrl, Ctrl+↑
     /// (clone caret) does not open it.
+    #[cfg(feature = "smoke")]
     pub(super) fn run_anything_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         let _ = std::fs::write(root.join("hello.py"), "import sys\nprint('argv:', sys.argv[1:])\n");

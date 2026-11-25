@@ -300,17 +300,20 @@ pub struct DiffView {
 
 impl DiffView {
     /// (left label, right label, number of changes): for smoke tests.
+    #[cfg(feature = "smoke")]
     pub fn summary(&self) -> (String, String, usize) {
         (self.left_label.clone(), self.right_label.clone(), self.blocks.len())
     }
 
     /// Smoke checks: (unified, collapse, displayed rows, folded rows).
+    #[cfg(feature = "smoke")]
     pub fn layout_state(&self) -> (bool, bool, usize, usize) {
         let folded = self.disp.iter().map(|d| if let Disp::Fold(r) = d { r.len() } else { 0 }).sum();
         (self.prefs.unified, self.prefs.collapse, self.disp.len(), folded)
     }
 
     /// Smoke checks: the changed words of the `n`-th modified row, as text (left, right).
+    #[cfg(feature = "smoke")]
     pub fn words_of_change(&mut self, n: usize) -> Option<(Vec<String>, Vec<String>)> {
         let i = self.rows.iter().enumerate().filter(|(_, r)| r.kind == RowKind::Modified && r.left.is_some() && r.right.is_some()).nth(n)?.0;
         let w = self.words(i)?;

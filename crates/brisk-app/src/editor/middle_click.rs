@@ -52,6 +52,7 @@ impl Editor {
 
     /// Smoke checks: the window point in the middle of the character at (`line`, `col`), if
     /// the line is on screen.
+    #[cfg(feature = "smoke")]
     pub fn char_point(&self, line: usize, col: usize) -> Option<gpui::Point<gpui::Pixels>> {
         let l = self.layout.as_ref()?;
         let shaped = l.shaped(line)?;
