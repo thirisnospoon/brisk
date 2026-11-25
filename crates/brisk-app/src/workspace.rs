@@ -1706,12 +1706,10 @@ impl Workspace {
         let kind = p.kind;
         let items = match kind {
             PopupKind::SearchEverywhere(SeTab::All) => {
-                let mut v = self.symbol_items(&q, true, 5);
+                let (mut v, symbols) = self.symbol_items_all(&q, 5, 8);
                 v.extend(self.file_items(&q, 30));
                 if !q.is_empty() {
-                    v.extend(
-                        self.symbol_items(&q, false, 8).into_iter().filter(|i| !matches!(i.target, Target::Symbol(_, _, _, brisk_syntax::OutlineKind::Class))),
-                    );
+                    v.extend(symbols);
                     v.extend(self.action_items(&q, 8));
                 }
                 v

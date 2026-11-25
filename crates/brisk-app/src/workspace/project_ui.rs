@@ -66,21 +66,67 @@ fn folder_name(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string_lossy().into_owned())
 }
 
-#[derive(Clone)]
+/// One symbol of a file. Symbols with the same container share its string, and top-level
+/// ones share one empty string.
 pub(super) struct Sym {
-    pub name: Arc<str>,
-    pub kind: OutlineKind,
+    name: Arc<str>,
+    kind: OutlineKind,
     /// Enclosing classes/functions, dotted.
-    pub container: Arc<str>,
-    pub file: usize,
-    pub line: usize,
-    pub col: usize,
+    container: Arc<str>,
+    line: u32,
+    col: u32,
 }
 
 /// Symbols of one file with the size and mtime they were read at.
 pub(super) struct FileSyms {
     stamp: (u64, Option<std::time::SystemTime>),
-    syms: Vec<Sym>,
+    syms: Box<[Sym]>,
+}
+
+/// A symbol with the index of its file in the file list.
+#[derive(Clone, Copy)]
+pub(super) struct SymRef<'a> {
+    pub name: &'a str,
+    pub kind: OutlineKind,
+    pub container: &'a str,
+    pub file: usize,
+    pub line: usize,
+    pub col: usize,
+}
+
+/// The symbol index: each file's symbols (shared with the cache, not copied), in file-list
+/// order, which is path order.
+#[derive(Default)]
+pub(super) struct SymIndex {
+    files: Vec<(u32, Arc<FileSyms>)>,
+    len: usize,
+}
+
+impl SymIndex {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    fn get(&self, slot: u32, i: u32) -> SymRef<'_> {
+        let (file, syms) = &self.files[slot as usize];
+        let s = &syms.syms[i as usize];
+        SymRef { name: &s.name, kind: s.kind, container: &s.container, file: *file as usize, line: s.line as usize, col: s.col as usize }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = SymRef<'_>> {
+        self.files.iter().enumerate().flat_map(move |(slot, (_, f))| (0..f.syms.len()).map(move |i| self.get(slot as u32, i as u32)))
+    }
+}
+
+/// A search hit: score, slot in `SymIndex::files`, symbol in that file.
+type Hit = (i32, u32, u32);
+
+/// The last search's hits, for narrowing when the next query extends it.
+struct LastHits {
+    list: std::sync::Weak<SymIndex>,
+    query: String,
+    classes_only: bool,
+    hits: Vec<(u32, u32)>,
 }
 
 /// Per-file symbols of the last index by relative path. A rescan (after any change in an
@@ -90,12 +136,18 @@ pub(super) type SymCache = std::collections::HashMap<String, Arc<FileSyms>>;
 
 #[derive(Default)]
 pub(super) struct Symbols {
-    pub list: Option<Arc<Vec<Sym>>>,
+    pub list: Option<Arc<SymIndex>>,
     pub files: Option<Arc<FileList>>,
     pub cache: Arc<SymCache>,
     pub building: bool,
     /// A file was saved since the index was built.
     pub stale: bool,
+    last: std::cell::RefCell<Option<LastHits>>,
+}
+
+fn empty_str() -> Arc<str> {
+    static EMPTY: std::sync::OnceLock<Arc<str>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(|| "".into()).clone()
 }
 
 fn file_symbols(path: &Path) -> Vec<Sym> {
@@ -103,69 +155,131 @@ fn file_symbols(path: &Path) -> Vec<Sym> {
     let Some(text) = brisk_search::read_text(path) else { return out };
     let mut tree = SyntaxTree::new(Lang::Python);
     tree.parse(&text);
-    let mut stack: Vec<String> = Vec::new();
+    let col = |byte: usize| {
+        let line_start = text[..byte].rfind('\n').map(|n| n + 1).unwrap_or(0);
+        text[line_start..byte].chars().count() as u32
+    };
+    // `containers[k]`: the first k names of `stack`, dotted, made once per container.
+    let mut stack: Vec<Arc<str>> = Vec::new();
+    let mut containers: Vec<Arc<str>> = vec![empty_str()];
     for o in tree.outline(&text) {
         stack.truncate(o.depth);
-        let line_start = text[..o.byte].rfind('\n').map(|n| n + 1).unwrap_or(0);
-        out.push(Sym {
-            name: o.name.as_str().into(),
-            kind: o.kind,
-            container: stack.join(".").into(),
-            file: 0,
-            line: o.line,
-            col: text[line_start..o.byte].chars().count(),
-        });
-        stack.push(o.name);
+        containers.truncate(stack.len() + 1);
+        let name: Arc<str> = o.name.as_str().into();
+        let container = containers[stack.len()].clone();
+        out.push(Sym { name: name.clone(), kind: o.kind, container: container.clone(), line: o.line as u32, col: col(o.byte) });
+        containers.push(if container.is_empty() { name.clone() } else { format!("{container}.{name}").into() });
+        stack.push(name);
     }
     for o in tree.module_variables(&text) {
-        let line_start = text[..o.byte].rfind('\n').map(|n| n + 1).unwrap_or(0);
-        out.push(Sym {
-            name: o.name.as_str().into(),
-            kind: o.kind,
-            container: "".into(),
-            file: 0,
-            line: o.line,
-            col: text[line_start..o.byte].chars().count(),
-        });
+        out.push(Sym { name: o.name.as_str().into(), kind: o.kind, container: empty_str(), line: o.line as u32, col: col(o.byte) });
     }
     out
 }
 
-fn index(files: &FileList, old: &SymCache) -> (Vec<Sym>, SymCache) {
-    let mut out = Vec::new();
-    let mut cache = SymCache::new();
-    for (i, rel) in files.files.iter().enumerate() {
-        if !(rel.ends_with(".py") || rel.ends_with(".pyi")) {
-            continue;
+fn index(files: &FileList, old: &SymCache) -> (SymIndex, SymCache) {
+    let py: Vec<usize> = (0..files.files.len()).filter(|&i| files.files[i].ends_with(".py") || files.files[i].ends_with(".pyi")).collect();
+    // Files are parsed on several threads, each taking the next file from a shared counter.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let read = || {
+        let mut out = Vec::new();
+        loop {
+            let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some(&i) = py.get(k) else { break };
+            let rel = &files.files[i];
+            let path = files.abs(i);
+            let Ok(meta) = std::fs::metadata(&path) else { continue };
+            if meta.len() > MAX_INDEXED_FILE {
+                continue;
+            }
+            let stamp = (meta.len(), meta.modified().ok());
+            let entry = match old.get(rel) {
+                Some(e) if e.stamp == stamp && stamp.1.is_some() => e.clone(),
+                _ => Arc::new(FileSyms { stamp, syms: file_symbols(&path).into_boxed_slice() }),
+            };
+            out.push((i as u32, entry));
         }
-        let path = files.abs(i);
-        let Ok(meta) = std::fs::metadata(&path) else { continue };
-        if meta.len() > MAX_INDEXED_FILE {
-            continue;
-        }
-        let stamp = (meta.len(), meta.modified().ok());
-        let entry = match old.get(rel) {
-            Some(e) if e.stamp == stamp && stamp.1.is_some() => e.clone(),
-            _ => Arc::new(FileSyms { stamp, syms: file_symbols(&path) }),
-        };
-        out.extend(entry.syms.iter().map(|s| Sym { file: i, ..s.clone() }));
-        cache.insert(rel.clone(), entry);
+        out
+    };
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(1)).clamp(1, 8).min(py.len() / 32 + 1);
+    let mut parts: Vec<(u32, Arc<FileSyms>)> = if threads == 1 {
+        read()
+    } else {
+        std::thread::scope(|s| {
+            let handles: Vec<_> = (0..threads).map(|_| s.spawn(read)).collect();
+            handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+        })
+    };
+    parts.sort_unstable_by_key(|p| p.0);
+    let cache: SymCache = parts.iter().map(|(i, e)| (files.files[*i as usize].clone(), e.clone())).collect();
+    let len = parts.iter().map(|p| p.1.syms.len()).sum();
+    parts.retain(|p| !p.1.syms.is_empty());
+    (SymIndex { files: parts, len }, cache)
+}
+
+/// A query for [`name_score`], lowercased once instead of per name.
+pub(super) struct NameQuery {
+    lower: String,
+    /// The letters matched against word starts (`_` left out).
+    letters: Vec<char>,
+    ascii: bool,
+}
+
+impl NameQuery {
+    pub(super) fn new(q: &str) -> Self {
+        let lower = q.to_lowercase();
+        let letters = lower.chars().filter(|c| *c != '_').collect();
+        Self { ascii: lower.is_ascii(), lower, letters }
     }
-    (out, cache)
+
+    /// [`name_score`] with this query. ASCII names (nearly all) are compared in place, without
+    /// lowercased copies.
+    pub(super) fn score(&self, name: &str) -> Option<i32> {
+        if !(self.ascii && name.is_ascii()) {
+            return name_score_slow(name, self);
+        }
+        let (n, q) = (name.as_bytes(), self.lower.as_bytes());
+        let len = n.len() as i32;
+        if n.eq_ignore_ascii_case(q) {
+            return Some(4000);
+        }
+        if n.len() >= q.len() && n[..q.len()].eq_ignore_ascii_case(q) {
+            return Some(3000 - len);
+        }
+        // Word starts: first char, after `_`, and upper-case letters after lower-case ones.
+        let mut it = self.letters.iter().peekable();
+        for (i, &c) in n.iter().enumerate() {
+            if i == 0 || n[i - 1] == b'_' || (c.is_ascii_uppercase() && n[i - 1].is_ascii_lowercase()) {
+                if it.peek().is_some_and(|&&l| l == c.to_ascii_lowercase() as char) {
+                    it.next();
+                }
+            }
+        }
+        if it.peek().is_none() {
+            return Some(2000 - len);
+        }
+        if q.len() > n.len() {
+            return None;
+        }
+        (0..=n.len() - q.len()).find(|&p| n[p..p + q.len()].eq_ignore_ascii_case(q)).map(|p| 1000 - p as i32 * 10 - len)
+    }
 }
 
 /// PyCharm-like name matching: exact, prefix, word/camel-hump starts (`gcw` → `get_current_window`),
 /// then substring. Higher is better.
 pub(super) fn name_score(name: &str, q: &str) -> Option<i32> {
-    let (n, ql) = (name.to_lowercase(), q.to_lowercase());
+    NameQuery::new(q).score(name)
+}
+
+fn name_score_slow(name: &str, q: &NameQuery) -> Option<i32> {
+    let (n, ql) = (name.to_lowercase(), q.lower.as_str());
     let len = name.chars().count() as i32;
     if n == ql {
         return Some(4000);
     }
-    if n.starts_with(&ql) {
+    if n.starts_with(ql) {
         return Some(3000 - len);
     }
-    // Word starts: first char, after `_`, and upper-case letters after lower-case ones.
     let chars: Vec<char> = name.chars().collect();
     let starts: Vec<char> = chars
         .iter()
@@ -173,16 +287,30 @@ pub(super) fn name_score(name: &str, q: &str) -> Option<i32> {
         .filter(|&(i, c)| i == 0 || chars[i - 1] == '_' || (c.is_uppercase() && chars[i - 1].is_lowercase()))
         .map(|(_, c)| c.to_ascii_lowercase())
         .collect();
-    let mut it = ql.chars().filter(|c| *c != '_').peekable();
+    let mut it = q.letters.iter().peekable();
     for c in &starts {
-        if it.peek() == Some(c) {
+        if it.peek() == Some(&c) {
             it.next();
         }
     }
     if it.peek().is_none() {
         return Some(2000 - len);
     }
-    n.find(&ql).map(|p| 1000 - p as i32 * 10 - len)
+    n.find(ql).map(|p| 1000 - p as i32 * 10 - len)
+}
+
+/// The best `k` hits, best first; equal scores in path order, then file order.
+fn top(hits: &mut Vec<Hit>, k: usize) {
+    let cmp = |a: &Hit, b: &Hit| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2));
+    if k == 0 {
+        hits.clear();
+        return;
+    }
+    if hits.len() > k {
+        hits.select_nth_unstable_by(k - 1, cmp);
+        hits.truncate(k);
+    }
+    hits.sort_unstable_by(cmp);
 }
 
 impl Workspace {
@@ -219,7 +347,28 @@ impl Workspace {
     }
 
     pub(super) fn symbol_items(&self, q: &str, classes_only: bool, limit: usize) -> Vec<PopupItem> {
-        let (Some(list), Some(files)) = (&self.symbols.list, &self.symbols.files) else { return Vec::new() };
+        let mut hits = self.symbol_hits(q, classes_only);
+        top(&mut hits, limit);
+        self.symbol_popup_items(&hits)
+    }
+
+    /// Search Everywhere's All tab from one pass over the index: the best `classes` classes,
+    /// and of the best `others` symbols those that are not classes.
+    pub(super) fn symbol_items_all(&self, q: &str, classes: usize, others: usize) -> (Vec<PopupItem>, Vec<PopupItem>) {
+        let mut hits = self.symbol_hits(q, false);
+        let Some(list) = &self.symbols.list else { return Default::default() };
+        let is_class = |h: &Hit| list.get(h.1, h.2).kind == OutlineKind::Class;
+        let mut c: Vec<Hit> = hits.iter().copied().filter(is_class).collect();
+        top(&mut c, classes);
+        top(&mut hits, others);
+        hits.retain(|h| !is_class(h));
+        (self.symbol_popup_items(&c), self.symbol_popup_items(&hits))
+    }
+
+    /// Every symbol matching `q`, unsorted. A query that extends the previous one (and has no
+    /// `.`) only looks at the previous hits: a name matching `abc` also matches `ab`.
+    fn symbol_hits(&self, q: &str, classes_only: bool) -> Vec<Hit> {
+        let Some(list) = &self.symbols.list else { return Vec::new() };
         let q = q.trim();
         if q.is_empty() {
             return Vec::new();
@@ -230,23 +379,41 @@ impl Workspace {
             Some((o, m)) if !o.is_empty() => (Some(o.rsplit('.').next().unwrap_or(o)), m),
             _ => (None, q),
         };
-        let mut scored: Vec<(i32, &Sym)> = list
-            .iter()
-            .filter(|s| !classes_only || s.kind == OutlineKind::Class)
-            .filter_map(|s| {
-                let own = name_score(&s.name, member)?;
-                let score = match outer {
-                    Some(o) => own + name_score(s.container.rsplit('.').next().unwrap_or(""), o)?,
-                    None => own,
-                };
-                Some((score, s))
-            })
-            .collect();
-        scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| files.files[a.1.file].cmp(&files.files[b.1.file])));
-        scored
-            .into_iter()
-            .take(limit)
-            .map(|(_, s)| {
+        let (member, outer) = (NameQuery::new(member), outer.map(NameQuery::new));
+        let score = |slot: u32, i: u32| {
+            let s = list.get(slot, i);
+            if classes_only && s.kind != OutlineKind::Class {
+                return None;
+            }
+            let own = member.score(s.name)?;
+            match &outer {
+                Some(o) => Some(own + o.score(s.container.rsplit('.').next().unwrap_or(""))?),
+                None => Some(own),
+            }
+        };
+        let mut last = self.symbols.last.borrow_mut();
+        let narrow = last.as_ref().filter(|l| {
+            std::sync::Weak::ptr_eq(&l.list, &Arc::downgrade(list)) && q.is_ascii() && l.classes_only == classes_only && q.starts_with(l.query.as_str()) && !q.contains('.')
+        });
+        let hits: Vec<Hit> = match narrow {
+            Some(l) => l.hits.iter().filter_map(|&(slot, i)| Some((score(slot, i)?, slot, i))).collect(),
+            None => list
+                .files
+                .iter()
+                .enumerate()
+                .flat_map(|(slot, (_, f))| (0..f.syms.len() as u32).map(move |i| (slot as u32, i)))
+                .filter_map(|(slot, i)| Some((score(slot, i)?, slot, i)))
+                .collect(),
+        };
+        *last = Some(LastHits { list: Arc::downgrade(list), query: q.to_string(), classes_only, hits: hits.iter().map(|h| (h.1, h.2)).collect() });
+        hits
+    }
+
+    fn symbol_popup_items(&self, hits: &[Hit]) -> Vec<PopupItem> {
+        let (Some(list), Some(files)) = (&self.symbols.list, &self.symbols.files) else { return Vec::new() };
+        hits.iter()
+            .map(|h| {
+                let s = list.get(h.1, h.2);
                 let rel = &files.files[s.file];
                 let detail = if s.container.is_empty() { format!("{rel}:{}", s.line + 1) } else { format!("{} · {rel}:{}", s.container, s.line + 1) };
                 PopupItem { label: s.name.to_string(), detail, hint: String::new(), target: Target::Symbol(files.abs(s.file), s.line, s.col, s.kind) }
@@ -475,5 +642,42 @@ mod tests {
         assert!(name_score("HttpRequest", "req").is_some());
         assert!(name_score("HttpRequest", "xyz").is_none());
         assert!(name_score("HttpRequest", "http").unwrap() > name_score("HttpRequest", "req").unwrap());
+    }
+
+    #[test]
+    fn ascii_matching_scores_as_the_general_one() {
+        let names = ["add", "add_all", "get_current_window", "HttpRequest", "_private", "__init__", "a", "URLParser", "x2y", "MyHTTPServer", "Ab_Cd"];
+        let queries = ["add", "a", "gcw", "hr", "req", "http", "_", "__", "init", "urlp", "up", "xyz", "ADD", "mhs", "a_c", "ab_cd", "toolongquerythanname"];
+        for n in names {
+            for q in queries {
+                let q = super::NameQuery::new(q);
+                assert_eq!(q.score(n), super::name_score_slow(n, &q), "{n} / {}", q.lower);
+            }
+        }
+        assert_eq!(name_score("Größe", "grö"), Some(3000 - 5));
+    }
+
+    #[test]
+    fn top_keeps_the_best_in_order() {
+        let mut hits = vec![(10, 2, 0), (30, 5, 1), (30, 1, 4), (20, 0, 0), (30, 1, 2), (5, 0, 1)];
+        super::top(&mut hits, 3);
+        assert_eq!(hits, vec![(30, 1, 2), (30, 1, 4), (30, 5, 1)]);
+        let mut all = vec![(1, 0, 0), (2, 0, 1)];
+        super::top(&mut all, 10);
+        assert_eq!(all, vec![(2, 0, 1), (1, 0, 0)]);
+    }
+
+    #[test]
+    fn file_symbols_share_containers() {
+        let d = std::env::temp_dir().join(format!("brisk-syms-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("m.py");
+        std::fs::write(&f, "X = 1\nclass A:\n    def f(self): pass\n    def g(self): pass\n    class B:\n        def h(self): pass\ndef top(): pass\n").unwrap();
+        let syms = super::file_symbols(&f);
+        let got: Vec<(&str, &str, u32)> = syms.iter().map(|s| (&*s.name, &*s.container, s.line)).collect();
+        assert_eq!(got, vec![("A", "", 1), ("f", "A", 2), ("g", "A", 3), ("B", "A", 4), ("h", "A.B", 5), ("top", "", 6), ("X", "", 0)]);
+        assert!(std::sync::Arc::ptr_eq(&syms[1].container, &syms[2].container), "one string per container");
+        assert!(std::sync::Arc::ptr_eq(&syms[0].container, &syms[6].container), "one empty string");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
