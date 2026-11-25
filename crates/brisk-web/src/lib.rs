@@ -76,6 +76,11 @@ impl Index {
         scan::scan(root)
     }
 
+    /// [`Index::scan`] over the project's file list, without walking the project again.
+    pub fn scan_files(list: &brisk_project::FileList) -> Index {
+        scan::scan_files(list)
+    }
+
     /// Whether the project uses a web framework at all.
     pub fn is_web(&self) -> bool {
         !self.routes.is_empty() || !self.template_dirs.is_empty()

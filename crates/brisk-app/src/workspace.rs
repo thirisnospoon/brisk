@@ -524,8 +524,6 @@ impl Workspace {
         cx.defer_in(window, |this: &mut Self, _, cx| {
             this.remember_pyproject();
             this.start_interpreter_discovery(cx);
-            // The Endpoints stripe button shows only in a web project.
-            this.scan_web(None, cx);
         });
         if std::env::var_os("BRISK_BUDGET").is_some() {
             cx.defer_in(window, |this: &mut Self, window, cx| this.budget_probe(window, cx));
@@ -546,6 +544,9 @@ impl Workspace {
             let _ = this.update(cx, |this, cx| {
                 this.files = Some(Arc::new(list));
                 this.ensure_symbols(cx);
+                // The Endpoints stripe button shows only in a web project; the scan reads
+                // the Python files of this list.
+                this.scan_web(None, cx);
                 this.status = format!("Indexed {n} files in {:.0?}", this.started.elapsed());
                 this.refresh_popup();
                 if this.find.open {

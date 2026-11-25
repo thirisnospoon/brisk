@@ -72,8 +72,17 @@ struct FileInfo {
     template_dirs: Vec<String>,
 }
 
+/// Words that make a Python file worth parsing (any case).
+const WEB_WORDS: [&str; 7] = ["urlpatterns", "root_urlconf", "fastapi", "flask", "apirouter", "blueprint", "jinja2templates"];
+
 pub fn scan(root: &Path) -> Index {
-    let list = brisk_project::FileList::scan(root);
+    scan_files(&brisk_project::FileList::scan(root))
+}
+
+/// [`scan`] over a file list the caller already has (no second walk of the project).
+pub fn scan_files(list: &brisk_project::FileList) -> Index {
+    let root = list.root.as_path();
+    let words = aho_corasick::AhoCorasick::builder().ascii_case_insensitive(true).build(WEB_WORDS).expect("fixed words");
     let mut idx = Index { root: root.to_path_buf(), ..Default::default() };
     let (mut tdirs, mut sdirs) = (BTreeSet::new(), BTreeSet::new());
     for rel in &list.files {
@@ -94,13 +103,14 @@ pub fn scan(root: &Path) -> Index {
         if std::fs::metadata(p).map(|m| m.len() > MAX_PY).unwrap_or(true) {
             continue;
         }
-        let Ok(src) = std::fs::read_to_string(p) else { continue };
-        let lower = src.to_ascii_lowercase();
-        let relevant = ["urlpatterns", "root_urlconf", "fastapi", "flask", "apirouter", "blueprint", "jinja2templates"].iter().any(|k| lower.contains(k));
-        if relevant {
-            if let Some(info) = read_file(p, src) {
-                infos.push(info);
-            }
+        let Ok(bytes) = std::fs::read(p) else { continue };
+        // One case-insensitive pass over the bytes; only files with a word are decoded.
+        if !words.is_match(&bytes) {
+            continue;
+        }
+        let Ok(src) = String::from_utf8(bytes) else { continue };
+        if let Some(info) = read_file(p, src) {
+            infos.push(info);
         }
     }
     for info in &infos {

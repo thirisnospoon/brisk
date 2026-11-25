@@ -6,6 +6,7 @@ license.workspace = true
 description = "Django, FastAPI and Flask awareness: URL routes, templates and the references between them"
 
 [dependencies]
+aho-corasick = "1"
 brisk-project.workspace = true
 tree-sitter.workspace = true
 tree-sitter-python.workspace = true

@@ -57,7 +57,14 @@ impl Workspace {
         self.web.scanning = true;
         self.web.stale = false;
         let root = self.root.clone();
-        let task = cx.background_executor().spawn(async move { Index::scan(&root) });
+        // The project's file list when it is built: no second walk of the project.
+        let files = self.files.clone();
+        let task = cx.background_executor().spawn(async move {
+            match files {
+                Some(list) => Index::scan_files(&list),
+                None => Index::scan(&root),
+            }
+        });
         let finish = |this: &mut Self, idx: Index| -> Arc<Index> {
             let idx = Arc::new(idx);
             this.web.index = Some(idx.clone());

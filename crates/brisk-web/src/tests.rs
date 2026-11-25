@@ -61,6 +61,24 @@ fn django_routes_follow_include_and_namespace() {
 }
 
 #[test]
+fn scan_of_a_file_list_is_the_same() {
+    let mut files = DJANGO.to_vec();
+    // A file that is not UTF-8 is skipped, as before.
+    files.push(("api/app.py", "from fastapi import FastAPI\napp = FastAPI()\n\n@app.get(\"/items\")\ndef items(): ...\n"));
+    let root = project("filelist", &files);
+    std::fs::write(root.join("api/latin1.py"), b"# caf\xe9\nfrom flask import Flask\napp = Flask(__name__)\n@app.route('/x')\ndef x(): ...\n").unwrap();
+    let a = Index::scan(&root);
+    let b = Index::scan_files(&brisk_project::FileList::scan(&root));
+    let show = |i: &Index| i.routes.iter().map(|r| format!("{:?} {} {}", r.framework, r.path, r.handler)).collect::<Vec<_>>();
+    assert_eq!(show(&a), show(&b));
+    assert!(show(&a).iter().any(|r| r.contains("/items")), "{:?}", show(&a));
+    assert!(!show(&a).iter().any(|r| r.contains("/x")));
+    assert_eq!(a.template_files, b.template_files);
+    assert_eq!(a.py_files, b.py_files);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn django_include_under_two_prefixes_and_cycles() {
     let files: &[(&str, &str)] = &[
         ("mysite/settings.py", "ROOT_URLCONF = \"mysite.urls\"\n"),
