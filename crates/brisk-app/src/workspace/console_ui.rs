@@ -50,6 +50,8 @@ pub struct PyConsole {
     console: Option<Console>,
     /// Bumped on every start: the polling task of an older process stops.
     generation: u64,
+    /// Wakes the polling task at once (a command was sent), whatever its interval.
+    kick: Option<futures::channel::mpsc::UnboundedSender<()>>,
     pub lines: Vec<(String, Kind)>,
     pub vars: Vec<Var>,
     pub version: String,
@@ -81,6 +83,14 @@ const MAX_LINES: usize = 5000;
 /// Inputs kept for ↑ / ↓ in the Python Console.
 const MAX_HISTORY: usize = 1000;
 
+/// Wakes the console's polling task (a field, so it can be called while the console is
+/// borrowed).
+fn kick(k: &Option<futures::channel::mpsc::UnboundedSender<()>>) {
+    if let Some(k) = k {
+        let _ = k.unbounded_send(());
+    }
+}
+
 impl PyConsole {
     fn new(cx: &mut Context<Workspace>) -> Self {
         let input = cx.new(|cx| {
@@ -93,6 +103,7 @@ impl PyConsole {
             focus: cx.focus_handle(),
             console: None,
             generation: 0,
+            kick: None,
             lines: Vec::new(),
             vars: Vec::new(),
             version: String::new(),
@@ -222,23 +233,45 @@ impl Workspace {
                 return;
             }
         }
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_millis(40)).await;
-            let alive = this
-                .update(cx, |this, cx| {
-                    let Some(p) = this.pyc.as_mut().filter(|p| p.generation == gen) else { return false };
-                    let Some(c) = p.console.as_mut() else { return false };
-                    let evs = c.events();
-                    if evs.is_empty() {
-                        return true;
+        let (kick, mut kicked) = futures::channel::mpsc::unbounded::<()>();
+        p.kick = Some(kick);
+        cx.spawn(async move |this, cx| {
+            use futures::StreamExt;
+            // Every 40 ms while a command runs or output keeps coming; an idle console is
+            // looked at twice a second (stray output from threads, the process exiting), and
+            // sending a command wakes it at once.
+            let mut quiet = 0u32;
+            let mut kick_open = true;
+            loop {
+                let ms = if quiet < 25 { 40 } else { 500 };
+                let timer = Box::pin(cx.background_executor().timer(Duration::from_millis(ms)));
+                if kick_open {
+                    if let futures::future::Either::Right((None, _)) = futures::future::select(timer, kicked.next()).await {
+                        kick_open = false;
                     }
-                    this.python_console_events(evs, cx);
-                    cx.notify();
-                    true
-                })
-                .unwrap_or(false);
-            if !alive {
-                break;
+                } else {
+                    timer.await;
+                }
+                let state = this
+                    .update(cx, |this, cx| {
+                        let p = this.pyc.as_mut().filter(|p| p.generation == gen)?;
+                        let c = p.console.as_mut()?;
+                        let evs = c.events();
+                        let waiting = p.busy || p.checking.is_some() || p.waiting_input.is_some();
+                        if evs.is_empty() {
+                            return Some(waiting);
+                        }
+                        this.python_console_events(evs, cx);
+                        cx.notify();
+                        Some(true)
+                    })
+                    .ok()
+                    .flatten();
+                match state {
+                    None => break,
+                    Some(true) => quiet = 0,
+                    Some(false) => quiet = quiet.saturating_add(1),
+                }
             }
         })
         .detach();
@@ -315,6 +348,7 @@ impl Workspace {
             return;
         };
         p.busy = true;
+        kick(&p.kick);
         if let Err(e) = c.run(&code) {
             p.busy = false;
             p.info(format!("Cannot send the command: {e}"));
@@ -329,6 +363,7 @@ impl Workspace {
             if let Some(c) = p.console.as_mut() {
                 let _ = c.input(&text);
             }
+            kick(&p.kick);
             p.waiting_input = None;
             // The answer continues the prompt's line.
             p.print(&format!("{text}\n"), Kind::Out);
@@ -357,6 +392,7 @@ impl Workspace {
             Some(c) => {
                 if c.check(&text).is_ok() {
                     p.checking = Some(text);
+                    kick(&p.kick);
                 }
             }
             None => self.python_console_run(text, cx),

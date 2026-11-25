@@ -143,7 +143,10 @@ impl Workspace {
 
     pub(super) fn render_status_islands(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let ed = self.active_editor().map(|e| e.read(cx));
-        let tasks = self.bg_tasks();
+        // The routine `git status` after every save and window switch is not shown in the bar:
+        // its spinner would redraw the whole window at the display's rate while it runs. It
+        // is still listed in the background tasks popup.
+        let tasks: Vec<String> = self.bg_tasks().into_iter().filter(|t| t != "git status…").collect();
         // A widget: muted text, a pill on hover; `click` makes it a button.
         let widget = |id: &'static str| {
             div()

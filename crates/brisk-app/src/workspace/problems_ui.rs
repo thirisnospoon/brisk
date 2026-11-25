@@ -214,10 +214,24 @@ fn icon(s: Severity) -> (&'static str, gpui::Hsla) {
 
 impl Workspace {
     /// ruff next to the project interpreter, else next to any other Python found, else on PATH.
+    /// The ruff to run. The lookup stats a few files per known interpreter and every `PATH`
+    /// entry, and lint asks for it on each pause in typing, so the answer is kept for a few
+    /// seconds per set of interpreters (a `pip install ruff` is still picked up soon).
     fn ruff(&self) -> Option<PathBuf> {
+        type Key = (PathBuf, Option<PathBuf>, usize, Option<usize>);
+        thread_local! {
+            static CACHE: std::cell::RefCell<Option<(Key, std::time::Instant, Option<PathBuf>)>> = const { std::cell::RefCell::new(None) };
+        }
+        const KEEP: Duration = Duration::from_secs(10);
         let project = self.runs.interpreter(&self.root).map(|i| i.path);
+        let key: Key = (self.root.clone(), project.clone(), self.runs.venvs.len(), self.runs.all.as_ref().map(Vec::len));
+        if let Some(hit) = CACHE.with_borrow(|c| c.as_ref().filter(|(k, at, _)| *k == key && at.elapsed() < KEEP).map(|(_, _, r)| r.clone())) {
+            return hit;
+        }
         let others = self.runs.venvs.iter().chain(self.runs.all.iter().flatten()).map(|i| i.path.clone());
-        project.into_iter().chain(others).find_map(|p| brisk_lint::find_ruff(Some(&p))).or_else(|| brisk_lint::find_ruff(None))
+        let found = project.into_iter().chain(others).find_map(|p| brisk_lint::find_ruff(Some(&p))).or_else(|| brisk_lint::find_ruff(None));
+        CACHE.set(Some((key, std::time::Instant::now(), found.clone())));
+        found
     }
 
     /// Interpreter discovery finished: check again files that waited for ruff.
