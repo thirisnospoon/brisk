@@ -330,6 +330,18 @@ impl ProjectTree {
     }
 }
 
+/// The last [`FileList::search_narrowing`] on this thread: its list, query and hits.
+struct LastSearch {
+    list: std::sync::Weak<FileList>,
+    query: String,
+    hits: Vec<u32>,
+}
+
+thread_local! {
+    static MATCHER: std::cell::RefCell<Option<Matcher>> = const { std::cell::RefCell::new(None) };
+    static LAST_SEARCH: std::cell::RefCell<Option<LastSearch>> = const { std::cell::RefCell::new(None) };
+}
+
 /// Flat list of project files for Go to File. Built off the UI thread.
 #[derive(Default, Clone)]
 pub struct FileList {
@@ -428,22 +440,63 @@ impl FileList {
         if query.trim().is_empty() {
             return Vec::new();
         }
-        let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
-        let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
-        let mut buf = Vec::new();
-        let mut out: Vec<(usize, u32)> = Vec::new();
-        for (i, f) in self.files.iter().enumerate() {
-            if let Some(score) = pattern.score(Utf32Str::new(f, &mut buf), &mut matcher) {
-                let name = f.rsplit('/').next().unwrap_or(f);
-                let bonus = pattern.score(Utf32Str::new(name, &mut buf), &mut matcher).map_or(0, |s| s / 2);
-                // Shorter paths win ties.
-                let s = (score + bonus).saturating_sub(f.len() as u32 / 8);
-                out.push((i, s));
-            }
-        }
-        out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| self.files[a.0].len().cmp(&self.files[b.0].len())));
-        out.truncate(limit);
+        let mut out = self.score_all(query, None);
+        self.best(&mut out, limit);
         out
+    }
+
+    /// [`FileList::search`] for typing: when `query` extends the previous query on this list
+    /// (on this thread) and has no pattern syntax, only the previous hits are scored again, as
+    /// a path that matches `abc` also matches `ab`.
+    pub fn search_narrowing(self: &std::sync::Arc<Self>, query: &str, limit: usize) -> Vec<(usize, u32)> {
+        if query.trim().is_empty() {
+            return Vec::new();
+        }
+        let plain = |q: &str| q.is_ascii() && !q.contains([' ', '\\', '^', '$', '!', '\'']);
+        let me = std::sync::Arc::downgrade(self);
+        let prev = LAST_SEARCH.with_borrow_mut(|l| {
+            l.take().filter(|l| std::sync::Weak::ptr_eq(&l.list, &me) && plain(&l.query) && plain(query) && query.starts_with(l.query.as_str()))
+        });
+        let mut out = self.score_all(query, prev.as_ref().map(|p| p.hits.as_slice()));
+        LAST_SEARCH.with_borrow_mut(|l| *l = Some(LastSearch { list: me, query: query.to_string(), hits: out.iter().map(|h| h.0 as u32).collect() }));
+        self.best(&mut out, limit);
+        out
+    }
+
+    /// Every match of `query` among `candidates` (all files by default), in file order.
+    fn score_all(&self, query: &str, candidates: Option<&[u32]>) -> Vec<(usize, u32)> {
+        let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
+        // Matcher::new allocates its scoring matrix; one per thread is reused.
+        MATCHER.with_borrow_mut(|m| {
+            let matcher = m.get_or_insert_with(|| Matcher::new(Config::DEFAULT.match_paths()));
+            let mut buf = Vec::new();
+            let mut score = |i: usize| {
+                let f = &self.files[i];
+                let score = pattern.score(Utf32Str::new(f, &mut buf), matcher)?;
+                let name = f.rsplit('/').next().unwrap_or(f);
+                let bonus = pattern.score(Utf32Str::new(name, &mut buf), matcher).map_or(0, |s| s / 2);
+                // Shorter paths win ties.
+                Some((i, (score + bonus).saturating_sub(f.len() as u32 / 8)))
+            };
+            match candidates {
+                Some(c) => c.iter().filter_map(|&i| score(i as usize)).collect(),
+                None => (0..self.files.len()).filter_map(score).collect(),
+            }
+        })
+    }
+
+    /// The best `limit` hits, best first: score, then the shorter path, then file order.
+    fn best(&self, hits: &mut Vec<(usize, u32)>, limit: usize) {
+        let cmp = |a: &(usize, u32), b: &(usize, u32)| b.1.cmp(&a.1).then_with(|| self.files[a.0].len().cmp(&self.files[b.0].len())).then(a.0.cmp(&b.0));
+        if limit == 0 {
+            hits.clear();
+            return;
+        }
+        if hits.len() > limit {
+            hits.select_nth_unstable_by(limit - 1, cmp);
+            hits.truncate(limit);
+        }
+        hits.sort_unstable_by(cmp);
     }
 
     pub fn abs(&self, i: usize) -> PathBuf {
@@ -592,5 +645,39 @@ mod tests {
         assert_eq!(fl.files[r[0].0], "app/models/user.py");
         let r = fl.search("main", 10);
         assert_eq!(fl.files[r[0].0], "app/main.py");
+    }
+
+    /// The old full sort, for comparison.
+    fn search_by_sorting(fl: &FileList, q: &str, limit: usize) -> Vec<(usize, u32)> {
+        let mut all = fl.score_all(q, None);
+        all.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| fl.files[a.0].len().cmp(&fl.files[b.0].len())));
+        all.truncate(limit);
+        all
+    }
+
+    #[test]
+    fn narrowing_search_matches_a_full_one() {
+        let mut files: Vec<String> = Vec::new();
+        for d in ["app", "app/models", "tests", "docs", "src/api_v2", "Src/Models"] {
+            for f in ["user.py", "user_model.py", "main.py", "models.py", "README.md", "m.py", "u_s_e_r.txt", "UserView.py"] {
+                files.push(format!("{d}/{f}"));
+            }
+        }
+        files.sort();
+        let fl = std::sync::Arc::new(FileList { root: PathBuf::from("/p"), files });
+        for typed in ["user", "models", "srcapi", "Us", "app/m"] {
+            for n in 1..=typed.len() {
+                let q = &typed[..n];
+                for limit in [1, 3, 50] {
+                    assert_eq!(fl.search_narrowing(q, limit), search_by_sorting(&fl, q, limit), "{q} / {limit}");
+                    assert_eq!(fl.search(q, limit), search_by_sorting(&fl, q, limit));
+                }
+            }
+        }
+        // Pattern syntax and a different list start over.
+        assert_eq!(fl.search_narrowing("user !md", 50), search_by_sorting(&fl, "user !md", 50));
+        let other = std::sync::Arc::new(FileList { root: PathBuf::from("/p"), files: vec!["user.py".into()] });
+        assert_eq!(other.search_narrowing("user", 5).len(), 1);
+        assert_eq!(fl.search_narrowing("users", 5), search_by_sorting(&fl, "users", 5));
     }
 }

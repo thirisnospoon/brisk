@@ -1688,7 +1688,7 @@ impl Workspace {
         if q.is_empty() {
             return self.recent.iter().take(limit).map(|p| self.file_item(p)).collect();
         }
-        files.search(q, limit).into_iter().map(|(i, _)| self.file_item(&files.abs(i))).collect()
+        files.search_narrowing(q, limit).into_iter().map(|(i, _)| self.file_item(&files.abs(i))).collect()
     }
 
     fn file_item(&self, p: &Path) -> PopupItem {
