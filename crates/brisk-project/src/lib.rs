@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 mod structure;
 pub use structure::{rel_path, Mark, Structure};
 
-/// Names hidden from the tree (PyCharm's default "Ignored files and folders").
-const HIDDEN: &[&str] = &[".git", ".hg", ".svn", "__pycache__", ".DS_Store", ".mypy_cache", ".ruff_cache", ".pytest_cache"];
+/// Names hidden from the tree (PyCharm's default "Ignored files and folders", plus the IDE
+/// folders: Brisk's own `.brisk` and PyCharm's `.idea`).
+const HIDDEN: &[&str] = &[".git", ".hg", ".svn", "__pycache__", ".DS_Store", ".mypy_cache", ".ruff_cache", ".pytest_cache", ".brisk", ".idea"];
 const HIDDEN_EXT: &[&str] = &["pyc", "pyo"];
 /// Shown but marked excluded and never indexed.
 const EXCLUDED: &[&str] = &[".venv", "venv", "env", "node_modules", ".tox", "dist", "build", ".next", ".nuxt", "target"];
@@ -453,6 +454,8 @@ mod tests {
         fs::create_dir_all(d.join("app/models")).unwrap();
         fs::create_dir_all(d.join(".venv/lib")).unwrap();
         fs::create_dir_all(d.join("__pycache__")).unwrap();
+        fs::create_dir_all(d.join(".brisk")).unwrap();
+        fs::create_dir_all(d.join(".idea")).unwrap();
         fs::write(d.join("app/models/user.py"), "class User: ...").unwrap();
         fs::write(d.join("app/main.py"), "").unwrap();
         fs::write(d.join("README.md"), "").unwrap();
