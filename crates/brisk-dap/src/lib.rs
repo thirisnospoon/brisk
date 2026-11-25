@@ -217,11 +217,23 @@ pub fn bundled_debugpy() -> Option<PathBuf> {
     dir.ancestors().map(|a| a.join("vendor").join("debugpy-lib")).find(|d| ok(d))
 }
 
-pub fn adapter_command(python: &Path) -> Result<AdapterCommand, String> {
+/// Neither the interpreter nor Brisk has debugpy: installing it into the interpreter helps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DebugpyMissing;
+
+impl std::fmt::Display for DebugpyMissing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("debugpy was not found: run `pip install debugpy` in the project interpreter")
+    }
+}
+
+impl std::error::Error for DebugpyMissing {}
+
+pub fn adapter_command(python: &Path) -> Result<AdapterCommand, DebugpyMissing> {
     if std::env::var_os("BRISK_DEBUGPY").is_none() && has_debugpy(python) {
         return Ok(AdapterCommand { program: python.to_path_buf(), args: vec!["-m".into(), "debugpy.adapter".into()], bundled: None });
     }
-    let lib = bundled_debugpy().ok_or_else(|| "debugpy was not found: run `pip install debugpy` in the project interpreter".to_string())?;
+    let lib = bundled_debugpy().ok_or(DebugpyMissing)?;
     Ok(AdapterCommand { program: python.to_path_buf(), args: vec!["-c".into(), bootstrap(&lib)], bundled: Some(lib) })
 }
 

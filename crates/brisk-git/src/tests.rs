@@ -151,6 +151,25 @@ fn stash_roundtrip() {
     let _ = fs::remove_dir_all(&d);
 }
 
+#[test]
+fn stash_of_nothing_fails() {
+    let (d, repo) = temp_repo("stash-none");
+    fs::write(d.join("a.py"), "x = 1\n").unwrap();
+    let files = vec!["a.py".to_string()];
+    repo.commit("first", &files, false, &files).unwrap();
+    // Only an untracked file, and untracked files left out: git makes no stash, exit 0.
+    fs::write(d.join("new.py"), "n = 1\n").unwrap();
+    assert!(repo.stash_push("", false).is_err());
+    assert!(repo.stash_list().unwrap().is_empty());
+    repo.stash_push("", true).unwrap();
+    assert_eq!(repo.stash_list().unwrap().len(), 1);
+    // With a stash already there, nothing new to stash is still an error.
+    fs::write(d.join("new.py"), "n = 1\n").unwrap();
+    assert!(repo.stash_push("", false).is_err());
+    assert_eq!(repo.stash_list().unwrap().len(), 1);
+    let _ = fs::remove_dir_all(&d);
+}
+
 /// A conflicted merge of `name` (contents: base, ours, theirs; None deletes the file there).
 fn conflicted(tag: &str, name: &str, base: &[u8], ours: Option<&[u8]>, theirs: Option<&[u8]>) -> (PathBuf, Repo) {
     let (d, repo) = temp_repo(tag);
@@ -175,6 +194,18 @@ fn conflicted(tag: &str, name: &str, base: &[u8], ours: Option<&[u8]>, theirs: O
     assert!(!out.status.success(), "the merge must conflict");
     assert_eq!(repo.conflicts().unwrap(), vec![name.to_string()]);
     (d, repo)
+}
+
+#[test]
+fn resolve_with_writes_and_stages() {
+    let (d, repo) = conflicted("resolve-with", "m.py", b"x = 0\n", Some(b"x = 1\n"), Some(b"x = 2\n"));
+    repo.resolve_with("m.py", "x = 3\n").unwrap();
+    assert_eq!(fs::read_to_string(d.join("m.py")).unwrap(), "x = 3\n");
+    assert!(repo.conflicts().unwrap().is_empty());
+    // The temporary file is gone: nothing but the merged file changed.
+    let names: Vec<String> = fs::read_dir(&d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n != ".git").collect();
+    assert_eq!(names, vec!["m.py".to_string()]);
+    let _ = fs::remove_dir_all(&d);
 }
 
 #[test]

@@ -31,16 +31,32 @@ impl Workspace {
     }
 
     /// The Conflicts dialog with the repository's conflicted files (after merge, pull, rebase).
+    /// The list is read off the UI thread.
     pub(super) fn open_conflicts(&mut self, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_mut() else { return };
-        let files = g.repo.conflicts().unwrap_or_default();
-        if files.is_empty() {
-            g.dialog = None;
-            self.show_toast("No conflicts to resolve".into(), false, cx);
-            return;
-        }
-        g.dialog = Some(GitDialog::Conflicts(ConflictsDialog { files, selected: 0 }));
-        cx.notify();
+        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        let task = cx.background_executor().spawn(async move { repo.conflicts() });
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            let _ = this.update(cx, |this, cx| {
+                let files = match res {
+                    Ok(files) => files,
+                    Err(e) => return this.show_toast(format!("Cannot list the conflicts: {e}"), true, cx),
+                };
+                let Some(g) = this.git.as_mut() else { return };
+                // Another dialog opened meanwhile: it stays.
+                if g.dialog.as_ref().is_some_and(|d| !matches!(d, GitDialog::Conflicts(_))) {
+                    return;
+                }
+                if files.is_empty() {
+                    g.dialog = None;
+                    this.show_toast("No conflicts to resolve".into(), false, cx);
+                    return;
+                }
+                g.dialog = Some(GitDialog::Conflicts(ConflictsDialog { files, selected: 0 }));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn selected_conflicts(&self) -> Vec<String> {

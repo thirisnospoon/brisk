@@ -469,6 +469,12 @@ impl Workspace {
                     this.status = "No documentation found".into();
                     cx.notify();
                 }
+                // Ctrl+Q says why it failed; a hover that fails stays quiet, as a hover with
+                // no documentation does.
+                Err(e) if mouse.is_none() => {
+                    this.status = format!("Quick Documentation: ty: {e}");
+                    cx.notify();
+                }
                 _ => {}
             });
         })

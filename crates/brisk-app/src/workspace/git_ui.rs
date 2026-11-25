@@ -64,6 +64,9 @@ pub struct Git {
     commit_scroll: UniformListScrollHandle,
     pub message: Entity<Editor>,
     amend: bool,
+    /// The last commit's message Amend put into the empty message box: unchecking Amend
+    /// clears it again while it is unedited.
+    amend_message: Option<String>,
     head_seen: Option<String>,
     pub(super) loaded: bool,
     /// Conflicts, Merge Revisions, Stash dialogs.
@@ -106,6 +109,7 @@ impl Git {
             commit_scroll: UniformListScrollHandle::new(),
             message: cx.new(|cx| Editor::scratch("", cx)),
             amend: false,
+            amend_message: None,
             head_seen: None,
             loaded: false,
             dialog: None,
@@ -824,6 +828,7 @@ impl Workspace {
                         s.borrow_mut().clear();
                     }
                     g.amend = false;
+                    g.amend_message = None;
                     g.message.update(cx, |e, cx| {
                         e.buffer.set_text("");
                         e.buffer.mark_saved();
@@ -833,6 +838,47 @@ impl Workspace {
             },
             cx,
         );
+    }
+
+    /// Amend, as in PyCharm: checked with an empty message box, the last commit's message
+    /// fills it (read off the UI thread); unchecked with that text unedited, the box is
+    /// empty again.
+    pub(super) fn toggle_amend(&mut self, cx: &mut Context<Self>) {
+        let Some(g) = self.git.as_mut() else { return };
+        g.amend = !g.amend;
+        let text = g.message.read(cx).text_string();
+        if !g.amend {
+            if g.amend_message.take().is_some_and(|m| m == text) {
+                g.message.update(cx, |e, cx| e.replace_all_text("", cx));
+            }
+            return cx.notify();
+        }
+        if !text.trim().is_empty() {
+            return cx.notify();
+        }
+        let repo = g.repo.clone();
+        let task = cx.background_executor().spawn(async move { repo.commit_message("HEAD") });
+        cx.spawn(async move |this, cx| {
+            let res = task.await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(g) = this.git.as_mut() else { return };
+                // Unchecked again, or typed into meanwhile: the box is the user's.
+                if !g.amend || !g.message.read(cx).text_string().trim().is_empty() {
+                    return;
+                }
+                match res {
+                    Ok(m) if !m.is_empty() => {
+                        g.message.update(cx, |e, cx| e.replace_all_text(&m, cx));
+                        g.amend_message = Some(m);
+                    }
+                    Ok(_) => {}
+                    Err(e) => this.show_toast(format!("Cannot read the last commit message: {e}"), true, cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     pub(super) fn git_popup_items(&self, kind: PopupKind, q: &str) -> Vec<PopupItem> {
@@ -857,7 +903,7 @@ impl Workspace {
                         (false, false, Some(u)) => format!("tracks {u}"),
                         _ => String::new(),
                     };
-                    v.push(PopupItem { label: b.name.clone(), detail, hint: format!("{}  →", &b.hash[..b.hash.len().min(8)]), target: Target::Branch(b.clone()) });
+                    v.push(PopupItem { label: b.name.clone(), detail, hint: b.hash[..b.hash.len().min(8)].to_string(), target: Target::Branch(b.clone()) });
                 }
                 v
             }
@@ -1262,12 +1308,7 @@ impl Workspace {
                                     .cursor_pointer()
                                     .child(checkbox(Some(amend)))
                                     .child("Amend")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if let Some(g) = this.git.as_mut() {
-                                            g.amend = !g.amend;
-                                        }
-                                        cx.notify();
-                                    })),
+                                    .on_click(cx.listener(|this, _, _, cx| this.toggle_amend(cx))),
                             )
                             .child(div().flex_1())
                             .child(div().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().text_size(ui_px(11.)).text_color(Theme::text_dim()).child(match busy {

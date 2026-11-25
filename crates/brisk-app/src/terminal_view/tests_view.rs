@@ -488,7 +488,10 @@ impl TerminalPanel {
                     })))
                     .child(tool("tests-export", "⇪", false).tooltip(tip("Export Test Results (HTML)")).on_click(cx.listener(|this, _, _, cx| {
                         match this.export_tests() {
-                            Ok(p) => cx.emit(RunEvent::OpenUrl(format!("file:///{}", p.display().to_string().replace('\\', "/")))),
+                            Ok(p) => {
+                                this.error = None;
+                                cx.emit(RunEvent::OpenUrl(format!("file:///{}", p.display().to_string().replace('\\', "/"))));
+                            }
                             Err(e) => this.error = Some(e),
                         }
                         cx.notify();
@@ -628,9 +631,7 @@ impl TerminalPanel {
                                 .child(div().text_color(Theme::text_dim()).child(when))
                                 .on_mouse_down(gpui::MouseButton::Left, cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
-                                    if let Err(err) = this.open_history(&e) {
-                                        this.error = Some(err);
-                                    }
+                                    this.error = this.open_history(&e).err();
                                     cx.notify();
                                 }))
                         })),

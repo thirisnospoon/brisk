@@ -222,7 +222,20 @@ impl Repo {
 
     /// Merge…'s Apply: write the merged text and mark the file resolved.
     pub fn resolve_with(&self, rel: &str, text: &str) -> Result<()> {
-        std::fs::write(self.abs(rel), text).map_err(|e| GitError(format!("{rel}: {e}")))?;
+        // A temporary file moved over the conflicted one: a failed write leaves it whole.
+        let path = self.abs(rel);
+        let mut tmp = path.clone().into_os_string();
+        tmp.push(".brisk-merge.tmp");
+        let tmp = std::path::PathBuf::from(tmp);
+        // The new file keeps the old one's permissions (an executable script stays executable).
+        let perms = std::fs::metadata(&path).ok().map(|m| m.permissions());
+        let written = std::fs::write(&tmp, text)
+            .and_then(|_| perms.map_or(Ok(()), |p| std::fs::set_permissions(&tmp, p)))
+            .and_then(|_| std::fs::rename(&tmp, &path));
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(GitError(format!("{rel}: {e}")));
+        }
         self.git(&["add", "--", rel]).map(|_| ())
     }
 }

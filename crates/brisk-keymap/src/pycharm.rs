@@ -163,6 +163,8 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("ctrl-alt-y", A::ReloadFromDisk, None);
     k.bind("enter", A::OpenSelected, PV);
     k.bind("f4", A::OpenSelected, PV);
+    k.bind("f5", A::CopyElement, PV);
+    k.bind("delete", A::DeleteElement, PV);
 
     // --- Run / Debug --------------------------------------------------------
     k.bind("shift-f10", A::Run, None);

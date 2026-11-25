@@ -52,6 +52,8 @@ impl Op {
 
 pub struct Packages {
     pub filter: Entity<Editor>,
+    /// The filter the selection was last reset for.
+    filtered_for: String,
     pub name: Entity<Editor>,
     pub version: Entity<Editor>,
     pub focus: FocusHandle,
@@ -101,17 +103,22 @@ fn field(cx: &mut Context<Workspace>) -> Entity<Editor> {
 impl Packages {
     fn new(cx: &mut Context<Workspace>) -> Self {
         let filter = field(cx);
+        // The field notifies on every caret blink too: only a new filter moves the selection.
         cx.observe(&filter, |this: &mut Workspace, _, cx| {
-            if let Some(p) = this.packages.as_mut() {
+            let Some(p) = this.packages.as_mut() else { return };
+            let q = text(&p.filter, cx);
+            if q != p.filtered_for {
+                p.filtered_for = q;
                 p.selected = 0;
+                cx.notify();
             }
-            cx.notify();
         })
         .detach();
         let name = field(cx);
         cx.observe(&name, |this: &mut Workspace, _, cx| this.update_package_suggestions(cx)).detach();
         Self {
             filter,
+            filtered_for: String::new(),
             name,
             version: field(cx),
             focus: cx.focus_handle(),
@@ -242,6 +249,8 @@ impl Workspace {
                 if ok {
                     this.check_outdated(cx);
                 }
+                // Operations queued before the tool was known.
+                this.start_next_package_op(cx);
                 cx.notify();
             });
         })
@@ -294,11 +303,23 @@ impl Workspace {
         if p.running.is_some() {
             return;
         }
-        let Some(op) = p.queue.pop_front() else { return };
-        let (Some(py), Some(tool)) = (p.python.clone(), p.tool.clone()) else {
+        if p.queue.is_empty() {
+            return;
+        }
+        let Some(py) = p.python.clone() else {
             p.queue.clear();
+            p.error = Some("No Python interpreter: set one for the project to manage its packages.".into());
             return;
         };
+        let Some(tool) = p.tool.clone() else {
+            // pip or uv is not detected yet: the operations stay queued ("Queued" in their
+            // rows) and the list refresh that detects it starts them.
+            if !p.loading {
+                self.refresh_packages(cx);
+            }
+            return;
+        };
+        let Some(op) = p.queue.pop_front() else { return };
         let label = op.label();
         p.busy = Some(label.clone());
         p.running = Some(op.clone());

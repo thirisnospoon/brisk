@@ -178,6 +178,8 @@ actions! {
     NewProject => "New Project...", "File";
     RecentProjects => "Recent Projects", "File";
     NewElement => "New...", "File";
+    CopyElement => "Copy...", "File";
+    DeleteElement => "Delete...", "File";
     CloseTab => "Close Tab", "File";
     NextTab => "Select Next Tab", "File";
     PreviousTab => "Select Previous Tab", "File";

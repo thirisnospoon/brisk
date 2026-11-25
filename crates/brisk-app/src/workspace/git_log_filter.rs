@@ -212,8 +212,25 @@ impl Workspace {
         self.open_menu(pos, v, cx);
     }
 
-    /// The Paths filter: the active file, its folder, the project's top-level folders.
+    /// The Paths filter: the active file, its folder, the project's top-level folders (listed
+    /// off the UI thread, then the menu opens).
     pub(super) fn path_filter_menu(&mut self, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+        let Some(root) = self.git.as_ref().map(|g| g.repo.root().to_path_buf()) else { return };
+        let task = cx.background_executor().spawn(async move {
+            let mut dirs: Vec<String> = std::fs::read_dir(root)
+                .map(|rd| rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| !n.starts_with('.')).map(|n| format!("{n}/")).collect())
+                .unwrap_or_default();
+            dirs.sort_by_key(|d| d.to_lowercase());
+            dirs
+        });
+        cx.spawn(async move |this, cx| {
+            let dirs = task.await;
+            let _ = this.update(cx, |this, cx| this.path_filter_menu_with(pos, dirs, cx));
+        })
+        .detach();
+    }
+
+    fn path_filter_menu_with(&mut self, pos: gpui::Point<gpui::Pixels>, mut dirs: Vec<String>, cx: &mut Context<Self>) {
         let Some(g) = self.git.as_ref() else { return };
         let cur = g.filter.query.path.clone();
         let item = |label: String, value: Option<String>| Entry::Item {
@@ -235,10 +252,6 @@ impl Workspace {
         if let Some(c) = cur.clone().filter(|c| !shown.contains(c)) {
             shown.push(c);
         }
-        let mut dirs: Vec<String> = std::fs::read_dir(g.repo.root())
-            .map(|rd| rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| !n.starts_with('.')).map(|n| format!("{n}/")).collect())
-            .unwrap_or_default();
-        dirs.sort_by_key(|d| d.to_lowercase());
         let n = shown.len();
         dirs.retain(|d| !shown.contains(d));
         shown.extend(dirs.into_iter().take(30));

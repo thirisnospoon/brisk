@@ -31,6 +31,7 @@ impl Repo {
     }
 
     /// Stash Changes: local changes (optionally untracked files too) go to a new stash.
+    /// Nothing to stash is an error: `git stash push` then exits 0 without making one.
     pub fn stash_push(&self, message: &str, untracked: bool) -> Result<String> {
         let mut args = vec!["stash", "push"];
         if untracked {
@@ -39,7 +40,15 @@ impl Repo {
         if !message.trim().is_empty() {
             args.extend(["-m", message]);
         }
-        self.git(&args)
+        // The top stash before and after, not git's message: that one is localized.
+        let top = || self.git(&["rev-parse", "-q", "--verify", "refs/stash"]).ok();
+        let before = top();
+        let out = self.git(&args)?;
+        if top() == before {
+            let hint = if untracked { "" } else { " (untracked files go in only with “Include untracked files”)" };
+            return Err(GitError(format!("No local changes to stash{hint}")));
+        }
+        Ok(out)
     }
 
     /// Unstash: apply (`pop` also drops it when it applied cleanly).

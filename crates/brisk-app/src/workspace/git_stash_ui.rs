@@ -52,7 +52,9 @@ impl Workspace {
         if g.status.changes.is_empty() {
             return self.show_toast("No local changes to stash".into(), false, cx);
         }
-        self.set_stash_dialog(Some(StashDialog::Push { message: String::new(), untracked: false }), cx);
+        // Only unversioned files changed: without them the stash would be empty.
+        let untracked = g.status.changes.iter().all(|c| c.status == FileStatus::Untracked);
+        self.set_stash_dialog(Some(StashDialog::Push { message: String::new(), untracked }), cx);
     }
 
     /// Unstash Changes…: the stash list, the newest selected.

@@ -36,7 +36,7 @@ impl ConsolePrefs {
         let o: serde_json::Map<String, serde_json::Value> =
             self.map.iter().map(|(k, &(w, f))| (k.clone(), serde_json::json!({ "softWrap": w, "scrollToEnd": f }))).collect();
         let _ = std::fs::create_dir_all(root.join(".brisk"));
-        let _ = std::fs::write(file(root), serde_json::to_string_pretty(&o).unwrap_or_default());
+        let _ = crate::editor::write_atomic(&file(root), serde_json::to_string_pretty(&o).unwrap_or_default().as_bytes());
     }
 }
 

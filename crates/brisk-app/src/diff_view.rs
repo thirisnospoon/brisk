@@ -878,10 +878,14 @@ impl Render for DiffView {
                     .child(div().w(px(1.)).h(ui_px(16.)).mx(px(4.)).bg(Theme::divider()))
                     .child(tool("diff-sbs", "columns-2", "Side-by-side viewer", !unified).on_click(cx.listener(|this, _, _, cx| this.set_unified(false, cx))))
                     .child(tool("diff-uni", "align-justify", "Unified viewer", unified).on_click(cx.listener(|this, _, _, cx| this.set_unified(true, cx))))
-                    .child(
-                        tool("diff-collapse", "fold-vertical", "Collapse Unchanged Fragments", collapse)
-                            .on_click(cx.listener(move |this, _, _, cx| this.set_collapse(!collapse, cx))),
-                    )
+                    // The editable working copy shows every line: folding applies to the
+                    // read-only views only.
+                    .when(!live, |d| {
+                        d.child(
+                            tool("diff-collapse", "fold-vertical", "Collapse Unchanged Fragments", collapse)
+                                .on_click(cx.listener(move |this, _, _, cx| this.set_collapse(!collapse, cx))),
+                        )
+                    })
                     .child(div().w(px(1.)).h(ui_px(16.)).mx(px(4.)).bg(Theme::divider()))
                     .child(if diffs == 0 { "Contents are identical".to_string() } else { format!("{diffs} difference{}", if diffs == 1 { "" } else { "s" }) }),
             )
