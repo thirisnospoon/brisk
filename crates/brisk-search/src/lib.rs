@@ -48,6 +48,8 @@ pub struct Results {
 
 pub struct Query {
     re: Regex,
+    /// The same pattern over raw bytes: a file is checked for a match before it is decoded.
+    bytes_re: regex::bytes::Regex,
     include: Option<GlobSet>,
     exclude: Option<GlobSet>,
     regex_mode: bool,
@@ -66,8 +68,10 @@ impl Query {
             regex::Error::Syntax(s) => s.lines().last().unwrap_or("bad regex").trim().to_string(),
             e => e.to_string(),
         })?;
+        // Built after the `str` regex, which rejects patterns that match invalid UTF-8.
+        let bytes_re = regex::bytes::RegexBuilder::new(&pat).case_insensitive(!o.case_sensitive).multi_line(true).size_limit(1 << 22).build().map_err(|e| e.to_string())?;
         let (include, exclude) = parse_mask(&o.file_mask)?;
-        Ok(Query { re, include, exclude, regex_mode: o.regex })
+        Ok(Query { re, bytes_re, include, exclude, regex_mode: o.regex })
     }
 
     pub fn matches_path(&self, rel: &str) -> bool {
@@ -205,6 +209,11 @@ fn parse_mask(mask: &str) -> Result<(Option<GlobSet>, Option<GlobSet>), String> 
 
 /// Read a file as text; None for binary, huge or non-UTF-8 files.
 pub fn read_text(path: &Path) -> Option<String> {
+    String::from_utf8(read_bytes(path)?).ok()
+}
+
+/// A file's bytes; None for binary or huge files.
+fn read_bytes(path: &Path) -> Option<Vec<u8>> {
     let meta = std::fs::metadata(path).ok()?;
     if meta.len() > MAX_FILE {
         return None;
@@ -213,7 +222,7 @@ pub fn read_text(path: &Path) -> Option<String> {
     if memchr::memchr(0, &bytes[..bytes.len().min(8192)]).is_some() {
         return None;
     }
-    String::from_utf8(bytes).ok()
+    Some(bytes)
 }
 
 /// Search `files` (relative to `root`) on all cores. Stops early when `cancel` is set
@@ -237,7 +246,15 @@ pub fn search(root: &Path, files: &[String], q: &Query, limit: usize, cancel: &A
                     if !q.matches_path(rel) {
                         continue;
                     }
-                    let Some(text) = read_text(&root.join(rel)) else { continue };
+                    let Some(bytes) = read_bytes(&root.join(rel)) else { continue };
+                    // Most files have no match: they are not decoded (or checked for UTF-8).
+                    if !q.bytes_re.is_match(&bytes) {
+                        searched.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
+                    // Files that are not UTF-8 are left out, as the editor would decode them
+                    // differently.
+                    let Ok(text) = String::from_utf8(bytes) else { continue };
                     searched.fetch_add(1, Ordering::Relaxed);
                     let mut v = Vec::new();
                     q.find_in(i, &text, &mut v, limit);
@@ -377,6 +394,9 @@ mod tests {
         }
         std::fs::write(d.join("bin.dat"), b"TOKEN\0\0").unwrap();
         files.push("bin.dat".into());
+        // Not UTF-8: left out (a match in it), as before.
+        std::fs::write(d.join("latin1.txt"), b"caf\xe9 TOKEN\n").unwrap();
+        files.push("latin1.txt".into());
         let r = search(&d, &files, &Query::new(&opts("token")).unwrap(), 1000, &AtomicBool::new(false));
         assert_eq!(r.matches.len(), 20);
         assert_eq!(r.files_with_matches, 20);
@@ -384,6 +404,13 @@ mod tests {
         assert_eq!(r.matches[0].line, 1);
         let r = search(&d, &files, &Query::new(&opts("token")).unwrap(), 5, &AtomicBool::new(false));
         assert!(r.truncated && r.matches.len() == 5);
+        // Whole words, case and regex behave as on the decoded text.
+        let r = search(&d, &files, &Query::new(&Options { case_sensitive: true, ..opts("token") }).unwrap(), 1000, &AtomicBool::new(false));
+        assert!(r.matches.is_empty());
+        let r = search(&d, &files, &Query::new(&Options { whole_words: true, ..opts("TOKE") }).unwrap(), 1000, &AtomicBool::new(false));
+        assert!(r.matches.is_empty());
+        let r = search(&d, &files, &Query::new(&Options { regex: true, ..opts(r"^TOKEN = \d$") }).unwrap(), 1000, &AtomicBool::new(false));
+        assert_eq!((r.matches.len(), r.matches[0].col.clone()), (20, 0..9));
         let _ = std::fs::remove_dir_all(&d);
     }
 }
