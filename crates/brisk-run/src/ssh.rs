@@ -471,7 +471,9 @@ mod tests {
         let info = parse_probe("HOME /home/dev\nPY /usr/bin/python3 3.12.3\nPY /home/dev/.venv/bin/python 3.12.3\nPY /usr/bin/python3 3.12.3\n");
         assert_eq!(info.home, "/home/dev");
         assert_eq!(info.pythons.len(), 2);
-        assert_eq!(default_remote_root("/home/dev/", Path::new(r"C:\work\My App")), "/home/dev/brisk-projects/My_App");
+        // A native path: on Linux `C:\work\My App` is a single file name.
+        let local = Path::new("work").join("My App");
+        assert_eq!(default_remote_root("/home/dev/", &local), "/home/dev/brisk-projects/My_App");
     }
 
     #[test]

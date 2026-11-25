@@ -48,7 +48,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libx11-xcb-dev libxcb1-dev
       - run: cargo check --workspace --all-targets
-      - run: cargo test --workspace --exclude brisk-app
+      # --no-fail-fast: while the job is new, one run should list every failing test.
+      - run: cargo test --workspace --exclude brisk-app --no-fail-fast
 
   test:
     runs-on: windows-latest
