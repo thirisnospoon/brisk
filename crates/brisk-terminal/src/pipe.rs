@@ -131,7 +131,15 @@ impl PipeIo {
                 };
                 let mut eof = [false; 2];
                 while open > 0 {
-                    match chunk_rx.recv_timeout(PARTIAL) {
+                    // Only an unfinished line needs a deadline; otherwise the thread sleeps
+                    // until output (or the end of it) arrives instead of waking every 30 ms
+                    // for the life of the process.
+                    let next = if bufs.iter().any(|b| !b.is_empty()) {
+                        chunk_rx.recv_timeout(PARTIAL)
+                    } else {
+                        chunk_rx.recv().map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)
+                    };
+                    match next {
                         Ok((i, Some(b))) => {
                             if bufs[i].is_empty() {
                                 since[i] = Some(Instant::now());
