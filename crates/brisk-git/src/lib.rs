@@ -9,7 +9,7 @@ mod diff;
 mod graph;
 mod locate;
 mod log_ops;
-mod log_query;
+pub mod log_query;
 mod merge;
 mod partial;
 mod remote;

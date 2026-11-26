@@ -52,7 +52,7 @@ of `src/`.
 | `brisk-dap` | 1,047 | 13 | proc | The Debug Adapter Protocol client for debugpy, and the debugger logic the Debug window shows: hover expressions, inline values, Smart Step Into targets, exception breakpoints, console completion, the Attach to Process list. |
 | `brisk-settings` | 590 | 4 | platform | The `Settings` type, `settings.json` (load, merged save, `.bak` of a broken file) and the globals painting code reads. |
 | `brisk-run` | 4,555 | 44 | project | Interpreter discovery, run configurations (`.brisk/run.json`, `.idea` and `.run/*.xml` import), command lines, pytest / unittest runners, traceback links, uv / Poetry detection, SSH interpreters, Run with Coverage and Profile (`coverage`, `profile`), Run Anything's parsing and history (`run_anything`), the Python Console's process and protocol (`console`). `env`: creating a venv and installing requirements, uv / Poetry sync and dependency changes, an interpreter's packages and the PyPI name list, the Terminal's activation of the project environment. |
-| `brisk-git` | 2,384 | 23 | proc | Git through the `git` CLI: status, log with its lane layout, diff, merge, stash, blame. |
+| `brisk-git` | 2,384 | 23 | proc | Git through the `git` CLI: status, log with its lane layout and filters, diff, merge, stash, blame. |
 | `brisk-terminal` | 1,282 | 6 | proc | The PTY (ConPTY, openpty) and VT emulation through `alacritty_terminal`. |
 | `brisk-db` | 1,777 | 14 | | PostgreSQL, MySQL / MariaDB and SQLite: connections, schema, queries. |
 | `brisk-history` | 465 | 3 | platform, git | Local History: revisions of a file at every save and before risky edits (gzip, in the settings folder), folder history, labels, pruning. |
@@ -718,7 +718,11 @@ console history, which are app settings.
 matching to `brisk-git`. One pull request each. Risk: low.
 
 Done on branch `arch3`, one commit each. `todo_scan.rs` is `brisk_search::todo`, unchanged,
-with its tests; `brisk-search` now depends on `brisk-project` for the file list.
+with its tests; `brisk-search` now depends on `brisk-project` for the file list. The log
+filter's matching was already in `brisk-git` (`Repo::log_query` turns a `LogQuery` into `git log`
+arguments); what moved from `git_log_filter.rs` to `brisk_git::log_query` is the rest that has
+no UI: the Date choices and the two chip labels, the top-level folders and the entries of the
+Paths menu. `git_log_filter.rs` keeps the field, the menus and the chips.
 
 #### Step 10. `brisk-history` and `brisk-settings`
 
