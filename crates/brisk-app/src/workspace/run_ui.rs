@@ -176,7 +176,7 @@ impl Workspace {
                     this.take_test_results(&t.results, cx);
                 }
                 this.coverage_finished(name, window, cx);
-                this.profile_finished(name, cx);
+                this.profile_finished(name, window, cx);
                 this.status = match (tests, code) {
                     (Some(t), _) => t.summary.clone(),
                     (None, Some(c)) => format!("'{name}' finished with exit code {c}"),

@@ -427,7 +427,7 @@ pub struct Workspace {
     /// Offer to install a missing package (coverage.py, debugpy), then launch again.
     install_offer: Option<install_offer_ui::InstallOffer>,
     /// The last profile (Run › Profile).
-    profile: Option<profile_ui::ProfileView>,
+    profile: profile_ui::Profiler,
     /// A profiled run whose stats come when its tab finishes.
     prof_pending: Option<profile_ui::Pending>,
     /// Before launch steps in progress.
@@ -630,7 +630,7 @@ impl Workspace {
             coverage: coverage_ui::Coverage::new(cx),
             cov_pending: None,
             install_offer: None,
-            profile: None,
+            profile: profile_ui::Profiler::new(cx),
             prof_pending: None,
             before: None,
             before_passed: None,
@@ -2188,7 +2188,7 @@ impl Workspace {
             .when(self.coverage.report(cx).is_some(), |d| {
                 d.child(self.stripe_button("st-coverage", "coverage", "Coverage", self.bottom == Some(BottomTool::Coverage), Action::ToggleCoverageWindow, cx))
             })
-            .when(self.profile.is_some(), |d| {
+            .when(self.profile.has_profile(cx), |d| {
                 d.child(self.stripe_button("st-profiler", "profiler", "Profiler", self.bottom == Some(BottomTool::Profiler), Action::ToggleProfilerWindow, cx))
             })
             .child(self.stripe_button("st-problems", "problems", "Problems", self.bottom == Some(BottomTool::Problems), Action::ToggleProblemsWindow, cx))
@@ -3242,7 +3242,7 @@ impl Render for Workspace {
             (BottomTool::Todo, _) => self.render_todo(),
             (BottomTool::Endpoints, _) => self.render_endpoints(),
             (BottomTool::Coverage, _) => self.render_coverage(),
-            (BottomTool::Profiler, _) => self.render_profiler(cx),
+            (BottomTool::Profiler, _) => self.render_profiler(),
             _ => Self::render_placeholder(b.title(), b.stage()),
         });
         let center = self.render_editor_area(cx);
