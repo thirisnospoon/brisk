@@ -47,6 +47,8 @@ pub fn idea_type(kind: RunKind) -> (&'static str, &'static str) {
         RunKind::Flask => ("Python.FlaskServer", "Flask server"),
         RunKind::Django => ("Python.DjangoServer", "Django server"),
         RunKind::DjangoTests => ("DjangoTestsConfigurationType", "Django tests"),
+        RunKind::Npm => ("js.build_tools.npm", ""),
+        RunKind::Node => ("NodeJSConfigurationType", ""),
     }
 }
 
@@ -74,6 +76,10 @@ pub fn to_xml(root: &Path, c: &RunConfig, kind_of: &dyn Fn(&str) -> Option<RunKi
             body.push(format!("<toRun name=\"{}\" type=\"{t}\" />", esc(&m)));
         }
         body.push("<method v=\"2\" />".into());
+        return wrap(&attrs, &body);
+    }
+    if c.kind.is_node() {
+        node_body(c, &mut body);
         return wrap(&attrs, &body);
     }
     let module = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -158,7 +164,7 @@ pub fn to_xml(root: &Path, c: &RunConfig, kind_of: &dyn Fn(&str) -> Option<RunKi
             body.push(opt("TARGET", &c.parameters));
             body.push(opt("USE_OPTIONS", "false"));
         }
-        RunKind::Compound => {}
+        RunKind::Compound | RunKind::Npm | RunKind::Node => {}
     }
     let steps: Vec<String> = crate::compound_names(&c.before_run)
         .into_iter()
@@ -272,4 +278,30 @@ fn read_all_in(p: &Path) -> usize {
     } else {
         usize::MAX
     }
+}
+
+/// WebStorm's npm and Node.js configurations: the package and script, or the file, with the
+/// arguments, working directory and variables.
+fn node_body(c: &RunConfig, body: &mut Vec<String>) {
+    let tag = |name: &str, value: &str| format!("<{name} value=\"{}\" />", esc(value));
+    if c.kind == RunKind::Npm {
+        body.push(tag("package-json", &project_path(if c.target.trim().is_empty() { "package.json" } else { &c.target })));
+        body.push(tag("command", "run"));
+        body.push("<scripts>".into());
+        body.push(format!("  {}", tag("script", &c.script)));
+        body.push("</scripts>".into());
+        body.push(tag("arguments", &c.parameters));
+    } else {
+        body.push(tag("path-to-js-file", &project_path(&c.target)));
+        body.push(tag("application-parameters", &c.parameters));
+        body.push(tag("node-parameters", &c.interpreter_options));
+        body.push(tag("working-dir", &project_path(&c.working_directory)));
+    }
+    body.push(tag("node-interpreter", c.interpreter.as_deref().unwrap_or("project")));
+    body.push("<envs>".into());
+    for (k, v) in &c.env {
+        body.push(format!("  <env name=\"{}\" value=\"{}\" />", esc(k), esc(v)));
+    }
+    body.push("</envs>".into());
+    body.push("<method v=\"2\" />".into());
 }

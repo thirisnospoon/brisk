@@ -13,6 +13,8 @@ pub enum RunTarget {
     Script,
     /// A pytest node inside the file: `["TestA", "test_b"]`.
     Test(Vec<String>),
+    /// A script of `package.json`.
+    Npm(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,6 +87,15 @@ pub fn run_marks(text: &str, test_file: bool) -> Vec<RunMark> {
     out
 }
 
+/// The marks of a file: `package.json` scripts, else Python's.
+fn marks_for(text: &str, test_file: bool, package_json: bool) -> Vec<RunMark> {
+    if package_json {
+        brisk_run::node::scripts(text).into_iter().map(|s| RunMark { line: s.line, target: RunTarget::Npm(s.name) }).collect()
+    } else {
+        run_marks(text, test_file)
+    }
+}
+
 /// The node key of a test result: `TestA::test_b` (parametrize ids dropped).
 pub fn scope_key(scope: &[String]) -> String {
     scope.join("::")
@@ -92,11 +103,15 @@ pub fn scope_key(scope: &[String]) -> String {
 
 impl Editor {
     pub fn run_slot(&self) -> Pixels {
-        if self.show_gutter && !self.is_field && self.path.is_some() && self.is_python() {
+        if self.show_gutter && !self.is_field && self.path.is_some() && (self.is_python() || self.is_package_json()) {
             px(SLOT)
         } else {
             px(0.)
         }
+    }
+
+    fn is_package_json(&self) -> bool {
+        self.path.as_deref().and_then(|p| p.file_name()).is_some_and(|n| n == "package.json")
     }
 
     /// The marks of the current text (cached by buffer version).
@@ -108,7 +123,7 @@ impl Editor {
         if self.run_cache.0 != v {
             let test = self.path.as_deref().is_some_and(brisk_run::is_test_file);
             self.text();
-            self.run_cache = (v, run_marks(&self.text_cache.1, test));
+            self.run_cache = (v, marks_for(&self.text_cache.1, test, self.is_package_json()));
         }
         self.run_cache.1.clone()
     }
@@ -142,8 +157,9 @@ impl Editor {
                         return None;
                     }
                     let test = e.path.as_deref().is_some_and(brisk_run::is_test_file);
+                    let npm = e.is_package_json();
                     let text = e.text().to_string();
-                    Some(cx.background_executor().spawn(async move { run_marks(&text, test) }))
+                    Some(cx.background_executor().spawn(async move { marks_for(&text, test, npm) }))
                 })
                 .ok()
                 .flatten();
@@ -177,7 +193,7 @@ impl Editor {
     pub fn test_status(&self, target: &RunTarget) -> Option<TestStatus> {
         match target {
             RunTarget::Test(scope) => self.test_results.get(&scope_key(scope)).copied(),
-            RunTarget::Script => None,
+            RunTarget::Script | RunTarget::Npm(_) => None,
         }
     }
 

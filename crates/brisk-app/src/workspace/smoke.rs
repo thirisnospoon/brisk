@@ -24,6 +24,7 @@ mod membudget;
 mod motion;
 mod mouse;
 mod multi;
+mod node;
 mod open;
 mod packages;
 mod picker;
@@ -231,6 +232,9 @@ pub(super) fn schedule(window: &mut Window, cx: &mut Context<Workspace>) {
     }
     if std::env::var_os("BRISK_SMOKE_UPDATE").is_some() {
         cx.defer_in(window, |this: &mut Workspace, window, cx| this.update_smoke(window, cx));
+    }
+    if std::env::var_os("BRISK_SMOKE_NODE").is_some() {
+        cx.defer_in(window, |this: &mut Workspace, window, cx| this.node_smoke(window, cx));
     }
     if std::env::var_os("BRISK_SMOKE_PICKER").is_some() {
         cx.defer_in(window, |this: &mut Workspace, window, cx| this.picker_smoke(window, cx));

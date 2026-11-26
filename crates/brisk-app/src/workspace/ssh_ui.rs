@@ -17,9 +17,14 @@ impl Workspace {
         }
     }
 
-    /// Debug, coverage and profiling run locally: with an SSH interpreter they say so instead
-    /// of quietly using a local Python. True when blocked.
+    /// Debug, coverage and profiling are Python's and run locally: for an npm or Node.js
+    /// configuration, or with an SSH interpreter, they say so instead of quietly using a local
+    /// Python. True when blocked.
     pub(super) fn remote_blocks(&mut self, cfg: &RunConfig, what: &str, cx: &mut Context<Self>) -> bool {
+        if cfg.kind.is_node() {
+            self.show_toast(format!("{what} is not available for npm and Node.js configurations yet: run '{}' instead", cfg.name), true, cx);
+            return true;
+        }
         let Some(s) = self.ssh_for(cfg, cx) else { return false };
         self.show_toast(
             format!("{what} is not available with an SSH interpreter yet ({}): run it, or pick a local interpreter in the status bar", s.label()),

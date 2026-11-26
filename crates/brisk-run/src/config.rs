@@ -24,6 +24,9 @@ pub struct RunConfig {
     /// pytest: a file, folder or node (`tests/test_x.py::TestA::test_b`), several separated
     /// by spaces; empty runs everything pytest finds in the working directory.
     pub target: String,
+    /// npm: the `package.json` script to run (`target` is the `package.json`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub script: String,
     /// pytest `-k` expression.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub keywords: String,
@@ -133,11 +136,20 @@ pub enum RunKind {
     Unittest,
     /// PyCharm's Doctests: `python -m doctest <files>`.
     Doctest,
+    /// PyCharm's npm: a `package.json` script (`script`) through npm, pnpm, yarn or bun.
+    Npm,
+    /// PyCharm's Node.js: a JS / TS file (`target`) with node; `interpreter` is node's path.
+    Node,
 }
 
 impl RunKind {
     fn is_python(&self) -> bool {
         *self == RunKind::Python
+    }
+
+    /// Runs with Node.js tools, not Python.
+    pub fn is_node(&self) -> bool {
+        matches!(self, RunKind::Npm | RunKind::Node)
     }
 
     /// A test runner with a test tree in the Run window.
@@ -314,7 +326,7 @@ impl RunFile {
     /// Add or refresh a temporary configuration and select it. A permanent configuration
     /// with the same target is reused instead (PyCharm does the same).
     pub fn use_for_file(&mut self, cfg: RunConfig) -> String {
-        if let Some(c) = self.configurations.iter().find(|c| c.kind == cfg.kind && !c.module && c.target == cfg.target) {
+        if let Some(c) = self.configurations.iter().find(|c| c.kind == cfg.kind && !c.module && c.target == cfg.target && c.script == cfg.script) {
             let n = c.name.clone();
             self.selected = Some(n.clone());
             return n;

@@ -16,6 +16,8 @@ pub enum Field {
     Kind,
     Target,
     Keywords,
+    /// npm: the script to run.
+    Script,
     Parameters,
     InterpreterOptions,
     WorkingDirectory,
@@ -55,11 +57,25 @@ pub enum Kind {
     DjangoTests,
     Unittest,
     Doctest,
+    Npm,
+    Node,
 }
 
 impl Kind {
-    const ALL: [Kind; 10] =
-        [Kind::Script, Kind::Module, Kind::Pytest, Kind::Unittest, Kind::Doctest, Kind::Compound, Kind::FastApi, Kind::Flask, Kind::Django, Kind::DjangoTests];
+    const ALL: [Kind; 12] = [
+        Kind::Script,
+        Kind::Module,
+        Kind::Pytest,
+        Kind::Unittest,
+        Kind::Doctest,
+        Kind::Compound,
+        Kind::FastApi,
+        Kind::Flask,
+        Kind::Django,
+        Kind::DjangoTests,
+        Kind::Npm,
+        Kind::Node,
+    ];
     fn of(c: &RunConfig) -> Kind {
         match (c.kind, c.module) {
             (RunKind::Pytest, _) => Kind::Pytest,
@@ -70,6 +86,8 @@ impl Kind {
             (RunKind::Flask, _) => Kind::Flask,
             (RunKind::Django, _) => Kind::Django,
             (RunKind::DjangoTests, _) => Kind::DjangoTests,
+            (RunKind::Npm, _) => Kind::Npm,
+            (RunKind::Node, _) => Kind::Node,
             (_, true) => Kind::Module,
             _ => Kind::Script,
         }
@@ -86,6 +104,8 @@ impl Kind {
             Kind::Flask => "Flask",
             Kind::Django => "Django server",
             Kind::DjangoTests => "Django tests",
+            Kind::Npm => "npm",
+            Kind::Node => "Node.js",
         }
     }
     /// The kind's chip in the form's Run row (all eight fit on one line).
@@ -109,6 +129,8 @@ impl Kind {
             Kind::Flask => "flask --app app run",
             Kind::Django => "manage.py runserver",
             Kind::DjangoTests => "manage.py test",
+            Kind::Npm => "npm run dev (pnpm, yarn, bun by the lock file)",
+            Kind::Node => "node app.js, tsx app.ts",
         }
     }
     fn web(self) -> Option<RunKind> {
@@ -130,6 +152,8 @@ impl Kind {
             Kind::Flask => RunKind::Flask,
             Kind::Django => RunKind::Django,
             Kind::DjangoTests => RunKind::DjangoTests,
+            Kind::Npm => RunKind::Npm,
+            Kind::Node => RunKind::Node,
             _ => RunKind::Python,
         };
         c.module = self == Kind::Module;
@@ -231,7 +255,7 @@ fn flag(c: &mut RunConfig, f: Field) -> Option<&mut bool> {
 fn template_fields(kind: Kind) -> Vec<Field> {
     use Field as F;
     let mut v = vec![F::InterpreterOptions, F::WorkingDirectory, F::Env, F::EnvFiles, F::Interpreter, F::OnStart, F::AllowMultiple];
-    if !matches!(kind, Kind::Pytest | Kind::Unittest | Kind::Doctest) {
+    if !matches!(kind, Kind::Pytest | Kind::Unittest | Kind::Doctest | Kind::Npm | Kind::Node) {
         v.extend([F::PythonConsole, F::EmulateTerminal]);
     }
     v
@@ -251,18 +275,14 @@ fn fields(kind: Kind, temporary: bool) -> Vec<Field> {
     if matches!(kind, Kind::Pytest | Kind::Unittest) {
         v.push(F::Keywords);
     }
-    v.extend([
-        F::Parameters,
-        F::InterpreterOptions,
-        F::WorkingDirectory,
-        F::Env,
-        F::EnvFiles,
-        F::Interpreter,
-        F::BeforeRun,
-        F::BeforeCommand,
-        F::OnStart,
-        F::AllowMultiple,
-    ]);
+    if kind == Kind::Npm {
+        v.push(F::Script);
+    }
+    v.push(F::Parameters);
+    if kind != Kind::Npm {
+        v.push(F::InterpreterOptions);
+    }
+    v.extend([F::WorkingDirectory, F::Env, F::EnvFiles, F::Interpreter, F::BeforeRun, F::BeforeCommand, F::OnStart, F::AllowMultiple]);
     if matches!(kind, Kind::Script | Kind::Module) {
         v.extend([F::PythonConsole, F::EmulateTerminal]);
     }
@@ -285,13 +305,20 @@ fn label(f: Field, kind: Kind) -> &'static str {
             Kind::Compound => "Configurations:",
             Kind::FastApi | Kind::Flask => "Application:",
             Kind::Django | Kind::DjangoTests => "manage.py:",
+            Kind::Npm => "package.json:",
+            Kind::Node => "JavaScript file:",
         },
         Field::Keywords => "Keywords (-k):",
+        Field::Script => "Script:",
+        Field::Parameters if kind == Kind::Npm => "Arguments:",
         Field::Parameters => "Parameters:",
+        Field::InterpreterOptions if kind == Kind::Node => "Node options:",
         Field::InterpreterOptions => "Interpreter options:",
         Field::WorkingDirectory => "Working directory:",
         Field::Env => "Environment:",
         Field::EnvFiles => "Paths to .env files:",
+        Field::Interpreter if kind == Kind::Npm => "Package manager:",
+        Field::Interpreter if kind == Kind::Node => "Node interpreter:",
         Field::Interpreter => "Interpreter:",
         Field::BeforeRun => "Before launch, run:",
         Field::BeforeCommand => "Before launch, command:",
@@ -358,6 +385,7 @@ impl RunDialog {
             Field::Name => &mut d.cfg.name,
             Field::Target => &mut d.cfg.target,
             Field::Keywords => &mut d.cfg.keywords,
+            Field::Script => &mut d.cfg.script,
             Field::Parameters => &mut d.cfg.parameters,
             Field::InterpreterOptions => &mut d.cfg.interpreter_options,
             Field::WorkingDirectory => &mut d.cfg.working_directory,
@@ -378,6 +406,7 @@ impl RunDialog {
             Field::Name => &d.cfg.name,
             Field::Target => &d.cfg.target,
             Field::Keywords => &d.cfg.keywords,
+            Field::Script => &d.cfg.script,
             Field::Parameters => &d.cfg.parameters,
             Field::InterpreterOptions => &d.cfg.interpreter_options,
             Field::WorkingDirectory => &d.cfg.working_directory,
@@ -602,6 +631,12 @@ impl RunDialog {
             }
             if matches!(c.kind, RunKind::FastApi | RunKind::Flask) && c.target.trim().is_empty() {
                 return Err((i, Field::Target, format!("'{}': Application is empty (module:app)", c.name)));
+            }
+            if c.kind == RunKind::Npm && c.script.trim().is_empty() {
+                return Err((i, Field::Script, format!("'{}': Script is empty", c.name)));
+            }
+            if c.kind == RunKind::Node && c.target.trim().is_empty() {
+                return Err((i, Field::Target, format!("'{}': JavaScript file is empty", c.name)));
             }
             if c.kind == RunKind::Python && c.target.trim().is_empty() {
                 let what = if c.module { "Module name" } else { "Script path" };
@@ -1094,6 +1129,7 @@ impl Workspace {
                             Field::Name => dr.cfg.name.clone(),
                             Field::Target => dr.cfg.target.clone(),
                             Field::Keywords => dr.cfg.keywords.clone(),
+                            Field::Script => dr.cfg.script.clone(),
                             Field::Parameters => dr.cfg.parameters.clone(),
                             Field::InterpreterOptions => dr.cfg.interpreter_options.clone(),
                             Field::WorkingDirectory => dr.cfg.working_directory.clone(),
@@ -1115,14 +1151,22 @@ impl Workspace {
                                 Kind::FastApi => "main:app (module:variable; no app found in the project)".to_string(),
                                 Kind::Flask => "app:app or app:create_app() (no app found in the project)".to_string(),
                                 Kind::Django | Kind::DjangoTests => "manage.py (no Django manage.py found in the project)".to_string(),
+                                Kind::Npm => "package.json (relative to the project)".to_string(),
+                                Kind::Node => "app.js or src/main.ts (relative to the project)".to_string(),
                             },
+                            Field::Script => "dev, build, test (a key of \"scripts\")".into(),
+                            Field::Parameters if kind == Kind::Npm => "passed to the script, e.g. --port 3000".into(),
+                            Field::Interpreter if kind == Kind::Npm => "from the lock file: npm, pnpm, yarn or bun on PATH".into(),
+                            Field::Interpreter if kind == Kind::Node => "node on PATH (TypeScript: the project's tsx)".into(),
                             Field::Parameters if kind == Kind::FastApi => "uvicorn options, e.g. --reload --port 8001".into(),
                             Field::Parameters if kind == Kind::Flask => "flask run options, e.g. --debug --port 5001".into(),
                             Field::Parameters if kind == Kind::Django => "runserver address and options, e.g. 127.0.0.1:8001 --noreload".into(),
                             Field::Parameters if kind == Kind::DjangoTests => "test labels and options, e.g. polls.tests -v 2 (empty: all)".into(),
                             Field::WorkingDirectory => {
-                                if kind == Kind::Script {
+                                if kind == Kind::Script || kind == Kind::Node {
                                     "the script's folder".into()
+                                } else if kind == Kind::Npm {
+                                    "the package.json folder".into()
                                 } else {
                                     "the project root".into()
                                 }
@@ -1521,6 +1565,12 @@ impl Workspace {
 fn command_preview(root: &std::path::Path, c: &RunConfig, interp: &str) -> String {
     if c.kind == RunKind::Compound {
         return format!("› runs together, each in its own tab: {}", brisk_run::compound_names(&c.target).join(", "));
+    }
+    if c.kind.is_node() {
+        return match brisk_run::node::build(root, c) {
+            Ok(cmd) => format!("› {}", cmd.display()),
+            Err(e) => format!("› {e}"),
+        };
     }
     let python = c.interpreter.clone().unwrap_or_else(|| interp.to_string());
     let target = match (c.kind, c.module) {

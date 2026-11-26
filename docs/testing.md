@@ -292,6 +292,12 @@ Folder: empty. Writes `srv.py`.
 
 Checks Show in Services, the Stop and Rerun / Cancel question on a second run, two parallel tabs with Allow multiple instances, console focus, and Don't show. `=dialog` leaves the dialog with these fields open.
 
+### `BRISK_SMOKE_NODE=1`
+
+Folder: empty. Needs Node.js and npm on PATH. Writes `package.json` with the scripts `hello` and `greet`, `hello.js` and `greet.ts`.
+
+Checks the ▶ marks on the script lines, that a script runs through npm with the configuration's variable, that `greet.ts` runs with node, that both configurations are saved, and that Debug on an npm configuration shows that it is not available.
+
 ### `BRISK_SMOKE_PICKER=1`
 
 Folder: empty. Writes `picker/alpha/.git`, `picker/beta` and `picker/.hidden`.

@@ -206,10 +206,19 @@ impl Workspace {
                 if is_py(&n.path) {
                     return Some(for_path(&n.path, &[]));
                 }
+                if brisk_run::node::is_script(&n.path) {
+                    return Some(RunConfig::for_node(&self.root, &n.path));
+                }
             }
         }
         let ed = self.active_editor()?.clone();
-        let path = ed.read(cx).path.clone().filter(|p| is_py(p))?;
+        let path = ed.read(cx).path.clone()?;
+        if brisk_run::node::is_script(&path) {
+            return Some(RunConfig::for_node(&self.root, &path));
+        }
+        if !is_py(&path) {
+            return None;
+        }
         let scope = if brisk_run::is_test_file(&path) {
             let (outline, (line, _)) = ed.update(cx, |e, _| (e.outline(), e.caret_line_col()));
             test_scope(&outline, line)
@@ -231,6 +240,16 @@ impl Workspace {
             return;
         }
         self.save_all(cx);
+        if cfg.kind.is_node() {
+            if !self.env_files_ok(&cfg, cx) {
+                return;
+            }
+            match brisk_run::node::build(&self.root, &cfg) {
+                Ok(cmd) => self.run_command(cfg, cmd, window, cx),
+                Err(e) => self.show_toast(e, true, cx),
+            }
+            return;
+        }
         if let Some(remote) = self.ssh_for(&cfg, cx) {
             self.run_remote(cfg, remote, window, cx);
             return;
@@ -504,6 +523,8 @@ impl Workspace {
                         (RunKind::Flask, _) => format!("flask --app {} run", c.target),
                         (RunKind::Django, _) => format!("{} runserver", c.target),
                         (RunKind::DjangoTests, _) => format!("{} test", c.target),
+                        (RunKind::Npm, _) => format!("npm run {}", c.script),
+                        (RunKind::Node, _) => format!("node {}", c.target),
                         (_, true) => format!("-m {}", c.target),
                         _ => c.target.clone(),
                     };

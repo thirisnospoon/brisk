@@ -313,6 +313,14 @@ Brisk stays usable while ty is missing or still starting (its first answers can 
 - Django and Jinja2 tags in `.html`, `.jinja` and `.j2` files are highlighted: `{% %}` and `{{ }}` with the tag name, strings, numbers and `|filters`, and `{# #}` comments.
 - Limitations: routes are read from the source, not by importing the project, so URL patterns built in loops or by third-party routers (Django REST Framework's `DefaultRouter`) are not listed. No completion of template, URL or static names yet, and no code insight for template variables.
 
+### npm and Node.js
+
+- `package.json` shows ▶ next to each script. Run starts it through the project's package manager: pnpm, yarn or bun when `packageManager` or a lock file (`pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `package-lock.json`) says so, else npm. The tool is taken from PATH; Package manager in the configuration overrides it.
+- `Ctrl+Shift+F10` on a `.js`, `.mjs`, `.cjs` or `.ts` file runs it with node. TypeScript runs through the project's `tsx` when `node_modules/.bin` has it, else with node's own type stripping (Node 22.18 and later).
+- npm and Node.js configurations take arguments, the working directory (default: the `package.json` or script folder), environment variables, `.env` files, Before launch steps and Node options. The nearest `node_modules/.bin` folders go on PATH, and `FORCE_COLOR=1` keeps colours in the Run window.
+- With Store as project file they are written in WebStorm's format (`js.build_tools.npm`, `NodeJSConfigurationType`). Debug, coverage and profiling are Python only for now and say so.
+- Nothing from Node ships with Brisk: without Node.js installed, the run says where to get it.
+
 ### Run tool window
 
 - Run (`Alt+4`) has one tab per run. The first line is the command as typed by hand (`python app/main.py --x`; Copy command line gives the full one), the last is "Process finished with exit code N in 0.36 s" with a green ✓ or red ✗. stderr is red. Input for `input()` is typed directly in the window (in green) and sent on `Enter`.

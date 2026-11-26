@@ -93,7 +93,9 @@ impl Workspace {
         let cfg = match &mark.target {
             RunTarget::Script => RunConfig::for_file(&self.root, &path),
             RunTarget::Test(scope) => RunConfig::for_tests_with(&self.root, &path, scope, kind),
+            RunTarget::Npm(script) => RunConfig::for_npm(&self.root, &path, script),
         };
+        let can_debug = !cfg.kind.is_node();
         let run_cfg = cfg.clone();
         let debug_cfg = cfg.clone();
         // The parameter sets of the last run of a parametrized test: ▶ on one of them.
@@ -125,7 +127,7 @@ impl Workspace {
             Entry::Item {
                 label: format!("Debug '{}'", cfg.name),
                 shortcut: "Ctrl+Shift+F9".into(),
-                enabled: true,
+                enabled: can_debug,
                 run: Rc::new(move |this: &mut Workspace, w: &mut Window, cx: &mut Context<Workspace>| this.launch_context(debug_cfg.clone(), true, w, cx)),
             },
         ];

@@ -9,6 +9,7 @@ pub mod env;
 pub mod envfile;
 mod interp;
 mod links;
+pub mod node;
 pub mod profile;
 pub mod project_files;
 pub mod pyproj;
