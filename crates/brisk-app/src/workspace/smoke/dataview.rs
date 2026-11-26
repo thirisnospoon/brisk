@@ -232,9 +232,9 @@ impl Workspace {
             let first = |s: &Option<DataSnapshot>| s.as_ref().and_then(|s| s.3.clone()).map(|r| r.0);
 
             let t0 = Instant::now();
-            let _ = this.update_in(cx, |t, w, cx| {
+            let _ = this.update(cx, |t, cx| {
                 if let Some(i) = row_of(t, cx, "df") {
-                    t.view_as_data(i, w, cx);
+                    t.debug.update(cx, |d, cx| d.view_as_data(i, cx));
                 }
             });
             let df = table!();
@@ -275,9 +275,9 @@ impl Workspace {
 
             // A 1M-row frame: the first page, then a page in the middle, sorted.
             let t0 = Instant::now();
-            let _ = this.update_in(cx, |t, w, cx| {
+            let _ = this.update(cx, |t, cx| {
                 if let Some(i) = row_of(t, cx, "big") {
-                    t.view_as_data(i, w, cx);
+                    t.debug.update(cx, |d, cx| d.view_as_data(i, cx));
                 }
             });
             let b = table!();
@@ -302,9 +302,9 @@ impl Workspace {
                 check("big row 500000", mid.is_some());
             }
 
-            let _ = this.update_in(cx, |t, w, cx| {
+            let _ = this.update(cx, |t, cx| {
                 if let Some(i) = row_of(t, cx, "arr") {
-                    t.view_as_data(i, w, cx);
+                    t.debug.update(cx, |d, cx| d.view_as_data(i, cx));
                 }
             });
             let a = table!();
@@ -319,7 +319,7 @@ impl Workspace {
             // Copy Value of a long string: the whole value, not the tree's short repr.
             let _ = this.update(cx, |t, cx| {
                 if let Some(i) = row_of(t, cx, "long_s") {
-                    t.copy_value(i, cx);
+                    t.debug.update(cx, |d, cx| d.copy_value(i, cx));
                 }
             });
             wait(1500).await;
@@ -332,7 +332,7 @@ impl Workspace {
             check("copy value is the whole string", clip.chars().count() == 5003 && clip.ends_with("END"));
             let _ = this.update(cx, |t, cx| {
                 if let Some(i) = row_of(t, cx, "long_s") {
-                    t.copy_as_expression(i, cx);
+                    t.debug.update(cx, |d, cx| d.copy_as_expression(i, cx));
                 }
             });
             wait(300).await;
@@ -340,8 +340,8 @@ impl Workspace {
             check("copy as expression", clip == "long_s");
             let _ = this.update(cx, |t, cx| {
                 if let Some(i) = row_of(t, cx, "long_s") {
-                    t.add_row_to_watches(i, cx);
-                    t.view_value(i, cx);
+                    t.debug.update(cx, |d, cx| d.add_row_to_watches(i, cx));
+                    t.debug.update(cx, |d, cx| d.view_value(i, cx));
                 }
             });
             wait(1500).await;
@@ -352,7 +352,7 @@ impl Workspace {
                         _ => "?".into(),
                     });
                     let w = t.debug.read(cx).watches.clone();
-                    t.remove_watch(t.debug.read(cx).watches.len().saturating_sub(1), cx);
+                    t.debug.update(cx, |d, cx| d.remove_watch(d.watches.len().saturating_sub(1), cx));
                     (w, title)
                 })
                 .unwrap_or_default();

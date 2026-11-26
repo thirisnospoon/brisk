@@ -2,25 +2,25 @@
 
 use super::*;
 
-impl Workspace {
+impl DebugModel {
     /// Enter in the console's input line: evaluate in the selected frame.
     pub(super) fn evaluate_input(&mut self, cx: &mut Context<Self>) {
-        let expr = std::mem::take(&mut self.debug.as_mut(cx).input);
+        let expr = std::mem::take(&mut self.input);
         if expr.trim().is_empty() {
             return;
         }
-        self.debug.as_mut(cx).completion = None;
-        self.debug.as_mut(cx).history.retain(|h| *h != expr);
-        self.debug.as_mut(cx).history.push(expr.clone());
-        let n = self.debug.read(cx).history.len().saturating_sub(100);
-        self.debug.as_mut(cx).history.drain(..n);
-        self.debug.as_mut(cx).history_pos = usize::MAX;
+        self.completion = None;
+        self.history.retain(|h| *h != expr);
+        self.history.push(expr.clone());
+        let n = self.history.len().saturating_sub(100);
+        self.history.drain(..n);
+        self.history_pos = usize::MAX;
         let _ = std::fs::create_dir_all(brisk_db::config_dir());
-        let _ = std::fs::write(history_path(), serde_json::to_string(&self.debug.read(cx).history).unwrap_or_default());
-        self.debug.as_mut(cx).print(&format!(">>> {expr}\n"), Line::Input);
-        let frame = self.debug.read(cx).frames.get(self.debug.read(cx).frame).map(|f| f.id);
-        let Some(s) = self.debug.read(cx).session.as_ref().filter(|s| s.state != State::Ended) else {
-            self.debug.as_mut(cx).info("The debugger is not running");
+        let _ = std::fs::write(history_path(), serde_json::to_string(&self.history).unwrap_or_default());
+        self.print(&format!(">>> {expr}\n"), Line::Input);
+        let frame = self.frames.get(self.frame).map(|f| f.id);
+        let Some(s) = self.session.as_ref().filter(|s| s.state != State::Ended) else {
+            self.info("The debugger is not running");
             return;
         };
         let mut args = json!({"expression": expr, "context": "repl"});
@@ -35,10 +35,10 @@ impl Workspace {
                     Ok(Ok(v)) => {
                         let (r, _) = brisk_dap::parse_evaluate(&v);
                         if !r.is_empty() {
-                            this.debug.as_mut(cx).print(&format!("{r}\n"), Line::Result);
+                            this.print(&format!("{r}\n"), Line::Result);
                         }
                     }
-                    Ok(Err(e)) => this.debug.as_mut(cx).print(&format!("{e}\n"), Line::Err),
+                    Ok(Err(e)) => this.print(&format!("{e}\n"), Line::Err),
                     Err(_) => {}
                 }
                 cx.notify();
@@ -49,17 +49,17 @@ impl Workspace {
 
     /// Tab in the console: ask debugpy what the name at the end of the input can be.
     pub(super) fn complete_input(&mut self, cx: &mut Context<Self>) {
-        let Some(frame) = self.debug.read(cx).frames.get(self.debug.read(cx).frame).map(|f| f.id) else {
-            self.status = "Completion works while the program is paused".into();
+        let Some(frame) = self.frames.get(self.frame).map(|f| f.id) else {
+            cx.emit(DebugEvent::Status("Completion works while the program is paused".into()));
             return;
         };
-        let Some(s) = self.debug.read(cx).session.as_ref().filter(|s| s.state != State::Ended) else { return };
-        let text = self.debug.read(cx).input.clone();
+        let Some(s) = self.session.as_ref().filter(|s| s.state != State::Ended) else { return };
+        let text = self.input.clone();
         let rx = s.client.request("completions", json!({"text": text, "column": text.chars().count() + 1, "frameId": frame}));
         cx.spawn(async move |this, cx| {
             let res = rx.await;
             let _ = this.update(cx, |this, cx| {
-                if this.debug.read(cx).input != text {
+                if this.input != text {
                     return;
                 }
                 let mut items: Vec<(String, String)> = match res {
@@ -77,19 +77,19 @@ impl Workspace {
                 order_completions(&mut items);
                 let start = completion_start(&text);
                 match items.len() {
-                    0 => this.status = "No completions".into(),
+                    0 => cx.emit(DebugEvent::Status("No completions".into())),
                     1 => {
-                        this.debug.as_mut(cx).input.truncate(start);
-                        this.debug.as_mut(cx).input.push_str(&items[0].0);
+                        this.input.truncate(start);
+                        this.input.push_str(&items[0].0);
                     }
                     _ => {
                         let typed = &text[start..];
                         let p = common_prefix(items.iter().map(|i| i.0.as_str()));
                         if p.len() > typed.len() && p.starts_with(typed) {
-                            this.debug.as_mut(cx).input.truncate(start);
-                            this.debug.as_mut(cx).input.push_str(&p);
+                            this.input.truncate(start);
+                            this.input.push_str(&p);
                         }
-                        this.debug.as_mut(cx).completion = Some(ConsoleCompletion { items, start, sel: 0 });
+                        this.completion = Some(ConsoleCompletion { items, start, sel: 0 });
                     }
                 }
                 cx.notify();
@@ -97,9 +97,7 @@ impl Workspace {
         })
         .detach();
     }
-}
 
-impl DebugModel {
     /// Keys while the completion list is open; false lets the input line have the key.
     pub(super) fn completion_key(&mut self, key: &str) -> bool {
         let Some(c) = self.completion.as_mut() else { return false };

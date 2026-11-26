@@ -64,9 +64,9 @@ impl Workspace {
                 // Screenshots: stay paused at the first breakpoint.
                 let _ = this.update_in(cx, |t, _, cx| {
                     if let Some(i) = t.debug.read(cx).vars.iter().position(|r| r.var.name == "items") {
-                        t.toggle_var(i, cx);
+                        t.debug.update(cx, |d, cx| d.toggle_var(i, cx));
                     }
-                    t.add_watch("len(items)".into(), cx);
+                    t.debug.update(cx, |d, cx| d.add_watch("len(items)".into(), cx));
                 });
                 // Print what changes, for a driver that clicks the window (mouse checks).
                 let mut last = String::new();
@@ -101,7 +101,7 @@ impl Workspace {
             // Expand a list variable.
             let _ = this.update_in(cx, |t, _, cx| {
                 if let Some(i) = t.debug.read(cx).vars.iter().position(|r| r.var.name == "items") {
-                    t.toggle_var(i, cx);
+                    t.debug.update(cx, |d, cx| d.toggle_var(i, cx));
                 }
             });
             wait(600).await;
@@ -112,20 +112,20 @@ impl Workspace {
             // Set Value of items[0], Copy Value of items.
             let _ = this.update_in(cx, |t, _, cx| {
                 if let Some(i) = t.debug.read(cx).vars.iter().position(|r| r.depth >= 2 && r.var.name == "0") {
-                    t.set_value(i, "10".into(), cx);
+                    t.debug.update(cx, |d, cx| d.set_value(i, "10".into(), cx));
                 }
             });
             wait(800).await;
             let _ = this.update_in(cx, |t, _, cx| {
                 let v = t.debug.read(cx).vars.iter().find(|r| r.depth >= 2 && r.var.name == "0").map(|r| r.var.value.clone());
                 if let Some(i) = t.debug.read(cx).vars.iter().position(|r| r.var.name == "items") {
-                    t.copy_value(i, cx);
+                    t.debug.update(cx, |d, cx| d.copy_value(i, cx));
                 }
                 let clip = cx.read_from_clipboard().and_then(|c| c.text());
                 eprintln!("smoke-debug: set value items[0] -> {v:?}; copy value of items -> {clip:?}");
                 t.debug.as_mut(cx).watches.clear();
                 for w in ["len(items)", "total", "nope_x"] {
-                    t.add_watch(w.into(), cx);
+                    t.debug.update(cx, |d, cx| d.add_watch(w.into(), cx));
                 }
             });
             wait(1000).await;
@@ -140,9 +140,9 @@ impl Workspace {
                     if let Some(e) = t.debug.as_mut(cx).edit.as_mut() {
                         e.text = "len(items) + 1".into();
                     }
-                    t.commit_edit(cx);
+                    t.debug.update(cx, |d, cx| d.commit_edit(cx));
                 }
-                t.remove_watch(2, cx);
+                t.debug.update(cx, |d, cx| d.remove_watch(2, cx));
             });
             wait(1000).await;
             let _ = this.update_in(cx, |t, _, cx| {
@@ -153,7 +153,7 @@ impl Workspace {
             let _ = this.update_in(cx, |t, w, cx| {
                 t.dispatch(Action::EvaluateExpression, w, cx);
                 t.debug.as_mut(cx).input = "sum(items) * 10".into();
-                t.evaluate_input(cx);
+                t.debug.update(cx, |d, cx| d.evaluate_input(cx));
             });
             wait(800).await;
             let _ = this.update_in(cx, |t, _, cx| {
@@ -161,14 +161,14 @@ impl Workspace {
                 eprintln!("smoke-debug: evaluate -> {tail:?}");
                 // Tab completion: one match is inserted, several open the list.
                 t.debug.as_mut(cx).input = "ite".into();
-                t.complete_input(cx);
+                t.debug.update(cx, |d, cx| d.complete_input(cx));
             });
             wait(800).await;
             let _ = this.update(cx, |t, cx| {
                 eprintln!("smoke-debug: tab after 'ite' -> {:?} list {:?}", t.debug.read(cx).input, t.debug.read(cx).completion.as_ref().map(|c| c.shown(&t.debug.read(cx).input).iter().map(|i| i.0.clone()).collect::<Vec<_>>()));
                 t.debug.as_mut(cx).completion = None;
                 t.debug.as_mut(cx).input = "items.".into();
-                t.complete_input(cx);
+                t.debug.update(cx, |d, cx| d.complete_input(cx));
             });
             wait(800).await;
             let _ = this.update(cx, |t, cx| {
@@ -432,15 +432,15 @@ impl Workspace {
                 }
             }
             let main_id = threads.iter().find(|t| t.1 == "MainThread").map(|t| t.0);
-            let _ = this.update_in(cx, |t, w, cx| {
-                let shown = t.render_threads(cx).is_some();
+            let _ = this.update(cx, |t, cx| {
+                let shown = t.debug.update(cx, |d, cx| d.render_threads(cx).is_some());
                 eprintln!(
                     "smoke-debug: threads {s:?} at {:?} threads={:?} chooser={shown}",
                     t.debug.read(cx).frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)),
                     threads.iter().map(|t| t.1.as_str()).collect::<Vec<_>>()
                 );
                 if let Some(id) = main_id {
-                    t.select_thread(id, w, cx);
+                    t.debug.update(cx, |d, cx| d.select_thread(id, cx));
                 }
             });
             wait(1500).await;
@@ -478,10 +478,10 @@ impl Workspace {
                     break;
                 }
             }
-            let _ = this.update_in(cx, |t, w, cx| {
+            let _ = this.update(cx, |t, cx| {
                 let i = labels.iter().position(|l| l.starts_with("a")).unwrap_or(0);
                 eprintln!("smoke-debug: smart step targets {labels:?} -> choose {:?}", labels.get(i));
-                t.chooser_go(i, w, cx);
+                t.debug.update(cx, |d, cx| d.chooser_go(i, cx));
             });
             let s = settled!();
             wait(800).await;
@@ -618,7 +618,7 @@ impl Workspace {
                         ed.update(cx, |e, cx| e.toggle_breakpoint(4, cx));
                     }
                     if let Some(i) = listed.iter().position(|x| *x == pid as i64) {
-                        t.chooser_go(i, w, cx);
+                        t.debug.update(cx, |d, cx| d.chooser_go(i, cx));
                     } else {
                         t.debug.as_mut(cx).chooser = None;
                     }

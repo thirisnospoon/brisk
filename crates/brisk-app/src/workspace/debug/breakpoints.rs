@@ -87,7 +87,7 @@ impl Workspace {
             self.send_breakpoints(&p, cx);
         }
         if self.debug.read(cx).session.as_ref().is_some_and(|s| s.state != State::Ended) {
-            self.debug_request("setExceptionBreakpoints", self.debug.read(cx).exception_args(), cx);
+            self.debug.update(cx, |d, cx| d.request("setExceptionBreakpoints", d.exception_args(), cx));
         }
         self.status = if muted { "Breakpoints muted".into() } else { "Breakpoints unmuted".into() };
         cx.notify();
@@ -126,24 +126,11 @@ impl Workspace {
 
     /// setBreakpoints for one file; the reply marks verified breakpoints in its editor.
     pub(super) fn send_breakpoints(&mut self, path: &Path, cx: &mut Context<Self>) {
-        let Some(s) = self.debug.read(cx).session.as_ref().filter(|s| s.state != State::Ended) else { return };
+        if !self.debug.read(cx).session.as_ref().is_some_and(|s| s.state != State::Ended) {
+            return;
+        }
         let bps = self.source_breakpoints(path, cx);
-        let rx = s.client.request("setBreakpoints", brisk_dap::set_breakpoints_args(path, &bps));
-        let path = path.to_path_buf();
-        cx.spawn(async move |this, cx| {
-            let Ok(Ok(v)) = rx.await else { return };
-            let verified = brisk_dap::parse_breakpoints(&v);
-            let _ = this.update(cx, |this, cx| {
-                // Replies list the temporary breakpoint last; editors only know the user's.
-                if let Some(ed) = this.editors().find(|e| e.read(cx).path.as_ref() == Some(&path)).cloned() {
-                    ed.update(cx, |e, cx| {
-                        e.set_breakpoints_verified(&verified);
-                        cx.notify();
-                    });
-                }
-            });
-        })
-        .detach();
+        self.debug.update(cx, |d, cx| d.set_breakpoints(path, &bps, cx));
     }
 
     /// Ctrl+F8 at the caret.
@@ -267,7 +254,7 @@ impl Workspace {
         self.debug.as_mut(cx).exc_uncaught = uncaught;
         save_exc(&self.root, raised, uncaught, &self.debug.read(cx).exc_classes);
         if self.debug.read(cx).session.as_ref().is_some_and(|s| s.state != State::Ended) {
-            self.debug_request("setExceptionBreakpoints", self.debug.read(cx).exception_args(), cx);
+            self.debug.update(cx, |d, cx| d.request("setExceptionBreakpoints", d.exception_args(), cx));
         }
         cx.notify();
     }
@@ -736,6 +723,20 @@ impl Workspace {
                 .into_any_element(),
         )
     }
+}
 
-    // --- Session ----------------------------------------------------------------------
+impl DebugModel {
+    /// setBreakpoints for one file; the reply says which are verified (`DebugEvent::Verified`).
+    pub(super) fn set_breakpoints(&mut self, path: &Path, bps: &[SourceBreakpoint], cx: &mut Context<Self>) {
+        let Some(s) = self.session.as_ref().filter(|s| s.state != State::Ended) else { return };
+        let rx = s.client.request("setBreakpoints", brisk_dap::set_breakpoints_args(path, bps));
+        let path = path.to_path_buf();
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(v)) = rx.await else { return };
+            // Replies list the temporary breakpoint last; editors only know the user's.
+            let verified = brisk_dap::parse_breakpoints(&v);
+            let _ = this.update(cx, |_, cx| cx.emit(DebugEvent::Verified(path, verified)));
+        })
+        .detach();
+    }
 }

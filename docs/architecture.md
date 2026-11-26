@@ -869,6 +869,28 @@ split it while moving (session, breakpoints, variables, console, views). It need
 configuration (from `RunModel` later, from `Workspace` until then) and opens files at
 lines. Verify: DEBUG smoke, `brisk-dap` tests. Risk: medium.
 
+Done on branch `arch2`, in three commits, with the pattern of step 15. `debug_ui.rs` is now
+the folder `workspace/debug/`: `mod.rs` (types, stored settings, `DebugEvent`,
+`Workspace::on_debug_event`), `session.rs`, `breakpoints.rs`, `variables.rs`, `console.rs`,
+`window.rs` and `smoke.rs`. `DebugModel` owns the session, frames, threads, variables,
+watches, the console with its history and completion, exception breakpoint settings and the
+choosers, and draws the Debug window (`impl Render`); the Smart Step Into / Attach to
+Process chooser is a model method the workspace draws over everything. One deviation: the
+model is created with the workspace, not on first use, because opening a file moves its
+stored breakpoints into the editor, so `Workspace` holds `Entity<DebugModel>` without a
+handle struct. `DebugEvent` carries what the model needs from outside: status, toasts,
+showing the window, a frame's file and line, inline values, clearing execution marks,
+breakpoint verification and the session's end, sending breakpoints (after `initialized`
+the workspace sends every file's, then calls `DebugModel::configure`), refreshing or staling
+the table tabs, View as DataFrame and View Value tabs, console links, the documentation
+hover, the variables menu, attaching to a chosen process, the debugpy install offer and the
+toolbar's actions. What stays on `Workspace` needs its editors, tabs or run
+configurations: breakpoints (they live in the editors; stored ones for closed files are in
+the model), drawing the View Breakpoints dialog and its keys, the launch checks of `start_debug` and
+`attach_to_process` (Before launch, remote targets, interpreter, env files), Stop's choice
+between a run and the debugger, and Smart Step Into reading the stop's statement from its
+editor. `workspace.rs` changed in two lines.
+
 #### Step 17. `VcsModel`
 
 Reached from 12 files, all git ones plus `workspace.rs` and

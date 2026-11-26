@@ -9,6 +9,7 @@ use gpui::{div, px, Context, Window};
 use std::path::PathBuf;
 
 /// What starts once the package is installed.
+#[derive(Clone)]
 pub enum Then {
     /// Run with Coverage of this configuration.
     Coverage(RunConfig),
@@ -111,7 +112,7 @@ impl Workspace {
                                 this.start_debug(cfg, window, cx);
                                 this.before_passed = None;
                             }
-                            Then::Attach(pid, process) => this.reattach(pid, process, window, cx),
+                            Then::Attach(pid, process) => this.reattach(pid, process, cx),
                         }
                     }
                     Err(e) => {

@@ -579,7 +579,7 @@ impl Workspace {
 
         window.focus(&tree_focus);
         let saved_bookmarks = bookmarks_ui::load(&root);
-        let debug = cx.new(|cx| debug::DebugModel::new(&root, cx));
+        let debug = debug::create(&root, window, cx);
         budget_probe::mark("bookmarks_debug");
         cx.defer_in(window, |this: &mut Self, window, cx| this.start_disk_poll(window, cx));
         // Closing the window saves everything first (PyCharm never asks).
@@ -3235,7 +3235,7 @@ impl Render for Workspace {
             (BottomTool::Git, _) => self.render_git_log(cx),
             (BottomTool::Find, _) => self.render_find_window(cx),
             (BottomTool::Problems, _) => self.render_problems(cx),
-            (BottomTool::Debug, _) => self.render_debug(window, cx),
+            (BottomTool::Debug, _) => self.debug.clone().into_any_element(),
             (BottomTool::Services, _) => self.render_services(cx),
             (BottomTool::PythonConsole, _) => self.render_python_console(window, cx),
             (BottomTool::Packages, _) => self.render_python_packages(window, cx),

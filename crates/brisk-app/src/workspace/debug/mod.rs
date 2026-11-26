@@ -20,7 +20,9 @@ use brisk_keymap::Action;
 use brisk_run::RunConfig;
 use futures::StreamExt;
 use gpui::prelude::*;
-use gpui::{div, list, px, uniform_list, Context, Entity, FocusHandle, ListAlignment, ListOffset, ListState, Task, UniformListScrollHandle, Window};
+use gpui::{
+    div, list, px, uniform_list, Context, Entity, EventEmitter, FocusHandle, ListAlignment, ListOffset, ListState, Task, UniformListScrollHandle, Window,
+};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -144,7 +146,162 @@ pub struct VarEdit {
     pub text: String,
 }
 
+/// What the debugger needs from the workspace: editors, tabs, the status bar and toasts.
+/// `Workspace::on_debug_event` is the one place that handles them.
+pub enum DebugEvent {
+    Status(String),
+    Toast(String, bool),
+    /// Show the Debug window in the bottom panel.
+    ShowWindow,
+    /// A frame was selected: open its file at the line and mark it as the execution point.
+    ShowFrame(PathBuf, usize),
+    /// The values of the stop's frame next to the lines of this file, up to the stop line.
+    InlineValues(PathBuf, usize, Vec<Variable>),
+    /// Execution marks and inline values go (from these files and wherever one is shown).
+    ClearMarks(Vec<PathBuf>),
+    /// The session ended: no breakpoint is verified any more.
+    Ended,
+    /// The adapter is initialized: every file's breakpoints, then `DebugModel::configure`.
+    Initialized,
+    /// This file's breakpoints changed for the debugger (Run to Cursor's temporary one went).
+    SendBreakpoints(PathBuf),
+    /// The reply to setBreakpoints for this file: which lines are verified.
+    Verified(PathBuf, Vec<Option<usize>>),
+    /// Open tables evaluate again in this frame / show that their rows are old.
+    RefreshDataViews(Arc<Client>, Option<i64>),
+    StaleDataViews(String),
+    /// View as DataFrame / Array: the table tab of this expression, evaluated in the frame.
+    ViewData(String, Arc<Client>, Option<i64>),
+    /// View Value: a scratch editor tab with this title and text.
+    OpenText(String, String),
+    /// A link in the console: the file at a 1-based line, focused.
+    OpenAt(PathBuf, usize),
+    /// Not a value under the mouse: the editor's documentation hover.
+    QuickDoc(Entity<Editor>, usize, gpui::Point<gpui::Pixels>),
+    /// The right-click menu of a variables row.
+    VarMenu(usize, gpui::Point<gpui::Pixels>),
+    /// Attach to Process chose this process (or Rerun found it alive).
+    Attach(u32, String),
+    /// No debugpy: offer to install it into this interpreter, then start `Then` again.
+    OfferDebugpy(String, PathBuf, Box<crate::workspace::install_offer_ui::Then>),
+    /// A toolbar button of the Debug window.
+    Dispatch(Action),
+}
+
+impl EventEmitter<DebugEvent> for DebugModel {}
+
+/// The model, created with the workspace (the gutter reads its stored breakpoints at the
+/// first file open), with its events going to `Workspace::on_debug_event`.
+pub(super) fn create(root: &Path, window: &mut Window, cx: &mut Context<Workspace>) -> Entity<DebugModel> {
+    let debug = cx.new(|cx| DebugModel::new(root, cx));
+    cx.subscribe_in(&debug, window, |this, _, ev, window, cx| this.on_debug_event(ev, window, cx)).detach();
+    // The workspace draws the chooser and the Breakpoints dialog from the model's state.
+    cx.observe(&debug, |_, _, cx| cx.notify()).detach();
+    debug
+}
+
+impl Workspace {
+    /// What the debugger asks of the workspace.
+    fn on_debug_event(&mut self, ev: &DebugEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match ev {
+            DebugEvent::Status(s) => self.status = s.clone(),
+            DebugEvent::Toast(t, error) => self.show_toast(t.clone(), *error, cx),
+            DebugEvent::ShowWindow => self.bottom = Some(BottomTool::Debug),
+            DebugEvent::ShowFrame(p, line) => {
+                let focus_back = self.debug.read(cx).focus.is_focused(window);
+                self.open_file(p, window, cx);
+                if let Some(ed) = self.active_editor().cloned() {
+                    let line = *line;
+                    ed.update(cx, |e, cx| {
+                        e.exec_line = Some(line);
+                        e.go_to_line(line, cx);
+                    });
+                }
+                if focus_back {
+                    window.focus(&self.debug.read(cx).focus.clone());
+                }
+            }
+            DebugEvent::InlineValues(p, line, vars) => {
+                if let Some(ed) = self.editors().find(|e| e.read(cx).path.as_ref() == Some(p)).cloned() {
+                    let b = &ed.read(cx).buffer;
+                    let lines: Vec<String> = (0..=(*line).min(b.len_lines().saturating_sub(1))).map(|l| b.line(l)).collect();
+                    let values = inline_values(&lines, *line, vars);
+                    ed.update(cx, |e, cx| {
+                        e.set_inline_values(values);
+                        cx.notify();
+                    });
+                }
+            }
+            DebugEvent::ClearMarks(marked) => {
+                for e in self.editors().cloned().collect::<Vec<_>>() {
+                    if e.read(cx).path.as_ref().is_some_and(|p| marked.contains(p)) || e.read(cx).exec_line.is_some() {
+                        e.update(cx, |e, cx| {
+                            e.exec_line = None;
+                            e.clear_inline_values();
+                            cx.notify();
+                        });
+                    }
+                }
+            }
+            DebugEvent::Ended => {
+                for e in self.editors().cloned().collect::<Vec<_>>() {
+                    e.update(cx, |e, cx| {
+                        e.clear_breakpoints_verified();
+                        cx.notify();
+                    });
+                }
+            }
+            DebugEvent::Initialized => {
+                for (p, _) in self.all_breakpoints(cx) {
+                    self.send_breakpoints(&p, cx);
+                }
+                self.debug.update(cx, |d, cx| d.configure(cx));
+            }
+            DebugEvent::SendBreakpoints(p) => self.send_breakpoints(p, cx),
+            DebugEvent::Verified(p, verified) => {
+                if let Some(ed) = self.editors().find(|e| e.read(cx).path.as_ref() == Some(p)).cloned() {
+                    ed.update(cx, |e, cx| {
+                        e.set_breakpoints_verified(verified);
+                        cx.notify();
+                    });
+                }
+            }
+            DebugEvent::RefreshDataViews(client, frame) => {
+                for v in self.data_views() {
+                    v.update(cx, |v, cx| v.refresh(client.clone(), *frame, cx));
+                }
+            }
+            DebugEvent::StaleDataViews(why) => {
+                for v in self.data_views() {
+                    v.update(cx, |v, cx| v.set_stale(why, cx));
+                }
+            }
+            DebugEvent::ViewData(expr, client, frame) => self.show_data_view(expr.clone(), client.clone(), *frame, window, cx),
+            DebugEvent::OpenText(title, text) => {
+                let ed = cx.new(|cx| {
+                    let mut e = Editor::scratch(text, cx);
+                    e.title_override = Some(title.clone());
+                    e
+                });
+                self.add_tab(Tab::Editor(ed));
+            }
+            DebugEvent::OpenAt(p, line) => self.open_console_link(p, *line, window, cx),
+            DebugEvent::QuickDoc(ed, pos, at) => self.quick_doc(ed.clone(), Some((*pos, *at)), cx),
+            DebugEvent::VarMenu(i, pos) => self.var_menu(*i, *pos, cx),
+            DebugEvent::Attach(pid, label) => self.attach_to_process(*pid, label.clone(), cx),
+            DebugEvent::OfferDebugpy(msg, python, then) => {
+                self.status = msg.clone();
+                self.install_offer =
+                    Some(crate::workspace::install_offer_ui::InstallOffer { package: "debugpy", python: python.clone(), then: (**then).clone() });
+            }
+            DebugEvent::Dispatch(action) => self.dispatch(*action, window, cx),
+        }
+        cx.notify();
+    }
+}
+
 pub struct DebugModel {
+    root: PathBuf,
     pub session: Option<Session>,
     /// Breakpoints of files that are not open.
     pub stored: Vec<StoredBp>,
@@ -221,6 +378,7 @@ pub struct Chooser {
 impl DebugModel {
     pub fn new(root: &Path, cx: &mut gpui::App) -> Self {
         Self {
+            root: root.to_path_buf(),
             session: None,
             stored: load(root),
             console: Vec::new(),
