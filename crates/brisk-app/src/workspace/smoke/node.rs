@@ -44,6 +44,10 @@ impl Workspace {
             std::fs::write(&pj, "{\n  \"name\": \"demo\",\n  \"scripts\": {\n    \"hello\": \"node hello.js\",\n    \"greet\": \"node greet.ts\"\n  }\n}\n");
         let _ = std::fs::write(root.join("hello.js"), "console.log('hi from npm ' + process.env.FOO);\n");
         let _ = std::fs::write(root.join("greet.ts"), "const who: string = 'ts';\nconsole.log(`hi from ${who}`);\n");
+        let _ = std::fs::write(
+            root.join("repo.ts"),
+            "export class UserRepo {\n  load = async () => {};\n  save(u) {}\n}\nexport const makeRepo = () => new UserRepo();\n",
+        );
         self.open_file(&pj, window, cx);
         cx.spawn_in(window, async move |this, cx| {
             wait(cx, 500).await;
@@ -85,6 +89,36 @@ impl Workspace {
                 .ok()
                 .flatten();
             check(toast.as_deref().is_some_and(|t| t.contains("not available")), "debug blocked", &toast);
+            // JS / TS symbols: Go to Class and Go to Symbol find them (the files were written
+            // after the startup scan).
+            let _ = this.update(cx, |t, cx| t.reindex_files(cx));
+            for _ in 0..100 {
+                let listed = this.update(cx, |t, _| t.files.as_ref().is_some_and(|f| f.files.iter().any(|p| p.ends_with("repo.ts")))).unwrap_or(false);
+                if listed {
+                    break;
+                }
+                wait(cx, 100).await;
+            }
+            for _ in 0..100 {
+                let ready = this.update(cx, |t, cx| {
+                    t.ensure_symbols(cx);
+                    t.symbols.list.is_some() && !t.symbols.building
+                });
+                if ready.unwrap_or(false) {
+                    break;
+                }
+                wait(cx, 100).await;
+            }
+            let found = this
+                .update(cx, |t, _| {
+                    let class = t.symbol_items("UserRepo", true, 5).into_iter().map(|i| i.label).collect::<Vec<_>>();
+                    let func = t.symbol_items("makeRepo", false, 5).into_iter().map(|i| i.label).collect::<Vec<_>>();
+                    let method = t.symbol_items("UserRepo.save", false, 5).into_iter().map(|i| i.label).collect::<Vec<_>>();
+                    (class, func, method)
+                })
+                .unwrap_or_default();
+            let ok = found.0.first().is_some_and(|l| l.contains("UserRepo")) && found.1.first().is_some_and(|l| l.contains("makeRepo")) && !found.2.is_empty();
+            check(ok, "TS symbols indexed", &found);
             eprintln!("smoke-node: PASS");
             std::process::exit(0);
         })

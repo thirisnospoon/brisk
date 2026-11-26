@@ -152,8 +152,9 @@ fn empty_str() -> Arc<str> {
 
 fn file_symbols(path: &Path) -> Vec<Sym> {
     let mut out = Vec::new();
+    let Some(lang) = Lang::from_path(path).filter(|l| *l == Lang::Python || l.is_js()) else { return out };
     let Some(text) = brisk_search::read_text(path) else { return out };
-    let mut tree = SyntaxTree::new(Lang::Python);
+    let mut tree = SyntaxTree::new(lang);
     tree.parse(&text);
     let col = |byte: usize| {
         let line_start = text[..byte].rfind('\n').map(|n| n + 1).unwrap_or(0);
@@ -177,8 +178,18 @@ fn file_symbols(path: &Path) -> Vec<Sym> {
     out
 }
 
+/// Files with symbols: Python, and JS / TS except minified bundles and declaration files.
+fn indexed(rel: &str) -> bool {
+    let ext = rel.rsplit_once('.').map_or("", |(_, e)| e);
+    match ext {
+        "py" | "pyi" => true,
+        "js" | "mjs" | "cjs" | "jsx" | "ts" | "mts" | "cts" | "tsx" => !(rel.ends_with(".min.js") || rel.ends_with(".d.ts") || rel.ends_with(".bundle.js")),
+        _ => false,
+    }
+}
+
 fn index(files: &FileList, old: &SymCache) -> (SymIndex, SymCache) {
-    let py: Vec<usize> = (0..files.files.len()).filter(|&i| files.files[i].ends_with(".py") || files.files[i].ends_with(".pyi")).collect();
+    let py: Vec<usize> = (0..files.files.len()).filter(|&i| indexed(&files.files[i])).collect();
     // Files are parsed on several threads, each taking the next file from a shared counter.
     let next = std::sync::atomic::AtomicUsize::new(0);
     let read = || {

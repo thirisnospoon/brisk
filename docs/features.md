@@ -133,7 +133,7 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 - Search Everywhere (`Shift Shift`) with tabs All / Classes / Files / Symbols / Actions. Switch tabs with a click, `Tab` or by repeating the shortcut.
 - `Ctrl+N` Go to Class, `Ctrl+Shift+N` Go to File, `Ctrl+Alt+Shift+N` Go to Symbol, `Ctrl+Shift+A` Find Action, `Ctrl+E` Recent Files, `Ctrl+G` Go to Line (accepts `line:column`).
 - Find Action matches a whole word or the start of words (`sf` finds Show Files, not every title with an s and an f), and an action reachable from several menus is listed once.
-- Files are indexed in the background, respecting `.gitignore`, with fuzzy matching. Classes and functions of all `.py` files are indexed by tree-sitter in the background and updated after each save. This does not need ty.
+- Files are indexed in the background, respecting `.gitignore`, with fuzzy matching. Classes and functions of all `.py` files, and of JS / TS files (classes, interfaces, enums, functions, methods, `const f = () => …` and top-level constants; minified bundles and `.d.ts` are skipped), are indexed by tree-sitter in the background and updated after each save. Structure, breadcrumbs and sticky lines use the same outline. This does not need ty or a TypeScript server.
 - Names match by prefix and by word starts: `fbp` finds `find_by_prefix`, `UR` finds `UserRepository`, `Repo.ad` finds member `ad…` of class `Repo…`. Go to Symbol also lists module-level variables and constants (`MAX_RETRIES`).
 - `Ctrl+F12` File Structure (with a filter), `Alt+↑/↓` previous / next method.
 - `Ctrl+Alt+←/→` Back / Forward. `Ctrl+Shift+E` Recent Locations (press again for changed locations only). `Ctrl+Shift+Backspace` Last Edit Location.

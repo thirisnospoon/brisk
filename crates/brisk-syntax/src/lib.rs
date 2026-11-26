@@ -168,6 +168,11 @@ impl Lang {
         }
     }
 
+    /// JavaScript, TypeScript or TSX.
+    pub fn is_js(self) -> bool {
+        matches!(self, Lang::JavaScript | Lang::TypeScript | Lang::Tsx)
+    }
+
     /// Line comment prefix for Ctrl+/ (None: block comments only).
     pub fn line_comment(self) -> Option<&'static str> {
         match self {
@@ -673,16 +678,23 @@ impl SyntaxTree {
         let mut out = Vec::new();
         let Some(tree) = &self.tree else { return out };
         let python = self.lang == Lang::Python;
+        if !python && !self.lang.is_js() {
+            return out;
+        }
         let mut cur = tree.walk();
         // The definition depth of the node under the cursor, one entry per level.
         let mut depths: Vec<usize> = vec![0];
         loop {
             let node = cur.node();
             let depth = depths.last().copied().unwrap_or(0);
-            let kind = match node.kind() {
-                "class_definition" => Some(OutlineKind::Class),
-                "function_definition" => Some(if depth > 0 { OutlineKind::Method } else { OutlineKind::Function }),
-                _ => None,
+            let kind = if python {
+                match node.kind() {
+                    "class_definition" => Some(OutlineKind::Class),
+                    "function_definition" => Some(if depth > 0 { OutlineKind::Method } else { OutlineKind::Function }),
+                    _ => None,
+                }
+            } else {
+                js_outline_kind(node, depth)
             };
             if let (Some(kind), Some(name)) = (kind, node.child_by_field_name("name")) {
                 out.push(OutlineItem {
@@ -695,7 +707,7 @@ impl SyntaxTree {
                 });
             }
             let child_depth = if kind.is_some() { depth + 1 } else { depth };
-            let descend = !python || kind.is_some() || PY_DEF_CONTAINERS.contains(&node.kind());
+            let descend = if python { kind.is_some() || PY_DEF_CONTAINERS.contains(&node.kind()) } else { !JS_LEAVES.contains(&node.kind()) };
             if descend && cur.goto_first_child() {
                 depths.push(child_depth);
                 continue;
@@ -710,11 +722,36 @@ impl SyntaxTree {
     }
 
     /// Module-level assignments (`NAME = ...`, `x: int = ...`, `a, b = ...`), each name once,
-    /// for Go to Symbol (PyCharm lists module variables and constants there too).
+    /// for Go to Symbol (PyCharm lists module variables and constants there too). In JS / TS:
+    /// top-level `const` / `let` / `var` names (exported or not) that are not functions.
     pub fn module_variables(&self, text: &str) -> Vec<OutlineItem> {
         let mut out: Vec<OutlineItem> = Vec::new();
         let Some(tree) = &self.tree else { return out };
         let root = tree.root_node();
+        if self.lang.is_js() {
+            let mut c = root.walk();
+            for st in root.children(&mut c) {
+                let decl = if st.kind() == "export_statement" { st.child_by_field_name("declaration") } else { Some(st) };
+                let Some(decl) = decl.filter(|d| matches!(d.kind(), "lexical_declaration" | "variable_declaration")) else { continue };
+                let mut dc = decl.walk();
+                for v in decl.named_children(&mut dc).filter(|n| n.kind() == "variable_declarator") {
+                    let is_fn = v.child_by_field_name("value").is_some_and(|x| JS_FUNCTION_VALUES.contains(&x.kind()));
+                    let Some(n) = v.child_by_field_name("name").filter(|n| n.kind() == "identifier") else { continue };
+                    if is_fn {
+                        continue;
+                    }
+                    out.push(OutlineItem {
+                        name: text[n.byte_range()].to_string(),
+                        kind: OutlineKind::Variable,
+                        depth: 0,
+                        byte: n.start_byte(),
+                        line: n.start_position().row,
+                        end_line: st.end_position().row,
+                    });
+                }
+            }
+            return out;
+        }
         let mut c = root.walk();
         for st in root.children(&mut c).filter(|n| n.kind() == "expression_statement") {
             let Some(a) = st.named_child(0).filter(|a| a.kind() == "assignment") else { continue };
@@ -742,6 +779,28 @@ impl SyntaxTree {
             }
         }
         out
+    }
+}
+
+/// Values that make a JS `const name = …` a function in Structure.
+const JS_FUNCTION_VALUES: &[&str] = &["arrow_function", "function_expression", "function", "generator_function"];
+
+/// JS / TS nodes the outline does not look into: no definition is listed inside them.
+const JS_LEAVES: &[&str] = &["string", "template_string", "comment", "regex", "jsx_text", "type_annotation", "import_statement", "number"];
+
+/// What a JS / TS node is in Structure, if anything: classes, interfaces, enums, functions,
+/// methods, and `const f = () => …` (in a class, `handle = () => …`).
+fn js_outline_kind(node: tree_sitter::Node, depth: usize) -> Option<OutlineKind> {
+    let func = |d: usize| if d > 0 { OutlineKind::Method } else { OutlineKind::Function };
+    match node.kind() {
+        "class_declaration" | "abstract_class_declaration" | "interface_declaration" | "enum_declaration" => Some(OutlineKind::Class),
+        "function_declaration" | "generator_function_declaration" => Some(func(depth)),
+        "method_definition" | "method_signature" | "abstract_method_signature" => Some(OutlineKind::Method),
+        "variable_declarator" | "public_field_definition" => {
+            let value = node.child_by_field_name("value")?;
+            JS_FUNCTION_VALUES.contains(&value.kind()).then(|| if node.kind() == "public_field_definition" { OutlineKind::Method } else { func(depth) })
+        }
+        _ => None,
     }
 }
 
@@ -1303,6 +1362,39 @@ mod incremental_tests {
         check(&mut inc, "class A:\n    x = 'é ö'\n");
         check(&mut inc, "");
         check(&mut inc, &base);
+    }
+
+    #[test]
+    fn js_outline_and_variables() {
+        let src = "import x from 'y';
+export const API = '/api';
+const add = (a, b) => a + b;
+export class Repo {
+  items = [];
+  load = async () => {};
+  save(x) { function inner() {} }
+}
+interface Shape { area(): number }
+function main() {}
+";
+        let mut t = SyntaxTree::new(Lang::TypeScript);
+        t.parse(src);
+        let o: Vec<(String, OutlineKind, usize)> = t.outline(src).into_iter().map(|o| (o.name, o.kind, o.depth)).collect();
+        assert_eq!(
+            o,
+            [
+                ("add".to_string(), OutlineKind::Function, 0),
+                ("Repo".into(), OutlineKind::Class, 0),
+                ("load".into(), OutlineKind::Method, 1),
+                ("save".into(), OutlineKind::Method, 1),
+                ("inner".into(), OutlineKind::Method, 2),
+                ("Shape".into(), OutlineKind::Class, 0),
+                ("area".into(), OutlineKind::Method, 1),
+                ("main".into(), OutlineKind::Function, 0),
+            ]
+        );
+        let v: Vec<String> = t.module_variables(src).into_iter().map(|o| o.name).collect();
+        assert_eq!(v, ["API"]);
     }
 
     #[test]

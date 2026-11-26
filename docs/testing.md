@@ -296,7 +296,7 @@ Checks Show in Services, the Stop and Rerun / Cancel question on a second run, t
 
 Folder: empty. Needs Node.js and npm on PATH. Writes `package.json` with the scripts `hello` and `greet`, `hello.js` and `greet.ts`.
 
-Checks the ▶ marks on the script lines, that a script runs through npm with the configuration's variable, that `greet.ts` runs with node, that both configurations are saved, and that Debug on an npm configuration shows that it is not available.
+Checks the ▶ marks on the script lines, that a script runs through npm with the configuration's variable, that `greet.ts` runs with node, that both configurations are saved, that Debug on an npm configuration shows that it is not available, and that Go to Class and Go to Symbol find `UserRepo`, `makeRepo` and `UserRepo.save` from `repo.ts`.
 
 ### `BRISK_SMOKE_PICKER=1`
 
