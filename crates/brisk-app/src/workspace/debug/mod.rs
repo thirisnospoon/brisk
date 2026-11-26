@@ -104,7 +104,7 @@ pub enum RowKind {
     Scope,
     Var,
     WatchHeader,
-    /// A watch: its index in `Debug::watches`.
+    /// A watch: its index in `DebugModel::watches`.
     Watch(usize),
 }
 
@@ -144,7 +144,7 @@ pub struct VarEdit {
     pub text: String,
 }
 
-pub struct Debug {
+pub struct DebugModel {
     pub session: Option<Session>,
     /// Breakpoints of files that are not open.
     pub stored: Vec<StoredBp>,
@@ -218,7 +218,7 @@ pub struct Chooser {
     pub sel: usize,
 }
 
-impl Debug {
+impl DebugModel {
     pub fn new(root: &Path, cx: &mut gpui::App) -> Self {
         Self {
             session: None,

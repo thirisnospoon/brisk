@@ -24,7 +24,7 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let bg = cx.background_executor().clone();
             let wait = |ms| bg.timer(std::time::Duration::from_millis(ms));
-            let state = |this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindowContext| this.update(cx, |t, _| t.debug.state()).ok().flatten();
+            let state = |this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindowContext| this.update(cx, |t, cx| t.debug.read(cx).state()).ok().flatten();
             // Wait until paused / ended.
             macro_rules! until {
                 ($pred:expr) => {{
@@ -52,8 +52,8 @@ impl Workspace {
             let ok = until!(paused);
             wait(400).await;
             let _ = this.update_in(cx, |t, _, cx| {
-                let f: Vec<String> = t.debug.frames.iter().map(|f| format!("{}:{}", f.name, f.line + 1)).collect();
-                let v: Vec<String> = t.debug.vars.iter().map(|r| format!("{}{}={}", "  ".repeat(r.depth), r.var.name, r.var.value)).collect();
+                let f: Vec<String> = t.debug.read(cx).frames.iter().map(|f| format!("{}:{}", f.name, f.line + 1)).collect();
+                let v: Vec<String> = t.debug.read(cx).vars.iter().map(|r| format!("{}{}={}", "  ".repeat(r.depth), r.var.name, r.var.value)).collect();
                 let exec = t.active_editor().and_then(|e| e.read(cx).exec_line).map(|l| l + 1);
                 eprintln!("smoke-debug: paused={ok} frames={f:?} exec_line={exec:?}");
                 eprintln!("smoke-debug: variables {v:?}");
@@ -63,7 +63,7 @@ impl Workspace {
             if std::env::var_os("BRISK_SMOKE_DEBUG_HOLD").is_some() {
                 // Screenshots: stay paused at the first breakpoint.
                 let _ = this.update_in(cx, |t, _, cx| {
-                    if let Some(i) = t.debug.vars.iter().position(|r| r.var.name == "items") {
+                    if let Some(i) = t.debug.read(cx).vars.iter().position(|r| r.var.name == "items") {
                         t.toggle_var(i, cx);
                     }
                     t.add_watch("len(items)".into(), cx);
@@ -79,15 +79,15 @@ impl Workspace {
                             .unwrap_or_default();
                         format!(
                             "state={:?} top={:?} bps={bps:?} muted={} popup={} bpdlg={} tab={:?} sel={:?} edit={:?} watches={:?}",
-                            t.debug.state(),
-                            t.debug.frames.first().map(|f| f.line + 1),
-                            t.debug.muted,
+                            t.debug.read(cx).state(),
+                            t.debug.read(cx).frames.first().map(|f| f.line + 1),
+                            t.debug.read(cx).muted,
                             t.popup.is_some(),
-                            t.debug.bp_dialog.as_ref().map_or("closed".to_string(), |d| format!("open(sel {} editing {})", d.sel, d.editing)),
-                            t.debug.tab,
-                            t.debug.sel.and_then(|s| t.debug.vars.get(s)).map(|r| r.var.name.clone()),
-                            t.debug.edit.as_ref().map(|e| e.target),
-                            t.debug.watches,
+                            t.debug.read(cx).bp_dialog.as_ref().map_or("closed".to_string(), |d| format!("open(sel {} editing {})", d.sel, d.editing)),
+                            t.debug.read(cx).tab,
+                            t.debug.read(cx).sel.and_then(|s| t.debug.read(cx).vars.get(s)).map(|r| r.var.name.clone()),
+                            t.debug.read(cx).edit.as_ref().map(|e| e.target),
+                            t.debug.read(cx).watches,
                         )
                     }) else {
                         return;
@@ -100,44 +100,44 @@ impl Workspace {
             }
             // Expand a list variable.
             let _ = this.update_in(cx, |t, _, cx| {
-                if let Some(i) = t.debug.vars.iter().position(|r| r.var.name == "items") {
+                if let Some(i) = t.debug.read(cx).vars.iter().position(|r| r.var.name == "items") {
                     t.toggle_var(i, cx);
                 }
             });
             wait(600).await;
-            let _ = this.update_in(cx, |t, _, _| {
-                let v: Vec<String> = t.debug.vars.iter().filter(|r| r.depth >= 2).map(|r| format!("{}={}", r.var.name, r.var.value)).collect();
+            let _ = this.update_in(cx, |t, _, cx| {
+                let v: Vec<String> = t.debug.read(cx).vars.iter().filter(|r| r.depth >= 2).map(|r| format!("{}={}", r.var.name, r.var.value)).collect();
                 eprintln!("smoke-debug: expanded items -> {v:?}");
             });
             // Set Value of items[0], Copy Value of items.
             let _ = this.update_in(cx, |t, _, cx| {
-                if let Some(i) = t.debug.vars.iter().position(|r| r.depth >= 2 && r.var.name == "0") {
+                if let Some(i) = t.debug.read(cx).vars.iter().position(|r| r.depth >= 2 && r.var.name == "0") {
                     t.set_value(i, "10".into(), cx);
                 }
             });
             wait(800).await;
             let _ = this.update_in(cx, |t, _, cx| {
-                let v = t.debug.vars.iter().find(|r| r.depth >= 2 && r.var.name == "0").map(|r| r.var.value.clone());
-                if let Some(i) = t.debug.vars.iter().position(|r| r.var.name == "items") {
+                let v = t.debug.read(cx).vars.iter().find(|r| r.depth >= 2 && r.var.name == "0").map(|r| r.var.value.clone());
+                if let Some(i) = t.debug.read(cx).vars.iter().position(|r| r.var.name == "items") {
                     t.copy_value(i, cx);
                 }
                 let clip = cx.read_from_clipboard().and_then(|c| c.text());
                 eprintln!("smoke-debug: set value items[0] -> {v:?}; copy value of items -> {clip:?}");
-                t.debug.watches.clear();
+                t.debug.as_mut(cx).watches.clear();
                 for w in ["len(items)", "total", "nope_x"] {
                     t.add_watch(w.into(), cx);
                 }
             });
             wait(1000).await;
-            let watch_rows = |t: &Workspace| -> Vec<String> {
-                t.debug.vars.iter().filter(|r| matches!(r.kind, RowKind::Watch(_))).map(|r| format!("{}={}", r.var.name, r.var.value)).collect()
+            let watch_rows = |t: &Workspace, cx: &gpui::App| -> Vec<String> {
+                t.debug.read(cx).vars.iter().filter(|r| matches!(r.kind, RowKind::Watch(_))).map(|r| format!("{}={}", r.var.name, r.var.value)).collect()
             };
             let _ = this.update_in(cx, |t, _, cx| {
-                eprintln!("smoke-debug: watches -> {:?}", watch_rows(t));
+                eprintln!("smoke-debug: watches -> {:?}", watch_rows(t, cx));
                 // Edit the first watch (as F2 + typing + Enter), remove the failing one (Delete).
-                if let Some(i) = t.debug.vars.iter().position(|r| r.kind == RowKind::Watch(0)) {
-                    t.begin_edit(i);
-                    if let Some(e) = t.debug.edit.as_mut() {
+                if let Some(i) = t.debug.read(cx).vars.iter().position(|r| r.kind == RowKind::Watch(0)) {
+                    t.debug.as_mut(cx).begin_edit(i);
+                    if let Some(e) = t.debug.as_mut(cx).edit.as_mut() {
                         e.text = "len(items) + 1".into();
                     }
                     t.commit_edit(cx);
@@ -145,44 +145,44 @@ impl Workspace {
                 t.remove_watch(2, cx);
             });
             wait(1000).await;
-            let _ = this.update_in(cx, |t, _, _| {
+            let _ = this.update_in(cx, |t, _, cx| {
                 let saved = std::fs::read_to_string(watches_path()).unwrap_or_default();
-                eprintln!("smoke-debug: edited watches -> {:?}; saved={}", watch_rows(t), saved.contains("len(items) + 1") && !saved.contains("nope_x"));
+                eprintln!("smoke-debug: edited watches -> {:?}; saved={}", watch_rows(t, cx), saved.contains("len(items) + 1") && !saved.contains("nope_x"));
             });
             // Evaluate in the console.
             let _ = this.update_in(cx, |t, w, cx| {
                 t.dispatch(Action::EvaluateExpression, w, cx);
-                t.debug.input = "sum(items) * 10".into();
+                t.debug.as_mut(cx).input = "sum(items) * 10".into();
                 t.evaluate_input(cx);
             });
             wait(800).await;
             let _ = this.update_in(cx, |t, _, cx| {
-                let tail: Vec<String> = t.debug.console.iter().rev().take(2).map(|(l, _)| l.trim_end().to_string()).collect();
+                let tail: Vec<String> = t.debug.read(cx).console.iter().rev().take(2).map(|(l, _)| l.trim_end().to_string()).collect();
                 eprintln!("smoke-debug: evaluate -> {tail:?}");
                 // Tab completion: one match is inserted, several open the list.
-                t.debug.input = "ite".into();
+                t.debug.as_mut(cx).input = "ite".into();
                 t.complete_input(cx);
             });
             wait(800).await;
             let _ = this.update(cx, |t, cx| {
-                eprintln!("smoke-debug: tab after 'ite' -> {:?} list {:?}", t.debug.input, t.debug.completion.as_ref().map(|c| c.shown(&t.debug.input).iter().map(|i| i.0.clone()).collect::<Vec<_>>()));
-                t.debug.completion = None;
-                t.debug.input = "items.".into();
+                eprintln!("smoke-debug: tab after 'ite' -> {:?} list {:?}", t.debug.read(cx).input, t.debug.read(cx).completion.as_ref().map(|c| c.shown(&t.debug.read(cx).input).iter().map(|i| i.0.clone()).collect::<Vec<_>>()));
+                t.debug.as_mut(cx).completion = None;
+                t.debug.as_mut(cx).input = "items.".into();
                 t.complete_input(cx);
             });
             wait(800).await;
             let _ = this.update(cx, |t, cx| {
-                let shown: Vec<String> = t.debug.completion.as_ref().map(|c| c.shown(&t.debug.input).iter().take(4).map(|i| i.0.clone()).collect()).unwrap_or_default();
+                let shown: Vec<String> = t.debug.read(cx).completion.as_ref().map(|c| c.shown(&t.debug.read(cx).input).iter().take(4).map(|i| i.0.clone()).collect()).unwrap_or_default();
                 eprintln!("smoke-debug: tab after 'items.' -> list {shown:?}");
                 for ch in ["c", "o"] {
-                    t.debug.input.push_str(ch);
-                    t.refilter_completion();
+                    t.debug.as_mut(cx).input.push_str(ch);
+                    t.debug.as_mut(cx).refilter_completion();
                 }
-                let shown: Vec<String> = t.debug.completion.as_ref().map(|c| c.shown(&t.debug.input).iter().map(|i| i.0.clone()).collect()).unwrap_or_default();
-                t.completion_key("down");
-                t.completion_key("enter");
-                eprintln!("smoke-debug: typed 'co' -> {shown:?}, down+enter -> {:?}; history file has {}", t.debug.input, load_history().iter().any(|h| h == "sum(items) * 10"));
-                t.debug.input.clear();
+                let shown: Vec<String> = t.debug.read(cx).completion.as_ref().map(|c| c.shown(&t.debug.read(cx).input).iter().map(|i| i.0.clone()).collect()).unwrap_or_default();
+                t.debug.as_mut(cx).completion_key("down");
+                t.debug.as_mut(cx).completion_key("enter");
+                eprintln!("smoke-debug: typed 'co' -> {shown:?}, down+enter -> {:?}; history file has {}", t.debug.read(cx).input, load_history().iter().any(|h| h == "sum(items) * 10"));
+                t.debug.as_mut(cx).input.clear();
                 cx.notify();
             });
             // F7 into add(), Shift+F8 out, F8 over.
@@ -191,20 +191,20 @@ impl Workspace {
                 let _ = this.update_in(cx, |t, w, cx| t.dispatch(a, w, cx));
                 until!(paused);
                 wait(500).await;
-                if let Ok(s) = this.update(cx, |t, _| t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1))) {
+                if let Ok(s) = this.update(cx, |t, cx| t.debug.read(cx).frames.first().map(|f| format!("{}:{}", f.name, f.line + 1))) {
                     seen.push(s.unwrap_or_default());
                 }
                 if a == Action::StepOut {
-                    let _ = this.update(cx, |t, _| {
-                        let r: Vec<String> = t.debug.vars.iter().filter_map(|r| r.return_label().map(|l| format!("{l} = {}", r.var.value))).collect();
-                        let top = t.debug.vars.iter().find(|r| r.depth == 1).map(|r| r.var.name.clone());
+                    let _ = this.update(cx, |t, cx| {
+                        let r: Vec<String> = t.debug.read(cx).vars.iter().filter_map(|r| r.return_label().map(|l| format!("{l} = {}", r.var.value))).collect();
+                        let top = t.debug.read(cx).vars.iter().find(|r| r.depth == 1).map(|r| r.var.name.clone());
                         eprintln!("smoke-debug: return values after shift-f8 -> {r:?} first local {top:?}");
                     });
                 }
             }
             eprintln!("smoke-debug: f7, shift-f8, f8 -> {seen:?} (return line {})", ret_line + 1);
             wait(500).await;
-            let _ = this.update_in(cx, |t, _, _| eprintln!("smoke-debug: watches after f8 -> {:?}", watch_rows(t)));
+            let _ = this.update_in(cx, |t, _, cx| eprintln!("smoke-debug: watches after f8 -> {:?}", watch_rows(t, cx)));
             // Conditional breakpoint inside the loop, then F9.
             let _ = this.update_in(cx, |t, _, cx| {
                 if let Some(ed) = t.active_editor().cloned() {
@@ -216,8 +216,8 @@ impl Workspace {
             until!(paused);
             wait(500).await;
             let _ = this.update_in(cx, |t, _, cx| {
-                let i = t.debug.vars.iter().find(|r| r.var.name == "i").map(|r| r.var.value.clone());
-                let at = t.debug.frames.first().map(|f| f.line + 1);
+                let i = t.debug.read(cx).vars.iter().find(|r| r.var.name == "i").map(|r| r.var.value.clone());
+                let at = t.debug.read(cx).frames.first().map(|f| f.line + 1);
                 let marks: Vec<(usize, Option<String>, Option<bool>)> =
                     t.active_editor().map(|e| e.read(cx).breakpoint_list().into_iter().map(|(l, b)| (l + 1, b.condition, b.verified)).collect()).unwrap_or_default();
                 eprintln!("smoke-debug: conditional bp -> line {at:?} i={i:?} breakpoints {marks:?}");
@@ -234,12 +234,12 @@ impl Workspace {
             });
             until!(paused);
             wait(500).await;
-            let _ = this.update_in(cx, |t, _, _| eprintln!("smoke-debug: run to cursor -> {:?}", t.debug.frames.first().map(|f| f.line + 1)));
+            let _ = this.update_in(cx, |t, _, cx| eprintln!("smoke-debug: run to cursor -> {:?}", t.debug.read(cx).frames.first().map(|f| f.line + 1)));
             let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::Resume, w, cx));
             let ended = until!(|s: Option<State>| s == Some(State::Ended));
             wait(300).await;
             let _ = this.update_in(cx, |t, _, cx| {
-                let out: Vec<String> = t.debug.console.iter().filter(|(_, k)| matches!(k, Line::Out | Line::Info)).map(|(l, _)| l.trim_end().to_string()).collect();
+                let out: Vec<String> = t.debug.read(cx).console.iter().filter(|(_, k)| matches!(k, Line::Out | Line::Info)).map(|(l, _)| l.trim_end().to_string()).collect();
                 let exec = t.active_editor().and_then(|e| e.read(cx).exec_line);
                 let inl = t.active_editor().map(|e| (0..12).any(|l| e.read(cx).inline_value(l).is_some()));
                 eprintln!("smoke-debug: inline values left after the end -> {inl:?}");
@@ -258,27 +258,27 @@ impl Workspace {
             let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::PauseProgram, w, cx));
             let p = until!(paused);
             wait(500).await;
-            let _ = this.update_in(cx, |t, _, _| {
-                let n = t.debug.vars.iter().find(|r| r.var.name == "n").map(|r| r.var.value.clone());
-                eprintln!("smoke-debug: pause running={running} paused={p} at {:?} n={n:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+            let _ = this.update_in(cx, |t, _, cx| {
+                let n = t.debug.read(cx).vars.iter().find(|r| r.var.name == "n").map(|r| r.var.value.clone());
+                eprintln!("smoke-debug: pause running={running} paused={p} at {:?} n={n:?}", t.debug.read(cx).frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
             });
             let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::RerunDebug, w, cx));
             let rerun = until!(|s: Option<State>| s == Some(State::Running));
             wait(800).await;
             let _ = this.update_in(cx, |t, w, cx| {
-                eprintln!("smoke-debug: rerun -> running={rerun} name={:?}", t.debug.session.as_ref().map(|s| s.name.clone()));
+                eprintln!("smoke-debug: rerun -> running={rerun} name={:?}", t.debug.read(cx).session.as_ref().map(|s| s.name.clone()));
                 t.dispatch(Action::Stop, w, cx);
             });
             let stopped = until!(|s: Option<State>| s == Some(State::Ended));
             // Stop while debugpy is still starting: no session may appear afterwards.
             let _ = this.update_in(cx, |t, w, cx| {
                 t.dispatch(Action::RerunDebug, w, cx);
-                let pending = t.debug.pending;
+                let pending = t.debug.read(cx).pending;
                 t.dispatch(Action::Stop, w, cx);
-                eprintln!("smoke-debug: stop -> {stopped}; stop while starting: pending={pending} after={}", t.debug.pending);
+                eprintln!("smoke-debug: stop -> {stopped}; stop while starting: pending={pending} after={}", t.debug.read(cx).pending);
             });
             wait(3000).await;
-            let _ = this.update_in(cx, |t, _, _| eprintln!("smoke-debug: late start dropped -> state={:?}", t.debug.state()));
+            let _ = this.update_in(cx, |t, _, cx| eprintln!("smoke-debug: late start dropped -> state={:?}", t.debug.read(cx).state()));
             // An uncaught exception: red header, traceback links in the console.
             let exc = dir.join("dbg_exc.py");
             let _ = std::fs::write(&exc, "def f(x):\n    return 1 / x\n\n\nf(0)\n");
@@ -291,14 +291,15 @@ impl Workspace {
             let _ = this.update_in(cx, |t, w, cx| {
                 let links: Vec<(PathBuf, usize)> = t
                     .debug
+                    .read(cx)
                     .console
                     .iter()
                     .filter(|(_, k)| matches!(k, Line::Err | Line::Out))
                     .flat_map(|(l, _)| brisk_run::find_links(l))
-                    .filter_map(|l| t.console_link(&l.path, l.line))
+                    .filter_map(|l| t.debug.read(cx).console_link(&l.path, l.line))
                     .collect();
-                eprintln!("smoke-debug: exception paused={p} header={:?} frame={:?} links={:?}", t.debug.exception, t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)), links.iter().map(|(p, l)| format!("{}:{l}", p.file_name().unwrap_or_default().to_string_lossy())).collect::<Vec<_>>());
-                let err: Vec<&str> = t.debug.console.iter().filter(|(_, k)| *k == Line::Err).map(|(l, _)| l.trim_end()).collect();
+                eprintln!("smoke-debug: exception paused={p} header={:?} frame={:?} links={:?}", t.debug.read(cx).exception, t.debug.read(cx).frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)), links.iter().map(|(p, l)| format!("{}:{l}", p.file_name().unwrap_or_default().to_string_lossy())).collect::<Vec<_>>());
+                let err: Vec<&str> = t.debug.read(cx).console.iter().filter(|(_, k)| *k == Line::Err).map(|(l, _)| l.trim_end()).collect();
                 eprintln!("smoke-debug: exception console {err:?}");
                 // Click on the first link: as the console's on_click does.
                 if let Some((p, l)) = links.first().cloned() {
@@ -316,7 +317,7 @@ impl Workspace {
                     let mut st = None;
                     for _ in 0..300 {
                         wait(100).await;
-                        let (pending, s) = this.update(cx, |t, _| (t.debug.pending, t.debug.state())).unwrap_or((false, None));
+                        let (pending, s) = this.update(cx, |t, cx| (t.debug.read(cx).pending, t.debug.read(cx).state())).unwrap_or((false, None));
                         if !pending && matches!(s, Some(State::Paused(_) | State::Ended)) {
                             st = s;
                             break;
@@ -329,7 +330,7 @@ impl Workspace {
             let raise = dir.join("dbg_raise.py");
             let _ = std::fs::write(&raise, "def f():\n    try:\n        raise ValueError(\"handled\")\n    except ValueError:\n        pass\n    x = 1\n    return x\n\n\nf()\n");
             let _ = this.update_in(cx, |t, w, cx| {
-                eprintln!("smoke-debug: after stop exception={:?}", t.debug.exception);
+                eprintln!("smoke-debug: after stop exception={:?}", t.debug.read(cx).exception);
                 t.open_file(&raise, w, cx);
                 if let Some(ed) = t.active_editor().cloned() {
                     ed.update(cx, |e, cx| e.toggle_breakpoint(5, cx));
@@ -339,19 +340,19 @@ impl Workspace {
                     .bp_rows(cx)
                     .iter()
                     .map(|r| match r {
-                        BpRow::Raised => format!("raised={}", t.debug.exc_raised),
-                        BpRow::Uncaught => format!("uncaught={}", t.debug.exc_uncaught),
+                        BpRow::Raised => format!("raised={}", t.debug.read(cx).exc_raised),
+                        BpRow::Uncaught => format!("uncaught={}", t.debug.read(cx).exc_uncaught),
                         BpRow::Class(_, c) => format!("class {}", c.name),
                         BpRow::Line(p, l, b) => format!("{}:{} enabled={}", p.file_name().unwrap_or_default().to_string_lossy(), l + 1, b.enabled),
                     })
                     .collect();
-                eprintln!("smoke-debug: view breakpoints open={} rows {rows:?}", t.debug.bp_dialog.is_some());
+                eprintln!("smoke-debug: view breakpoints open={} rows {rows:?}", t.debug.read(cx).bp_dialog.is_some());
                 t.bp_set_enabled(&raise, 5, false, cx);
                 t.set_exception_breakpoints(false, true, cx);
                 let sent = t.source_breakpoints(&raise, cx).len();
                 let shown = t.active_editor().map(|e| e.read(cx).breakpoint_list().into_iter().map(|(l, b)| (l + 1, b.enabled)).collect::<Vec<_>>());
                 eprintln!("smoke-debug: disabled -> editor {shown:?}, sent to debugpy {sent}");
-                t.debug.bp_dialog = None;
+                t.debug.as_mut(cx).bp_dialog = None;
                 t.dispatch(Action::DebugContext, w, cx);
             });
             let s1 = settled!();
@@ -366,8 +367,8 @@ impl Workspace {
                 let saved = std::fs::read_to_string(exc_path()).unwrap_or_default().replace(char::is_whitespace, "");
                 eprintln!(
                     "smoke-debug: raised on -> {s2:?} at {:?} header={:?} saved={}",
-                    t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)),
-                    t.debug.exception,
+                    t.debug.read(cx).frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)),
+                    t.debug.read(cx).exception,
                     saved.contains("\"raised\":true")
                 );
                 t.dispatch(Action::Stop, w, cx);
@@ -400,15 +401,15 @@ impl Workspace {
                 let s = settled!();
                 wait(800).await;
                 let _ = this.update_in(cx, |t, w, cx| {
-                    let cmd = t.debug.console.first().map(|(l, _)| l.trim_end().rsplit(' ').take(2).collect::<Vec<_>>().join(" ")).unwrap_or_default();
-                    let value = t.debug.vars.iter().find(|r| r.var.name == "value").map(|r| r.var.value.clone());
-                    eprintln!("smoke-debug: pytest {what}: {s:?} at {:?} value={value:?} cmd tail {cmd:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                    let cmd = t.debug.read(cx).console.first().map(|(l, _)| l.trim_end().rsplit(' ').take(2).collect::<Vec<_>>().join(" ")).unwrap_or_default();
+                    let value = t.debug.read(cx).vars.iter().find(|r| r.var.name == "value").map(|r| r.var.value.clone());
+                    eprintln!("smoke-debug: pytest {what}: {s:?} at {:?} value={value:?} cmd tail {cmd:?}", t.debug.read(cx).frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
                     t.dispatch(Action::Resume, w, cx);
                 });
                 until!(|s: Option<State>| s == Some(State::Ended));
                 wait(300).await;
-                let _ = this.update_in(cx, |t, _, _| {
-                    let summary = t.debug.console.iter().rev().map(|(l, _)| l.trim()).find(|l| l.contains("passed") || l.contains("failed"));
+                let _ = this.update_in(cx, |t, _, cx| {
+                    let summary = t.debug.read(cx).console.iter().rev().map(|(l, _)| l.trim()).find(|l| l.contains("passed") || l.contains("failed"));
                     eprintln!("smoke-debug: pytest {what} result {summary:?}");
                 });
             }
@@ -425,7 +426,7 @@ impl Workspace {
             let mut threads = Vec::new();
             for _ in 0..50 {
                 wait(100).await;
-                threads = this.update(cx, |t, _| t.debug.threads.clone()).unwrap_or_default();
+                threads = this.update(cx, |t, cx| t.debug.read(cx).threads.clone()).unwrap_or_default();
                 if !threads.is_empty() {
                     break;
                 }
@@ -435,7 +436,7 @@ impl Workspace {
                 let shown = t.render_threads(cx).is_some();
                 eprintln!(
                     "smoke-debug: threads {s:?} at {:?} threads={:?} chooser={shown}",
-                    t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)),
+                    t.debug.read(cx).frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)),
                     threads.iter().map(|t| t.1.as_str()).collect::<Vec<_>>()
                 );
                 if let Some(id) = main_id {
@@ -444,13 +445,13 @@ impl Workspace {
             });
             wait(1500).await;
             let _ = this.update_in(cx, |t, w, cx| {
-                let frames: Vec<String> = t.debug.frames.iter().map(|f| format!("{}:{}", f.name, f.line + 1)).collect();
-                eprintln!("smoke-debug: main thread -> paused={:?} frames has main:10 {}", t.debug.paused_thread() == main_id, frames.iter().any(|f| f == "main:10"));
+                let frames: Vec<String> = t.debug.read(cx).frames.iter().map(|f| format!("{}:{}", f.name, f.line + 1)).collect();
+                eprintln!("smoke-debug: main thread -> paused={:?} frames has main:10 {}", t.debug.read(cx).paused_thread() == main_id, frames.iter().any(|f| f == "main:10"));
                 t.dispatch(Action::Resume, w, cx);
             });
             until!(|s: Option<State>| s == Some(State::Ended));
             let _ = this.update_in(cx, |t, _, cx| {
-                eprintln!("smoke-debug: threads after end {:?} {:?}", t.debug.threads, t.debug.console.iter().rev().take(3).map(|l| l.0.trim().to_string()).collect::<Vec<_>>());
+                eprintln!("smoke-debug: threads after end {:?} {:?}", t.debug.read(cx).threads, t.debug.read(cx).console.iter().rev().take(3).map(|l| l.0.trim().to_string()).collect::<Vec<_>>());
                 let _ = std::fs::remove_file(&thr);
                 let _ = cx;
             });
@@ -466,13 +467,13 @@ impl Workspace {
             let s = settled!();
             wait(800).await;
             let _ = this.update_in(cx, |t, w, cx| {
-                eprintln!("smoke-debug: smart step {s:?} at {:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                eprintln!("smoke-debug: smart step {s:?} at {:?}", t.debug.read(cx).frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
                 t.dispatch(Action::SmartStepInto, w, cx);
             });
             let mut labels = Vec::new();
             for _ in 0..50 {
                 wait(100).await;
-                labels = this.update(cx, |t, _| t.debug.chooser.as_ref().map(|s| s.targets.iter().map(|t| t.1.clone()).collect::<Vec<_>>())).ok().flatten().unwrap_or_default();
+                labels = this.update(cx, |t, cx| t.debug.read(cx).chooser.as_ref().map(|s| s.targets.iter().map(|t| t.1.clone()).collect::<Vec<_>>())).ok().flatten().unwrap_or_default();
                 if !labels.is_empty() {
                     break;
                 }
@@ -485,8 +486,8 @@ impl Workspace {
             let s = settled!();
             wait(800).await;
             let _ = this.update_in(cx, |t, w, cx| {
-                let x = t.debug.vars.iter().find(|r| r.var.name == "x").map(|r| r.var.value.clone());
-                eprintln!("smoke-debug: smart step into a -> {s:?} at {:?} x={x:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                let x = t.debug.read(cx).vars.iter().find(|r| r.var.name == "x").map(|r| r.var.value.clone());
+                eprintln!("smoke-debug: smart step into a -> {s:?} at {:?} x={x:?}", t.debug.read(cx).frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
                 t.dispatch(Action::Resume, w, cx);
             });
             until!(|s: Option<State>| s == Some(State::Ended));
@@ -506,18 +507,18 @@ impl Workspace {
                 let saved = std::fs::read_to_string(exc_path()).unwrap_or_default().replace(char::is_whitespace, "");
                 eprintln!(
                     "smoke-debug: exception class {:?} args {} saved={}",
-                    t.debug.exc_classes.iter().map(|c| (c.name.clone(), c.raised, c.uncaught)).collect::<Vec<_>>(),
-                    t.debug.exception_args(),
+                    t.debug.read(cx).exc_classes.iter().map(|c| (c.name.clone(), c.raised, c.uncaught)).collect::<Vec<_>>(),
+                    t.debug.read(cx).exception_args(),
                     saved.contains("\"name\":\"ValueError\"")
                 );
-                t.debug.bp_dialog = None;
+                t.debug.as_mut(cx).bp_dialog = None;
                 t.dispatch(Action::DebugContext, w, cx);
             });
             let s = settled!();
             wait(800).await;
             let _ = this.update_in(cx, |t, w, cx| {
-                eprintln!("smoke-debug: class ValueError -> {s:?} at {:?} header={:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)), t.debug.exception);
-                if let Some(i) = t.debug.exc_classes.iter().position(|c| c.name == "ValueError") {
+                eprintln!("smoke-debug: class ValueError -> {s:?} at {:?} header={:?}", t.debug.read(cx).frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)), t.debug.read(cx).exception);
+                if let Some(i) = t.debug.read(cx).exc_classes.iter().position(|c| c.name == "ValueError") {
                     t.bp_remove_class(i, cx);
                 }
                 t.dispatch(Action::Resume, w, cx);
@@ -536,10 +537,10 @@ impl Workspace {
             });
             let s = settled!();
             wait(800).await;
-            let var = |t: &Workspace, n: &str| t.debug.vars.iter().find(|r| r.var.name == n).map(|r| r.var.value.clone());
-            let top = |t: &Workspace| t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1));
+            let var = |t: &Workspace, cx: &gpui::App, n: &str| t.debug.read(cx).vars.iter().find(|r| r.var.name == n).map(|r| r.var.value.clone());
+            let top = |t: &Workspace, cx: &gpui::App| t.debug.read(cx).frames.first().map(|f| format!("{}:{}", f.name, f.line + 1));
             let _ = this.update_in(cx, |t, w, cx| {
-                eprintln!("smoke-debug: jump {s:?} at {:?} x={:?}", top(t), var(t, "x"));
+                eprintln!("smoke-debug: jump {s:?} at {:?} x={:?}", top(t, cx), var(t, cx, "x"));
                 if let Some(ed) = t.active_editor().cloned() {
                     ed.update(cx, |e, cx| e.go_to_line(1, cx));
                 }
@@ -548,27 +549,27 @@ impl Workspace {
             let mut at = None;
             for _ in 0..50 {
                 wait(100).await;
-                at = this.update(cx, |t, _| top(t)).ok().flatten();
+                at = this.update(cx, |t, cx| top(t, cx)).ok().flatten();
                 if at.as_deref() == Some("f:2") {
                     break;
                 }
             }
             wait(600).await;
             let _ = this.update_in(cx, |t, w, cx| {
-                eprintln!("smoke-debug: jumped -> {at:?} x={:?}", var(t, "x"));
+                eprintln!("smoke-debug: jumped -> {at:?} x={:?}", var(t, cx, "x"));
                 t.dispatch(Action::StepOver, w, cx);
             });
             let s = settled!();
             wait(800).await;
             let _ = this.update_in(cx, |t, _, cx| {
-                eprintln!("smoke-debug: after step {s:?} at {:?} x={:?}", top(t), var(t, "x"));
+                eprintln!("smoke-debug: after step {s:?} at {:?} x={:?}", top(t, cx), var(t, cx, "x"));
                 if let Some(ed) = t.active_editor().cloned() {
                     t.set_next_statement(ed, 8, cx);
                 }
             });
             wait(2000).await;
             let _ = this.update_in(cx, |t, w, cx| {
-                eprintln!("smoke-debug: jump out of f -> at {:?} console {:?}", top(t), t.debug.console.last().map(|l| l.0.trim().to_string()));
+                eprintln!("smoke-debug: jump out of f -> at {:?} console {:?}", top(t, cx), t.debug.read(cx).console.last().map(|l| l.0.trim().to_string()));
                 if let Some(ed) = t.active_editor().cloned() {
                     ed.update(cx, |e, cx| e.toggle_breakpoint(3, cx));
                 }
@@ -580,7 +581,7 @@ impl Workspace {
             let mut states = Vec::new();
             for _ in 0..60 {
                 wait(100).await;
-                let st = this.update(cx, |t, _| t.debug.state()).ok().flatten();
+                let st = this.update(cx, |t, cx| t.debug.read(cx).state()).ok().flatten();
                 if states.last() != Some(&st) {
                     states.push(st);
                 }
@@ -591,7 +592,7 @@ impl Workspace {
             wait(1000).await;
             let _ = this.update(cx, |t, cx| {
                 let _ = cx;
-                eprintln!("smoke-debug: jump states {states:?} output {:?}", t.debug.console.iter().rev().map(|l| l.0.trim()).find(|l| l.starts_with("r ")));
+                eprintln!("smoke-debug: jump states {states:?} output {:?}", t.debug.read(cx).console.iter().rev().map(|l| l.0.trim()).find(|l| l.starts_with("r ")));
             });
             let _ = std::fs::remove_file(&jump);
             let spin2 = dir.join("dbg_attach_target.py");
@@ -605,7 +606,7 @@ impl Workspace {
                 let mut listed = Vec::new();
                 for _ in 0..100 {
                     wait(100).await;
-                    listed = this.update(cx, |t, _| t.debug.chooser.as_ref().map(|c| c.targets.iter().map(|x| x.0).collect::<Vec<_>>())).ok().flatten().unwrap_or_default();
+                    listed = this.update(cx, |t, cx| t.debug.read(cx).chooser.as_ref().map(|c| c.targets.iter().map(|x| x.0).collect::<Vec<_>>())).ok().flatten().unwrap_or_default();
                     if !listed.is_empty() {
                         break;
                     }
@@ -619,14 +620,14 @@ impl Workspace {
                     if let Some(i) = listed.iter().position(|x| *x == pid as i64) {
                         t.chooser_go(i, w, cx);
                     } else {
-                        t.debug.chooser = None;
+                        t.debug.as_mut(cx).chooser = None;
                     }
                 });
                 let s = settled!();
                 wait(800).await;
                 let _ = this.update_in(cx, |t, w, cx| {
-                    let n = t.debug.vars.iter().find(|r| r.var.name == "n").map(|r| r.var.value.clone());
-                    eprintln!("smoke-debug: attached -> {s:?} at {:?} n={n:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                    let n = t.debug.read(cx).vars.iter().find(|r| r.var.name == "n").map(|r| r.var.value.clone());
+                    eprintln!("smoke-debug: attached -> {s:?} at {:?} n={n:?}", t.debug.read(cx).frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
                     if let Some(ed) = t.active_editor().cloned() {
                         ed.update(cx, |e, cx| e.toggle_breakpoint(4, cx));
                     }
@@ -634,7 +635,7 @@ impl Workspace {
                 });
                 wait(2500).await;
                 let alive = matches!(child.try_wait(), Ok(None));
-                let _ = this.update(cx, |t, _| eprintln!("smoke-debug: detach -> state={:?} process alive={alive} console {:?}", t.debug.state(), t.debug.console.last().map(|l| l.0.trim().to_string())));
+                let _ = this.update(cx, |t, cx| eprintln!("smoke-debug: detach -> state={:?} process alive={alive} console {:?}", t.debug.read(cx).state(), t.debug.read(cx).console.last().map(|l| l.0.trim().to_string())));
                 // Rerun attaches to the same process; once it has exited, a message.
                 let _ = this.update_in(cx, |t, w, cx| {
                     if let Some(ed) = t.active_editor().cloned() {
@@ -645,13 +646,13 @@ impl Workspace {
                 let mut again = None;
                 for _ in 0..150 {
                     wait(100).await;
-                    again = this.update(cx, |t, _| t.debug.session.as_ref().filter(|s| s.attached && matches!(s.state, State::Paused(_))).map(|s| s.name.clone())).ok().flatten();
+                    again = this.update(cx, |t, cx| t.debug.read(cx).session.as_ref().filter(|s| s.attached && matches!(s.state, State::Paused(_))).map(|s| s.name.clone())).ok().flatten();
                     if again.is_some() {
                         break;
                     }
                 }
                 let _ = this.update_in(cx, |t, w, cx| {
-                    eprintln!("smoke-debug: rerun after attach -> {again:?} (pid {pid}) at {:?}", t.debug.frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
+                    eprintln!("smoke-debug: rerun after attach -> {again:?} (pid {pid}) at {:?}", t.debug.read(cx).frames.first().map(|f| format!("{}:{}", f.name, f.line + 1)));
                     if let Some(ed) = t.active_editor().cloned() {
                         ed.update(cx, |e, cx| e.toggle_breakpoint(4, cx));
                     }
@@ -663,8 +664,8 @@ impl Workspace {
                 wait(500).await;
                 let _ = this.update_in(cx, |t, w, cx| t.dispatch(Action::RerunDebug, w, cx));
                 wait(4000).await;
-                let _ = this.update(cx, |t, _| {
-                    eprintln!("smoke-debug: rerun after exit -> live={} console {:?}", t.debug.is_live(), t.debug.console.last().map(|l| l.0.trim().to_string()));
+                let _ = this.update(cx, |t, cx| {
+                    eprintln!("smoke-debug: rerun after exit -> live={} console {:?}", t.debug.read(cx).is_live(), t.debug.read(cx).console.last().map(|l| l.0.trim().to_string()));
                 });
             }
             let _ = this.update_in(cx, |_, _, cx| {

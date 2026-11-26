@@ -5,7 +5,7 @@ use super::*;
 impl Workspace {
     /// The thread list for the chooser above Frames.
     pub(super) fn load_threads(&mut self, cx: &mut Context<Self>) {
-        let Some(s) = &self.debug.session else { return };
+        let Some(s) = &self.debug.read(cx).session else { return };
         let rx = s.client.request("threads", json!({}));
         cx.spawn(async move |this, cx| {
             let Ok(Ok(v)) = rx.await else { return };
@@ -15,8 +15,8 @@ impl Workspace {
                 .map(|a| a.iter().filter_map(|t| Some((t.get("id")?.as_i64()?, t.get("name").and_then(Value::as_str).unwrap_or("").to_string()))).collect())
                 .unwrap_or_default();
             let _ = this.update(cx, |this, cx| {
-                if this.debug.paused_thread().is_some() {
-                    this.debug.threads = threads;
+                if this.debug.read(cx).paused_thread().is_some() {
+                    this.debug.as_mut(cx).threads = threads;
                     cx.notify();
                 }
             });
@@ -26,16 +26,19 @@ impl Workspace {
 
     /// Another thread in the chooser: its stack and variables; steps and Resume go to it.
     pub(in crate::workspace) fn select_thread(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
-        self.debug.threads_open = false;
-        let Some(s) = self.debug.session.as_mut().filter(|s| matches!(s.state, State::Paused(_))) else { return };
-        s.state = State::Paused(id);
-        self.debug.frames.clear();
+        {
+            let mut d = self.debug.as_mut(cx);
+            d.threads_open = false;
+            let Some(s) = d.session.as_mut().filter(|s| matches!(s.state, State::Paused(_))) else { return };
+            s.state = State::Paused(id);
+            d.frames.clear();
+        }
         self.load_frames(id, window, cx);
         cx.notify();
     }
 
     pub(super) fn render_threads(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let d = &self.debug;
+        let d = self.debug.read(cx);
         let cur = d.paused_thread()?;
         if d.threads.len() < 2 {
             return None;
@@ -56,7 +59,7 @@ impl Workspace {
             .child(div().flex_1().child(name(cur)))
             .child(crate::icons::ui_icon(if d.threads_open { "chevron-up" } else { "chevron-down" }, 12., Theme::text_dim()))
             .on_click(cx.listener(|this, _, _, cx| {
-                this.debug.threads_open = !this.debug.threads_open;
+                this.debug.as_mut(cx).threads_open = !this.debug.read(cx).threads_open;
                 cx.notify();
             }));
         let list = d.threads.iter().map(|(id, n)| {
@@ -77,13 +80,13 @@ impl Workspace {
     }
 
     pub(super) fn load_frames(&mut self, thread: i64, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(s) = &self.debug.session else { return };
+        let Some(s) = &self.debug.read(cx).session else { return };
         let rx = s.client.request("stackTrace", json!({"threadId": thread, "startFrame": 0, "levels": 100}));
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(v)) = rx.await else { return };
             let frames = brisk_dap::parse_frames(&v);
             let _ = this.update_in(cx, |this, window, cx| {
-                this.debug.frames = frames;
+                this.debug.as_mut(cx).frames = frames;
                 this.select_frame(0, window, cx);
             });
         })
@@ -92,11 +95,11 @@ impl Workspace {
 
     /// Show a frame: its line in the editor, its variables.
     pub(in crate::workspace) fn select_frame(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(f) = self.debug.frames.get(i).cloned() else { return };
-        self.debug.frame = i;
+        let Some(f) = self.debug.read(cx).frames.get(i).cloned() else { return };
+        self.debug.as_mut(cx).frame = i;
         self.clear_exec_marks(cx);
         if let Some(p) = f.path.clone().filter(|p| p.is_file()) {
-            let focus_back = self.debug.focus.is_focused(window);
+            let focus_back = self.debug.read(cx).focus.is_focused(window);
             self.open_file(&p, window, cx);
             if let Some(ed) = self.active_editor().cloned() {
                 ed.update(cx, |e, cx| {
@@ -104,15 +107,15 @@ impl Workspace {
                     e.go_to_line(f.line, cx);
                 });
             }
-            self.debug.marked.push(p);
+            self.debug.as_mut(cx).marked.push(p);
             if focus_back {
-                window.focus(&self.debug.focus.clone());
+                window.focus(&self.debug.read(cx).focus.clone());
             }
         }
-        self.debug.idle_watches();
+        self.debug.as_mut(cx).idle_watches();
         self.evaluate_watches(cx);
         self.refresh_data_views(cx);
-        let Some(s) = &self.debug.session else { return };
+        let Some(s) = &self.debug.read(cx).session else { return };
         let rx = s.client.request("scopes", json!({"frameId": f.id}));
         let client = s.client.clone();
         let frame_path = f.path.clone();
@@ -144,9 +147,9 @@ impl Workspace {
                         rows.extend(first.clone().unwrap_or_default().into_iter().map(|v| VarRow::var(1, v, parent)));
                     }
                 }
-                let n = this.debug.watch_len();
-                this.debug.vars.truncate(n);
-                this.debug.vars.extend(rows);
+                let n = this.debug.read(cx).watch_len();
+                this.debug.as_mut(cx).vars.truncate(n);
+                this.debug.as_mut(cx).vars.extend(rows);
                 if let (Some(p), Some(vars)) = (frame_path.as_ref(), first.as_ref()) {
                     if let Some(ed) = this.editors().find(|e| e.read(cx).path.as_ref() == Some(p)).cloned() {
                         let lines: Vec<String> =
@@ -166,31 +169,32 @@ impl Workspace {
 
     /// Expand or collapse a variable row.
     pub(in crate::workspace) fn toggle_var(&mut self, i: usize, cx: &mut Context<Self>) {
-        let Some(row) = self.debug.vars.get(i).cloned() else { return };
-        self.debug.sel = Some(i);
+        let Some(row) = self.debug.read(cx).vars.get(i).cloned() else { return };
+        self.debug.as_mut(cx).sel = Some(i);
         if row.var.reference <= 0 {
             return;
         }
         if row.expanded {
-            let end = (i + 1..self.debug.vars.len()).find(|&j| self.debug.vars[j].depth <= row.depth).unwrap_or(self.debug.vars.len());
-            self.debug.vars.drain(i + 1..end);
-            self.debug.vars[i].expanded = false;
+            let end =
+                (i + 1..self.debug.read(cx).vars.len()).find(|&j| self.debug.read(cx).vars[j].depth <= row.depth).unwrap_or(self.debug.read(cx).vars.len());
+            self.debug.as_mut(cx).vars.drain(i + 1..end);
+            self.debug.as_mut(cx).vars[i].expanded = false;
             cx.notify();
             return;
         }
-        let Some(s) = &self.debug.session else { return };
+        let Some(s) = &self.debug.read(cx).session else { return };
         let rx = s.client.request("variables", json!({"variablesReference": row.var.reference}));
         cx.spawn(async move |this, cx| {
             let Ok(Ok(v)) = rx.await else { return };
             let kids = brisk_dap::parse_variables(&v);
             let _ = this.update(cx, |this, cx| {
-                if this.debug.vars.get(i).map(|r| r.var.reference) != Some(row.var.reference) {
+                if this.debug.read(cx).vars.get(i).map(|r| r.var.reference) != Some(row.var.reference) {
                     return;
                 }
-                this.debug.vars[i].expanded = true;
+                this.debug.as_mut(cx).vars[i].expanded = true;
                 let at = i + 1;
                 for (k, v) in kids.into_iter().enumerate() {
-                    this.debug.vars.insert(at + k, VarRow::var(row.depth + 1, v, row.var.reference));
+                    this.debug.as_mut(cx).vars.insert(at + k, VarRow::var(row.depth + 1, v, row.var.reference));
                 }
                 cx.notify();
             });
@@ -203,8 +207,8 @@ impl Workspace {
     /// Mouse rest on a name while paused: `name = {type} value` and its first children, in
     /// the editor's hover popup. False when the debugger is not paused here (docs instead).
     pub(in crate::workspace) fn debug_hover(&mut self, ed: &Entity<Editor>, pos: usize, at: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) -> bool {
-        let frame = self.debug.frames.get(self.debug.frame).map(|f| f.id);
-        let live = self.debug.session.as_ref().filter(|s| matches!(s.state, State::Paused(_)));
+        let frame = self.debug.read(cx).frames.get(self.debug.read(cx).frame).map(|f| f.id);
+        let live = self.debug.read(cx).session.as_ref().filter(|s| matches!(s.state, State::Paused(_)));
         let (Some(s), Some(frame)) = (live, frame) else { return false };
         let e = ed.read(cx);
         if !e.is_python() || pos >= e.buffer.len_chars() {
@@ -252,15 +256,15 @@ impl Workspace {
 
     /// Evaluate every watch in the selected frame (on each stop and after changes).
     pub(super) fn evaluate_watches(&mut self, cx: &mut Context<Self>) {
-        let frame = self.debug.frames.get(self.debug.frame).map(|f| f.id);
-        let live = self.debug.session.as_ref().filter(|s| matches!(s.state, State::Paused(_)));
+        let frame = self.debug.read(cx).frames.get(self.debug.read(cx).frame).map(|f| f.id);
+        let live = self.debug.read(cx).session.as_ref().filter(|s| matches!(s.state, State::Paused(_)));
         let (Some(s), Some(frame)) = (live, frame) else {
-            let rows = self.debug.watch_section(None);
-            self.debug.set_watch_rows(rows);
+            let rows = self.debug.read(cx).watch_section(None);
+            self.debug.as_mut(cx).set_watch_rows(rows);
             return;
         };
         let client = s.client.clone();
-        let exprs = self.debug.watches.clone();
+        let exprs = self.debug.read(cx).watches.clone();
         cx.spawn(async move |this, cx| {
             let mut vals = Vec::new();
             for e in &exprs {
@@ -277,11 +281,11 @@ impl Workspace {
             }
             let _ = this.update(cx, |this, cx| {
                 // Stale: the watches or the frame changed meanwhile.
-                if this.debug.watches != exprs || this.debug.frames.get(this.debug.frame).map(|f| f.id) != Some(frame) {
+                if this.debug.read(cx).watches != exprs || this.debug.read(cx).frames.get(this.debug.read(cx).frame).map(|f| f.id) != Some(frame) {
                     return;
                 }
-                let rows = this.debug.watch_section(Some(vals));
-                this.debug.set_watch_rows(rows);
+                let rows = this.debug.read(cx).watch_section(Some(vals));
+                this.debug.as_mut(cx).set_watch_rows(rows);
                 cx.notify();
             });
         })
@@ -289,7 +293,7 @@ impl Workspace {
     }
 
     pub(super) fn watches_changed(&mut self, cx: &mut Context<Self>) {
-        save_watches(&self.root, &self.debug.watches);
+        save_watches(&self.root, &self.debug.read(cx).watches);
         self.evaluate_watches(cx);
         cx.notify();
     }
@@ -299,15 +303,15 @@ impl Workspace {
         if expr.is_empty() {
             return;
         }
-        if !self.debug.watches.contains(&expr) {
-            self.debug.watches.push(expr);
+        if !self.debug.read(cx).watches.contains(&expr) {
+            self.debug.as_mut(cx).watches.push(expr);
         }
         self.watches_changed(cx);
     }
 
     pub(in crate::workspace) fn remove_watch(&mut self, i: usize, cx: &mut Context<Self>) {
-        if i < self.debug.watches.len() {
-            self.debug.watches.remove(i);
+        if i < self.debug.read(cx).watches.len() {
+            self.debug.as_mut(cx).watches.remove(i);
             self.watches_changed(cx);
         }
     }
@@ -317,26 +321,14 @@ impl Workspace {
         if expr.is_empty() {
             return self.remove_watch(i, cx);
         }
-        if let Some(w) = self.debug.watches.get_mut(i) {
-            *w = expr;
+        let found = self.debug.as_mut(cx).watches.get_mut(i).map(|w| *w = expr).is_some();
+        if found {
             self.watches_changed(cx);
         }
     }
 
-    /// F2 / double click: edit a watch's expression, or set a variable's value.
-    pub(in crate::workspace) fn begin_edit(&mut self, i: usize) {
-        let Some(r) = self.debug.vars.get(i) else { return };
-        self.debug.sel = Some(i);
-        self.debug.edit = match r.kind {
-            RowKind::Watch(w) => Some(VarEdit { target: EditTarget::Watch(w), text: self.debug.watches.get(w).cloned().unwrap_or_default() }),
-            RowKind::WatchHeader => Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }),
-            RowKind::Var if r.parent > 0 && self.debug.paused_thread().is_some() => Some(VarEdit { target: EditTarget::Value(i), text: r.var.value.clone() }),
-            _ => None,
-        };
-    }
-
     pub(in crate::workspace) fn commit_edit(&mut self, cx: &mut Context<Self>) {
-        let Some(ed) = self.debug.edit.take() else { return };
+        let Some(ed) = self.debug.as_mut(cx).edit.take() else { return };
         match ed.target {
             EditTarget::NewWatch => self.add_watch(ed.text, cx),
             EditTarget::Watch(w) => self.edit_watch(w, ed.text, cx),
@@ -347,25 +339,25 @@ impl Workspace {
 
     /// Set Value (DAP setVariable) of a variable row.
     pub(in crate::workspace) fn set_value(&mut self, i: usize, value: String, cx: &mut Context<Self>) {
-        let Some(row) = self.debug.vars.get(i).cloned().filter(|r| r.kind == RowKind::Var && r.parent > 0) else { return };
-        let Some(s) = self.debug.session.as_ref().filter(|s| matches!(s.state, State::Paused(_))) else { return };
+        let Some(row) = self.debug.read(cx).vars.get(i).cloned().filter(|r| r.kind == RowKind::Var && r.parent > 0) else { return };
+        let Some(s) = self.debug.read(cx).session.as_ref().filter(|s| matches!(s.state, State::Paused(_))) else { return };
         let rx = s.client.request("setVariable", json!({"variablesReference": row.parent, "name": row.var.name, "value": value}));
         cx.spawn(async move |this, cx| {
             let res = rx.await;
             let _ = this.update(cx, |this, cx| {
                 match res {
                     Ok(Ok(v)) => {
-                        let at = if this.debug.vars.get(i).is_some_and(|r| r.parent == row.parent && r.var.name == row.var.name) {
+                        let at = if this.debug.read(cx).vars.get(i).is_some_and(|r| r.parent == row.parent && r.var.name == row.var.name) {
                             Some(i)
                         } else {
-                            this.debug.vars.iter().position(|r| r.parent == row.parent && r.var.name == row.var.name)
+                            this.debug.read(cx).vars.iter().position(|r| r.parent == row.parent && r.var.name == row.var.name)
                         };
                         if let Some(at) = at {
-                            if this.debug.vars[at].expanded {
+                            if this.debug.read(cx).vars[at].expanded {
                                 // Collapse: the children are of the old value.
                                 this.toggle_var(at, cx);
                             }
-                            let r = &mut this.debug.vars[at];
+                            let r = &mut this.debug.as_mut(cx).vars[at];
                             r.var.value = v.get("value").and_then(Value::as_str).unwrap_or("").to_string();
                             if let Some(t) = v.get("type").and_then(Value::as_str) {
                                 r.var.type_name = t.to_string();
@@ -376,7 +368,7 @@ impl Workspace {
                     }
                     Ok(Err(e)) => {
                         this.status = format!("Cannot set value: {e}");
-                        this.debug.info(format!("Cannot set {}: {e}", row.var.name));
+                        this.debug.as_mut(cx).info(format!("Cannot set {}: {e}", row.var.name));
                     }
                     Err(_) => {}
                 }
@@ -387,7 +379,7 @@ impl Workspace {
     }
 
     pub(in crate::workspace) fn copy_value(&mut self, i: usize, cx: &mut Context<Self>) {
-        let Some(r) = self.debug.vars.get(i) else { return };
+        let Some(r) = self.debug.read(cx).vars.get(i) else { return };
         if matches!(r.kind, RowKind::Scope | RowKind::WatchHeader) {
             return;
         }
@@ -403,24 +395,13 @@ impl Workspace {
         });
     }
 
-    /// The expression of a row of the variables tree: a watch's text, or debugpy's evaluateName.
-    pub(in crate::workspace) fn row_expression(&self, i: usize) -> Option<String> {
-        let r = self.debug.vars.get(i)?;
-        match r.kind {
-            RowKind::Watch(w) => self.debug.watches.get(w).cloned(),
-            RowKind::Var if !r.var.evaluate_name.is_empty() => Some(r.var.evaluate_name.clone()),
-            RowKind::Var if r.depth == 1 => Some(r.var.name.clone()),
-            _ => None,
-        }
-    }
-
     /// The whole value of a row (str() of a string, repr() of anything else), not the
     /// tree's truncated repr: evaluated in the program, hex-encoded so no repr mangles it.
     pub(super) fn full_value(&mut self, i: usize, cx: &mut Context<Self>, done: impl FnOnce(&mut Self, Result<String, String>, &mut Context<Self>) + 'static) {
-        let Some(expr) = self.row_expression(i) else { return };
-        let Some(s) = self.debug.session.as_ref().filter(|s| matches!(s.state, State::Paused(_))) else { return };
+        let Some(expr) = self.debug.read(cx).row_expression(i) else { return };
+        let Some(s) = self.debug.read(cx).session.as_ref().filter(|s| matches!(s.state, State::Paused(_))) else { return };
         let mut args = json!({"expression": full_value_expression(&expr), "context": "clipboard"});
-        if let Some(f) = self.debug.frames.get(self.debug.frame) {
+        if let Some(f) = self.debug.read(cx).frames.get(self.debug.read(cx).frame) {
             args["frameId"] = json!(f.id);
         }
         let rx = s.client.request("evaluate", args);
@@ -440,21 +421,21 @@ impl Workspace {
     }
 
     pub(in crate::workspace) fn copy_as_expression(&mut self, i: usize, cx: &mut Context<Self>) {
-        let Some(expr) = self.row_expression(i) else { return };
+        let Some(expr) = self.debug.read(cx).row_expression(i) else { return };
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(expr.clone()));
         self.status = format!("Copied {expr}");
     }
 
     pub(in crate::workspace) fn add_row_to_watches(&mut self, i: usize, cx: &mut Context<Self>) {
-        let Some(expr) = self.row_expression(i) else { return };
-        if !self.debug.watches.contains(&expr) {
+        let Some(expr) = self.debug.read(cx).row_expression(i) else { return };
+        if !self.debug.read(cx).watches.contains(&expr) {
             self.add_watch(expr, cx);
         }
     }
 
     /// View: the whole value in an editor tab (a long string, a big repr).
     pub(in crate::workspace) fn view_value(&mut self, i: usize, cx: &mut Context<Self>) {
-        let Some(expr) = self.row_expression(i) else { return };
+        let Some(expr) = self.debug.read(cx).row_expression(i) else { return };
         self.full_value(i, cx, move |this, full, cx| match full {
             Ok(text) => {
                 let ed = cx.new(|cx| {
@@ -470,10 +451,10 @@ impl Workspace {
 
     /// View as DataFrame / View as Array: the row's value in a table tab, paged from the program.
     pub(in crate::workspace) fn view_as_data(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(expr) = self.row_expression(i) else { return };
-        let Some(s) = self.debug.session.as_ref().filter(|s| matches!(s.state, State::Paused(_))) else { return };
+        let Some(expr) = self.debug.read(cx).row_expression(i) else { return };
+        let Some(s) = self.debug.read(cx).session.as_ref().filter(|s| matches!(s.state, State::Paused(_))) else { return };
         let client = s.client.clone();
-        let frame = self.debug.frames.get(self.debug.frame).map(|f| f.id);
+        let frame = self.debug.read(cx).frames.get(self.debug.read(cx).frame).map(|f| f.id);
         // One tab per expression: View again shows it, evaluated anew.
         let existing = self.all_tabs().find_map(|t| match t {
             Tab::Data(v) if v.read(cx).expr == expr => Some(v.clone()),
@@ -508,9 +489,9 @@ impl Workspace {
 
     /// A stop or another frame: open tables evaluate their expressions there again.
     pub(super) fn refresh_data_views(&mut self, cx: &mut Context<Self>) {
-        let Some(s) = self.debug.session.as_ref().filter(|s| matches!(s.state, State::Paused(_))) else { return };
+        let Some(s) = self.debug.read(cx).session.as_ref().filter(|s| matches!(s.state, State::Paused(_))) else { return };
         let client = s.client.clone();
-        let frame = self.debug.frames.get(self.debug.frame).map(|f| f.id);
+        let frame = self.debug.read(cx).frames.get(self.debug.read(cx).frame).map(|f| f.id);
         for v in self.data_views() {
             v.update(cx, |v, cx| v.refresh(client.clone(), frame, cx));
         }
@@ -526,12 +507,12 @@ impl Workspace {
     pub(super) fn var_menu(&mut self, i: usize, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
         use crate::workspace::menu_ui::Entry;
         use std::rc::Rc;
-        let Some(r) = self.debug.vars.get(i).cloned() else { return };
+        let Some(r) = self.debug.read(cx).vars.get(i).cloned() else { return };
         if matches!(r.kind, RowKind::Scope | RowKind::WatchHeader) {
             return;
         }
-        let paused = self.debug.paused_thread().is_some();
-        let has_expr = self.row_expression(i).is_some();
+        let paused = self.debug.read(cx).paused_thread().is_some();
+        let has_expr = self.debug.read(cx).row_expression(i).is_some();
         let item = |label: &str, shortcut: &str, enabled: bool, run: crate::workspace::menu_ui::MenuFn| Entry::Item {
             label: label.into(),
             shortcut: shortcut.into(),
@@ -548,7 +529,7 @@ impl Workspace {
             "F2",
             paused && r.kind == RowKind::Var && r.parent > 0,
             Rc::new(move |this, _, cx| {
-                this.begin_edit(i);
+                this.debug.as_mut(cx).begin_edit(i);
                 cx.notify();
             }),
         ));
@@ -567,32 +548,37 @@ impl Workspace {
     /// Keys in the variables tree (the Debugger tab has focus).
     pub(super) fn vars_key(&mut self, k: &gpui::Keystroke, cx: &mut Context<Self>) -> bool {
         let ctrl = k.modifiers.control || k.modifiers.platform;
-        if let Some(ed) = self.debug.edit.as_mut() {
+        if self.debug.read(cx).edit.is_some() {
+            let edit_text = |this: &mut Self, cx: &mut Context<Self>, f: &dyn Fn(&mut String)| {
+                if let Some(ed) = this.debug.as_mut(cx).edit.as_mut() {
+                    f(&mut ed.text);
+                }
+            };
             match k.key.as_str() {
                 "enter" => self.commit_edit(cx),
-                "escape" => self.debug.edit = None,
-                "backspace" => {
-                    ed.text.pop();
-                }
+                "escape" => self.debug.as_mut(cx).edit = None,
+                "backspace" => edit_text(self, cx, &|t| {
+                    t.pop();
+                }),
                 // gpui gives Space no key_char.
-                "space" if !ctrl => ed.text.push(' '),
+                "space" if !ctrl => edit_text(self, cx, &|t| t.push(' ')),
                 "v" if ctrl => {
-                    if let Some(t) = cx.read_from_clipboard().and_then(|c| c.text()) {
-                        ed.text.push_str(t.lines().next().unwrap_or(""));
+                    if let Some(c) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                        edit_text(self, cx, &|t| t.push_str(c.lines().next().unwrap_or("")));
                     }
                 }
                 _ if ctrl || k.modifiers.alt => return false,
                 _ => match k.key_char.as_deref() {
-                    Some(t) if !t.chars().any(char::is_control) => ed.text.push_str(t),
+                    Some(s) if !s.chars().any(char::is_control) => edit_text(self, cx, &|t| t.push_str(s)),
                     _ => return false,
                 },
             }
             cx.notify();
             return true;
         }
-        let n = self.debug.vars.len();
-        let sel = self.debug.sel.filter(|&s| s < n);
-        let before = self.debug.sel;
+        let n = self.debug.read(cx).vars.len();
+        let sel = self.debug.read(cx).sel.filter(|&s| s < n);
+        let before = self.debug.read(cx).sel;
         match (k.key.as_str(), ctrl) {
             ("c", true) => {
                 if let Some(s) = sel {
@@ -600,51 +586,76 @@ impl Workspace {
                 }
             }
             (_, true) => return false,
-            ("down", _) if n > 0 => self.debug.sel = Some(sel.map_or(0, |s| (s + 1).min(n - 1))),
-            ("up", _) if n > 0 => self.debug.sel = Some(sel.map_or(0, |s| s.saturating_sub(1))),
+            ("down", _) if n > 0 => self.debug.as_mut(cx).sel = Some(sel.map_or(0, |s| (s + 1).min(n - 1))),
+            ("up", _) if n > 0 => self.debug.as_mut(cx).sel = Some(sel.map_or(0, |s| s.saturating_sub(1))),
             ("right", _) => {
-                if let Some(s) = sel.filter(|&s| !self.debug.vars[s].expanded) {
+                if let Some(s) = sel.filter(|&s| !self.debug.read(cx).vars[s].expanded) {
                     self.toggle_var(s, cx);
                 }
             }
             ("left", _) => {
                 if let Some(s) = sel {
-                    let r = &self.debug.vars[s];
+                    let r = &self.debug.read(cx).vars[s];
                     if r.expanded && r.var.reference > 0 {
                         self.toggle_var(s, cx);
-                    } else if let Some(p) = (0..s).rev().find(|&j| self.debug.vars[j].depth < r.depth) {
-                        self.debug.sel = Some(p);
+                    } else if let Some(p) = (0..s).rev().find(|&j| self.debug.read(cx).vars[j].depth < r.depth) {
+                        self.debug.as_mut(cx).sel = Some(p);
                     }
                 }
             }
             ("enter", _) => {
                 if let Some(s) = sel {
-                    if self.debug.vars[s].var.reference > 0 {
+                    if self.debug.read(cx).vars[s].var.reference > 0 {
                         self.toggle_var(s, cx);
                     } else {
-                        self.begin_edit(s);
+                        self.debug.as_mut(cx).begin_edit(s);
                     }
                 }
             }
             ("f2", _) => {
                 if let Some(s) = sel {
-                    self.begin_edit(s);
+                    self.debug.as_mut(cx).begin_edit(s);
                 }
             }
-            ("insert", _) => self.debug.edit = Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }),
+            ("insert", _) => self.debug.as_mut(cx).edit = Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }),
             ("delete", _) => {
-                if let Some(RowKind::Watch(w)) = sel.map(|s| self.debug.vars[s].kind) {
+                if let Some(RowKind::Watch(w)) = sel.map(|s| self.debug.read(cx).vars[s].kind) {
                     self.remove_watch(w, cx);
                 }
             }
             _ => return false,
         }
-        if self.debug.sel != before {
-            if let Some(s) = self.debug.sel {
-                self.debug.vars_scroll.scroll_to_item(s, gpui::ScrollStrategy::Top);
+        if self.debug.read(cx).sel != before {
+            if let Some(s) = self.debug.read(cx).sel {
+                self.debug.read(cx).vars_scroll.scroll_to_item(s, gpui::ScrollStrategy::Top);
             }
         }
         cx.notify();
         true
+    }
+}
+
+impl DebugModel {
+    /// F2 / double click: edit a watch's expression, or set a variable's value.
+    pub(in crate::workspace) fn begin_edit(&mut self, i: usize) {
+        let Some(r) = self.vars.get(i) else { return };
+        self.sel = Some(i);
+        self.edit = match r.kind {
+            RowKind::Watch(w) => Some(VarEdit { target: EditTarget::Watch(w), text: self.watches.get(w).cloned().unwrap_or_default() }),
+            RowKind::WatchHeader => Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }),
+            RowKind::Var if r.parent > 0 && self.paused_thread().is_some() => Some(VarEdit { target: EditTarget::Value(i), text: r.var.value.clone() }),
+            _ => None,
+        };
+    }
+
+    /// The expression of a row of the variables tree: a watch's text, or debugpy's evaluateName.
+    pub(in crate::workspace) fn row_expression(&self, i: usize) -> Option<String> {
+        let r = self.vars.get(i)?;
+        match r.kind {
+            RowKind::Watch(w) => self.watches.get(w).cloned(),
+            RowKind::Var if !r.var.evaluate_name.is_empty() => Some(r.var.evaluate_name.clone()),
+            RowKind::Var if r.depth == 1 => Some(r.var.name.clone()),
+            _ => None,
+        }
     }
 }

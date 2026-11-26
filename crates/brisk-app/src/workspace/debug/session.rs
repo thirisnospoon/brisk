@@ -32,7 +32,7 @@ impl Workspace {
                 self.launch_context(ctx, true, window, cx);
             }
             A::Resume | A::StepOver | A::StepInto | A::StepOut | A::RunToCursor => {
-                let Some(thread) = self.debug.paused_thread() else {
+                let Some(thread) = self.debug.read(cx).paused_thread() else {
                     self.status = "The debugger is not paused".into();
                     return true;
                 };
@@ -46,7 +46,7 @@ impl Workspace {
                     let Some(ed) = self.active_editor().cloned() else { return true };
                     let (path, line) = (ed.read(cx).path.clone(), ed.read(cx).caret_line_col().0);
                     let Some(path) = path else { return true };
-                    if let Some(s) = self.debug.session.as_mut() {
+                    if let Some(s) = self.debug.as_mut(cx).session.as_mut() {
                         s.temp = Some((path.clone(), line));
                     }
                     self.send_breakpoints(&path, cx);
@@ -54,9 +54,9 @@ impl Workspace {
                 self.debug_request(command, json!({"threadId": thread}), cx);
                 self.set_running(cx);
             }
-            A::Stop if self.debug.is_live() => self.stop_debug(cx),
+            A::Stop if self.debug.read(cx).is_live() => self.stop_debug(cx),
             A::PauseProgram => {
-                if self.debug.state() != Some(State::Running) {
+                if self.debug.read(cx).state() != Some(State::Running) {
                     self.status = "Pause: the program is not running".into();
                     return true;
                 }
@@ -74,21 +74,21 @@ impl Workspace {
                     }
                 });
                 let text = text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty() && !t.contains('\n'));
-                self.debug.tab = DebugTab::Debugger;
+                self.debug.as_mut(cx).tab = DebugTab::Debugger;
                 self.bottom = Some(BottomTool::Debug);
                 match text {
                     Some(t) if self.focused_editor(window, cx).is_some() => self.add_watch(t, cx),
-                    _ => self.debug.edit = Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }),
+                    _ => self.debug.as_mut(cx).edit = Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }),
                 }
-                window.focus(&self.debug.focus.clone());
+                window.focus(&self.debug.read(cx).focus.clone());
             }
-            A::RerunDebug => match (self.debug.last.clone(), self.debug.last_attach.clone()) {
+            A::RerunDebug => match (self.debug.read(cx).last.clone(), self.debug.read(cx).last_attach.clone()) {
                 (Some(cfg), _) => self.start_debug(cfg, window, cx),
                 (None, Some((pid, label))) => self.reattach(pid, label, window, cx),
                 (None, None) => self.status = "Rerun: nothing has been debugged yet".into(),
             },
             A::EvaluateExpression => {
-                if self.debug.paused_thread().is_none() {
+                if self.debug.read(cx).paused_thread().is_none() {
                     self.status = "Evaluate: the debugger is not paused".into();
                     return true;
                 }
@@ -102,11 +102,11 @@ impl Workspace {
                     } else {
                         sel
                     };
-                    self.debug.input = t.trim().to_string();
+                    self.debug.as_mut(cx).input = t.trim().to_string();
                 }
-                self.debug.tab = DebugTab::Console;
+                self.debug.as_mut(cx).tab = DebugTab::Console;
                 self.bottom = Some(BottomTool::Debug);
-                window.focus(&self.debug.focus.clone());
+                window.focus(&self.debug.read(cx).focus.clone());
             }
             _ => return false,
         }
@@ -116,7 +116,7 @@ impl Workspace {
 
     /// Send a request; an error reply goes to the status bar (a refused step, a stale thread).
     pub(super) fn debug_request(&self, command: &'static str, args: Value, cx: &mut Context<Self>) {
-        let Some(s) = &self.debug.session else { return };
+        let Some(s) = &self.debug.read(cx).session else { return };
         let reply = s.client.request(command, args);
         cx.spawn(async move |this, cx| {
             // A dropped reply means the adapter went away: the session's end says so.
@@ -131,22 +131,22 @@ impl Workspace {
     }
 
     pub(super) fn set_running(&mut self, cx: &mut Context<Self>) {
-        if let Some(s) = self.debug.session.as_mut() {
+        if let Some(s) = self.debug.as_mut(cx).session.as_mut() {
             if s.state != State::Ended {
                 s.state = State::Running;
             }
         }
-        self.debug.frames.clear();
-        self.debug.threads.clear();
-        self.debug.threads_open = false;
-        self.debug.idle_watches();
-        self.debug.exception = None;
+        self.debug.as_mut(cx).frames.clear();
+        self.debug.as_mut(cx).threads.clear();
+        self.debug.as_mut(cx).threads_open = false;
+        self.debug.as_mut(cx).idle_watches();
+        self.debug.as_mut(cx).exception = None;
         self.clear_exec_marks(cx);
         self.stale_data_views("Running: rows of the last stop", cx);
     }
 
     pub(super) fn clear_exec_marks(&mut self, cx: &mut Context<Self>) {
-        let marked = std::mem::take(&mut self.debug.marked);
+        let marked = std::mem::take(&mut self.debug.as_mut(cx).marked);
         for e in self.editors().cloned().collect::<Vec<_>>() {
             if e.read(cx).path.as_ref().is_some_and(|p| marked.contains(p)) || e.read(cx).exec_line.is_some() {
                 e.update(cx, |e, cx| {
@@ -160,7 +160,7 @@ impl Workspace {
 
     /// Pause Program: debugpy pauses all threads; the main one is asked.
     pub(super) fn pause_debug(&mut self, cx: &mut Context<Self>) {
-        let Some(s) = &self.debug.session else { return };
+        let Some(s) = &self.debug.read(cx).session else { return };
         let client = s.client.clone();
         let threads = client.request("threads", json!({}));
         cx.spawn(async move |this, cx| {
@@ -172,7 +172,7 @@ impl Workspace {
             let id = main.and_then(|t| t.get("id")).and_then(Value::as_i64).unwrap_or(0);
             if let Ok(Err(e)) = client.request("pause", json!({"threadId": id})).await {
                 let _ = this.update(cx, |this, cx| {
-                    this.debug.info(format!("Cannot pause: {e}"));
+                    this.debug.as_mut(cx).info(format!("Cannot pause: {e}"));
                     cx.notify();
                 });
             }
@@ -195,11 +195,11 @@ impl Workspace {
             return;
         }
         self.save_all(cx);
-        if self.debug.is_live() {
+        if self.debug.read(cx).is_live() {
             self.stop_debug(cx);
         }
-        self.debug.last = Some(cfg.clone());
-        self.debug.last_attach = None;
+        self.debug.as_mut(cx).last = Some(cfg.clone());
+        self.debug.as_mut(cx).last_attach = None;
         let python = match &cfg.interpreter {
             Some(p) => Some(brisk_run::resolve(&self.root, p)),
             None => self.runs.interpreter(&self.root).map(|i| i.path),
@@ -215,22 +215,22 @@ impl Workspace {
         }
         let cmd = brisk_run::build(&self.root, &cfg, &python);
         let launch = launch_for(&cmd);
-        self.debug.cwd = launch.cwd.clone();
-        self.debug.exception = None;
+        self.debug.as_mut(cx).cwd = launch.cwd.clone();
+        self.debug.as_mut(cx).exception = None;
         let name = cfg.name.clone();
-        self.debug.console.clear();
-        self.debug.console_changed(false);
-        self.debug.frames.clear();
-        self.debug.idle_watches();
-        self.debug.tab = DebugTab::Console;
-        self.debug.info(cmd.display());
+        self.debug.as_mut(cx).console.clear();
+        self.debug.as_mut(cx).console_changed(false);
+        self.debug.as_mut(cx).frames.clear();
+        self.debug.as_mut(cx).idle_watches();
+        self.debug.as_mut(cx).tab = DebugTab::Console;
+        self.debug.as_mut(cx).info(cmd.display());
         self.bottom = Some(BottomTool::Debug);
         self.status = format!("Debugging '{name}'");
         let root = self.root.clone();
-        self.debug.gen += 1;
-        self.debug.pending = true;
-        self.debug.started = Some(std::time::Instant::now());
-        let gen = self.debug.gen;
+        self.debug.as_mut(cx).gen += 1;
+        self.debug.as_mut(cx).pending = true;
+        self.debug.as_mut(cx).started = Some(std::time::Instant::now());
+        let gen = self.debug.read(cx).gen;
         cx.spawn_in(window, async move |this, cx| {
             let adapter = cx
                 .background_executor()
@@ -241,18 +241,18 @@ impl Workspace {
                 .await;
             let started = adapter.map(|a| Client::start(&a.program, &a.args, &root, &[]).map_err(|e| format!("cannot start debugpy: {e}")));
             let _ = this.update_in(cx, |this, window, cx| {
-                if this.debug.gen != gen {
+                if this.debug.read(cx).gen != gen {
                     // Stopped (or started again) while debugpy was starting.
                     if let Ok(Ok((client, _))) = &started {
                         client.kill();
                     }
                     return;
                 }
-                this.debug.pending = false;
+                this.debug.as_mut(cx).pending = false;
                 match started {
                     Err(missing) => this.offer_debugpy(missing, python, crate::workspace::install_offer_ui::Then::Debug(cfg), cx),
                     Ok(Err(e)) => {
-                        this.debug.info(e.clone());
+                        this.debug.as_mut(cx).info(e.clone());
                         this.show_toast(e, true, cx);
                     }
                     Ok(Ok((client, events))) => this.attach_session(client, events, name, ("launch", brisk_dap::launch_args(&launch)), window, cx),
@@ -282,7 +282,8 @@ impl Workspace {
             }
         });
         let attached = req.0 == "attach";
-        self.debug.session = Some(Session { client: client.clone(), name, state: State::Starting, _events: task, temp: None, exit_code: None, attached });
+        self.debug.as_mut(cx).session =
+            Some(Session { client: client.clone(), name, state: State::Starting, _events: task, temp: None, exit_code: None, attached });
         cx.spawn(async move |this, cx| {
             let init = client.request("initialize", brisk_dap::initialize_args()).await;
             let err = match init {
@@ -292,7 +293,7 @@ impl Workspace {
             };
             if let Some(e) = err {
                 let _ = this.update(cx, |this, cx| {
-                    this.debug.info(format!("debugpy did not start: {e}"));
+                    this.debug.as_mut(cx).info(format!("debugpy did not start: {e}"));
                     cx.notify();
                 });
                 return;
@@ -301,7 +302,7 @@ impl Workspace {
             let res = client.request(command, args).await;
             if let Ok(Err(e)) = res {
                 let _ = this.update(cx, |this, cx| {
-                    this.debug.info(format!("Cannot {command}: {e}"));
+                    this.debug.as_mut(cx).info(format!("Cannot {command}: {e}"));
                     this.end_session(cx);
                     cx.notify();
                 });
@@ -311,9 +312,9 @@ impl Workspace {
     }
 
     pub(super) fn stop_debug(&mut self, cx: &mut Context<Self>) {
-        self.debug.gen += 1;
-        self.debug.pending = false;
-        if let Some(s) = self.debug.session.as_ref().filter(|s| s.state != State::Ended) {
+        self.debug.as_mut(cx).gen += 1;
+        self.debug.as_mut(cx).pending = false;
+        if let Some(s) = self.debug.read(cx).session.as_ref().filter(|s| s.state != State::Ended) {
             let rx = s.client.request("disconnect", json!({"terminateDebuggee": !s.attached}));
             let client = s.client.clone();
             cx.spawn(async move |_, cx| {
@@ -322,21 +323,21 @@ impl Workspace {
             })
             .detach();
         }
-        let detached = self.debug.session.as_ref().is_some_and(|s| s.attached && s.state != State::Ended);
-        self.debug.info(if detached { "Detached: the process keeps running" } else { "Stopped" });
+        let detached = self.debug.read(cx).session.as_ref().is_some_and(|s| s.attached && s.state != State::Ended);
+        self.debug.as_mut(cx).info(if detached { "Detached: the process keeps running" } else { "Stopped" });
         self.end_session(cx);
     }
 
     pub(super) fn end_session(&mut self, cx: &mut Context<Self>) {
-        if let Some(s) = self.debug.session.as_mut() {
+        if let Some(s) = self.debug.as_mut(cx).session.as_mut() {
             s.state = State::Ended;
         }
-        self.debug.frames.clear();
-        self.debug.threads.clear();
-        self.debug.threads_open = false;
-        self.debug.idle_watches();
-        self.debug.edit = None;
-        self.debug.exception = None;
+        self.debug.as_mut(cx).frames.clear();
+        self.debug.as_mut(cx).threads.clear();
+        self.debug.as_mut(cx).threads_open = false;
+        self.debug.as_mut(cx).idle_watches();
+        self.debug.as_mut(cx).edit = None;
+        self.debug.as_mut(cx).exception = None;
         self.clear_exec_marks(cx);
         self.stale_data_views("The debug session ended", cx);
         for e in self.editors().cloned().collect::<Vec<_>>() {
@@ -349,9 +350,9 @@ impl Workspace {
 
     pub(super) fn debug_event(&mut self, ev: Event, window: &mut Window, cx: &mut Context<Self>) {
         let Event::Dap { event, body } = ev else {
-            if self.debug.state().is_some_and(|s| s != State::Ended) {
-                let code = self.debug.session.as_ref().and_then(|s| s.exit_code);
-                self.debug.info(match code {
+            if self.debug.read(cx).state().is_some_and(|s| s != State::Ended) {
+                let code = self.debug.read(cx).session.as_ref().and_then(|s| s.exit_code);
+                self.debug.as_mut(cx).info(match code {
                     Some(c) => format!("Process finished with exit code {c}"),
                     None => "Debugger disconnected".into(),
                 });
@@ -365,9 +366,9 @@ impl Workspace {
                 for (p, _) in self.all_breakpoints(cx) {
                     self.send_breakpoints(&p, cx);
                 }
-                self.debug_request("setExceptionBreakpoints", self.debug.exception_args(), cx);
+                self.debug_request("setExceptionBreakpoints", self.debug.read(cx).exception_args(), cx);
                 self.debug_request("configurationDone", json!({}), cx);
-                if let Some(s) = self.debug.session.as_mut() {
+                if let Some(s) = self.debug.as_mut(cx).session.as_mut() {
                     s.state = State::Running;
                 }
             }
@@ -375,41 +376,42 @@ impl Workspace {
                 let cat = body.get("category").and_then(Value::as_str).unwrap_or("console");
                 let text = body.get("output").and_then(Value::as_str).unwrap_or("");
                 match cat {
-                    "stdout" => self.debug.print(text, Line::Out),
-                    "stderr" => self.debug.print(text, Line::Err),
+                    "stdout" => self.debug.as_mut(cx).print(text, Line::Out),
+                    "stderr" => self.debug.as_mut(cx).print(text, Line::Err),
                     "telemetry" | "important" => {}
-                    _ => self.debug.print(text, Line::Info),
+                    _ => self.debug.as_mut(cx).print(text, Line::Info),
                 }
             }
             "stopped" => {
                 let thread = body.get("threadId").and_then(Value::as_i64).unwrap_or(1);
-                if let Some(s) = self.debug.session.as_mut() {
+                let temp = self.debug.as_mut(cx).session.as_mut().and_then(|s| {
                     s.state = State::Paused(thread);
-                    // Run to Cursor reached (or another breakpoint): the temporary one goes.
-                    if let Some((p, _)) = s.temp.take() {
-                        self.send_breakpoints(&p, cx);
-                    }
+                    s.temp.take()
+                });
+                // Run to Cursor reached (or another breakpoint): the temporary one goes.
+                if let Some((p, _)) = temp {
+                    self.send_breakpoints(&p, cx);
                 }
                 if body.get("reason").and_then(Value::as_str) == Some("exception") {
                     let d = body.get("text").or_else(|| body.get("description")).and_then(Value::as_str).unwrap_or("exception");
-                    self.debug.exception = Some(d.to_string());
+                    self.debug.as_mut(cx).exception = Some(d.to_string());
                     self.exception_info(thread, cx);
                 }
-                self.debug.tab = DebugTab::Debugger;
+                self.debug.as_mut(cx).tab = DebugTab::Debugger;
                 self.bottom = Some(BottomTool::Debug);
                 self.load_frames(thread, window, cx);
                 self.load_threads(cx);
             }
             "continued" => self.set_running(cx),
             "exited" => {
-                if let Some(s) = self.debug.session.as_mut() {
+                if let Some(s) = self.debug.as_mut(cx).session.as_mut() {
                     s.exit_code = body.get("exitCode").and_then(Value::as_i64);
                 }
             }
             "terminated" => {
-                let code = self.debug.session.as_ref().and_then(|s| s.exit_code);
-                if self.debug.state() != Some(State::Ended) {
-                    self.debug.info(match code {
+                let code = self.debug.read(cx).session.as_ref().and_then(|s| s.exit_code);
+                if self.debug.read(cx).state() != Some(State::Ended) {
+                    self.debug.as_mut(cx).info(match code {
                         Some(c) => format!("\nProcess finished with exit code {c}"),
                         None => "\nProcess finished".into(),
                     });
@@ -424,7 +426,7 @@ impl Workspace {
 
     /// Stopped on an exception: its type, message and traceback (DAP exceptionInfo).
     pub(super) fn exception_info(&mut self, thread: i64, cx: &mut Context<Self>) {
-        let Some(s) = &self.debug.session else { return };
+        let Some(s) = &self.debug.read(cx).session else { return };
         let rx = s.client.request("exceptionInfo", json!({"threadId": thread}));
         cx.spawn(async move |this, cx| {
             let res = rx.await;
@@ -437,26 +439,19 @@ impl Workspace {
                         let head = if msg.is_empty() { ty.to_string() } else { format!("{ty}: {msg}") };
                         (head, v.pointer("/details/stackTrace").and_then(Value::as_str).unwrap_or("").to_string())
                     }
-                    _ => (this.debug.exception.clone().unwrap_or_else(|| "exception".into()), String::new()),
+                    _ => (this.debug.read(cx).exception.clone().unwrap_or_else(|| "exception".into()), String::new()),
                 };
-                this.debug.print("Traceback (most recent call last):\n", Line::Err);
+                this.debug.as_mut(cx).print("Traceback (most recent call last):\n", Line::Err);
                 let stack = python_order(&stack);
                 if !stack.is_empty() {
-                    this.debug.print(&format!("{stack}\n"), Line::Err);
+                    this.debug.as_mut(cx).print(&format!("{stack}\n"), Line::Err);
                 }
-                this.debug.print(&format!("{head}\n"), Line::Err);
-                this.debug.exception = Some(head);
+                this.debug.as_mut(cx).print(&format!("{head}\n"), Line::Err);
+                this.debug.as_mut(cx).exception = Some(head);
                 cx.notify();
             });
         })
         .detach();
-    }
-
-    /// A console link: `File "x.py", line N` (relative to the session's directory).
-    pub(super) fn console_link(&self, path: &str, line: usize) -> Option<(PathBuf, usize)> {
-        let p = PathBuf::from(path);
-        let p = if p.is_absolute() { p } else { self.debug.cwd.join(p) };
-        p.is_file().then_some((p, line))
     }
 
     pub(in crate::workspace) fn open_console_link(&mut self, path: &Path, line: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -472,14 +467,14 @@ impl Workspace {
 
     /// Shift+F7: the calls on the stop line; one call steps into it right away.
     pub(super) fn smart_step_into(&mut self, cx: &mut Context<Self>) {
-        let (Some(thread), Some(frame)) = (self.debug.paused_thread(), self.debug.frames.get(self.debug.frame).map(|f| f.id)) else {
+        let (Some(thread), Some(frame)) = (self.debug.read(cx).paused_thread(), self.debug.read(cx).frames.get(self.debug.read(cx).frame).map(|f| f.id)) else {
             self.status = "The debugger is not paused".into();
             return;
         };
-        let Some(s) = &self.debug.session else { return };
+        let Some(s) = &self.debug.read(cx).session else { return };
         let rx = s.client.request("stepInTargets", json!({"frameId": frame}));
         // The stop's statement, from its editor (or the file on disk).
-        let stmt = self.debug.frames.get(self.debug.frame).and_then(|f| {
+        let stmt = self.debug.read(cx).frames.get(self.debug.read(cx).frame).and_then(|f| {
             let p = f.path.clone()?;
             let lines: Vec<String> = match self.editors().find(|e| e.read(cx).path.as_ref() == Some(&p)) {
                 Some(ed) => {
@@ -493,7 +488,7 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let res = rx.await;
             let _ = this.update(cx, |this, cx| {
-                if this.debug.paused_thread() != Some(thread) {
+                if this.debug.read(cx).paused_thread() != Some(thread) {
                     return;
                 }
                 let targets: Vec<(i64, String)> = match &res {
@@ -520,7 +515,7 @@ impl Workspace {
                         this.debug_request("stepIn", json!({"threadId": thread, "targetId": targets[0].0}), cx);
                         this.set_running(cx);
                     }
-                    _ => this.debug.chooser = Some(Chooser { kind: ChooserKind::StepInto(thread), targets, sel: 0 }),
+                    _ => this.debug.as_mut(cx).chooser = Some(Chooser { kind: ChooserKind::StepInto(thread), targets, sel: 0 }),
                 }
                 cx.notify();
             });
@@ -530,11 +525,11 @@ impl Workspace {
 
     /// Step into the chosen call / attach to the chosen process.
     pub(in crate::workspace) fn chooser_go(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(st) = self.debug.chooser.take() else { return };
+        let Some(st) = self.debug.as_mut(cx).chooser.take() else { return };
         if let Some((id, label)) = st.targets.get(i) {
             match st.kind {
                 ChooserKind::StepInto(thread) => {
-                    if self.debug.paused_thread() == Some(thread) {
+                    if self.debug.read(cx).paused_thread() == Some(thread) {
                         self.debug_request("stepIn", json!({"threadId": thread, "targetId": id}), cx);
                         self.set_running(cx);
                     }
@@ -550,19 +545,19 @@ impl Workspace {
     /// Jump to Cursor / a dragged execution arrow: the paused thread continues from `line`
     /// of this editor's file without running the lines between (debugpy gotoTargets + goto).
     pub(in crate::workspace) fn set_next_statement(&mut self, ed: Entity<Editor>, line: usize, cx: &mut Context<Self>) {
-        let Some(thread) = self.debug.paused_thread() else {
+        let Some(thread) = self.debug.read(cx).paused_thread() else {
             self.status = "Jump to Cursor: the debugger is not paused".into();
             return;
         };
         let Some(path) = ed.read(cx).path.clone() else { return };
-        let Some(s) = &self.debug.session else { return };
+        let Some(s) = &self.debug.read(cx).session else { return };
         let client = s.client.clone();
         // debugpy moves the innermost frame, whatever file the target names: another file
         // would mean that line number in the paused one. Other limits (into a loop, out of the
         // function) debugpy reports itself, and the program stays paused where it was.
-        if self.debug.frames.first().and_then(|f| f.path.as_ref()) != Some(&path) {
+        if self.debug.read(cx).frames.first().and_then(|f| f.path.as_ref()) != Some(&path) {
             let msg = format!("Cannot jump to line {}: only in the file where the program is paused", line + 1);
-            self.debug.info(msg.clone());
+            self.debug.as_mut(cx).info(msg.clone());
             self.show_toast(msg, true, cx);
             return;
         }
@@ -589,7 +584,7 @@ impl Workspace {
                     Ok(()) => this.status = format!("Next statement: line {}", line + 1),
                     Err(e) => {
                         let msg = format!("Cannot jump to line {}: {e}", line + 1);
-                        this.debug.info(msg.clone());
+                        this.debug.as_mut(cx).info(msg.clone());
                         this.show_toast(msg, true, cx);
                     }
                 }
@@ -613,7 +608,7 @@ impl Workspace {
                 } else {
                     this.status.clear();
                     let targets = procs.into_iter().map(|(pid, cmd)| (pid as i64, format!("{pid}  {}    {cmd}", process_target(&cmd)))).collect();
-                    this.debug.chooser = Some(Chooser { kind: ChooserKind::Attach, targets, sel: 0 });
+                    this.debug.as_mut(cx).chooser = Some(Chooser { kind: ChooserKind::Attach, targets, sel: 0 });
                 }
                 cx.notify();
             });
@@ -625,13 +620,13 @@ impl Workspace {
     /// The focused window decides (Debug or Run), else the one started last.
     pub(in crate::workspace) fn stop_targets_debug(&self, window: &Window, cx: &gpui::App) -> bool {
         let Some(panel) = self.runs.panel.as_ref().filter(|p| p.read(cx).is_running()) else { return true };
-        if self.debug.focus.contains_focused(window, cx) {
+        if self.debug.read(cx).focus.contains_focused(window, cx) {
             return true;
         }
         if gpui::Focusable::focus_handle(panel.read(cx), cx).contains_focused(window, cx) {
             return false;
         }
-        match (self.debug.started, panel.read(cx).last_started_running()) {
+        match (self.debug.read(cx).started, panel.read(cx).last_started_running()) {
             (Some(d), Some(r)) => d >= r,
             _ => true,
         }
@@ -645,7 +640,7 @@ impl Workspace {
         then: crate::workspace::install_offer_ui::Then,
         cx: &mut Context<Self>,
     ) {
-        self.debug.info(missing.to_string());
+        self.debug.as_mut(cx).info(missing.to_string());
         self.status = missing.to_string();
         self.install_offer = Some(crate::workspace::install_offer_ui::InstallOffer { package: "debugpy", python, then });
         cx.notify();
@@ -661,7 +656,7 @@ impl Workspace {
                     this.attach_to_process(pid, label, window, cx);
                 } else {
                     let msg = format!("Process {pid} has exited: use Attach to Process (Ctrl+Alt+F5) to choose another");
-                    this.debug.info(msg.clone());
+                    this.debug.as_mut(cx).info(msg.clone());
                     this.show_toast(msg, false, cx);
                 }
                 cx.notify();
@@ -672,7 +667,7 @@ impl Workspace {
 
     /// debugpy's adapter (with the project interpreter) injects itself into `pid`.
     pub(in crate::workspace) fn attach_to_process(&mut self, pid: u32, label: String, window: &mut Window, cx: &mut Context<Self>) {
-        if self.debug.is_live() {
+        if self.debug.read(cx).is_live() {
             self.stop_debug(cx);
         }
         let Some(python) = self.runs.interpreter(&self.root).map(|i| i.path) else {
@@ -680,22 +675,22 @@ impl Workspace {
             return;
         };
         let name = format!("pid {pid}");
-        self.debug.last = None;
-        self.debug.last_attach = Some((pid, label.clone()));
-        self.debug.exception = None;
-        self.debug.console.clear();
-        self.debug.console_changed(false);
-        self.debug.frames.clear();
-        self.debug.idle_watches();
-        self.debug.tab = DebugTab::Console;
-        self.debug.info(format!("Attaching to {label}"));
+        self.debug.as_mut(cx).last = None;
+        self.debug.as_mut(cx).last_attach = Some((pid, label.clone()));
+        self.debug.as_mut(cx).exception = None;
+        self.debug.as_mut(cx).console.clear();
+        self.debug.as_mut(cx).console_changed(false);
+        self.debug.as_mut(cx).frames.clear();
+        self.debug.as_mut(cx).idle_watches();
+        self.debug.as_mut(cx).tab = DebugTab::Console;
+        self.debug.as_mut(cx).info(format!("Attaching to {label}"));
         self.bottom = Some(BottomTool::Debug);
         self.status = format!("Attaching to process {pid}");
         let root = self.root.clone();
-        self.debug.gen += 1;
-        self.debug.pending = true;
-        self.debug.started = Some(std::time::Instant::now());
-        let gen = self.debug.gen;
+        self.debug.as_mut(cx).gen += 1;
+        self.debug.as_mut(cx).pending = true;
+        self.debug.as_mut(cx).started = Some(std::time::Instant::now());
+        let gen = self.debug.read(cx).gen;
         cx.spawn_in(window, async move |this, cx| {
             let adapter = cx
                 .background_executor()
@@ -706,17 +701,17 @@ impl Workspace {
                 .await;
             let started = adapter.map(|a| Client::start(&a.program, &a.args, &root, &[]).map_err(|e| format!("cannot start debugpy: {e}")));
             let _ = this.update_in(cx, |this, window, cx| {
-                if this.debug.gen != gen {
+                if this.debug.read(cx).gen != gen {
                     if let Ok(Ok((client, _))) = &started {
                         client.kill();
                     }
                     return;
                 }
-                this.debug.pending = false;
+                this.debug.as_mut(cx).pending = false;
                 match started {
                     Err(missing) => this.offer_debugpy(missing, python, crate::workspace::install_offer_ui::Then::Attach(pid, label), cx),
                     Ok(Err(e)) => {
-                        this.debug.info(e.clone());
+                        this.debug.as_mut(cx).info(e.clone());
                         this.show_toast(e, true, cx);
                     }
                     Ok(Ok((client, events))) => this.attach_session(client, events, name, ("attach", brisk_dap::attach_args(pid, true)), window, cx),
@@ -729,23 +724,24 @@ impl Workspace {
     }
 
     pub(in crate::workspace) fn chooser_key(&mut self, e: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(st) = self.debug.chooser.as_mut() else { return };
-        let n = st.targets.len();
-        match e.keystroke.key.as_str() {
-            "escape" => self.debug.chooser = None,
-            "up" => st.sel = (st.sel + n - 1) % n.max(1),
-            "down" | "tab" => st.sel = (st.sel + 1) % n.max(1),
-            "enter" | "f7" => {
-                let i = st.sel;
-                self.chooser_go(i, window, cx);
+        let Some((n, sel)) = self.debug.read(cx).chooser.as_ref().map(|st| (st.targets.len(), st.sel)) else { return };
+        let set_sel = |this: &mut Self, sel: usize, cx: &mut Context<Self>| {
+            if let Some(st) = this.debug.as_mut(cx).chooser.as_mut() {
+                st.sel = sel;
             }
+        };
+        match e.keystroke.key.as_str() {
+            "escape" => self.debug.as_mut(cx).chooser = None,
+            "up" => set_sel(self, (sel + n - 1) % n.max(1), cx),
+            "down" | "tab" => set_sel(self, (sel + 1) % n.max(1), cx),
+            "enter" | "f7" => self.chooser_go(sel, window, cx),
             _ => {}
         }
         cx.notify();
     }
 
     pub(in crate::workspace) fn render_chooser(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let st = self.debug.chooser.as_ref()?;
+        let st = self.debug.read(cx).chooser.as_ref()?;
         let title = match st.kind {
             ChooserKind::StepInto(_) => "Smart Step Into  (Enter: step into · Esc: cancel)",
             ChooserKind::Attach => "Attach to Process  (Enter: attach · Esc: cancel)",
@@ -783,7 +779,7 @@ impl Workspace {
                 .on_mouse_down(
                     gpui::MouseButton::Left,
                     cx.listener(|this, _, _, cx| {
-                        this.debug.chooser = None;
+                        this.debug.as_mut(cx).chooser = None;
                         cx.notify();
                     }),
                 )
@@ -809,5 +805,14 @@ impl Workspace {
                 )
                 .into_any_element(),
         )
+    }
+}
+
+impl DebugModel {
+    /// A console link: `File "x.py", line N` (relative to the session's directory).
+    pub(super) fn console_link(&self, path: &str, line: usize) -> Option<(PathBuf, usize)> {
+        let p = PathBuf::from(path);
+        let p = if p.is_absolute() { p } else { self.cwd.join(p) };
+        p.is_file().then_some((p, line))
     }
 }

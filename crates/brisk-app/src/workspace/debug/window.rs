@@ -5,11 +5,11 @@ use super::*;
 impl Workspace {
     /// Keys while the Debug window has focus: the console's input line.
     pub(in crate::workspace) fn debug_key(&mut self, e: &gpui::KeyDownEvent, window: &Window, cx: &mut Context<Self>) -> bool {
-        if !self.debug.focus.is_focused(window) {
+        if !self.debug.read(cx).focus.is_focused(window) {
             return false;
         }
         let k = &e.keystroke;
-        if self.debug.tab == DebugTab::Debugger {
+        if self.debug.read(cx).tab == DebugTab::Debugger {
             return self.vars_key(k, cx);
         }
         let m = k.modifiers;
@@ -17,8 +17,8 @@ impl Workspace {
         if paste {
             // A one-line input: the clipboard's first line, as the Run dialog's fields take it.
             if let Some(t) = cx.read_from_clipboard().and_then(|c| c.text()) {
-                self.debug.input.push_str(t.lines().next().unwrap_or(""));
-                self.refilter_completion();
+                self.debug.as_mut(cx).input.push_str(t.lines().next().unwrap_or(""));
+                self.debug.as_mut(cx).refilter_completion();
             }
             cx.notify();
             return true;
@@ -26,7 +26,7 @@ impl Workspace {
         if k.modifiers.control || k.modifiers.alt || k.modifiers.platform {
             return false;
         }
-        if self.completion_key(k.key.as_str()) {
+        if self.debug.as_mut(cx).completion_key(k.key.as_str()) {
             cx.notify();
             return true;
         }
@@ -34,32 +34,32 @@ impl Workspace {
             "tab" if !k.modifiers.shift => self.complete_input(cx),
             "enter" => self.evaluate_input(cx),
             "backspace" => {
-                self.debug.input.pop();
+                self.debug.as_mut(cx).input.pop();
             }
-            "space" => self.debug.input.push(' '),
-            "escape" => self.debug.input.clear(),
+            "space" => self.debug.as_mut(cx).input.push(' '),
+            "escape" => self.debug.as_mut(cx).input.clear(),
             "up" => {
-                let pos = self.debug.history_pos.min(self.debug.history.len());
+                let pos = self.debug.read(cx).history_pos.min(self.debug.read(cx).history.len());
                 if pos > 0 {
-                    self.debug.history_pos = pos - 1;
-                    self.debug.input = self.debug.history[pos - 1].clone();
+                    self.debug.as_mut(cx).history_pos = pos - 1;
+                    self.debug.as_mut(cx).input = self.debug.read(cx).history[pos - 1].clone();
                 }
             }
             "down" => {
-                if self.debug.history_pos.saturating_add(1) < self.debug.history.len() {
-                    self.debug.history_pos += 1;
-                    self.debug.input = self.debug.history[self.debug.history_pos].clone();
+                if self.debug.read(cx).history_pos.saturating_add(1) < self.debug.read(cx).history.len() {
+                    self.debug.as_mut(cx).history_pos += 1;
+                    self.debug.as_mut(cx).input = self.debug.read(cx).history[self.debug.read(cx).history_pos].clone();
                 } else {
-                    self.debug.history_pos = self.debug.history.len();
-                    self.debug.input.clear();
+                    self.debug.as_mut(cx).history_pos = self.debug.read(cx).history.len();
+                    self.debug.as_mut(cx).input.clear();
                 }
             }
             _ => match crate::keys::typed_text(k) {
-                Some(t) => self.debug.input.push_str(t),
+                Some(t) => self.debug.as_mut(cx).input.push_str(t),
                 _ => return false,
             },
         }
-        self.refilter_completion();
+        self.debug.as_mut(cx).refilter_completion();
         cx.notify();
         true
     }
@@ -67,7 +67,7 @@ impl Workspace {
     // --- Debug window -------------------------------------------------------------------
 
     pub(in crate::workspace) fn render_debug(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let d = &self.debug;
+        let d = self.debug.read(cx);
         let state = d.state();
         let paused = matches!(state, Some(State::Paused(_)));
         let live = d.is_live();
@@ -94,6 +94,7 @@ impl Workspace {
             (Some(s), _) => format!("{} — finished", s.name),
             (None, _) => "No debug session. Shift+F9 debugs the selected configuration, Ctrl+Shift+F9 the current file.".into(),
         };
+        let (pending, muted, cur_tab) = (d.pending, d.muted, d.tab);
         let tool = |id: &'static str, icon: &'static str, tip: &'static str, on: bool, color: gpui::Hsla, action: Action, cx: &mut Context<Self>| {
             div()
                 .id(id)
@@ -124,7 +125,7 @@ impl Workspace {
             .border_color(Theme::divider())
             .child(crate::ui_kit::tool_title("Debug"))
             .child(tool("dbg-rerun", "rerun", "Rerun Debug Session", can_rerun, green, Action::RerunDebug, cx))
-            .child(tool("dbg-resume", "resume", "Resume Program  F9", paused && !d.pending, green, Action::Resume, cx))
+            .child(tool("dbg-resume", "resume", "Resume Program  F9", paused && !pending, green, Action::Resume, cx))
             .child(tool("dbg-pause", "pause", "Pause Program", running, plain, Action::PauseProgram, cx))
             .child(tool("dbg-stop", "stop", "Stop  Ctrl+F2", live, Theme::error(), Action::Stop, cx))
             .child(div().w(px(1.)).h(ui_px(16.)).mx(px(4.)).bg(Theme::divider()))
@@ -145,10 +146,10 @@ impl Workspace {
                     .justify_center()
                     .rounded(px(4.))
                     .cursor_pointer()
-                    .when(d.muted, |x| x.bg(Theme::selection_row()))
-                    .when(!d.muted, |x| x.hover(|s| s.bg(Theme::hover_row())))
+                    .when(muted, |x| x.bg(Theme::selection_row()))
+                    .when(!muted, |x| x.hover(|s| s.bg(Theme::hover_row())))
                     .active(|s| s.bg(Theme::press()))
-                    .child(crate::icons::tool_icon("mute-breakpoints", 16., if d.muted { Theme::text() } else { plain }))
+                    .child(crate::icons::tool_icon("mute-breakpoints", 16., if muted { Theme::text() } else { plain }))
                     .tooltip(|_, cx| cx.new(|_| crate::workspace::Tip("Mute Breakpoints".into())).into())
                     .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::MuteBreakpoints, w, cx))),
             )
@@ -165,25 +166,25 @@ impl Workspace {
                 .when(t == cur, |x| x.border_b_2().border_color(Theme::accent()))
                 .child(label)
                 .on_click(cx.listener(move |this, _, w, cx| {
-                    this.debug.tab = t;
-                    w.focus(&this.debug.focus.clone());
+                    this.debug.as_mut(cx).tab = t;
+                    w.focus(&this.debug.read(cx).focus.clone());
                     cx.notify();
                 }))
         };
-        let tabs = div().flex().px(px(6.)).child(tab("dbg-tab-dbg", "Debugger", DebugTab::Debugger, d.tab, cx)).child(tab(
+        let tabs = div().flex().px(px(6.)).child(tab("dbg-tab-dbg", "Debugger", DebugTab::Debugger, cur_tab, cx)).child(tab(
             "dbg-tab-con",
             "Console",
             DebugTab::Console,
-            d.tab,
+            cur_tab,
             cx,
         ));
-        let body: gpui::AnyElement = match d.tab {
+        let body: gpui::AnyElement = match cur_tab {
             DebugTab::Debugger => self.render_debugger_tab(window, cx),
             DebugTab::Console => self.render_console_tab(window, cx),
         };
         div()
             .id("debug-window")
-            .track_focus(&self.debug.focus)
+            .track_focus(&self.debug.read(cx).focus)
             .size_full()
             .flex()
             .flex_col()
@@ -194,7 +195,7 @@ impl Workspace {
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, w, cx| {
-                    w.focus(&this.debug.focus.clone());
+                    w.focus(&this.debug.read(cx).focus.clone());
                     cx.notify();
                 }),
             )
@@ -203,7 +204,7 @@ impl Workspace {
 
     /// One row of the Variables / Watches list (only the rows in view are built).
     pub(super) fn debug_var_row(&self, i: usize, focused: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let d = &self.debug;
+        let d = self.debug.read(cx);
         let Some(r) = d.vars.get(i) else { return div().into_any_element() };
         let paused = d.paused_thread().is_some();
         let edit = d.edit.clone();
@@ -275,7 +276,7 @@ impl Workspace {
                         .child(label)
                         .on_click(cx.listener(move |this, _, w, cx| {
                             cx.stop_propagation();
-                            this.debug.sel = Some(i);
+                            this.debug.as_mut(cx).sel = Some(i);
                             this.view_as_data(i, w, cx);
                         })),
                 )
@@ -283,16 +284,16 @@ impl Workspace {
             .on_mouse_down(
                 gpui::MouseButton::Right,
                 cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
-                    this.debug.sel = Some(i);
+                    this.debug.as_mut(cx).sel = Some(i);
                     this.var_menu(i, e.position, cx);
                 }),
             )
             .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, _, cx| {
-                if this.debug.edit.as_ref().is_some_and(|e| e.target != EditTarget::Value(i)) {
+                if this.debug.read(cx).edit.as_ref().is_some_and(|e| e.target != EditTarget::Value(i)) {
                     this.commit_edit(cx);
                 }
                 if ev.click_count() >= 2 {
-                    this.begin_edit(i);
+                    this.debug.as_mut(cx).begin_edit(i);
                 } else {
                     this.toggle_var(i, cx);
                 }
@@ -331,7 +332,7 @@ impl Workspace {
 
     pub(super) fn render_debugger_tab(&mut self, _window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
         let threads = self.render_threads(cx);
-        let d = &self.debug;
+        let d = self.debug.read(cx);
         let frames = div()
             .id("dbg-frames")
             .w(px(300.))
@@ -379,6 +380,7 @@ impl Workspace {
         let can_remove = matches!(sel_kind, Some((RowKind::Watch(_), _)));
         let can_set = matches!(sel_kind, Some((RowKind::Var, p)) if p > 0) && paused;
         let can_copy = matches!(sel_kind, Some((RowKind::Var | RowKind::Watch(_), _)));
+        let (vars_scroll, vars_bar, exception) = (d.vars_scroll.clone(), d.vars_bar.clone(), d.exception.clone());
         let mini =
             |id: &'static str, label: &'static str, tip: &'static str, on: bool, f: fn(&mut Workspace, &mut Context<Workspace>), cx: &mut Context<Self>| {
                 div()
@@ -396,7 +398,7 @@ impl Workspace {
                     .on_click(cx.listener(move |this, _, w, cx| {
                         if on {
                             f(this, cx);
-                            w.focus(&this.debug.focus.clone());
+                            w.focus(&this.debug.read(cx).focus.clone());
                             cx.notify();
                         }
                     }))
@@ -414,7 +416,7 @@ impl Workspace {
                 "+ Watch",
                 "New Watch  Insert",
                 true,
-                |t, _| t.debug.edit = Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }),
+                |t, cx| t.debug.as_mut(cx).edit = Some(VarEdit { target: EditTarget::NewWatch, text: String::new() }),
                 cx,
             ))
             .child(mini(
@@ -423,7 +425,7 @@ impl Workspace {
                 "Remove Watch  Delete",
                 can_remove,
                 |t, cx| {
-                    if let Some(RowKind::Watch(w)) = t.debug.sel.and_then(|s| t.debug.vars.get(s)).map(|r| r.kind) {
+                    if let Some(RowKind::Watch(w)) = t.debug.read(cx).sel.and_then(|s| t.debug.read(cx).vars.get(s)).map(|r| r.kind) {
                         t.remove_watch(w, cx);
                     }
                 },
@@ -434,9 +436,9 @@ impl Workspace {
                 "Set Value",
                 "Set Value  F2",
                 can_set,
-                |t, _| {
-                    if let Some(s) = t.debug.sel {
-                        t.begin_edit(s);
+                |t, cx| {
+                    if let Some(s) = t.debug.read(cx).sel {
+                        t.debug.as_mut(cx).begin_edit(s);
                     }
                 },
                 cx,
@@ -447,7 +449,7 @@ impl Workspace {
                 "Copy Value  Ctrl+C",
                 can_copy,
                 |t, cx| {
-                    if let Some(s) = t.debug.sel {
+                    if let Some(s) = t.debug.read(cx).sel {
                         t.copy_value(s, cx);
                     }
                 },
@@ -478,13 +480,14 @@ impl Workspace {
                         "dbg-vars-rows",
                         n_rows,
                         cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
-                            let focused = this.debug.focus.is_focused(window);
+                            let focused = this.debug.read(cx).focus.is_focused(window);
                             let nw = this
                                 .debug
+                                .read(cx)
                                 .edit
                                 .as_ref()
                                 .filter(|e| e.target == EditTarget::NewWatch)
-                                .map(|e| (this.debug.watch_len().min(this.debug.vars.len()), e.text.clone()));
+                                .map(|e| (this.debug.read(cx).watch_len().min(this.debug.read(cx).vars.len()), e.text.clone()));
                             range
                                 .map(|j| match &nw {
                                     Some((at, text)) if j == *at => Self::new_watch_row(text, focused),
@@ -495,12 +498,12 @@ impl Workspace {
                         }),
                     )
                     .size_full()
-                    .track_scroll(d.vars_scroll.clone()),
+                    .track_scroll(vars_scroll.clone()),
                 )
-                .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&d.vars_scroll), d.vars_bar.clone()))
+                .child(crate::scrollbar::scrollbar(crate::scrollbar::Source::list(&vars_scroll), vars_bar))
                 .into_any_element()
         });
-        let banner = d.exception.clone().map(|e| {
+        let banner = exception.map(|e| {
             div()
                 .flex_shrink_0()
                 .px(px(8.))
@@ -520,7 +523,7 @@ impl Workspace {
 
     /// One Debug Console line (the list builds only the lines in view, links included).
     pub(super) fn debug_console_line(&self, ln: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let Some((t, k)) = self.debug.console.get(ln) else { return div().into_any_element() };
+        let Some((t, k)) = self.debug.read(cx).console.get(ln) else { return div().into_any_element() };
         let color = match k {
             Line::Out => Theme::text(),
             Line::Err => Theme::error(),
@@ -534,7 +537,7 @@ impl Workspace {
         let mut at = 0;
         if matches!(k, Line::Out | Line::Err) {
             for (j, l) in brisk_run::find_links(line).into_iter().enumerate() {
-                let Some((path, n)) = self.console_link(&l.path, l.line) else { continue };
+                let Some((path, n)) = self.debug.read(cx).console_link(&l.path, l.line) else { continue };
                 if l.cols.start > at {
                     pieces.push(div().child(chars[at..l.cols.start].iter().collect::<String>()).into_any_element());
                 }
@@ -558,8 +561,8 @@ impl Workspace {
     }
 
     pub(super) fn render_console_tab(&mut self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
-        self.debug.sync_console();
-        let d = &self.debug;
+        self.debug.as_mut(cx).sync_console();
+        let d = self.debug.read(cx);
         let focused = d.focus.is_focused(window);
         let can_eval = d.paused_thread().is_some();
         let lines = div()

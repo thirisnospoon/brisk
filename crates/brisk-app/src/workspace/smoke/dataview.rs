@@ -166,21 +166,22 @@ impl Workspace {
             let mut paused = false;
             for _ in 0..300 {
                 wait(100).await;
-                if this.update(cx, |t, _| matches!(t.debug.state(), Some(State::Paused(_)))).unwrap_or(false) {
+                if this.update(cx, |t, cx| matches!(t.debug.read(cx).state(), Some(State::Paused(_)))).unwrap_or(false) {
                     paused = true;
                     break;
                 }
             }
             // Variables arrive after the stop.
             for _ in 0..50 {
-                if this.update(cx, |t, _| t.debug.vars.iter().any(|r| r.var.name == "df")).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.debug.read(cx).vars.iter().any(|r| r.var.name == "df")).unwrap_or(false) {
                     break;
                 }
                 wait(100).await;
             }
             let rows = this
-                .update(cx, |t, _| {
+                .update(cx, |t, cx| {
                     t.debug
+                        .read(cx)
                         .vars
                         .iter()
                         .filter(|r| r.depth == 1)
@@ -191,12 +192,13 @@ impl Workspace {
             eprintln!("smoke-dataview: paused {paused}, variables {rows:?}");
             check("did not stop at # BREAK", paused);
             if !paused {
-                let tail =
-                    this.update(cx, |t, _| t.debug.console.iter().rev().take(6).map(|(l, _)| l.trim_end().to_string()).collect::<Vec<_>>()).unwrap_or_default();
+                let tail = this
+                    .update(cx, |t, cx| t.debug.read(cx).console.iter().rev().take(6).map(|(l, _)| l.trim_end().to_string()).collect::<Vec<_>>())
+                    .unwrap_or_default();
                 eprintln!("smoke-dataview: debug console (last lines first) {tail:?}");
                 finish(false);
             }
-            let row_of = |t: &Workspace, name: &str| t.debug.vars.iter().position(|r| r.depth == 1 && r.var.name == name);
+            let row_of = |t: &Workspace, cx: &gpui::App, name: &str| t.debug.read(cx).vars.iter().position(|r| r.depth == 1 && r.var.name == name);
             // Wait until the active table has its first page (and nothing in flight).
             macro_rules! table {
                 () => {{
@@ -231,7 +233,7 @@ impl Workspace {
 
             let t0 = Instant::now();
             let _ = this.update_in(cx, |t, w, cx| {
-                if let Some(i) = row_of(t, "df") {
+                if let Some(i) = row_of(t, cx, "df") {
                     t.view_as_data(i, w, cx);
                 }
             });
@@ -274,7 +276,7 @@ impl Workspace {
             // A 1M-row frame: the first page, then a page in the middle, sorted.
             let t0 = Instant::now();
             let _ = this.update_in(cx, |t, w, cx| {
-                if let Some(i) = row_of(t, "big") {
+                if let Some(i) = row_of(t, cx, "big") {
                     t.view_as_data(i, w, cx);
                 }
             });
@@ -301,7 +303,7 @@ impl Workspace {
             }
 
             let _ = this.update_in(cx, |t, w, cx| {
-                if let Some(i) = row_of(t, "arr") {
+                if let Some(i) = row_of(t, cx, "arr") {
                     t.view_as_data(i, w, cx);
                 }
             });
@@ -316,7 +318,7 @@ impl Workspace {
 
             // Copy Value of a long string: the whole value, not the tree's short repr.
             let _ = this.update(cx, |t, cx| {
-                if let Some(i) = row_of(t, "long_s") {
+                if let Some(i) = row_of(t, cx, "long_s") {
                     t.copy_value(i, cx);
                 }
             });
@@ -329,7 +331,7 @@ impl Workspace {
             );
             check("copy value is the whole string", clip.chars().count() == 5003 && clip.ends_with("END"));
             let _ = this.update(cx, |t, cx| {
-                if let Some(i) = row_of(t, "long_s") {
+                if let Some(i) = row_of(t, cx, "long_s") {
                     t.copy_as_expression(i, cx);
                 }
             });
@@ -337,7 +339,7 @@ impl Workspace {
             let clip = this.update(cx, |_, cx| cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default()).unwrap_or_default();
             check("copy as expression", clip == "long_s");
             let _ = this.update(cx, |t, cx| {
-                if let Some(i) = row_of(t, "long_s") {
+                if let Some(i) = row_of(t, cx, "long_s") {
                     t.add_row_to_watches(i, cx);
                     t.view_value(i, cx);
                 }
@@ -349,8 +351,8 @@ impl Workspace {
                         Tab::Editor(e) => format!("{} ({} chars)", e.read(cx).title(), e.read(cx).buffer.len_chars()),
                         _ => "?".into(),
                     });
-                    let w = t.debug.watches.clone();
-                    t.remove_watch(t.debug.watches.len().saturating_sub(1), cx);
+                    let w = t.debug.read(cx).watches.clone();
+                    t.remove_watch(t.debug.read(cx).watches.len().saturating_sub(1), cx);
                     (w, title)
                 })
                 .unwrap_or_default();
@@ -364,7 +366,10 @@ impl Workspace {
                 wait(300).await;
                 for _ in 0..100 {
                     wait(100).await;
-                    if this.update(cx, |t, _| matches!(t.debug.state(), Some(State::Paused(_))) && !t.debug.frames.is_empty()).unwrap_or(false) {
+                    if this
+                        .update(cx, |t, cx| matches!(t.debug.read(cx).state(), Some(State::Paused(_))) && !t.debug.read(cx).frames.is_empty())
+                        .unwrap_or(false)
+                    {
                         break;
                     }
                 }

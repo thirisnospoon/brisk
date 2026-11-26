@@ -166,7 +166,7 @@ impl Workspace {
         ];
         if python {
             v.push(self.action_entry(&format!("Run '{name}'"), Action::RunContext, true, true));
-            if self.debug.paused_thread().is_some() {
+            if self.debug.read(cx).paused_thread().is_some() {
                 v.push(self.action_entry("Jump to Cursor (Set Next Statement)", Action::SetNextStatement, true, true));
             }
         }

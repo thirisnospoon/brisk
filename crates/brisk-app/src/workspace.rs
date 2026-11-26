@@ -406,7 +406,7 @@ pub struct Workspace {
     find: find_ui::Find,
     db: db_ui::Db,
     services: services_ui::Services,
-    debug: debug::Debug,
+    debug: Entity<debug::DebugModel>,
     /// Created on first open of the Python Console.
     pyc: Option<console_ui::PyConsole>,
     /// The "press the keys" box of Keymap.
@@ -579,7 +579,7 @@ impl Workspace {
 
         window.focus(&tree_focus);
         let saved_bookmarks = bookmarks_ui::load(&root);
-        let debug = debug::Debug::new(&root, cx);
+        let debug = cx.new(|cx| debug::DebugModel::new(&root, cx));
         budget_probe::mark("bookmarks_debug");
         cx.defer_in(window, |this: &mut Self, window, cx| this.start_disk_poll(window, cx));
         // Closing the window saves everything first (PyCharm never asks).
@@ -1089,12 +1089,12 @@ impl Workspace {
             cx.stop_propagation();
             return;
         }
-        if self.debug.chooser.is_some() {
+        if self.debug.read(cx).chooser.is_some() {
             self.chooser_key(e, window, cx);
             cx.stop_propagation();
             return;
         }
-        if self.debug.bp_dialog.is_some() {
+        if self.debug.read(cx).bp_dialog.is_some() {
             self.bp_dialog_key(e, window, cx);
             cx.stop_propagation();
             return;
@@ -1391,7 +1391,7 @@ impl Workspace {
                 }
                 self.status = "Cancelling the running statement…".into();
             }
-            A::Stop if self.debug.is_live() && self.stop_targets_debug(window, cx) => {
+            A::Stop if self.debug.read(cx).is_live() && self.stop_targets_debug(window, cx) => {
                 self.debug_action(action, window, cx);
             }
             A::Stop => self.run_action(action, window, cx),

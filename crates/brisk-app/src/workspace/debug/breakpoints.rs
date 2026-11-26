@@ -18,7 +18,7 @@ impl Workspace {
                 out.push((p, list));
             }
         }
-        for b in &self.debug.stored {
+        for b in &self.debug.read(cx).stored {
             if open.contains(&b.path) {
                 continue;
             }
@@ -60,12 +60,12 @@ impl Workspace {
     /// A file was opened: its stored breakpoints move into the editor.
     pub(in crate::workspace) fn adopt_breakpoints(&mut self, ed: &Entity<Editor>, cx: &mut Context<Self>) {
         let Some(p) = ed.read(cx).path.clone() else { return };
-        let mine: Vec<(usize, Breakpoint)> = self.debug.stored.iter().filter(|b| b.path == p).map(|b| (b.line, b.breakpoint())).collect();
+        let mine: Vec<(usize, Breakpoint)> = self.debug.read(cx).stored.iter().filter(|b| b.path == p).map(|b| (b.line, b.breakpoint())).collect();
         if mine.is_empty() {
             return;
         }
-        self.debug.stored.retain(|b| b.path != p);
-        let muted = self.debug.muted;
+        self.debug.as_mut(cx).stored.retain(|b| b.path != p);
+        let muted = self.debug.read(cx).muted;
         ed.update(cx, |e, cx| {
             e.set_breakpoints(&mine);
             e.set_breakpoints_muted(muted);
@@ -75,8 +75,8 @@ impl Workspace {
 
     /// Mute Breakpoints: grey them in every editor and take them all out of a running session.
     pub(in crate::workspace) fn toggle_mute_breakpoints(&mut self, cx: &mut Context<Self>) {
-        self.debug.muted = !self.debug.muted;
-        let muted = self.debug.muted;
+        self.debug.as_mut(cx).muted = !self.debug.read(cx).muted;
+        let muted = self.debug.read(cx).muted;
         for ed in self.editors().cloned().collect::<Vec<_>>() {
             ed.update(cx, |e, cx| {
                 e.set_breakpoints_muted(muted);
@@ -86,8 +86,8 @@ impl Workspace {
         for (p, _) in self.all_breakpoints(cx) {
             self.send_breakpoints(&p, cx);
         }
-        if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) {
-            self.debug_request("setExceptionBreakpoints", self.debug.exception_args(), cx);
+        if self.debug.read(cx).session.as_ref().is_some_and(|s| s.state != State::Ended) {
+            self.debug_request("setExceptionBreakpoints", self.debug.read(cx).exception_args(), cx);
         }
         self.status = if muted { "Breakpoints muted".into() } else { "Breakpoints unmuted".into() };
         cx.notify();
@@ -97,8 +97,8 @@ impl Workspace {
     pub(in crate::workspace) fn stash_breakpoints(&mut self, ed: &Entity<Editor>, cx: &mut Context<Self>) {
         let Some(p) = ed.read(cx).path.clone() else { return };
         let list = ed.read(cx).breakpoint_list();
-        self.debug.stored.retain(|b| b.path != p);
-        self.debug.stored.extend(list.into_iter().map(|(line, b)| StoredBp { path: p.clone(), line, condition: b.condition, enabled: b.enabled }));
+        self.debug.as_mut(cx).stored.retain(|b| b.path != p);
+        self.debug.as_mut(cx).stored.extend(list.into_iter().map(|(line, b)| StoredBp { path: p.clone(), line, condition: b.condition, enabled: b.enabled }));
     }
 
     /// A breakpoint changed in an editor: save, and tell a running debugger.
@@ -113,10 +113,10 @@ impl Workspace {
         let mut v: Vec<SourceBreakpoint> = self
             .all_breakpoints(cx)
             .into_iter()
-            .filter(|(p, _)| p == path && !self.debug.muted)
+            .filter(|(p, _)| p == path && !self.debug.read(cx).muted)
             .flat_map(|(_, l)| l.into_iter().filter(|(_, b)| b.enabled).map(|(line, b)| SourceBreakpoint { line, condition: b.condition }))
             .collect();
-        if let Some((p, l)) = self.debug.session.as_ref().and_then(|s| s.temp.clone()) {
+        if let Some((p, l)) = self.debug.read(cx).session.as_ref().and_then(|s| s.temp.clone()) {
             if p == path && !v.iter().any(|b| b.line == l) {
                 v.push(SourceBreakpoint { line: l, condition: None });
             }
@@ -126,7 +126,7 @@ impl Workspace {
 
     /// setBreakpoints for one file; the reply marks verified breakpoints in its editor.
     pub(super) fn send_breakpoints(&mut self, path: &Path, cx: &mut Context<Self>) {
-        let Some(s) = self.debug.session.as_ref().filter(|s| s.state != State::Ended) else { return };
+        let Some(s) = self.debug.read(cx).session.as_ref().filter(|s| s.state != State::Ended) else { return };
         let bps = self.source_breakpoints(path, cx);
         let rx = s.client.request("setBreakpoints", brisk_dap::set_breakpoints_args(path, &bps));
         let path = path.to_path_buf();
@@ -197,7 +197,7 @@ impl Workspace {
 
     pub(in crate::workspace) fn bp_rows(&self, cx: &gpui::App) -> Vec<BpRow> {
         let mut v = vec![BpRow::Raised, BpRow::Uncaught];
-        v.extend(self.debug.exc_classes.iter().cloned().enumerate().map(|(i, c)| BpRow::Class(i, c)));
+        v.extend(self.debug.read(cx).exc_classes.iter().cloned().enumerate().map(|(i, c)| BpRow::Class(i, c)));
         for (p, bps) in self.all_breakpoints(cx) {
             v.extend(bps.into_iter().map(|(l, b)| BpRow::Line(p.clone(), l, b)));
         }
@@ -207,7 +207,7 @@ impl Workspace {
     pub(in crate::workspace) fn open_bp_dialog(&mut self, cx: &mut Context<Self>) {
         // The first line breakpoint is selected, as in PyCharm.
         let sel = self.bp_rows(cx).iter().position(|r| matches!(r, BpRow::Line(..))).unwrap_or(0);
-        self.debug.bp_dialog = Some(BpDialog { sel, editing: false });
+        self.debug.as_mut(cx).bp_dialog = Some(BpDialog { sel, editing: false });
         cx.notify();
     }
 
@@ -226,7 +226,7 @@ impl Workspace {
         match self.bp_editor(path, cx) {
             Some(ed) => ed.update(cx, |e, cx| e.set_breakpoint_enabled(line, on, cx)),
             None => {
-                if let Some(b) = self.debug.stored.iter_mut().find(|b| b.path == path && b.line == line) {
+                if let Some(b) = self.debug.as_mut(cx).stored.iter_mut().find(|b| b.path == path && b.line == line) {
                     b.enabled = on;
                 }
                 self.stored_bp_changed(path, cx);
@@ -239,7 +239,7 @@ impl Workspace {
         match self.bp_editor(path, cx) {
             Some(ed) => ed.update(cx, |e, cx| e.set_breakpoint_condition(line, cond, cx)),
             None => {
-                if let Some(b) = self.debug.stored.iter_mut().find(|b| b.path == path && b.line == line) {
+                if let Some(b) = self.debug.as_mut(cx).stored.iter_mut().find(|b| b.path == path && b.line == line) {
                     b.condition = cond;
                 }
                 self.stored_bp_changed(path, cx);
@@ -255,7 +255,7 @@ impl Workspace {
                 }
             }
             None => {
-                self.debug.stored.retain(|b| !(b.path == path && b.line == line));
+                self.debug.as_mut(cx).stored.retain(|b| !(b.path == path && b.line == line));
                 self.stored_bp_changed(path, cx);
             }
         }
@@ -263,31 +263,31 @@ impl Workspace {
 
     /// The Python Exception Breakpoint checkboxes.
     pub(in crate::workspace) fn set_exception_breakpoints(&mut self, raised: bool, uncaught: bool, cx: &mut Context<Self>) {
-        self.debug.exc_raised = raised;
-        self.debug.exc_uncaught = uncaught;
-        save_exc(&self.root, raised, uncaught, &self.debug.exc_classes);
-        if self.debug.session.as_ref().is_some_and(|s| s.state != State::Ended) {
-            self.debug_request("setExceptionBreakpoints", self.debug.exception_args(), cx);
+        self.debug.as_mut(cx).exc_raised = raised;
+        self.debug.as_mut(cx).exc_uncaught = uncaught;
+        save_exc(&self.root, raised, uncaught, &self.debug.read(cx).exc_classes);
+        if self.debug.read(cx).session.as_ref().is_some_and(|s| s.state != State::Ended) {
+            self.debug_request("setExceptionBreakpoints", self.debug.read(cx).exception_args(), cx);
         }
         cx.notify();
     }
 
     /// A class exception breakpoint changed: save and tell a running debugger.
     pub(in crate::workspace) fn bp_update_class(&mut self, i: usize, f: impl FnOnce(&mut ExcClass), cx: &mut Context<Self>) {
-        if let Some(c) = self.debug.exc_classes.get_mut(i) {
+        if let Some(c) = self.debug.as_mut(cx).exc_classes.get_mut(i) {
             f(c);
         }
-        let (r, u) = (self.debug.exc_raised, self.debug.exc_uncaught);
+        let (r, u) = (self.debug.read(cx).exc_raised, self.debug.read(cx).exc_uncaught);
         self.set_exception_breakpoints(r, u, cx);
     }
 
     /// "+ Exception": a new class row, its name field ready for typing.
     pub(in crate::workspace) fn bp_add_class(&mut self, cx: &mut Context<Self>) {
         self.bp_drop_empty_classes(cx);
-        self.debug.exc_classes.push(ExcClass::default());
-        let i = self.debug.exc_classes.len() - 1;
+        self.debug.as_mut(cx).exc_classes.push(ExcClass::default());
+        let i = self.debug.read(cx).exc_classes.len() - 1;
         let sel = self.bp_rows(cx).iter().position(|r| matches!(r, BpRow::Class(j, _) if *j == i)).unwrap_or(0);
-        if let Some(d) = self.debug.bp_dialog.as_mut() {
+        if let Some(d) = self.debug.as_mut(cx).bp_dialog.as_mut() {
             d.sel = sel;
             d.editing = true;
         }
@@ -295,25 +295,25 @@ impl Workspace {
     }
 
     pub(in crate::workspace) fn bp_remove_class(&mut self, i: usize, cx: &mut Context<Self>) {
-        if i < self.debug.exc_classes.len() {
-            self.debug.exc_classes.remove(i);
+        if i < self.debug.read(cx).exc_classes.len() {
+            self.debug.as_mut(cx).exc_classes.remove(i);
         }
-        let (r, u) = (self.debug.exc_raised, self.debug.exc_uncaught);
+        let (r, u) = (self.debug.read(cx).exc_raised, self.debug.read(cx).exc_uncaught);
         self.set_exception_breakpoints(r, u, cx);
     }
 
     /// A class row left without a name goes away.
     pub(super) fn bp_drop_empty_classes(&mut self, cx: &mut Context<Self>) {
-        if self.debug.exc_classes.iter().any(|c| c.name.trim().is_empty()) {
-            self.debug.exc_classes.retain(|c| !c.name.trim().is_empty());
-            let (r, u) = (self.debug.exc_raised, self.debug.exc_uncaught);
+        if self.debug.read(cx).exc_classes.iter().any(|c| c.name.trim().is_empty()) {
+            self.debug.as_mut(cx).exc_classes.retain(|c| !c.name.trim().is_empty());
+            let (r, u) = (self.debug.read(cx).exc_raised, self.debug.read(cx).exc_uncaught);
             self.set_exception_breakpoints(r, u, cx);
         }
     }
 
     /// Space / a click on the checkbox.
     pub(super) fn bp_toggle_row(&mut self, row: &BpRow, cx: &mut Context<Self>) {
-        let (r, u) = (self.debug.exc_raised, self.debug.exc_uncaught);
+        let (r, u) = (self.debug.read(cx).exc_raised, self.debug.read(cx).exc_uncaught);
         match row {
             BpRow::Raised => self.set_exception_breakpoints(!r, u, cx),
             BpRow::Uncaught => self.set_exception_breakpoints(r, !u, cx),
@@ -328,7 +328,7 @@ impl Workspace {
     /// Enter / a double click: the breakpoint's line in the editor.
     pub(super) fn bp_go_to(&mut self, row: &BpRow, window: &mut Window, cx: &mut Context<Self>) {
         let BpRow::Line(p, l, _) = row else { return };
-        self.debug.bp_dialog = None;
+        self.debug.as_mut(cx).bp_dialog = None;
         self.open_file(p, window, cx);
         if let Some(ed) = self.active_editor().cloned() {
             ed.update(cx, |e, cx| e.go_to_line(*l, cx));
@@ -337,34 +337,44 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Changes the open Breakpoints dialog's selection or editing state.
+    pub(super) fn bp_dialog_set(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut BpDialog)) {
+        if let Some(d) = self.debug.as_mut(cx).bp_dialog.as_mut() {
+            f(d);
+        }
+    }
+
     pub(in crate::workspace) fn bp_dialog_key(&mut self, e: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let rows = self.bp_rows(cx);
-        let Some(d) = self.debug.bp_dialog.as_mut() else { return };
-        d.sel = d.sel.min(rows.len().saturating_sub(1));
-        let sel = d.sel;
+        let Some((sel, editing)) = self.debug.as_mut(cx).bp_dialog.as_mut().map(|d| {
+            d.sel = d.sel.min(rows.len().saturating_sub(1));
+            (d.sel, d.editing)
+        }) else {
+            return;
+        };
         let row = rows.get(sel).cloned();
         let k = &e.keystroke;
         if k.modifiers.control || k.modifiers.alt || k.modifiers.platform {
             if k.key == "f8" && k.modifiers.control && k.modifiers.shift {
-                self.debug.bp_dialog = None;
+                self.debug.as_mut(cx).bp_dialog = None;
             }
             cx.notify();
             return;
         }
-        let was_editing = d.editing;
+        let was_editing = editing;
         match k.key.as_str() {
-            "escape" | "enter" if d.editing => d.editing = false,
-            "escape" => self.debug.bp_dialog = None,
-            "up" => {
+            "escape" | "enter" if editing => self.bp_dialog_set(cx, |d| d.editing = false),
+            "escape" => self.debug.as_mut(cx).bp_dialog = None,
+            "up" => self.bp_dialog_set(cx, |d| {
                 d.editing = false;
                 d.sel = sel.saturating_sub(1);
-            }
-            "down" => {
+            }),
+            "down" => self.bp_dialog_set(cx, |d| {
                 d.editing = false;
                 d.sel = (sel + 1).min(rows.len().saturating_sub(1));
-            }
-            "insert" | "+" if !d.editing => self.bp_add_class(cx),
-            "space" if !d.editing => {
+            }),
+            "insert" | "+" if !editing => self.bp_add_class(cx),
+            "space" if !editing => {
                 if let Some(r) = row {
                     self.bp_toggle_row(&r, cx);
                 }
@@ -389,7 +399,7 @@ impl Workspace {
             },
             "backspace" if matches!(row, Some(BpRow::Class(..))) => {
                 if let Some(BpRow::Class(i, _)) = row {
-                    d.editing = true;
+                    self.bp_dialog_set(cx, |d| d.editing = true);
                     self.bp_update_class(
                         i,
                         |c| {
@@ -411,7 +421,7 @@ impl Workspace {
                 if let (Some(BpRow::Class(i, _)), Some(t)) =
                     (&row, k.key_char.as_deref().filter(|t| t.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')))
                 {
-                    d.editing = true;
+                    self.bp_dialog_set(cx, |d| d.editing = true);
                     let t = t.to_string();
                     self.bp_update_class(*i, |c| c.name.push_str(&t), cx);
                     cx.notify();
@@ -419,7 +429,7 @@ impl Workspace {
                 }
                 // Typing edits the selected breakpoint's condition.
                 if let (Some(BpRow::Line(p, l, b)), Some(t)) = (row, crate::keys::typed_text(k)) {
-                    d.editing = true;
+                    self.bp_dialog_set(cx, |d| d.editing = true);
                     let mut c = b.condition.unwrap_or_default();
                     c.push_str(t);
                     self.bp_set_condition(&p, l, Some(c), cx);
@@ -427,15 +437,15 @@ impl Workspace {
             }
         }
         // Leaving a class name field: an empty one is dropped.
-        if was_editing && !self.debug.bp_dialog.as_ref().is_some_and(|d| d.editing) {
+        if was_editing && !self.debug.read(cx).bp_dialog.as_ref().is_some_and(|d| d.editing) {
             self.bp_drop_empty_classes(cx);
         }
         cx.notify();
     }
 
     pub(in crate::workspace) fn render_bp_dialog(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let sel = self.debug.bp_dialog.as_ref()?.sel;
-        let editing = self.debug.bp_dialog.as_ref().is_some_and(|d| d.editing);
+        let sel = self.debug.read(cx).bp_dialog.as_ref()?.sel;
+        let editing = self.debug.read(cx).bp_dialog.as_ref().is_some_and(|d| d.editing);
         let rows = self.bp_rows(cx);
         let sel = sel.min(rows.len().saturating_sub(1));
         let check = |on: bool| {
@@ -458,8 +468,8 @@ impl Workspace {
                 list.push(group("PYTHON LINE BREAKPOINTS").into_any_element());
             }
             let (on, label, detail) = match r {
-                BpRow::Raised => (self.debug.exc_raised, "On raised exceptions".to_string(), "even when handled".to_string()),
-                BpRow::Uncaught => (self.debug.exc_uncaught, "On uncaught exceptions".to_string(), String::new()),
+                BpRow::Raised => (self.debug.read(cx).exc_raised, "On raised exceptions".to_string(), "even when handled".to_string()),
+                BpRow::Uncaught => (self.debug.read(cx).exc_uncaught, "On uncaught exceptions".to_string(), String::new()),
                 BpRow::Class(_, c) => (
                     c.enabled,
                     if c.name.is_empty() { "<class name>".to_string() } else { c.name.clone() },
@@ -495,7 +505,7 @@ impl Workspace {
                     .child(div().text_color(if on { Theme::text() } else { Theme::text_muted() }).whitespace_nowrap().child(label))
                     .child(div().text_color(Theme::text_dim()).whitespace_nowrap().overflow_hidden().child(detail))
                     .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, w, cx| {
-                        if let Some(d) = this.debug.bp_dialog.as_mut() {
+                        if let Some(d) = this.debug.as_mut(cx).bp_dialog.as_mut() {
                             d.sel = i;
                             d.editing = false;
                         }
@@ -562,7 +572,7 @@ impl Workspace {
                             .when(editing, |x| x.child(div().w(px(1.5)).h(ui_px(15.)).bg(Theme::caret())))
                             .when(editing, |x| x.relative().child(crate::ui_kit::focus_ring(crate::ui_kit::RADIUS, 0.)))
                             .on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(d) = this.debug.bp_dialog.as_mut() {
+                                if let Some(d) = this.debug.as_mut(cx).bp_dialog.as_mut() {
                                     d.editing = true;
                                 }
                                 cx.notify();
@@ -611,7 +621,7 @@ impl Workspace {
                             .when(editing, |x| x.child(div().w(px(1.5)).h(ui_px(15.)).bg(Theme::caret())))
                             .when(editing, |x| x.relative().child(crate::ui_kit::focus_ring(crate::ui_kit::RADIUS, 0.)))
                             .on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(d) = this.debug.bp_dialog.as_mut() {
+                                if let Some(d) = this.debug.as_mut(cx).bp_dialog.as_mut() {
                                     d.editing = true;
                                 }
                                 cx.notify();
@@ -717,7 +727,7 @@ impl Workspace {
                                     }
                                 })))
                                 .child(button("bp-done", "Done", true, true).on_click(cx.listener(|this, _, _, cx| {
-                                    this.debug.bp_dialog = None;
+                                    this.debug.as_mut(cx).bp_dialog = None;
                                     this.bp_drop_empty_classes(cx);
                                     cx.notify();
                                 }))),

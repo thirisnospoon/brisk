@@ -277,7 +277,7 @@ impl Workspace {
             if want("debug-console") || want("debug-variables") {
                 let tb = root.join("big").join("f00001.py");
                 let _ = this.update(cx, |this, cx| {
-                    let d = &mut this.debug;
+                    let mut d = this.debug.as_mut(cx);
                     d.console = (0..5000)
                         .map(|i| {
                             if i % 3 == 0 {
@@ -303,19 +303,20 @@ impl Workspace {
                             parent: 0,
                         })
                         .collect();
+                    drop(d);
                     this.bottom = Some(BottomTool::Debug);
                     cx.notify();
                 });
                 if want("debug-variables") {
                     let _ = this.update(cx, |this, cx| {
-                        this.debug.tab = crate::workspace::debug::DebugTab::Debugger;
+                        this.debug.as_mut(cx).tab = crate::workspace::debug::DebugTab::Debugger;
                         cx.notify();
                     });
                     results.push(("debug-variables (10k)", best(&this, cx, At::Bottom(0.7)).await));
                 }
                 if want("debug-console") {
                     let _ = this.update(cx, |this, cx| {
-                        this.debug.tab = crate::workspace::debug::DebugTab::Console;
+                        this.debug.as_mut(cx).tab = crate::workspace::debug::DebugTab::Console;
                         cx.notify();
                     });
                     results.push(("debug-console (5000 lines)", best(&this, cx, At::Bottom(0.5)).await));
