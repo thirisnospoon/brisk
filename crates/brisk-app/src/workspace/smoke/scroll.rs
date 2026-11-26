@@ -242,7 +242,7 @@ impl Workspace {
                 wait(cx, 300).await;
                 let _ = this.update(cx, |this, cx| {
                     if let Some(p) = this.packages.as_mut() {
-                        p.list = (0..500).map(|i| crate::py_packages::Package { name: format!("package-{i:03}"), version: format!("1.{i}.0") }).collect();
+                        p.list = (0..500).map(|i| brisk_run::env::packages::Package { name: format!("package-{i:03}"), version: format!("1.{i}.0") }).collect();
                         p.loading = false;
                     }
                     cx.notify();

@@ -47,7 +47,7 @@ fn setup_smoke_python(root: &Path, preinstall: &[&str]) -> Result<(), String> {
     std::env::set_var("PIP_FIND_LINKS", &wheels);
     std::env::set_var("PIP_NO_INDEX", "1");
     std::env::set_var("BRISK_PYPI_INDEX", url);
-    let py = crate::py_venv::create(&base, &root.join(".venv"))?;
+    let py = brisk_run::env::venv::create(&base, &root.join(".venv"))?;
     for req in preinstall {
         let out = std::process::Command::new(&py).args(["-m", "pip", "install", "--disable-pip-version-check", req]).output().map_err(|e| e.to_string())?;
         if !out.status.success() {
@@ -231,7 +231,7 @@ impl Workspace {
                     text.push_str("brisk-big-one\tBrisk_Big_One\n");
                     let _ = std::fs::write(&big, text);
                     let t = std::time::Instant::now();
-                    let found = crate::py_packages::suggest_file(&big, "brisk-big", 12, &|| true);
+                    let found = brisk_run::env::packages::suggest_file(&big, "brisk-big", 12, &|| true);
                     let ms = t.elapsed().as_secs_f64() * 1000.0;
                     let peak = brisk_platform::process::memory().map(|m| m.0 as f64 / 1048576.0).unwrap_or(0.0);
                     let size = std::fs::metadata(&big).map(|m| m.len() / 1_000_000).unwrap_or(0);

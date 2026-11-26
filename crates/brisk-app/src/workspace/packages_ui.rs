@@ -6,10 +6,10 @@
 
 use super::{BottomTool, Workspace};
 use crate::editor::Editor;
-use crate::py_packages::{self, Package, Tool};
 use crate::theme::ui_px;
 use crate::theme::{mono_font, Theme};
 use brisk_keymap::Action;
+use brisk_run::env::packages::{self as py_packages, Package, Tool};
 use gpui::prelude::*;
 use gpui::{
     div, px, uniform_list, Animation, AnimationExt, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ScrollStrategy, Transformation,
@@ -64,7 +64,7 @@ pub struct Packages {
     pub tool: Option<Tool>,
     /// uv or Poetry of the project, when the interpreter is the project's environment
     /// (`None` inside: checked, a plain environment; outer `None`: not checked yet).
-    pub project: Option<Option<crate::py_manager::ProjectTool>>,
+    pub project: Option<Option<brisk_run::env::manager::ProjectTool>>,
     pub list: Vec<Package>,
     /// Index into the filtered list.
     pub selected: usize,
@@ -235,7 +235,7 @@ impl Workspace {
         let root = self.root.clone();
         let task = cx.background_executor().spawn(async move {
             let tool = tool.unwrap_or_else(|| py_packages::tool_for(&py));
-            let project = project.unwrap_or_else(|| crate::py_manager::project_tool(&root, &py));
+            let project = project.unwrap_or_else(|| brisk_run::env::manager::project_tool(&root, &py));
             let list = py_packages::list(&py, &tool);
             (tool, project, list)
         });

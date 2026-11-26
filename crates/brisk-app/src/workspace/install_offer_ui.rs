@@ -94,8 +94,9 @@ impl Workspace {
         let Some(InstallOffer { package, python, then }) = self.install_offer.take() else { return };
         self.status = format!("Installing {package}…");
         let (py, root) = (python.clone(), self.root.clone());
-        let task =
-            cx.background_executor().spawn(async move { crate::py_venv::install(&py, &root, &crate::py_venv::Requirements::Pyproject(vec![package.into()])) });
+        let task = cx
+            .background_executor()
+            .spawn(async move { brisk_run::env::venv::install(&py, &root, &brisk_run::env::venv::Requirements::Pyproject(vec![package.into()])) });
         cx.spawn_in(window, async move |this, cx| {
             let res = task.await;
             let _ = this.update_in(cx, |this, window, cx| {

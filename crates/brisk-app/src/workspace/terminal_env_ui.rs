@@ -4,9 +4,9 @@
 #[cfg(feature = "smoke")]
 use super::BottomTool;
 use super::Workspace;
-use crate::terminal_env::{self, Activation};
 #[cfg(feature = "smoke")]
 use brisk_keymap::Action;
+use brisk_run::env::terminal::{self as terminal_env, Activation};
 use gpui::Context;
 #[cfg(feature = "smoke")]
 use gpui::Window;
@@ -67,7 +67,7 @@ impl Workspace {
             if brisk_run::venv_python(&root.join(".venv")).is_none() {
                 if let Some(base) = base.clone() {
                     let dir = root.join(".venv");
-                    let r = bg.spawn(async move { crate::py_venv::create(&base, &dir) }).await;
+                    let r = bg.spawn(async move { brisk_run::env::venv::create(&base, &dir) }).await;
                     eprintln!("smoke-termvenv: created .venv {:?}", r.map(|p| p.display().to_string()));
                 }
             }

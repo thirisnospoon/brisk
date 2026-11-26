@@ -18,15 +18,11 @@ mod local_history;
 mod merge_view;
 mod profile;
 mod py_console;
-mod py_manager;
-mod py_packages;
-mod py_venv;
 mod run_anything;
 mod scrollbar;
 mod settings;
 mod smoke;
 mod stall;
-mod terminal_env;
 mod terminal_view;
 mod theme;
 mod todo_scan;
@@ -51,6 +47,8 @@ fn main() {
     let root = PathBuf::from(root.to_string_lossy().trim_start_matches(r"\\?\").to_string());
 
     workspace::project_ui::remember_project(&root);
+    // Smokes never reach the network: pip gets no index of its own, PyPI names only from a file.
+    brisk_run::env::set_offline(smoke::active());
     settings::load();
     workspace::budget_probe::mark("settings");
     // Local History: old revisions and the over-budget oldest go, once per start, off the UI.

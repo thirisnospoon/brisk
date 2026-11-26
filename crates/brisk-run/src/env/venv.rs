@@ -3,7 +3,6 @@
 //! installed into it. Every call blocks: run them in the background.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Requirements {
@@ -21,13 +20,7 @@ impl Requirements {
     }
 }
 
-fn command(program: &Path) -> Command {
-    let mut c = Command::new(program);
-    c.env("PYTHONIOENCODING", "utf-8").env("PIP_DISABLE_PIP_VERSION_CHECK", "1").env("PIP_NO_INPUT", "1");
-    crate::py_packages::offline_in_smoke(&mut c);
-    brisk_platform::process::no_window(&mut c);
-    c
-}
+use super::pip_command as command;
 
 fn last_error(stderr: &[u8]) -> String {
     let err = String::from_utf8_lossy(stderr);
@@ -51,7 +44,7 @@ pub fn create(base: &Path, dir: &Path) -> Result<PathBuf, String> {
     if !out.status.success() {
         return Err(last_error(&out.stderr));
     }
-    brisk_run::venv_python(dir).ok_or_else(|| format!("{} has no Python after venv", dir.display()))
+    crate::venv_python(dir).ok_or_else(|| format!("{} has no Python after venv", dir.display()))
 }
 
 /// `[project].dependencies = [ "...", ... ]` of a pyproject.toml (enough for the common

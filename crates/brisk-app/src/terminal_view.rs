@@ -147,7 +147,7 @@ pub struct TerminalPanel {
     selecting: bool,
     pub error: Option<String>,
     /// The project interpreter's environment for new shells.
-    activation: Option<crate::terminal_env::Activation>,
+    activation: Option<brisk_run::env::terminal::Activation>,
     /// Run tool window (process output) instead of Terminal (shells).
     run_mode: bool,
     /// The ▾ next to + is open: the shells to start a new tab with.
@@ -234,7 +234,7 @@ impl TerminalPanel {
     /// The Terminal tool window. Shells start with `activation` (the project interpreter's
     /// environment) when it is known, else with the project's `.venv` on PATH; the first one
     /// in `dir` (the project root when None).
-    pub fn new_in(root: PathBuf, activation: Option<crate::terminal_env::Activation>, dir: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
+    pub fn new_in(root: PathBuf, activation: Option<brisk_run::env::terminal::Activation>, dir: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
         let mut panel = Self::with_mode(root, false, cx);
         panel.activation = activation;
         panel.start_dir = dir;
@@ -566,7 +566,7 @@ sys.exit(r)";
     }
 
     /// The environment for shells opened from now on.
-    pub fn set_activation(&mut self, a: Option<crate::terminal_env::Activation>) {
+    pub fn set_activation(&mut self, a: Option<brisk_run::env::terminal::Activation>) {
         self.activation = a;
     }
 
@@ -749,7 +749,7 @@ sys.exit(r)";
             opts.env.remove("VIRTUAL_ENV");
             opts.env.extend(a.env.clone());
             if let (true, Some(p)) = (cfg!(windows), &a.prompt) {
-                opts.shell = Some(("powershell.exe".into(), crate::terminal_env::powershell_args(p)));
+                opts.shell = Some(("powershell.exe".into(), brisk_run::env::terminal::powershell_args(p)));
             }
         }
         // Another shell than the default PowerShell: its own program; the environment stays.

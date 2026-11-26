@@ -1,13 +1,13 @@
 //! Running uv and Poetry for the project: syncing its environment and changing its
 //! dependencies. Every call blocks: run them in the background.
 
-use brisk_run::pyproj::Manager;
+use crate::pyproj::Manager;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The tool for the project, or a message saying how to get it.
 pub fn tool(manager: Manager, project_python: Option<&Path>) -> Result<PathBuf, String> {
-    brisk_run::pyproj::find_tool(manager, project_python).ok_or_else(|| match manager {
+    crate::pyproj::find_tool(manager, project_python).ok_or_else(|| match manager {
         Manager::Uv => "uv is not installed: see docs.astral.sh/uv, or pip install uv".to_string(),
         Manager::Poetry => "Poetry is not installed: see python-poetry.org, or pipx install poetry".to_string(),
     })
@@ -53,13 +53,13 @@ pub fn run(manager: Manager, tool: &Path, root: &Path, args: &[String]) -> Resul
 /// Syncs the environment from the lock file; its interpreter.
 pub fn sync(manager: Manager, tool: &Path, root: &Path) -> Result<PathBuf, String> {
     // `poetry install` refuses a lock file older than pyproject.toml; `uv sync` locks itself.
-    if manager == Manager::Poetry && brisk_run::pyproj::lock_outdated(root, manager) {
+    if manager == Manager::Poetry && crate::pyproj::lock_outdated(root, manager) {
         run(manager, tool, root, &manager.lock_args())?;
     }
     run(manager, tool, root, &manager.sync_args())?;
     match manager {
-        Manager::Uv => brisk_run::venv_python(&root.join(".venv")),
-        Manager::Poetry => brisk_run::pyproj::poetry_env_python(tool, root),
+        Manager::Uv => crate::venv_python(&root.join(".venv")),
+        Manager::Poetry => crate::pyproj::poetry_env_python(tool, root),
     }
     .ok_or_else(|| format!("{} finished, but its environment was not found", manager.name()))
 }
@@ -82,10 +82,10 @@ fn same_path(a: &Path, b: &Path) -> bool {
 /// Poetry's environment for Poetry) and the tool is installed. Can start Poetry: call it off
 /// the UI thread.
 pub fn project_tool(root: &Path, python: &Path) -> Option<ProjectTool> {
-    let manager = brisk_run::pyproj::detect(root)?;
-    let tool = brisk_run::pyproj::find_tool(manager, Some(python))?;
-    let in_dot_venv = brisk_run::Interpreter::venv_dir_of(python).is_some_and(|d| same_path(&d, &root.join(".venv")));
-    let ours = in_dot_venv || (manager == Manager::Poetry && brisk_run::pyproj::poetry_env_python(&tool, root).is_some_and(|p| same_path(&p, python)));
+    let manager = crate::pyproj::detect(root)?;
+    let tool = crate::pyproj::find_tool(manager, Some(python))?;
+    let in_dot_venv = crate::Interpreter::venv_dir_of(python).is_some_and(|d| same_path(&d, &root.join(".venv")));
+    let ours = in_dot_venv || (manager == Manager::Poetry && crate::pyproj::poetry_env_python(&tool, root).is_some_and(|p| same_path(&p, python)));
     ours.then(|| ProjectTool { manager, tool, root: root.to_path_buf() })
 }
 
@@ -96,7 +96,7 @@ impl ProjectTool {
 
     fn is_dev(&self, name: &str) -> bool {
         let text = std::fs::read_to_string(self.root.join("pyproject.toml")).unwrap_or_default();
-        brisk_run::pyproj::dev_dependencies(&text).contains(&brisk_run::pyproj::normalize(name))
+        crate::pyproj::dev_dependencies(&text).contains(&crate::pyproj::normalize(name))
     }
 
     pub fn install(&self, requirement: &str) -> Result<(), String> {

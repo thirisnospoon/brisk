@@ -2,7 +2,6 @@
 //! has no pip (uv-made virtual environments). Every call blocks: run them in the background.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Package {
@@ -25,17 +24,11 @@ impl Tool {
     }
 }
 
-fn command(program: &Path) -> Command {
-    let mut c = Command::new(program);
-    c.env("PYTHONIOENCODING", "utf-8").env("PIP_DISABLE_PIP_VERSION_CHECK", "1").env("PIP_NO_INPUT", "1");
-    offline_in_smoke(&mut c);
-    brisk_platform::process::no_window(&mut c);
-    c
-}
+use super::pip_command as command;
 
 fn on_path(exe: &str) -> Option<PathBuf> {
-    let names: Vec<String> = if cfg!(windows) { vec![format!("{exe}.exe")] } else { vec![exe.to_string()] };
-    std::env::split_paths(&std::env::var_os("PATH")?).flat_map(|d| names.iter().map(move |n| d.join(n))).find(|p| p.is_file())
+    let name = brisk_platform::python::Layout::host().exe(exe);
+    std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(&name)).find(|p| p.is_file())
 }
 
 /// pip when the interpreter has it, else uv from PATH, else pip (its error is shown).
@@ -139,14 +132,6 @@ pub fn outdated(python: &Path, tool: &Tool) -> Result<std::collections::HashMap<
     run(python, tool, &["list", "--outdated", "--format=json"]).map(|s| parse_outdated(&s))
 }
 
-/// Smokes never reach the network: without a local index of their own pip gets none. Every
-/// pip call made under a smoke goes through this.
-pub(crate) fn offline_in_smoke(c: &mut Command) {
-    if crate::smoke::active() && std::env::var_os("PIP_INDEX_URL").is_none() {
-        c.env("PIP_NO_INDEX", "1");
-    }
-}
-
 const PYPI: &str = "https://pypi.org/simple/";
 
 /// PyPI's Simple index (every project name); `BRISK_PYPI_INDEX` overrides it (a mirror, or a
@@ -180,7 +165,7 @@ os.replace(tmp, sys.argv[2])
 
 /// The cached names of `url`: `pypi-names.txt` for PyPI, a file per mirror otherwise.
 fn names_cache(url: &str) -> PathBuf {
-    let dir = brisk_db::config_dir();
+    let dir = brisk_platform::dirs::config_dir();
     if url == PYPI {
         // v2: normalized keys (the first list kept the published names only).
         let _ = std::fs::remove_file(dir.join("pypi-names.txt"));
@@ -194,8 +179,8 @@ fn names_cache(url: &str) -> PathBuf {
 /// younger than a day, else fetched into it (several MB: call it in the background).
 pub fn index_file(python: &Path) -> Result<PathBuf, String> {
     let url = index_url();
-    // Smokes never reach the network: they pass a local index or get no suggestions.
-    if crate::smoke::active() && !url.starts_with("file:") {
+    // Offline (smokes): only a local index, else no suggestions.
+    if super::offline() && !url.starts_with("file:") {
         return Err("No PyPI index in smoke tests (set BRISK_PYPI_INDEX to a file:// URL)".into());
     }
     let cache = names_cache(&url);

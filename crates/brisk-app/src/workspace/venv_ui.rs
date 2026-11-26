@@ -3,10 +3,10 @@
 //! install the project's requirements into it.
 
 use super::{PopupItem, Target, Workspace};
-use crate::py_manager;
-use crate::py_venv::{self, Requirements};
 use crate::theme::ui_px;
 use crate::theme::Theme;
+use brisk_run::env::manager as py_manager;
+use brisk_run::env::venv::{self as py_venv, Requirements};
 use brisk_run::pyproj::{self, Manager};
 use brisk_run::InterpKind;
 use gpui::prelude::*;

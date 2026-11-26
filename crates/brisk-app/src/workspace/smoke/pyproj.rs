@@ -1,11 +1,11 @@
 //! Smoke of uv and Poetry projects: syncing the environment, the Packages window editing
 //! pyproject.toml, and the offer to sync after the dependencies change.
 
-use crate::py_packages::Package;
 use crate::workspace::packages_ui::Op;
 use crate::workspace::smoke::packages::MAKE_WHEELS;
 use crate::workspace::Workspace;
 use brisk_keymap::Action;
+use brisk_run::env::packages::Package;
 use brisk_run::pyproj::Manager;
 use gpui::{Context, Window};
 use std::path::Path;

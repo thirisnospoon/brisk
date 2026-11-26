@@ -2,9 +2,9 @@
 //! (wherever it lives) or a conda environment goes first on PATH with VIRTUAL_ENV /
 //! CONDA_PREFIX set, and PowerShell's prompt starts with `(name)` as after `activate`.
 
+use crate::{InterpKind, Interpreter};
 use brisk_platform::python::Layout;
 use brisk_platform::shell::path_separator as sep;
-use brisk_run::{InterpKind, Interpreter};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -75,12 +75,12 @@ mod tests {
         let bin = Layout::host().scripts_dir(&venv);
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(venv.join("pyvenv.cfg"), "home = x\nprompt = 'proj'\n").unwrap();
-        let a = activation(&bin.join("python.exe"), InterpKind::Venv);
+        let a = activation(&bin.join(Layout::host().exe("python")), InterpKind::Venv);
         assert_eq!(a.prompt.as_deref(), Some("proj"));
         assert_eq!(a.env["VIRTUAL_ENV"], venv.display().to_string());
         assert!(a.env["PATH"].starts_with(&bin.display().to_string()));
         std::fs::write(venv.join("pyvenv.cfg"), "home = x\n").unwrap();
-        assert_eq!(activation(&bin.join("python.exe"), InterpKind::Venv).prompt.as_deref(), Some("work"));
+        assert_eq!(activation(&bin.join(Layout::host().exe("python")), InterpKind::Venv).prompt.as_deref(), Some("work"));
 
         let conda = dir.join("miniconda3").join("envs").join("ds");
         let py = Layout::host().prefix_python(&conda);

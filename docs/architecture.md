@@ -50,7 +50,7 @@ of `src/`.
 | `brisk-lint` | 472 | 4 | proc, run | ruff: discovery, checks, fixes, noqa. |
 | `brisk-lsp` | 1,436 | 10 | proc, lint | JSON-RPC over stdio and a typed API for ty. |
 | `brisk-dap` | 562 | 5 | proc | The Debug Adapter Protocol client for debugpy. |
-| `brisk-run` | 4,555 | 44 | project | Interpreter discovery, run configurations (`.brisk/run.json`, `.idea` and `.run/*.xml` import), command lines, pytest / unittest runners, traceback links, uv / Poetry detection, SSH interpreters. |
+| `brisk-run` | 4,555 | 44 | project | Interpreter discovery, run configurations (`.brisk/run.json`, `.idea` and `.run/*.xml` import), command lines, pytest / unittest runners, traceback links, uv / Poetry detection, SSH interpreters. `env`: creating a venv and installing requirements, uv / Poetry sync and dependency changes, an interpreter's packages and the PyPI name list, the Terminal's activation of the project environment. |
 | `brisk-git` | 2,384 | 23 | proc | Git through the `git` CLI: status, log with its lane layout, diff, merge, stash, blame. |
 | `brisk-terminal` | 1,282 | 6 | proc | The PTY (ConPTY, openpty) and VT emulation through `alacritty_terminal`. |
 | `brisk-db` | 1,777 | 14 | | PostgreSQL, MySQL / MariaDB and SQLite: connections, schema, queries. |
@@ -75,10 +75,9 @@ target and nothing outside it can link against its code.
   window and the Run console. It emits `RunEvent` (`terminal_view.rs:71`).
 - `diff_view.rs`, `merge_view.rs`, `grid_view.rs`, `data_view.rs`: the other kinds of editor
   tab (`Tab`, `workspace.rs:238`).
-- UI-free modules that live here anyway: `local_history.rs`, `py_packages.rs`, `py_venv.rs`,
-  `py_manager.rs`, `py_console.rs`, `todo_scan.rs`, `coverage.rs`, `profile.rs`,
-  `editorconfig.rs`, `run_anything.rs`, `terminal_env.rs`, `settings.rs`, `keymap_store.rs`.
-  None of them imports `gpui`.
+- UI-free modules that live here anyway: `local_history.rs`, `py_console.rs`,
+  `todo_scan.rs`, `coverage.rs`, `profile.rs`, `editorconfig.rs`, `run_anything.rs`,
+  `settings.rs`, `keymap_store.rs`. None of them imports `gpui`.
 - `theme.rs`, `icons.rs`, `ui_kit.rs`, `scrollbar.rs`: drawing helpers. Colors and sizes are
   read from global state (`settings.rs` keeps them in statics).
 - `crash.rs` (panic log) and `stall.rs` (main-thread watchdog and frame timing).
@@ -672,6 +671,16 @@ they can be done in parallel.
 
 `py_venv.rs`, `py_manager.rs`, `py_packages.rs`, `terminal_env.rs` with their tests.
 Verify: `cargo test -p brisk-run`; smokes for packages, venv, terminal env. Risk: low.
+
+Done on branch `arch1`. The four files moved unchanged, with their tests, to
+`brisk-run/src/env/` as `venv.rs`, `manager.rs`, `packages.rs` and `terminal.rs`; brisk-app
+calls `brisk_run::env::*` from `venv_ui.rs`, `packages_ui.rs`, `install_offer_ui.rs`,
+`terminal_env_ui.rs` and `terminal_view.rs`. The two `crate::smoke::active()` checks (pip
+without an index, no PyPI name list from the network) became `env::set_offline`, which
+`main.rs` sets from `smoke::active()` at start; `env::pip_offline` is the same check for a
+pip started elsewhere (the DataView smoke). The pip command of `venv` and `packages` is one
+function, `env::pip_command`. The names cache uses `brisk_platform::dirs::config_dir`. The
+tests now also run in the Linux CI job.
 
 #### Step 7. Run outputs to `brisk-run`
 

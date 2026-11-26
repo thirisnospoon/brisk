@@ -3,6 +3,7 @@
 
 mod config;
 pub mod django;
+pub mod env;
 pub mod envfile;
 mod interp;
 mod links;

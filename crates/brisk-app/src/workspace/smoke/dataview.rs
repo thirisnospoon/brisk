@@ -40,7 +40,7 @@ print(len(df))
 
 fn quiet(cmd: &mut std::process::Command) -> &mut std::process::Command {
     brisk_platform::process::no_window(cmd);
-    crate::py_packages::offline_in_smoke(cmd);
+    brisk_run::env::pip_offline(cmd);
     cmd.stdin(std::process::Stdio::null())
 }
 
