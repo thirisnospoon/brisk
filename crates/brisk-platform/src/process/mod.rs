@@ -57,6 +57,53 @@ pub fn memory() -> Option<(u64, u64)> {
     sys::memory()
 }
 
+/// A process on this machine, as the size and memory budget samples it (`cargo xtask budget`).
+#[derive(Clone, Debug)]
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub parent: u32,
+    /// The executable's file name (`ty.exe`, `ruff`).
+    pub name: String,
+    /// Bytes; 0 when the process cannot be opened.
+    pub working_set: u64,
+}
+
+/// Every process the current user can see, with its parent.
+pub fn processes() -> Vec<ProcessInfo> {
+    sys::processes()
+}
+
+/// `pid` and every process it started, directly or not (`pid` itself left out).
+pub fn descendants(all: &[ProcessInfo], pid: u32) -> Vec<ProcessInfo> {
+    let mut ids = vec![pid];
+    let mut out: Vec<ProcessInfo> = Vec::new();
+    loop {
+        let more: Vec<ProcessInfo> = all.iter().filter(|p| ids.contains(&p.parent) && !ids.contains(&p.pid)).cloned().collect();
+        if more.is_empty() {
+            return out;
+        }
+        ids.extend(more.iter().map(|p| p.pid));
+        out.extend(more);
+    }
+}
+
+/// Working set and private bytes of another process, in bytes.
+pub fn memory_of(pid: u32) -> Option<(u64, u64)> {
+    sys::memory_of(pid)
+}
+
+/// When `child` was created, in milliseconds since the Unix epoch (as the system recorded it,
+/// so the time spent in the spawn call itself does not count). `None` where it is not known.
+pub fn start_unix_ms(child: &Child) -> Option<u64> {
+    sys::start_unix_ms(child)
+}
+
+/// Whether `pid` has a visible top-level window of its own (`MainWindowHandle` in .NET).
+/// Always false where windows are not tracked per process.
+pub fn has_window(pid: u32) -> bool {
+    sys::has_window(pid)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -96,5 +143,34 @@ mod tests {
         let arg = if cfg!(windows) { "/C" } else { "-c" };
         let out = super::command(program).args([arg, "echo hi"]).output().unwrap();
         assert!(String::from_utf8_lossy(&out.stdout).contains("hi"));
+    }
+
+    #[test]
+    fn descendants_follow_the_tree() {
+        let p = |pid, parent| super::ProcessInfo { pid, parent, name: String::new(), working_set: 0 };
+        let all = [p(1, 0), p(2, 1), p(3, 2), p(4, 1), p(5, 9)];
+        let mut d: Vec<u32> = super::descendants(&all, 1).iter().map(|p| p.pid).collect();
+        d.sort();
+        assert_eq!(d, [2, 3, 4]);
+        assert!(super::descendants(&all, 5).is_empty());
+    }
+
+    #[test]
+    fn a_child_is_listed_with_its_memory_and_start() {
+        #[cfg(windows)]
+        {
+            let before = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+            let mut c = std::process::Command::new("cmd").args(["/C", "ping -n 3 127.0.0.1 >NUL"]).spawn().unwrap();
+            let all = super::processes();
+            let me = std::process::id();
+            let kids = super::descendants(&all, me);
+            assert!(kids.iter().any(|k| k.pid == c.id() && k.name.eq_ignore_ascii_case("cmd.exe")), "{kids:?}");
+            assert!(super::memory_of(c.id()).is_some_and(|(ws, _)| ws > 0));
+            let start = super::start_unix_ms(&c).unwrap();
+            assert!(start + 1000 >= before && start <= before + 10_000, "{start} vs {before}");
+            assert!(!super::has_window(c.id()));
+            let _ = c.kill();
+            let _ = c.wait();
+        }
     }
 }

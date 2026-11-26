@@ -93,3 +93,81 @@ pub fn live_children() -> Option<u32> {
         (ok != 0).then_some(info.ActiveProcesses)
     }
 }
+
+pub fn processes() -> Vec<super::ProcessInfo> {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
+    let mut out = Vec::new();
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == INVALID_HANDLE_VALUE {
+            return out;
+        }
+        let mut e: PROCESSENTRY32W = std::mem::zeroed();
+        e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut ok = Process32FirstW(snap, &mut e) != 0;
+        while ok {
+            let len = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
+            let name = String::from_utf16_lossy(&e.szExeFile[..len]);
+            let working_set = memory_of(e.th32ProcessID).map_or(0, |m| m.0);
+            out.push(super::ProcessInfo { pid: e.th32ProcessID, parent: e.th32ParentProcessID, name, working_set });
+            ok = Process32NextW(snap, &mut e) != 0;
+        }
+        CloseHandle(snap);
+    }
+    out
+}
+
+pub fn memory_of(pid: u32) -> Option<(u64, u64)> {
+    use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX};
+    use windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return None;
+        }
+        let mut c: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
+        c.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+        let ok = GetProcessMemoryInfo(h, &mut c as *mut _ as *mut PROCESS_MEMORY_COUNTERS, c.cb);
+        CloseHandle(h);
+        (ok != 0).then_some((c.WorkingSetSize as u64, c.PrivateUsage as u64))
+    }
+}
+
+pub fn start_unix_ms(child: &Child) -> Option<u64> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::GetProcessTimes;
+    let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+    let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+    // SAFETY: the handle is the child's own and stays open for the call.
+    let ok = unsafe { GetProcessTimes(child.as_raw_handle() as HANDLE, &mut created, &mut exited, &mut kernel, &mut user) };
+    if ok == 0 {
+        return None;
+    }
+    // 100 ns ticks since 1601-01-01.
+    let ticks = ((created.dwHighDateTime as u64) << 32) | created.dwLowDateTime as u64;
+    ticks.checked_sub(116_444_736_000_000_000).map(|t| t / 10_000)
+}
+
+pub fn has_window(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindow, GetWindowThreadProcessId, IsWindowVisible, GW_OWNER};
+    struct Search {
+        pid: u32,
+        found: bool,
+    }
+    unsafe extern "system" fn visit(h: HWND, l: LPARAM) -> BOOL {
+        // SAFETY: `l` is the `Search` below, alive for the whole EnumWindows call.
+        let s = unsafe { &mut *(l as *mut Search) };
+        let mut owner = 0u32;
+        unsafe { GetWindowThreadProcessId(h, &mut owner) };
+        if owner == s.pid && unsafe { IsWindowVisible(h) } != 0 && unsafe { GetWindow(h, GW_OWNER) }.is_null() {
+            s.found = true;
+            return 0;
+        }
+        1
+    }
+    let mut s = Search { pid, found: false };
+    unsafe { EnumWindows(Some(visit), &mut s as *mut Search as LPARAM) };
+    s.found
+}

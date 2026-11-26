@@ -19,6 +19,7 @@ members = [
     "crates/brisk-vm",
     "crates/brisk-web",
     "crates/brisk-app",
+    "xtask",
 ]
 exclude = ["third_party"]
 

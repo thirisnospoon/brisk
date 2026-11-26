@@ -58,6 +58,7 @@ of `src/`.
 | `brisk-history` | 465 | 3 | platform, git | Local History: revisions of a file at every save and before risky edits (gzip, in the settings folder), folder history, labels, pruning. |
 | `brisk-web` | 1,087 | 7 | project | Django / FastAPI / Flask routes and template references. |
 | `brisk-vm` | 198 | 3 | | The Windows Hypervisor Platform check for the planned container VM (`docs/design/containers.md`). |
+| `xtask` | | | platform | `cargo xtask package-portable` and `cargo xtask budget`, the release tasks (not part of Brisk). |
 
 The dependency graph is shallow and has no cycles. Only `brisk-app` depends on GPUI.
 
@@ -673,6 +674,17 @@ Port `package-portable.ps1` and `budget.ps1` to `cargo xtask`; CI calls the xtas
 `.ps1` names stay as wrappers until the release checklist and `docs/building.md` are
 updated. Verify: the zip matches the script's, file for file, and the budget numbers match.
 Risk: medium, since release packaging depends on it. Do it between releases.
+
+Done on branch `arch1`. `xtask/` is a workspace crate, `cargo xtask` its alias in
+`.cargo/config.toml`; `package-portable` and `budget` are ports of the scripts, and the two
+`.ps1` files call them with the same parameters. The fetch scripts stay PowerShell: the
+package task runs them where PowerShell is found and otherwise needs `vendor/` filled. The
+budget's process sampling (`processes`, `descendants`, `memory_of`, `start_unix_ms`,
+`has_window`) is in `brisk_platform::process`. Compared on the same release exe: the zip has
+the same 317 entries with the same sizes and SHA-256 (it is 5 KB smaller: another deflate),
+`--size-only` gives the same numbers, and MEMBUDGET agrees within run-to-run noise. The
+startup launches were not compared: they show the release window on screen. The workflow
+still calls the scripts; it changes when CI is back on.
 
 ### Phase 2: move logic out of `brisk-app`
 

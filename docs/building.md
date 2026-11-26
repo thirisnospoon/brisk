@@ -41,10 +41,10 @@ Development builds look for the tools in these folders. The portable package cop
 ## Portable Windows package
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\package-portable.ps1   # -NoBuild packages an already built exe
+cargo xtask package-portable   # --no-build packages an already built exe
 ```
 
-The script builds the release binary (unless `-NoBuild`), runs both fetch scripts, and writes `dist\Brisk-<version>-windows-x64.zip` (about 39 MB). The version comes from `Cargo.toml`.
+`scripts\package-portable.ps1 [-NoBuild]` does the same (it calls the xtask). The task builds the release binary (unless `-NoBuild`), runs both fetch scripts, and writes `dist\Brisk-<version>-windows-x64.zip` (about 39 MB). The version comes from `Cargo.toml`.
 
 The zip contains:
 
@@ -66,10 +66,10 @@ Saved database passwords are encrypted with DPAPI for the current Windows user. 
 ## Size, startup and memory budget
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\budget.ps1
+cargo xtask budget
 ```
 
-Options: `-Build` (build first), `-Package` (rebuild the zip), `-Runs 3`, `-NoMembudget`, `-SizeOnly` (sizes only, as in CI), `-Out results.json`, and `-Exe`, `-SmokeExe`, `-Zip`, `-Project` to measure something other than the defaults (`target\release\brisk.exe`, `target\smoke\brisk.exe`, the newest `dist\*.zip`, `examples\demo_project`).
+`scripts\budget.ps1` takes the same options in PowerShell form (`-Build`, `-SizeOnly`, …) and calls the xtask. Options: `--build` (build first), `--package` (rebuild the zip), `--runs 3`, `--no-membudget`, `--size-only` (sizes only, as in CI), `--out results.json`, and `--exe`, `--smoke-exe`, `--zip`, `--project` to measure something other than the defaults (`target\release\brisk.exe`, `target\smoke\brisk.exe`, the newest `dist\*.zip`, `examples\demo_project`).
 
 `BRISK_SMOKE_MEMBUDGET` is a smoke, so it runs on the build with the `smoke` feature; the release exe has no smokes. `-Build` builds both, the smoke one with `--profile smoke` (release without LTO, see [testing.md](testing.md#smoke-tests)).
 
