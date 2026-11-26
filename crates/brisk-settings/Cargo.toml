@@ -1,0 +1,10 @@
+[package]
+name = "brisk-settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Brisk's user settings: the Settings type, settings.json, and the globals painting code reads."
+
+[dependencies]
+brisk-platform.workspace = true
+serde_json = "1"

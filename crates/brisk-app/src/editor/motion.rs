@@ -119,7 +119,7 @@ impl Editor {
             return;
         }
         let far = (target - shown).abs() > INSTANT_ROWS * line_height();
-        if !crate::settings::smooth_scrolling() || self.layout.is_none() || !far {
+        if !brisk_settings::smooth_scrolling() || self.layout.is_none() || !far {
             self.motion.glide = None;
             return;
         }
@@ -131,7 +131,7 @@ impl Editor {
     pub fn smooth_scroll(&mut self, dy: f32, cx: &mut gpui::Context<Self>) {
         let shown = self.begin_scroll();
         self.scroll_y = (self.scroll_y - dy).clamp(0.0, self.max_scroll_y());
-        if crate::settings::smooth_scrolling() && self.layout.is_some() && self.scroll_y != shown {
+        if brisk_settings::smooth_scrolling() && self.layout.is_some() && self.scroll_y != shown {
             let target = self.scroll_y;
             self.scroll_y = shown;
             self.motion.glide = Some(Glide { from: shown, to: target, start: Instant::now(), dur: WHEEL, last: shown });
@@ -214,7 +214,7 @@ impl Motion {
         let mut animating = false;
         let mut primary = None;
         let mut slide = None;
-        if let (true, Some(t)) = (crate::settings::smooth_caret(), target) {
+        if let (true, Some(t)) = (brisk_settings::smooth_caret(), target) {
             let to = point(t.x + scroll.x, t.y + scroll.y);
             let at = |s: &(Point<Pixels>, Point<Pixels>, Instant)| {
                 let k = ease_out(now.duration_since(s.2).as_secs_f32() / CARET_SLIDE.as_secs_f32());
@@ -233,7 +233,7 @@ impl Motion {
             }
             slide = Some(s);
         }
-        let blink = crate::settings::caret_blinking() && !animating;
+        let blink = brisk_settings::caret_blinking() && !animating;
         let (alpha, still) = if blink { blink_at(now.duration_since(epoch).as_secs_f32() * 1000.0) } else { (1.0, None) };
         // A fade is drawn at ~30 frames a second (smooth enough for an opacity change, half
         // the cost of every display frame); between fades nothing is drawn until the next.

@@ -322,12 +322,12 @@ y = [i * 2 for i in x]
                 let Some(ed) = this.active_editor().cloned() else { return };
                 eprintln!("smoke-intel: after ty's check, line 4 hints {:?}", ed.read(cx).inlay_labels(3));
                 // Settings > Editor > "Show inlay hints" hides and brings them back at once.
-                let mut s = crate::settings::current();
+                let mut s = brisk_settings::current();
                 s.inlay_hints = false;
-                crate::settings::apply(&s);
+                brisk_settings::apply(&s);
                 eprintln!("smoke-intel: hints turned off, line 4 hints {:?}", ed.read(cx).inlay_labels(3));
                 s.inlay_hints = true;
-                crate::settings::apply(&s);
+                brisk_settings::apply(&s);
                 eprintln!("smoke-intel: hints turned on, line 4 hints {:?}", ed.read(cx).inlay_labels(3));
                 ed.update(cx, |e, _| e.buffer.undo());
             });

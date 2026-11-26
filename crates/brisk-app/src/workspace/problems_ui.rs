@@ -1061,7 +1061,7 @@ impl Workspace {
     /// text is applied and saved when ruff answers, unless the file was edited meanwhile. A
     /// file ruff cannot parse stays as it is.
     pub(super) fn actions_on_save(&mut self, cx: &mut Context<Self>) {
-        let s = crate::settings::current();
+        let s = brisk_settings::current();
         if !s.reformat_on_save && !s.optimize_imports_on_save {
             return;
         }

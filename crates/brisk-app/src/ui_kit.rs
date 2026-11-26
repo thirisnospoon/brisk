@@ -179,7 +179,7 @@ pub fn floating<E: Styled>(e: E) -> E {
     if !crate::theme::islands() {
         return e.shadow_lg();
     }
-    let a = if crate::settings::is_light() { 0.5 } else { 1. };
+    let a = if brisk_settings::is_light() { 0.5 } else { 1. };
     let layer = |alpha: f32, y: f32, blur: f32| gpui::BoxShadow {
         color: gpui::hsla(0., 0., 0., alpha * a),
         offset: gpui::point(px(0.), px(y)),

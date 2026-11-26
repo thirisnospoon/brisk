@@ -50,6 +50,7 @@ of `src/`.
 | `brisk-lint` | 472 | 4 | proc, run | ruff: discovery, checks, fixes, noqa. |
 | `brisk-lsp` | 1,436 | 10 | proc, lint | JSON-RPC over stdio and a typed API for ty. |
 | `brisk-dap` | 1,047 | 13 | proc | The Debug Adapter Protocol client for debugpy, and the debugger logic the Debug window shows: hover expressions, inline values, Smart Step Into targets, exception breakpoints, console completion, the Attach to Process list. |
+| `brisk-settings` | 590 | 4 | platform | The `Settings` type, `settings.json` (load, merged save, `.bak` of a broken file) and the globals painting code reads. |
 | `brisk-run` | 4,555 | 44 | project | Interpreter discovery, run configurations (`.brisk/run.json`, `.idea` and `.run/*.xml` import), command lines, pytest / unittest runners, traceback links, uv / Poetry detection, SSH interpreters. `env`: creating a venv and installing requirements, uv / Poetry sync and dependency changes, an interpreter's packages and the PyPI name list, the Terminal's activation of the project environment. |
 | `brisk-git` | 2,384 | 23 | proc | Git through the `git` CLI: status, log with its lane layout, diff, merge, stash, blame. |
 | `brisk-terminal` | 1,282 | 6 | proc | The PTY (ConPTY, openpty) and VT emulation through `alacritty_terminal`. |
@@ -77,10 +78,10 @@ target and nothing outside it can link against its code.
 - `diff_view.rs`, `merge_view.rs`, `grid_view.rs`, `data_view.rs`: the other kinds of editor
   tab (`Tab`, `workspace.rs:238`).
 - UI-free modules that live here anyway: `py_console.rs`, `todo_scan.rs`, `coverage.rs`,
-  `profile.rs`, `editorconfig.rs`, `run_anything.rs`, `settings.rs`, `keymap_store.rs`.
+  `profile.rs`, `editorconfig.rs`, `run_anything.rs`, `keymap_store.rs`.
   None of them imports `gpui`.
 - `theme.rs`, `icons.rs`, `ui_kit.rs`, `scrollbar.rs`: drawing helpers. Colors and sizes are
-  read from global state (`settings.rs` keeps them in statics).
+  read from global state (`brisk-settings` keeps them in statics).
 - `crash.rs` (panic log) and `stall.rs` (main-thread watchdog and frame timing).
 
 ### The `Workspace` entity
@@ -717,6 +718,19 @@ tests `settings.rs` lacks: round trip, unknown keys kept, broken file kept as `.
 Verify: new crate tests; SETTINGS and DISK smokes; budget (startup reads settings).
 Risk: medium for settings, since a format slip loses user settings; the round-trip tests
 are the guard.
+
+Done on branch `arch4`. `local_history.rs` is the `brisk-history` crate, unchanged but for
+the settings folder, which now comes from `brisk_platform::dirs::config_dir`; the popup stays
+in `workspace/history_ui.rs`. `settings.rs` is the `brisk-settings` crate, with the dialog
+left in `workspace/settings_ui.rs`. Its JSON code is unchanged; `load` and `save` call
+`read` and `save_at`, which take the file path, so the tests use a temporary file: round
+trip, the key names and value forms of the file, unknown keys and another window's change
+kept on save, a broken file copied to `settings.json.bak`. Two helpers it used moved into
+`brisk-platform` so the crate does not depend on `brisk-app`: `fs::write_atomic` (from
+`editor/disk.rs`, which re-exports it) and `fonts::ui` / `fonts::mono` with the
+`BRISK_UI_FONT` / `BRISK_MONO_FONT` overrides (from `theme.rs`, which calls them). The
+statics stay as they are (problem 8); call sites use `brisk_settings::` instead of
+`crate::settings::`.
 
 #### Step 11. `brisk-app` as library plus binary
 

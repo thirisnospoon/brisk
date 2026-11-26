@@ -8,13 +8,13 @@ pub struct Theme;
 
 /// The dark color, or the light one in the light theme.
 fn pick(dark: u32, light: u32) -> Hsla {
-    rgb(if crate::settings::is_light() { light } else { dark }).into()
+    rgb(if brisk_settings::is_light() { light } else { dark }).into()
 }
 
 #[allow(dead_code)]
 impl Theme {
     pub fn is_light() -> bool {
-        crate::settings::is_light()
+        brisk_settings::is_light()
     }
     pub fn bg() -> Hsla {
         ui("bg", 0x1e1f22, 0xf7f8fa)
@@ -22,7 +22,7 @@ impl Theme {
     /// The window frame around the islands: a little darker than everything on it.
     pub fn frame() -> Hsla {
         let mut c = Self::bg();
-        c.l = if crate::settings::is_light() { (c.l - 0.06).max(0.) } else { c.l * 0.66 };
+        c.l = if brisk_settings::is_light() { (c.l - 0.06).max(0.) } else { c.l * 0.66 };
         c
     }
     pub fn panel() -> Hsla {
@@ -309,7 +309,7 @@ impl Theme {
             KeywordArg => (0xaa4926, 0x660099),
             FStringBrace => (0xcf8e6d, 0x0037a6),
         };
-        if !crate::settings::is_light() {
+        if !brisk_settings::is_light() {
             if let Some(c) = design_syntax(design(), h) {
                 return rgb(c).into();
             }
@@ -339,7 +339,7 @@ fn design() -> u8 {
 
 /// The UI scale (Settings › Appearance › UI font size, times View › Zoom IDE).
 pub fn ui_scale() -> f32 {
-    crate::settings::ui_scale()
+    brisk_settings::ui_scale()
 }
 
 /// `x` UI pixels at the current UI scale: font sizes, row and header heights, icon sizes.
@@ -351,7 +351,7 @@ pub fn ui_px(x: f32) -> gpui::Pixels {
 /// them on a darker frame, and editor tabs are pills. The UI style setting picks it (live);
 /// `BRISK_DESIGN=islands` or `=classic` overrides the setting.
 pub fn islands() -> bool {
-    islands_override().unwrap_or_else(crate::settings::islands)
+    islands_override().unwrap_or_else(brisk_settings::islands)
 }
 
 /// The UI style forced by `BRISK_DESIGN` ("islands" / "classic"), if any.
@@ -372,7 +372,7 @@ pub fn islands_override() -> Option<bool> {
 
 /// A UI color: the design variant's, else the theme's.
 fn ui(role: &'static str, dark: u32, light: u32) -> Hsla {
-    if !crate::settings::is_light() {
+    if !brisk_settings::is_light() {
         if let Some(c) = design_ui(design(), role) {
             return rgb(c).into();
         }
@@ -520,16 +520,10 @@ fn design_syntax(d: u8, h: Highlight) -> Option<u32> {
 
 /// The UI font: `BRISK_UI_FONT` overrides the platform default (for comparing fonts).
 pub fn ui_font() -> &'static str {
-    static F: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
-    F.get_or_init(|| env_font("BRISK_UI_FONT").unwrap_or(brisk_platform::fonts::UI))
+    brisk_platform::fonts::ui()
 }
 
 /// The default editor and console font: `BRISK_MONO_FONT` overrides the platform default.
 pub fn mono_font() -> &'static str {
-    static F: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
-    F.get_or_init(|| env_font("BRISK_MONO_FONT").unwrap_or(brisk_platform::fonts::MONO))
-}
-
-fn env_font(var: &str) -> Option<&'static str> {
-    std::env::var(var).ok().filter(|f| !f.trim().is_empty()).map(|f| &*Box::leak(f.into_boxed_str()))
+    brisk_platform::fonts::mono()
 }

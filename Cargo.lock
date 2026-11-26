@@ -702,6 +702,7 @@ dependencies = [
  "brisk-project",
  "brisk-run",
  "brisk-search",
+ "brisk-settings",
  "brisk-syntax",
  "brisk-terminal",
  "brisk-text",
@@ -821,6 +822,14 @@ dependencies = [
  "globset",
  "memchr",
  "regex",
+]
+
+[[package]]
+name = "brisk-settings"
+version = "0.3.0"
+dependencies = [
+ "brisk-platform",
+ "serde_json",
 ]
 
 [[package]]

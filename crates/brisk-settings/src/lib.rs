@@ -2,6 +2,7 @@
 //! inlay hints, smooth scrolling, the caret and sticky lines.
 //! Stored in `<config dir>/settings.json`; read by painting code through cheap globals.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::RwLock;
 
@@ -63,7 +64,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             light: false,
-            editor_font: crate::theme::mono_font().to_string(),
+            editor_font: brisk_platform::fonts::mono().to_string(),
             font_size: DEFAULT_FONT_SIZE,
             line_spacing: 1.0,
             inlay_hints: true,
@@ -114,7 +115,7 @@ static SPACING: AtomicU32 = AtomicU32::new(0);
 static CURRENT: RwLock<Option<Settings>> = RwLock::new(None);
 
 fn path() -> std::path::PathBuf {
-    brisk_db::config_dir().join("settings.json")
+    brisk_platform::dirs::config_dir().join("settings.json")
 }
 
 pub fn current() -> Settings {
@@ -135,12 +136,20 @@ pub fn load() -> Settings {
 static LOADED: std::sync::Mutex<Option<serde_json::Value>> = std::sync::Mutex::new(None);
 
 fn load_file() -> Settings {
+    let s = read(&path());
+    apply(&s);
+    s
+}
+
+/// The settings in the file `p`: defaults for a missing or broken file, and for each key it
+/// lacks.
+fn read(p: &Path) -> Settings {
     let mut s = Settings::default();
-    if let Ok(text) = std::fs::read_to_string(path()) {
+    if let Ok(text) = std::fs::read_to_string(p) {
         let parsed = serde_json::from_str::<serde_json::Value>(&text);
         if parsed.is_err() && !text.trim().is_empty() {
             // Hand-edited into invalid JSON: keep a copy before defaults overwrite it.
-            let _ = std::fs::copy(path(), path().with_extension("json.bak"));
+            let _ = std::fs::copy(p, p.with_extension("json.bak"));
         }
         if let Ok(v) = parsed {
             if let Some(t) = v.get("theme").and_then(|t| t.as_str()) {
@@ -203,7 +212,6 @@ fn load_file() -> Settings {
             }
         }
     }
-    apply(&s);
     s
 }
 
@@ -235,14 +243,20 @@ pub fn apply(s: &Settings) {
 }
 
 pub fn save(s: &Settings) -> std::io::Result<()> {
+    let mut loaded = LOADED.lock().unwrap_or_else(|e| e.into_inner());
+    save_at(&path(), s, &mut loaded)
+}
+
+/// Write `s` to the file `p`. Keys the file has and Brisk does not know stay, and only the
+/// keys whose value differs from `loaded` (what this process last read or wrote) are
+/// written; then `loaded` becomes `s`.
+fn save_at(p: &Path, s: &Settings, loaded: &mut Option<serde_json::Value>) -> std::io::Result<()> {
     let new = to_json(s);
-    let p = path();
-    let mut merged = std::fs::read_to_string(&p)
+    let mut merged = std::fs::read_to_string(p)
         .ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
         .filter(|v| v.is_object())
         .unwrap_or_else(|| serde_json::json!({}));
-    let mut loaded = LOADED.lock().unwrap_or_else(|e| e.into_inner());
     if let (Some(m), Some(n)) = (merged.as_object_mut(), new.as_object()) {
         for (k, v) in n {
             if loaded.as_ref().and_then(|l| l.get(k)) != Some(v) {
@@ -253,7 +267,7 @@ pub fn save(s: &Settings) -> std::io::Result<()> {
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d)?;
     }
-    crate::editor::write_atomic(&p, serde_json::to_string_pretty(&merged).unwrap_or_default().as_bytes())?;
+    brisk_platform::fs::write_atomic(p, serde_json::to_string_pretty(&merged).unwrap_or_default().as_bytes())?;
     *loaded = Some(new);
     Ok(())
 }
@@ -403,7 +417,7 @@ pub fn line_height() -> f32 {
 }
 
 pub fn editor_font() -> String {
-    CURRENT.read().ok().and_then(|s| s.as_ref().map(|s| s.editor_font.clone())).unwrap_or_else(|| crate::theme::mono_font().to_string())
+    CURRENT.read().ok().and_then(|s| s.as_ref().map(|s| s.editor_font.clone())).unwrap_or_else(|| brisk_platform::fonts::mono().to_string())
 }
 
 /// Zoom all editors (not saved, like PyCharm's "Change Font Size"): `delta` points, or back
@@ -430,3 +444,147 @@ pub const FONT_CHOICES: &[&str] = &[
     "Menlo",
     "DejaVu Sans Mono",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    /// `settings.json` in a new, empty folder.
+    fn file(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("brisk-settings-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("settings.json")
+    }
+
+    fn json_of(p: &Path) -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+    }
+
+    fn cleanup(p: &Path) {
+        if let Some(d) = p.parent() {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
+
+    /// Every setting away from its default.
+    fn changed() -> Settings {
+        Settings {
+            light: true,
+            editor_font: "JetBrains Mono".into(),
+            font_size: 15.5,
+            line_spacing: 1.2,
+            inlay_hints: false,
+            islands: true,
+            tab_limit: 25,
+            tab_rows: true,
+            ui_font_size: 14.0,
+            ui_zoom: 1.25,
+            reformat_on_save: true,
+            optimize_imports_on_save: true,
+            smooth_scrolling: false,
+            caret_blinking: false,
+            smooth_caret: true,
+            sticky_lines: false,
+            show_whitespaces: true,
+            soft_wrap_files: "*.md".into(),
+            soft_wrap_indent: false,
+            soft_wrap_extra_indent: 4,
+            line_comment_first_column: false,
+            line_comment_space: false,
+            animations: false,
+        }
+    }
+
+    #[test]
+    fn round_trip() {
+        let p = file("round-trip");
+        save_at(&p, &changed(), &mut None).unwrap();
+        assert_eq!(read(&p), changed());
+        save_at(&p, &Settings::default(), &mut None).unwrap();
+        assert_eq!(read(&p), Settings::default());
+        cleanup(&p);
+    }
+
+    /// The key names and value forms of `settings.json`: a change here makes Brisk lose the
+    /// settings users already have.
+    #[test]
+    fn file_format() {
+        let p = file("format");
+        let s = Settings { editor_font: "Consolas".into(), ..Settings::default() };
+        save_at(&p, &s, &mut None).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.starts_with("{\n  \""), "{text}");
+        let expected = json!({
+            "theme": "dark",
+            "editor_font": "Consolas",
+            "font_size": 13.5,
+            "line_spacing": 1.0,
+            "inlay_hints": true,
+            "ui_style": "classic",
+            "tab_limit": 10,
+            "tab_rows": false,
+            "ui_font_size": 13.0,
+            "ui_zoom": 1.0,
+            "reformat_on_save": false,
+            "optimize_imports_on_save": false,
+            "smooth_scrolling": true,
+            "caret_blinking": true,
+            "smooth_caret": false,
+            "sticky_lines": true,
+            "show_whitespaces": false,
+            "animations": true,
+            "soft_wrap_files": "*.md; *.txt; *.rst; *.adoc",
+            "soft_wrap_indent": true,
+            "soft_wrap_extra_indent": 0,
+            "line_comment_first_column": true,
+            "line_comment_space": true,
+        });
+        assert_eq!(json_of(&p), expected);
+        // An old file with a few keys: those are read, the rest are defaults; values out of
+        // range are clamped.
+        std::fs::write(&p, r#"{"theme": "light", "font_size": 99, "ui_style": "islands"}"#).unwrap();
+        assert_eq!(read(&p), Settings { light: true, font_size: MAX_FONT_SIZE, islands: true, ..Settings::default() });
+        cleanup(&p);
+    }
+
+    #[test]
+    fn unknown_keys_and_other_windows_changes_are_kept() {
+        let p = file("merge");
+        std::fs::write(&p, r#"{"theme": "light", "future_option": {"x": [1, 2]}}"#).unwrap();
+        let s = read(&p);
+        let mut loaded = Some(to_json(&s));
+        // Another Brisk window saves a font size meanwhile.
+        let mut other = json_of(&p);
+        other["font_size"] = json!(18.0);
+        std::fs::write(&p, other.to_string()).unwrap();
+        // This one changes only the tab rows.
+        let saved = Settings { tab_rows: true, ..s };
+        save_at(&p, &saved, &mut loaded).unwrap();
+        let v = json_of(&p);
+        assert_eq!(v["future_option"], json!({"x": [1, 2]}));
+        assert_eq!(v["theme"], json!("light"));
+        assert_eq!(v["font_size"], json!(18.0));
+        assert_eq!(v["tab_rows"], json!(true));
+        assert_eq!(loaded, Some(to_json(&saved)));
+        cleanup(&p);
+    }
+
+    #[test]
+    fn broken_file_is_kept_as_bak() {
+        let p = file("broken");
+        let broken = "{ \"theme\": \"light\", ";
+        std::fs::write(&p, broken).unwrap();
+        assert_eq!(read(&p), Settings::default());
+        assert_eq!(std::fs::read_to_string(p.with_extension("json.bak")).unwrap(), broken);
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), broken);
+        // An empty file is not worth a copy.
+        std::fs::remove_file(p.with_extension("json.bak")).unwrap();
+        std::fs::write(&p, "  \n").unwrap();
+        assert_eq!(read(&p), Settings::default());
+        assert!(!p.with_extension("json.bak").exists());
+        cleanup(&p);
+    }
+}

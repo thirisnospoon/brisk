@@ -115,8 +115,8 @@ impl Editor {
         }
         let folds: u64 =
             self.folds.hidden.iter().fold(self.folds.hidden.len() as u64, |h, &(a, z)| h.wrapping_mul(31).wrapping_add((a as u64) << 20 ^ z as u64));
-        let indent_on = crate::settings::soft_wrap_indent();
-        let extra = crate::settings::soft_wrap_extra_indent();
+        let indent_on = brisk_settings::soft_wrap_indent();
+        let extra = brisk_settings::soft_wrap_extra_indent();
         let key = (self.buffer.version(), self.wrap.cols, folds, indent_on, extra);
         if self.wrap.key == Some(key) {
             return;

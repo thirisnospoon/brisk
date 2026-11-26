@@ -26,7 +26,7 @@ pub(super) fn scan(line: &str) -> Vec<(u32, bool)> {
 
 impl Editor {
     pub(super) fn whitespace_shown(&self) -> bool {
-        self.whitespace.shown.unwrap_or_else(crate::settings::show_whitespaces)
+        self.whitespace.shown.unwrap_or_else(brisk_settings::show_whitespaces)
     }
 
     /// View › Active Editor › Show Whitespaces: flip it for this editor.

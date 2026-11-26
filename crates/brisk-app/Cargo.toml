@@ -20,6 +20,7 @@ brisk-search.workspace = true
 brisk-db.workspace = true
 brisk-history.workspace = true
 brisk-run.workspace = true
+brisk-settings.workspace = true
 brisk-lint.workspace = true
 brisk-lsp.workspace = true
 brisk-dap.workspace = true

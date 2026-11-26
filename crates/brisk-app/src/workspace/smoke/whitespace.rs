@@ -49,9 +49,9 @@ impl Workspace {
             let _ = this.update_in(cx, |t, window, cx| t.dispatch(Action::ShowWhitespaces, window, cx));
             bg.timer(Duration::from_millis(200)).await;
             eprintln!("smoke-whitespace: toggled off -> {:?}", st(cx, 1));
-            let mut s = crate::settings::current();
+            let mut s = brisk_settings::current();
             s.show_whitespaces = true;
-            crate::settings::apply(&s);
+            brisk_settings::apply(&s);
             let fresh = this.update_in(cx, |t, window, cx| {
                 let p = t.root.join("fresh.py");
                 let _ = std::fs::write(&p, "a = 1\n");
@@ -62,7 +62,7 @@ impl Workspace {
             if let Ok(Some(f)) = fresh {
                 eprintln!("smoke-whitespace: Settings default on, a new editor -> {:?}", f.read_with(cx, |e, _| e.whitespace_for_smoke(0)).unwrap_or_default());
             }
-            crate::settings::apply(&crate::settings::Settings::default());
+            brisk_settings::apply(&brisk_settings::Settings::default());
             eprintln!("smoke-whitespace: done");
             let _ = this.update(cx, |_, cx| cx.quit());
         })

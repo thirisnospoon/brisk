@@ -2460,7 +2460,7 @@ impl Workspace {
         }
         let wheel = scroll.clone();
         let islands = crate::theme::islands();
-        let rows = crate::settings::tab_rows();
+        let rows = brisk_settings::tab_rows();
         // Some tabs do not fit (as of the last layout): the ▾ list at the strip's end.
         let overflow = !rows && scroll.max_offset().width > px(0.5);
         let strip = div()
@@ -3454,11 +3454,11 @@ fn fade_in(id: &'static str, e: impl IntoElement, kind: Enter) -> gpui::AnyEleme
     let (ms, rise, dim) = match kind {
         Enter::Menu => (120, 4., 0.),
         Enter::Popup => (170, 8., 0.),
-        Enter::Dialog => (190, 10., if crate::settings::is_light() { 0.10 } else { 0.22 }),
+        Enter::Dialog => (190, 10., if brisk_settings::is_light() { 0.10 } else { 0.22 }),
         Enter::Toast => (200, 12., 0.),
     };
     let base = div().absolute().left_0().size_full().when(dim > 0., |d| d.bg(gpui::hsla(0., 0., 0., dim)));
-    if !crate::settings::animations() {
+    if !brisk_settings::animations() {
         return base.top_0().child(e).into_any_element();
     }
     base.child(e)
@@ -3473,7 +3473,7 @@ fn fade_in(id: &'static str, e: impl IntoElement, kind: Enter) -> gpui::AnyEleme
 /// twice). Keyed by the tool, so switching Run → Terminal plays it again.
 fn panel_in(id: impl Into<gpui::ElementId>, side: ToolSide, e: impl IntoElement) -> gpui::AnyElement {
     use gpui::{Animation, AnimationExt};
-    if !crate::settings::animations() {
+    if !brisk_settings::animations() {
         return div().size_full().child(e).into_any_element();
     }
     div()

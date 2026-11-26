@@ -64,7 +64,7 @@ const VCS_SYNC_LINES: usize = 2_000;
 const VCS_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
 
 pub fn line_height() -> f32 {
-    crate::settings::line_height()
+    brisk_settings::line_height()
 }
 
 struct LayoutCache {
@@ -403,7 +403,7 @@ impl Editor {
             test_results: Default::default(),
             scope_cache: Default::default(),
         };
-        ed.wrap.on = crate::settings::soft_wrap_for(path);
+        ed.wrap.on = brisk_settings::soft_wrap_for(path);
         if text.len() > big::OPEN_PARSE_BYTES && ed.syntax.is_some() {
             // A long file: the lines in view first (a tree of the first ones), the whole file
             // in the background (`background_parse`, started by the first frame).
@@ -1099,7 +1099,7 @@ impl Editor {
             A::MoveLineDown => b.move_lines(false),
             A::MoveStatementUp | A::MoveStatementDown => self.move_statement(action == A::MoveStatementUp),
             A::CommentLine => {
-                (b.comment_first_column, b.comment_space) = crate::settings::line_comment_style();
+                (b.comment_first_column, b.comment_space) = brisk_settings::line_comment_style();
                 b.toggle_line_comment()
             }
             A::AddCaretNextOccurrence => b.add_next_occurrence(),
@@ -1403,7 +1403,7 @@ impl Editor {
             while self.zoom_acc.abs() >= step {
                 let up = self.zoom_acc > 0.0;
                 self.zoom_acc -= if up { step } else { -step };
-                crate::settings::zoom(Some(if up { 1.0 } else { -1.0 }));
+                brisk_settings::zoom(Some(if up { 1.0 } else { -1.0 }));
             }
             self.clamp_scroll();
             window.refresh();
@@ -1783,8 +1783,8 @@ impl Element for EditorElement {
     ) -> Prepaint {
         // One-line fields (filters, names, find) use the UI font like the rest of the chrome.
         let is_field = self.editor.read(cx).is_field;
-        let font_size = px(if is_field { crate::ui_kit::FIELD_TEXT } else { crate::settings::font_size() });
-        let mono = font(if is_field { crate::theme::ui_font().to_string() } else { crate::settings::editor_font() });
+        let font_size = px(if is_field { crate::ui_kit::FIELD_TEXT } else { brisk_settings::font_size() });
+        let mono = font(if is_field { crate::theme::ui_font().to_string() } else { brisk_settings::editor_font() });
         let run = |len: usize, color: gpui::Hsla| TextRun { len, font: mono.clone(), color, background_color: None, underline: None, strikethrough: None };
         let digit = window.text_system().shape_line("0".into(), font_size, &[run(1, Theme::text())], None);
         let char_w = digit.width;

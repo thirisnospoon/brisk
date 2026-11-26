@@ -369,7 +369,7 @@ impl Workspace {
     /// Past the tab limit (Settings › Editor Tabs) the least recently used tab of the group
     /// closes: never the active one, a pinned one or one with unsaved changes, as in PyCharm.
     pub(super) fn enforce_tab_limit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let limit = crate::settings::tab_limit();
+        let limit = brisk_settings::tab_limit();
         while self.tabs.len() > limit {
             let keep = self.active.and_then(|i| self.tabs.get(i)).map(|t| t.entity_id());
             let age = |p: Option<&Path>| p.and_then(|p| self.recent.iter().position(|r| r == p)).unwrap_or(usize::MAX);

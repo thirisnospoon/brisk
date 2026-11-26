@@ -3,10 +3,10 @@
 //! (Alt+Shift+. / Alt+Shift+, / Ctrl+wheel) and the quick theme switch.
 
 use super::Workspace;
-use crate::settings::{self, Settings};
 use crate::theme::ui_px;
 use crate::theme::Theme;
 use brisk_keymap::Action;
+use brisk_settings::{self as settings, Settings};
 use gpui::prelude::*;
 use gpui::{div, px, Context, Window};
 

@@ -8,9 +8,9 @@
 
 use crate::diff_view::{line_text, right_to_left, side, tool, Block, Side};
 use crate::editor::Editor;
-use crate::settings::{font_size, line_height};
 use crate::theme::{mono_font, ui_font, ui_px, Theme};
 use brisk_git::Chunk;
+use brisk_settings::{font_size, line_height};
 use gpui::prelude::*;
 use gpui::{
     canvas, div, point, px, uniform_list, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, Subscription, UniformListScrollHandle, Window,

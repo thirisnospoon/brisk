@@ -75,7 +75,7 @@ impl Workspace {
             eprintln!(
                 "smoke-stripe: click the error mark -> {clicked}, caret {:?}, view top row {:.0}",
                 (caret.0 + 1, caret.1 + 1),
-                top / crate::settings::line_height()
+                top / brisk_settings::line_height()
             );
             let typed = ed.read_with(cx, |e, _| e.stripe_builds_for_smoke()).unwrap_or(0);
             eprintln!("smoke-stripe: rebuilds so far {typed}");

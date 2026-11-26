@@ -22,7 +22,7 @@ impl Editor {
     /// Before laying out a frame: which headers stick at this scroll position.
     pub(super) fn update_sticky(&mut self) {
         self.sticky.shown.clear();
-        if !self.show_gutter || self.is_field || !crate::settings::sticky_lines() || self.scroll_y <= 0.0 {
+        if !self.show_gutter || self.is_field || !brisk_settings::sticky_lines() || self.scroll_y <= 0.0 {
             return;
         }
         let outline = self.outline_cached();

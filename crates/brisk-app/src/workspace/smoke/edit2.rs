@@ -241,9 +241,9 @@ impl Workspace {
         self.dispatch(Action::Undo, window, cx);
         eprintln!("smoke-edit2: undo -> back to the selection format: {}", ed.read(cx).text_string().contains("x=f(1,2)"));
         // Actions on Save: Optimize imports + Reformat code on Ctrl+S.
-        let mut s = crate::settings::current();
+        let mut s = brisk_settings::current();
         (s.reformat_on_save, s.optimize_imports_on_save) = (true, true);
-        crate::settings::apply(&s);
+        brisk_settings::apply(&s);
         // ruff runs in the background: the file is saved as typed, then the cleaned text is
         // applied and saved. A file of its own, so the later steps do not edit it meanwhile.
         let on_save = self.root.join("onsave.py");
@@ -272,7 +272,7 @@ impl Workspace {
         }
         self.open_file(&file, window, cx);
         (s.reformat_on_save, s.optimize_imports_on_save) = (false, false);
-        crate::settings::apply(&s);
+        brisk_settings::apply(&s);
         // Code Cleanup: every safe ruff fix (the unused import goes).
         ed.update(cx, |e, cx| e.replace_all_text("import sys\nx = 1\n", cx));
         self.dispatch(Action::CodeCleanup, window, cx);

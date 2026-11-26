@@ -236,6 +236,7 @@ processes live in one Windows Job Object, so nothing outlives the IDE.
 | `brisk-lsp` | ty client (LSP) |
 | `brisk-lint` | ruff integration |
 | `brisk-dap` | Debug Adapter Protocol client for debugpy |
+| `brisk-settings` | User settings and `settings.json` |
 | `brisk-run` | Run configurations (including `.idea` import), test runners, output parsing |
 | `brisk-git` | Git through the `git` CLI |
 | `brisk-project` | Project tree and the fuzzy file index behind Go to File |

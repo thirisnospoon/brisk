@@ -155,11 +155,11 @@ impl Workspace {
             eprintln!("smoke-motion: typing -> caret opacity {:.2}", probe(cx, &ed).map(|p| p.alpha).unwrap_or(-1.0));
 
             // Smooth caret movement (off by default): End slides the caret.
-            let mut s = crate::settings::current();
+            let mut s = brisk_settings::current();
             eprintln!("smoke-motion: defaults -> smooth scrolling {}, caret blinking {}, smooth caret {}", s.smooth_scrolling, s.caret_blinking, s.smooth_caret);
             for slide in [false, true] {
                 s.smooth_caret = slide;
-                crate::settings::apply(&s);
+                brisk_settings::apply(&s);
                 let _ = this.update_in(cx, |t, w, cx| t.smoke_press("home", w, cx));
                 pause(150).await;
                 let x0 = probe(cx, &ed).map(|p| p.caret_x).unwrap_or(0.0);
@@ -182,12 +182,12 @@ impl Workspace {
             // Smooth scrolling off: the wheel jumps.
             s.smooth_caret = false;
             s.smooth_scrolling = false;
-            crate::settings::apply(&s);
+            brisk_settings::apply(&s);
             let y0 = probe(cx, &ed).map(|p| p.scroll_y).unwrap_or(0.0);
             let _ = ed.update(cx, |e, cx| e.smooth_scroll(-3.0 * lh, cx));
             let p = probe(cx, &ed);
             eprintln!("smoke-motion: smooth scrolling off -> wheel moved {:.1} rows at once, glide {}", p.map(|p| p.scroll_y - y0).unwrap_or(0.0) / lh, p.is_some_and(|p| p.target.is_some()));
-            crate::settings::apply(&crate::settings::Settings::default());
+            brisk_settings::apply(&brisk_settings::Settings::default());
             eprintln!("smoke-motion: done");
             if !hold {
                 let _ = this.update(cx, |_, cx| cx.quit());
@@ -245,12 +245,12 @@ impl Workspace {
             pause(300).await;
             let top = ed.read_with(cx, |e, _| e.line_top_for_smoke(class3) / lh).unwrap_or(-1.0);
             eprintln!("smoke-sticky: click on the class line -> caret {:?}, glide {gliding}, class line drawn at row {top:.2}", (caret.0 + 1, caret.1));
-            let mut st = crate::settings::current();
+            let mut st = brisk_settings::current();
             st.sticky_lines = false;
-            crate::settings::apply(&st);
+            brisk_settings::apply(&st);
             let s = at(cx, &ed, (def2 + 3) as f32).await;
             eprintln!("smoke-sticky: setting off -> {s:?}");
-            crate::settings::apply(&crate::settings::Settings::default());
+            brisk_settings::apply(&brisk_settings::Settings::default());
             eprintln!("smoke-sticky: done");
             let _ = this.update(cx, |_, cx| cx.quit());
         })

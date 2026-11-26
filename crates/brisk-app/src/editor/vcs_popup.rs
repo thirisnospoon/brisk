@@ -5,8 +5,8 @@
 
 use super::{line_height, Editor, EditorEvent};
 use crate::diff_view::{line_text, tool, Side};
-use crate::settings::font_size;
 use crate::theme::{mono_font, ui_font, ui_px, Theme};
+use brisk_settings::font_size;
 use gpui::prelude::*;
 use gpui::{div, px, ClipboardItem, MouseButton, Pixels, Point};
 use std::ops::Range;

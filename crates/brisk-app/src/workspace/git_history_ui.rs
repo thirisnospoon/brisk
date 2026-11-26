@@ -327,7 +327,7 @@ impl Workspace {
                                     .border_1()
                                     .border_color(Theme::divider())
                                     .bg(Theme::editor_bg())
-                                    .font_family(crate::settings::editor_font())
+                                    .font_family(brisk_settings::editor_font())
                                     .text_size(ui_px(12.5))
                                     .children(patch_lines),
                             ),

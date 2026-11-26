@@ -8,9 +8,9 @@
 //! follows the editor's scrolling, and a strip between them connects the changed ranges.
 
 use crate::editor::Editor;
-use crate::settings::{font_size, line_height};
 use crate::theme::{mono_font, ui_font, ui_px, ui_scale, Theme};
 use brisk_git::{AlignedRow, RowKind, UnifiedRow};
+use brisk_settings::{font_size, line_height};
 use gpui::prelude::*;
 use gpui::{
     canvas, div, point, px, uniform_list, App, Context, Entity, FocusHandle, Focusable, Hsla, SharedString, StyledText, Subscription, TextRun,

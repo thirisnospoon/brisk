@@ -72,7 +72,7 @@ impl Workspace {
         if !old {
             return d.into_any_element();
         }
-        if !crate::settings::animations() {
+        if !brisk_settings::animations() {
             return d.opacity(0.).into_any_element();
         }
         // Keyed by the message's number, so each message fades once.

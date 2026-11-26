@@ -78,7 +78,7 @@ impl Editor {
 
     /// Hints on `line` when its text is still `text` and hints are turned on in Settings.
     fn hints_on(&self, line: usize, text: &str) -> &[Hint] {
-        if !crate::settings::inlay_hints() {
+        if !brisk_settings::inlay_hints() {
             return &[];
         }
         match self.inlays.lines.get(&line) {

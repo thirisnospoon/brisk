@@ -19,7 +19,6 @@ mod profile;
 mod py_console;
 mod run_anything;
 mod scrollbar;
-mod settings;
 mod smoke;
 mod stall;
 mod terminal_view;
@@ -48,7 +47,7 @@ fn main() {
     workspace::project_ui::remember_project(&root);
     // Smokes never reach the network: pip gets no index of its own, PyPI names only from a file.
     brisk_run::env::set_offline(smoke::active());
-    settings::load();
+    brisk_settings::load();
     workspace::budget_probe::mark("settings");
     // Local History: old revisions and the over-budget oldest go, once per start, off the UI.
     std::thread::Builder::new()
