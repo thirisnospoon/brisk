@@ -69,19 +69,19 @@ behaviour and shortcuts; the code, icons and artwork are its own.
 
 ## Performance and memory usage
 
-Measured with `scripts\budget.ps1` on Brisk 0.3.0 (release build), Windows 11 Pro,
+Measured with `cargo xtask budget` on Brisk 0.4.0 (release build), Windows 11 Pro,
 AMD Ryzen 7 7735HS, 28 GB RAM, opening the bundled `examples\demo_project`. Every
 launch uses a fresh settings folder. Numbers are working sets unless noted.
 
-| Metric | Brisk 0.3.0 | Limit checked on every merge |
+| Metric | Brisk 0.4.0 | Limit checked on every merge |
 |---|---|---|
-| `brisk.exe` size | 26.0 MB | 26 MB |
-| Portable zip (with ty, ruff, debugpy) | 38.7 MB | 39 MB |
+| `brisk.exe` size | 22.0 MB | 26 MB |
+| Portable zip (with ty, ruff, debugpy) | 37.4 MB | 39 MB |
 | Startup, process start to first frame with the project open (median of 9) | 0.46 s | 0.4 s |
-| IDE process, idle, 5 s after start | 65 MB (88 MB private) | 110 MB |
-| IDE process after a heavy session: 200k lines of run output, 50 tabs, Find in Files | 152 MB | 200 MB |
-| ty language server, peak during that session (separate process) | 94 MB | not checked |
-| ruff, peak during that session (separate process) | 23 MB | not checked |
+| IDE process, idle, 5 s after start | 67 MB (87 MB private) | 110 MB |
+| IDE process after a heavy session: 200k lines of run output, 50 tabs, Find in Files | 85 MB | 200 MB |
+| ty language server, peak during that session (separate process) | 95 MB | not checked |
+| ruff, peak during that session (separate process) | 16 MB | not checked |
 | Frame time while scrolling large lists (20k files, 10k variables, 2k commits) | under 10 ms | p95 16 ms |
 
 What these numbers do and do not say:
@@ -89,14 +89,16 @@ What these numbers do and do not say:
 - The IDE process and its helpers are reported separately. ty (types, completion,
   navigation) and ruff (inspections, formatting) run as child processes. Their memory
   grows with the size of your project; the figures above are for a small project.
-- Startup missed its own 0.4 s limit in this run by 58 ms; most of the time goes into
-  loading fonts. 0.2.7 measured the same on the same machine that day (461 ms). Yes, we
-  are that petty about milliseconds.
+- Startup still misses its own 0.4 s limit, by 63 ms in this run; most of the time goes
+  into loading fonts. 0.3.0 measured 458 ms on the same machine. Yes, we are that petty
+  about milliseconds.
+- The heavy session went down from 152 MB in 0.3.0 to 85 MB, mostly because the Run
+  console now keeps pipe output as plain text instead of a terminal grid.
 - Brisk has not been benchmarked against other IDEs here. If you compare, measure on
   your own machine and project.
 
 We wanted a splash screen like PyCharm's: a nice logo, a progress bar, time to make tea.
-Sadly, Brisk opens a project in about 0.46 s (458 ms, median of 9 runs), and the splash
+Sadly, Brisk opens a project in about 0.46 s (463 ms, median of 9 runs), and the splash
 would not get its first frame on screen. We are not slowing the IDE down to show it.
 
 ## Features
@@ -299,6 +301,9 @@ far less mature.
 
 - **Released:** everything in [docs/features.md](docs/features.md) that is in the
   latest release.
+- **New in 0.4.0:** Brisk's own folder picker for Open and New Project; darker consoles;
+  a round of speed and memory work (the heavy session from 152 to 85 MB, the exe from
+  26 to 22 MB).
 - **New in 0.3.0:** uv and Poetry projects; Django, FastAPI and Flask navigation with an
   Endpoints window; SSH interpreters; Mark Directory as; a configurable keymap with
   PyCharm keymap import; animations and a round of interface polish.
