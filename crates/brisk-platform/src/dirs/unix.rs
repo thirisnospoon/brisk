@@ -13,3 +13,11 @@ pub fn config_dir(env: Env) -> Option<PathBuf> {
 pub fn roaming_app_data(_: Env) -> Option<PathBuf> {
     None
 }
+
+pub fn home(env: Env) -> Option<PathBuf> {
+    super::non_empty(env, "HOME")
+}
+
+pub fn roots() -> Vec<PathBuf> {
+    vec![PathBuf::from("/")]
+}

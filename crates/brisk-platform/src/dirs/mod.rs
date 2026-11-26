@@ -26,6 +26,22 @@ pub fn roaming_app_data() -> Option<PathBuf> {
     sys::roaming_app_data(&|k| std::env::var_os(k))
 }
 
+/// The user's home folder: `%USERPROFILE%` on Windows, `$HOME` elsewhere.
+pub fn home() -> Option<PathBuf> {
+    sys::home(&|k| std::env::var_os(k))
+}
+
+/// Where a path can start: the drive letters on Windows (`C:\`, `D:\`, …), `/` elsewhere.
+/// Asks no drive anything, so a dead network drive does not hang it.
+pub fn roots() -> Vec<PathBuf> {
+    sys::roots()
+}
+
+/// The value of `var`, unless it is unset or empty.
+fn non_empty(env: Env, var: &str) -> Option<PathBuf> {
+    env(var).filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
 fn portable_in(exe_dir: &Path, is_file: impl Fn(&Path) -> bool) -> Option<PathBuf> {
     is_file(&exe_dir.join("portable")).then(|| exe_dir.join("data"))
 }
@@ -95,5 +111,29 @@ mod tests {
     fn fallbacks_without_the_system_folder() {
         assert_eq!(config_dir_from(None, &env(&[("XDG_CONFIG_HOME", "xdg")])), Path::new("xdg").join("brisk"));
         assert_eq!(config_dir_from(None, &env(&[])), std::env::temp_dir().join("brisk"));
+    }
+
+    #[test]
+    fn home_from_the_environment() {
+        let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        assert_eq!(sys::home(&env(&[("USERPROFILE", "profile"), ("HOME", "home")])), Some(PathBuf::from(if cfg!(windows) { "profile" } else { "home" })));
+        let empty: &'static [(&'static str, &'static str)] = if cfg!(windows) { &[("USERPROFILE", "")] } else { &[("HOME", "")] };
+        assert_eq!(sys::home(&env(empty)), None, "an empty {var} is no home");
+        assert_eq!(sys::home(&env(&[])), None);
+    }
+
+    #[test]
+    fn roots_are_absolute() {
+        let roots = roots();
+        assert!(!roots.is_empty());
+        assert!(roots.iter().all(|r| r.is_absolute()), "{roots:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drive_letters_from_the_mask() {
+        assert_eq!(sys::drive_roots(0b101), vec![PathBuf::from(r"A:\"), PathBuf::from(r"C:\")]);
+        assert_eq!(sys::drive_roots(1 << 25), vec![PathBuf::from(r"Z:\")]);
+        assert!(sys::drive_roots(0).is_empty());
     }
 }

@@ -1,7 +1,7 @@
 //! The folder picker's model: a typed path split into the folder to list and the name being
-//! typed, the subfolders that match it, and where a path can start (drives, home). Plain
-//! filesystem work; listing a folder may be slow (network drives), so callers run
-//! [`list_dirs`] off the UI thread.
+//! typed, and the subfolders that match it. Where a path can start (home, drives) is
+//! `brisk_platform::dirs::{home, roots}`. Plain filesystem work; listing a folder may be slow
+//! (network drives), so callers run [`list_dirs`] off the UI thread.
 
 use std::path::{Path, PathBuf};
 
@@ -21,11 +21,6 @@ pub struct Folder {
 
 fn is_sep(c: char) -> bool {
     c == '/' || c == '\\'
-}
-
-/// The user's home folder.
-pub fn home() -> Option<PathBuf> {
-    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).filter(|h| !h.is_empty()).map(PathBuf::from)
 }
 
 /// A typed path as the folder to list and the start of the name typed after it:
@@ -84,21 +79,6 @@ pub fn matching<'a>(all: &'a [Folder], typed: &str) -> Vec<&'a Folder> {
     }
     prefix.extend(inside);
     prefix
-}
-
-/// Where a path can start: the drives on Windows, `/` elsewhere.
-pub fn roots() -> Vec<PathBuf> {
-    #[cfg(windows)]
-    {
-        // A bit mask of the drive letters; asks no drive anything, so a dead network drive
-        // does not hang it.
-        let mask = unsafe { windows_sys::Win32::Storage::FileSystem::GetLogicalDrives() };
-        (0..26u8).filter(|i| mask & (1 << i) != 0).map(|i| PathBuf::from(format!("{}:\\", (b'A' + i) as char))).collect()
-    }
-    #[cfg(not(windows))]
-    {
-        vec![PathBuf::from("/")]
-    }
 }
 
 /// `dir` as typed text that lists its contents: with a trailing separator.
@@ -182,8 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn roots_exist() {
-        assert!(!roots().is_empty());
+    fn queries_end_with_a_separator() {
         assert!(as_query(Path::new("/x")).ends_with(std::path::MAIN_SEPARATOR));
     }
 }

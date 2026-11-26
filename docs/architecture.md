@@ -459,7 +459,7 @@ this crate; callers do not change.
 | `shell` | `default_shell()`, `shell_command(line)` | `cmd` / PowerShell |
 | `fs` | `replace_atomic(tmp, target)`, `reveal(path)`, `trash(path)`, `open_with_default(path)` | `ReplaceFileW`, Explorer |
 | `secrets` | `protect(&[u8])`, `unprotect(&[u8])` | DPAPI. The Unix side returns "no secret store" until a keyring backend is written; the data source dialog then refuses to save the password and says why, instead of writing it in clear text. |
-| `dirs` | `config_dir()`, `data_dir()`, `cache_dir()`, `portable()` | `%APPDATA%\Brisk`, `data` next to the exe |
+| `dirs` | `config_dir()`, `data_dir()`, `cache_dir()`, `portable()`, `home()`, `roots()` | `%APPDATA%\Brisk`, `data` next to the exe, `%USERPROFILE%`, drive letters |
 | `fonts` | default UI and editor font names, extra font folders | Segoe UI, Consolas (now in `theme.rs` and `main.rs`) |
 
 Rules:
@@ -647,6 +647,10 @@ before (portable `data`, then `%APPDATA%\Brisk`, `~/Library/Application Support/
 XDG folder); `brisk_db::config::config_dir` re-exports it, and the three `APPDATA` reads that
 were left go through `dirs::roaming_app_data`. The path logic takes the environment as a
 function, so portable and installed mode are unit tests.
+
+On branch `arch1`, the folder picker's home folder and drive list moved from
+`brisk-project/src/folders.rs` to `dirs::home` and `dirs::roots` (`GetLogicalDrives` on
+Windows, `/` elsewhere), and `brisk-project` no longer depends on `windows-sys`.
 
 #### Step P5. `secrets`
 

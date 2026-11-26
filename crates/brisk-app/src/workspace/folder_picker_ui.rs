@@ -43,7 +43,7 @@ pub(super) struct FolderPicker {
 impl Workspace {
     /// Opens the picker at the folder that holds the current project.
     pub(super) fn open_folder_picker(&mut self, purpose: Purpose, cx: &mut Context<Self>) {
-        let start = self.root.parent().map(Path::to_path_buf).or_else(folders::home).unwrap_or_else(|| self.root.clone());
+        let start = self.root.parent().map(Path::to_path_buf).or_else(brisk_platform::dirs::home).unwrap_or_else(|| self.root.clone());
         let picker = &mut self.folder_picker;
         picker.purpose = purpose;
         picker.listed.clear();
@@ -98,13 +98,13 @@ impl Workspace {
 
     /// The picker's rows for the typed path.
     pub(super) fn picker_items(&mut self, q: &str) -> Vec<PopupItem> {
-        let home = folders::home();
+        let home = brisk_platform::dirs::home();
         let (dir, typed) = folders::split_query(q, home.as_deref());
         let row = |label: String, detail: String, hint: &str, pick: Pick| PopupItem { label, detail, hint: hint.into(), target: Target::PickFolder(pick) };
         let Some(dir) = dir else {
             // Nothing that names a folder yet: where to start.
             let typed = typed.to_lowercase();
-            let mut starts: Vec<PathBuf> = home.into_iter().chain(folders::roots()).collect();
+            let mut starts: Vec<PathBuf> = home.into_iter().chain(brisk_platform::dirs::roots()).collect();
             starts.extend(super::project_ui::recent_projects());
             return starts
                 .into_iter()
