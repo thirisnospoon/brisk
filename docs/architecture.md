@@ -901,6 +901,22 @@ after the tool areas. Verify: LSP, INTEL, COMPLETE, LINT, FIND smokes. Risk: med
 Packages, Python Console, TODO, Endpoints,
 Coverage and Profiler views, one pull request each. Risk: low each.
 
+TODO, Endpoints, Coverage and Profiler done on branch `arch1`, one commit each, with the
+step 15 pattern. Each `Workspace` field (`todo`, `endpoints`, `coverage`, `profile`) is
+now a small handle with the tool window's focus handle and `Option<Entity<…Model>>`.
+The model is created when the window first opens, or for Coverage and Profiler when the
+first report comes in. It owns the list, selection, scroll and folding or sort, and draws
+the window (`impl Render`). The rest goes out as events (`TodoEvent`, `EndpointsEvent`,
+`CoverageEvent`, `ProfileEvent`): open a file at a line, focus the editor, rescan, run a
+header button's action, clear the report. Keys that the workspace routes
+(`todo_key`, `endpoints_key`) get the model's answer back as a value and act on it in the
+same turn, so the smokes still see where Enter went. Two things stay on `Workspace`:
+- The web index, which Go to Declaration and Go to Related also use. The workspace hands
+  each new index to the Endpoints model.
+- Starting coverage and profile runs, and the pending runs, until `RunModel` (step 19).
+`coverage_finished` and `profile_finished` now take the window, so they can create the
+model. Packages and Python Console are left for after step 18 (`PythonEnv`).
+
 #### Step 22. What is left of `Workspace`
 
 Split `workspace.rs` into the struct and startup,
