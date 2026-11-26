@@ -92,7 +92,8 @@ impl Workspace {
 
     /// What runs in the background now, for the indicator: one line each, most important
     /// first.
-    pub(super) fn bg_tasks(&self) -> Vec<String> {
+    /// `env`: [`super::python_env::PythonEnv::tasks`].
+    pub(super) fn bg_tasks(&self, env: &[&str]) -> Vec<String> {
         let mut v: Vec<String> = Vec::new();
         if self.files.is_none() {
             v.push("Indexing files…".into());
@@ -115,22 +116,14 @@ impl Workspace {
                 v.push("Loading packages…".into());
             }
         }
-        if self.venv_busy {
-            v.push("Creating virtual environment…".into());
-        }
-        if self.venv_offer.as_ref().is_some_and(|o| o.installing) {
-            v.push("Installing requirements…".into());
-        }
-        if self.runs.all.is_none() {
-            v.push("Detecting interpreters…".into());
-        }
+        v.extend(env.iter().map(|t| t.to_string()));
         v
     }
 
     /// The background tasks popup: one row per task.
     pub(super) fn bg_task_items(&self, q: &str) -> Vec<PopupItem> {
         let ql = q.to_lowercase();
-        let tasks = self.bg_tasks();
+        let tasks = self.bg_tasks(&self.env_view.tasks);
         if tasks.is_empty() {
             return vec![PopupItem { label: "No background tasks".into(), detail: String::new(), hint: String::new(), target: Target::Task }];
         }
@@ -146,7 +139,7 @@ impl Workspace {
         // The routine `git status` after every save and window switch is not shown in the bar:
         // its spinner would redraw the whole window at the display's rate while it runs. It
         // is still listed in the background tasks popup.
-        let tasks: Vec<String> = self.bg_tasks().into_iter().filter(|t| t != "git status…").collect();
+        let tasks: Vec<String> = self.bg_tasks(&self.env.read(cx).tasks()).into_iter().filter(|t| t != "git status…").collect();
         // A widget: muted text, a pill on hover; `click` makes it a button.
         let widget = |id: &'static str| {
             div()
@@ -177,8 +170,8 @@ impl Workspace {
                 .child(widget("sb-indent").child(e.indent_label()))
                 .when(e.language_name() != "Python", |r| r.child(widget("sb-lang").child(e.language_name())));
         }
-        right = right.child(widget("sb-interpreter").child(self.interpreter_label()).cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
-            this.open_popup(PopupKind::Interpreters);
+        right = right.child(widget("sb-interpreter").child(self.interpreter_label(cx)).cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
+            this.open_env_popup(PopupKind::Interpreters, cx);
             cx.notify();
         })));
         // The live branch (after a checkout), not the one read at startup.
@@ -209,7 +202,7 @@ impl Workspace {
                 .child(tasks[0].clone())
                 .when(more > 0, |d| d.child(div().text_color(Theme::text_dim()).child(format!("+{more}"))))
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.open_popup(PopupKind::BackgroundTasks);
+                    this.open_env_popup(PopupKind::BackgroundTasks, cx);
                     cx.notify();
                 }))
         });

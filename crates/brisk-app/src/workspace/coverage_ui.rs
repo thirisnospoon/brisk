@@ -74,7 +74,7 @@ pub struct Pending {
 impl Workspace {
     /// Run › Run with Coverage: the selected configuration, else the current file.
     pub(super) fn run_with_coverage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.reload_runs();
+        self.reload_runs(cx);
         let Some(cfg) = self.runs.file.selected_config().cloned().or_else(|| self.context_config(window, cx)) else {
             self.status = "Nothing to run with coverage: open a Python file or select a configuration".into();
             return;
@@ -86,7 +86,7 @@ impl Workspace {
         if self.remote_blocks(&cfg, "Coverage", cx) {
             return;
         }
-        let Some(python) = self.config_python(&cfg) else {
+        let Some(python) = self.config_python(&cfg, cx) else {
             self.show_toast("No Python interpreter configured: create a .venv or install Python".into(), true, cx);
             return;
         };
@@ -108,10 +108,10 @@ impl Workspace {
         .detach();
     }
 
-    pub(super) fn config_python(&self, cfg: &RunConfig) -> Option<PathBuf> {
+    pub(super) fn config_python(&self, cfg: &RunConfig, cx: &gpui::App) -> Option<PathBuf> {
         match &cfg.interpreter {
             Some(p) => Some(brisk_run::resolve(&self.root, p)),
-            None => self.runs.interpreter(&self.root).map(|i| i.path),
+            None => self.interpreter(cx).map(|i| i.path),
         }
     }
 
@@ -268,7 +268,7 @@ impl Workspace {
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
             for _ in 0..100 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.interpreter(cx).is_some()).unwrap_or(false) {
                     break;
                 }
             }
@@ -282,14 +282,14 @@ impl Workspace {
                         break;
                     }
                 }
-                let _ = this.update(cx, |this, _| {
+                let _ = this.update(cx, |this, cx| {
                     eprintln!(
                         "smoke-coverage: offer for {:?}, interpreter {:?}",
                         this.install_offer.as_ref().and_then(|o| match &o.then {
                             super::install_offer_ui::Then::Coverage(c) => Some(c.name.clone()),
                             _ => None,
                         }),
-                        this.interpreter_label()
+                        this.interpreter_label(cx)
                     )
                 });
                 return;

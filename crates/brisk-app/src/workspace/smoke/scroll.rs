@@ -377,7 +377,7 @@ impl Workspace {
                     ..Default::default()
                 };
                 for _ in 0..100 {
-                    if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(true) {
+                    if this.update(cx, |t, cx| t.interpreter(cx).is_some()).unwrap_or(true) {
                         break;
                     }
                     wait(cx, 100).await;

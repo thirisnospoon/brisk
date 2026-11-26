@@ -619,7 +619,7 @@ impl Workspace {
                     shortcut: self.resolver.keymap().shortcut_label(Action::RunContext).unwrap_or_default(),
                     enabled: true,
                     run: Rc::new(move |this: &mut Workspace, window, cx| {
-                        let cfg = brisk_run::RunConfig::for_tests_with(&this.root, &d, &[], this.default_test_kind());
+                        let cfg = brisk_run::RunConfig::for_tests_with(&this.root, &d, &[], this.default_test_kind(cx));
                         this.run_config(cfg, window, cx);
                     }),
                 });

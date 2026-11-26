@@ -212,7 +212,7 @@ impl Workspace {
     }
 
     fn start_python_console(&mut self, cx: &mut Context<Self>) {
-        let python = self.runs.interpreter(&self.root).map(|i| i.path).unwrap_or_else(|| PathBuf::from("python"));
+        let python = self.interpreter(cx).map(|i| i.path).unwrap_or_else(|| PathBuf::from("python"));
         let root = self.root.clone();
         let Some(p) = self.pyc.as_mut() else { return };
         p.console = None;

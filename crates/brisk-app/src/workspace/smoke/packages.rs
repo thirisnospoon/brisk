@@ -65,7 +65,7 @@ impl Workspace {
         let res = cx.background_executor().spawn(async move { setup_smoke_python(&root, preinstall) }).await;
         eprintln!("smoke-python: venv and local wheels in {:.1?} -> {res:?}", t0.elapsed());
         let _ = this.update(cx, |t, cx| {
-            t.runs.venvs = brisk_run::project_venvs(&t.root);
+            t.env.update(cx, |e, _| e.venvs = brisk_run::project_venvs(&t.root));
             cx.notify();
         });
         res.is_ok()
@@ -84,7 +84,7 @@ impl Workspace {
             // Interpreter discovery runs at startup.
             for _ in 0..100 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.interpreter(cx).is_some()).unwrap_or(false) {
                     break;
                 }
             }
@@ -177,7 +177,7 @@ impl Workspace {
             let mb = || brisk_platform::process::memory().map(|m| m.0 as f64 / 1048576.0).unwrap_or(0.0);
             for _ in 0..100 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.interpreter(cx).is_some()).unwrap_or(false) {
                     break;
                 }
             }

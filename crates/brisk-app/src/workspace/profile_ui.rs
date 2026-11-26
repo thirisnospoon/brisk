@@ -95,7 +95,7 @@ fn ms(s: f64) -> String {
 impl Workspace {
     /// Run › Profile: the selected configuration, else the current file, under cProfile.
     pub(super) fn profile_run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.reload_runs();
+        self.reload_runs(cx);
         let Some(cfg) = self.runs.file.selected_config().cloned().or_else(|| self.context_config(window, cx)) else {
             self.status = "Nothing to profile: open a Python file or select a configuration".into();
             return;
@@ -111,7 +111,7 @@ impl Workspace {
         if self.remote_blocks(&cfg, "Profiling", cx) {
             return;
         }
-        let Some(python) = self.config_python(&cfg) else {
+        let Some(python) = self.config_python(&cfg, cx) else {
             self.show_toast("No Python interpreter configured: create a .venv or install Python".into(), true, cx);
             return;
         };
@@ -236,7 +236,7 @@ impl Workspace {
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
             for _ in 0..100 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.interpreter(cx).is_some()).unwrap_or(false) {
                     break;
                 }
             }

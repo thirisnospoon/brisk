@@ -61,10 +61,11 @@ impl Workspace {
                 let _ = this.update(cx, |_, cx| cx.quit());
                 return;
             }
-            let _ = this.update(cx, |this, _| this.remember_pyproject());
+            let _ = this.update(cx, |this, cx| this.remember_pyproject(cx));
             let items = this
-                .update(cx, |this, _| {
-                    this.runs.all = Some(Vec::new());
+                .update(cx, |this, cx| {
+                    this.env.update(cx, |e, _| e.all = Some(Vec::new()));
+                    this.env_view = this.env.read(cx).view();
                     this.add_interpreter_items("").into_iter().map(|i| i.label).take(2).collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
@@ -74,14 +75,14 @@ impl Workspace {
             let wait_env = async |this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindowContext| {
                 for _ in 0..1800 {
                     pause(100).await;
-                    if this.update(cx, |t, _| !t.venv_busy).unwrap_or(true) {
+                    if this.update(cx, |t, cx| !t.env.read(cx).busy).unwrap_or(true) {
                         break;
                     }
                 }
             };
             wait_env(&this, cx).await;
             let (status, label, python) =
-                this.update(cx, |t, _| (t.status.clone(), t.interpreter_label(), t.runs.interpreter(&t.root).map(|i| i.path))).unwrap_or_default();
+                this.update(cx, |t, cx| (t.status.clone(), t.interpreter_label(cx), t.interpreter(cx).map(|i| i.path))).unwrap_or_default();
             let inside = python.as_ref().is_some_and(|p| p.starts_with(&root));
             eprintln!("smoke-pyproj: sync in {:.1?} -> {status:?}", t0.elapsed());
             eprintln!("smoke-pyproj: interpreter {label:?}, inside the project {inside}, lock file {}", root.join(manager.lock_file()).is_file());
@@ -138,10 +139,10 @@ impl Workspace {
             };
             let text = pyproject();
             edit(&this, cx, format!("{text}\n[tool.ruff]\nline-length = 100\n")).await;
-            eprintln!("smoke-pyproj: unrelated edit -> offer {:?}", this.update(cx, |t, _| t.venv_offer.is_some()).unwrap_or(true));
+            eprintln!("smoke-pyproj: unrelated edit -> offer {:?}", this.update(cx, |t, cx| t.env.read(cx).offer.is_some()).unwrap_or(true));
             let text = pyproject().replace("dependencies = []", "dependencies = [\"brisktwo\"]");
             edit(&this, cx, text).await;
-            let offer = this.update(cx, |t, _| t.venv_offer.as_ref().map(|o| o.text())).ok().flatten();
+            let offer = this.update(cx, |t, cx| t.env.read(cx).offer.as_ref().map(|o| o.text())).ok().flatten();
             eprintln!("smoke-pyproj: dependency added in the editor -> offer {offer:?}");
             let _ = this.update(cx, |this, cx| this.install_requirements(cx));
             pause(200).await;
@@ -150,7 +151,7 @@ impl Workspace {
             eprintln!(
                 "smoke-pyproj: after the offer's sync -> uv.lock has brisktwo {}, offer {:?}, status {:?}",
                 lock.contains("brisktwo"),
-                this.update(cx, |t, _| t.venv_offer.is_some()).unwrap_or(true),
+                this.update(cx, |t, cx| t.env.read(cx).offer.is_some()).unwrap_or(true),
                 this.update(cx, |t, _| t.status.clone()).unwrap_or_default()
             );
             eprintln!("smoke-pyproj: done");

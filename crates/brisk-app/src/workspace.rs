@@ -40,6 +40,7 @@ mod places_ui;
 mod problems_ui;
 mod profile_ui;
 pub(crate) mod project_ui;
+mod python_env;
 mod run_anything_ui;
 mod run_config_ui;
 mod run_marks_ui;
@@ -369,6 +370,10 @@ pub struct Workspace {
     root: PathBuf,
     branch: Option<String>,
     runs: run_ui::Runs,
+    /// Interpreters, the project interpreter, creating and syncing environments.
+    env: Entity<python_env::PythonEnv>,
+    /// What the open interpreter popup lists (taken when it opened).
+    env_view: python_env::EnvView,
     problems: problems_ui::Problems,
     lsp: lsp_ui::Lsp,
     nav: lsp_ui::Nav,
@@ -406,18 +411,10 @@ pub struct Workspace {
     debug: debug_ui::Debug,
     /// Created on first open of the Python Console.
     pyc: Option<console_ui::PyConsole>,
-    /// A project venv is being created (Add Interpreter).
-    venv_busy: bool,
-    /// Add SSH Interpreter: the host just probed and what it has.
-    ssh_found: Option<(String, brisk_run::ssh::HostInfo)>,
     /// The "press the keys" box of Keymap.
     key_capture: Option<keymap_ui::KeyCapture>,
     /// The keymap generation the resolver was built from.
     keymap_gen: u64,
-    /// The offer to install requirements into a new venv.
-    venv_offer: Option<venv_ui::VenvOffer>,
-    /// `pyproj::deps_fingerprint` of pyproject.toml when the project opened or was last synced.
-    pyproject_fp: Option<u64>,
     /// Run Anything history, newest first.
     ra_history: Vec<String>,
     /// The last coverage report (Run with Coverage).
@@ -516,13 +513,14 @@ impl Workspace {
         let branch = std::fs::read_to_string(root.join(".git/HEAD"))
             .ok()
             .map(|h| h.trim().strip_prefix("ref: refs/heads/").map(str::to_string).unwrap_or_else(|| h.trim().chars().take(8).collect()));
-        let (runs, imported_runs) = run_ui::Runs::new(&root);
+        let (runs, (selected, ssh), imported_runs) = run_ui::Runs::new(&root);
+        let env = cx.new(|_| python_env::PythonEnv::new(root.clone(), selected, ssh));
         budget_probe::mark("runs");
         if imported_runs > 0 {
             cx.defer_in(window, move |this: &mut Self, _, cx| this.show_toast(format!("Imported {imported_runs} run configuration(s) from .idea"), false, cx));
         }
         cx.defer_in(window, |this: &mut Self, _, cx| {
-            this.remember_pyproject();
+            this.remember_pyproject(cx);
             this.start_interpreter_discovery(cx);
         });
         if std::env::var_os("BRISK_BUDGET").is_some() {
@@ -590,6 +588,8 @@ impl Workspace {
             root,
             branch,
             runs,
+            env,
+            env_view: Default::default(),
             problems: problems_ui::Problems::new(cx),
             lsp: lsp_ui::Lsp::new(),
             nav: lsp_ui::Nav::default(),
@@ -620,12 +620,8 @@ impl Workspace {
             services: services_ui::Services { selected: None, focus: cx.focus_handle() },
             debug,
             pyc: None,
-            venv_busy: false,
-            ssh_found: None,
             key_capture: None,
             keymap_gen: crate::keymap_store::generation(),
-            venv_offer: None,
-            pyproject_fp: None,
             ra_history: Vec::new(),
             coverage: coverage_ui::Coverage::new(cx),
             cov_pending: None,
@@ -939,7 +935,7 @@ impl Workspace {
         let term = match &self.terminal {
             Some(t) if !t.read(cx).is_empty() => t.clone(),
             _ => {
-                let activation = self.terminal_activation();
+                let activation = self.terminal_activation(cx);
                 let dir = self.terminal_start.take();
                 let t = cx.new(|cx| TerminalPanel::new_in(root, activation, dir, cx));
                 // Hide the tool window when the last shell exits.
@@ -1339,7 +1335,7 @@ impl Workspace {
             | A::Fetch => self.git_action(action, window, cx),
             A::ToggleStructureWindow => self.toggle_left(LeftTool::Structure, window, cx),
             A::ToggleBookmarksWindow => self.toggle_left(LeftTool::Bookmarks, window, cx),
-            A::RunAnything => self.open_run_anything(),
+            A::RunAnything => self.open_run_anything(cx),
             A::ToggleTerminalWindow => self.toggle_bottom(BottomTool::Terminal, window, cx),
             A::ToggleRunWindow | A::Run | A::RunContext | A::Rerun | A::SelectRunConfiguration | A::EditRunConfigurations => {
                 self.run_action(action, window, cx)
@@ -1883,7 +1879,7 @@ impl Workspace {
                         self.run_popup_pick(t, window, cx)
                     }
                     Some(Target::AddInterpreter) => {
-                        self.open_popup(PopupKind::AddInterpreter);
+                        self.open_env_popup(PopupKind::AddInterpreter, cx);
                         cx.notify();
                     }
                     Some(Target::AddSsh) => {
@@ -2127,7 +2123,7 @@ impl Workspace {
             .child(chip("tb-branch", Some("git-branch"), self.branch_label()).on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Branches, w, cx))))
             .child(div().flex_1())
             .child(chip("tb-config", None, self.run_widget_label()).on_click(cx.listener(|this, _, _, cx| {
-                this.reload_runs();
+                this.reload_runs(cx);
                 this.open_popup(PopupKind::RunConfigs(false));
                 cx.notify();
             })))
@@ -2756,9 +2752,9 @@ impl Workspace {
                     .rounded(px(4.))
                     .hover(|s| s.bg(Theme::hover_row()))
                     .cursor_pointer()
-                    .child(self.interpreter_label())
+                    .child(self.interpreter_label(cx))
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.open_popup(PopupKind::Interpreters);
+                        this.open_env_popup(PopupKind::Interpreters, cx);
                         cx.notify();
                     })),
             )

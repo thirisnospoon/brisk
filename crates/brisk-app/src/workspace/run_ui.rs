@@ -5,7 +5,7 @@ use super::before_launch_ui;
 use super::{BottomTool, PopupItem, PopupKind, Target, Workspace};
 use crate::terminal_view::{RunEvent, TerminalPanel};
 use brisk_keymap::Action;
-use brisk_run::{InterpKind, Interpreter, RunConfig, RunFile, RunKind};
+use brisk_run::{Interpreter, RunConfig, RunFile, RunKind};
 use gpui::prelude::*;
 use gpui::{Context, Entity, Focusable, Window};
 use std::path::Path;
@@ -13,11 +13,9 @@ use std::path::Path;
 use std::path::PathBuf;
 
 pub(super) struct Runs {
+    /// `run.json` without the project interpreter and the SSH interpreters, which
+    /// [`super::python_env::PythonEnv`] owns while the project is open.
     pub file: RunFile,
-    /// Project virtualenvs, known instantly from `pyvenv.cfg`.
-    pub venvs: Vec<Interpreter>,
-    /// Everything found on the machine; `None` while discovery runs in the background.
-    pub all: Option<Vec<Interpreter>>,
     pub panel: Option<Entity<TerminalPanel>>,
     /// Edit Configurations dialog, when open.
     pub dialog: Option<super::run_config_ui::RunDialog>,
@@ -29,60 +27,23 @@ pub(super) struct Runs {
 }
 
 impl Runs {
-    /// Returns the state and how many configurations were imported from `.idea`.
-    pub fn new(root: &Path) -> (Self, usize) {
-        let (file, imported) = brisk_run::load(root);
+    /// Returns the state, the interpreter choice for [`super::python_env::PythonEnv`]
+    /// (taken out of the file), and how many configurations were imported from `.idea`.
+    pub fn new(root: &Path) -> (Self, EnvChoice, usize) {
+        let (mut file, imported) = brisk_run::load(root);
         if imported > 0 {
             let _ = brisk_run::save(root, &file);
         }
-        (
-            Runs {
-                file,
-                venvs: brisk_run::project_venvs(root),
-                all: None,
-                panel: None,
-                dialog: None,
-                stop_confirmed: None,
-                stamp: brisk_run::run_file_stamp(root),
-            },
-            imported,
-        )
-    }
-
-    fn known(&self) -> impl Iterator<Item = &Interpreter> {
-        self.venvs.iter().chain(self.all.iter().flatten())
-    }
-
-    pub(super) fn lookup(&self, path: &Path) -> Interpreter {
-        self.known().find(|i| i.path == path).cloned().unwrap_or_else(|| {
-            let venv = Interpreter::venv_dir_of(path);
-            Interpreter {
-                path: path.to_path_buf(),
-                version: venv.as_deref().map(brisk_run::venv_version).unwrap_or_default(),
-                kind: if venv.is_some() { InterpKind::Venv } else { InterpKind::System },
-            }
-        })
-    }
-
-    /// The project interpreter: the one chosen in the status bar, else the project venv,
-    /// else the first interpreter found on the machine.
-    /// With an SSH interpreter selected this is the local fallback that code insight, the
-    /// console and the debugger use ([`Self::ssh`] is what runs use).
-    pub fn interpreter(&self, root: &Path) -> Option<Interpreter> {
-        match &self.file.interpreter {
-            Some(p) if !p.starts_with(brisk_run::ssh::SCHEME) => Some(self.lookup(&brisk_run::resolve(root, p))),
-            Some(_) => self.venvs.first().or_else(|| self.all.as_ref().and_then(|a| a.first())).cloned(),
-            None => self.venvs.first().or_else(|| self.all.as_ref().and_then(|a| a.first())).cloned(),
-        }
+        let choice = take_choice(&mut file);
+        (Runs { file, panel: None, dialog: None, stop_confirmed: None, stamp: brisk_run::run_file_stamp(root) }, choice, imported)
     }
 }
 
-impl Runs {
-    /// The project's SSH interpreter, when one is selected.
-    pub fn ssh(&self) -> Option<brisk_run::ssh::SshInterpreter> {
-        let uri = self.file.interpreter.as_deref()?;
-        self.file.ssh.iter().find(|s| s.uri() == uri).cloned()
-    }
+/// The project interpreter and the SSH interpreters, as `run.json` keeps them.
+pub(super) type EnvChoice = (Option<String>, Vec<brisk_run::ssh::SshInterpreter>);
+
+fn take_choice(f: &mut RunFile) -> EnvChoice {
+    (f.interpreter.take(), std::mem::take(&mut f.ssh))
 }
 
 impl Workspace {
@@ -92,7 +53,7 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let all = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.runs.all = Some(all);
+                this.env.update(cx, |e, _| e.all = Some(all));
                 this.relint_all(cx);
                 if this.bottom == Some(BottomTool::Problems) && this.problems.tab == super::problems_ui::ProblemsTab::Project {
                     this.check_project(cx);
@@ -103,22 +64,22 @@ impl Workspace {
         .detach();
     }
 
-    pub(super) fn interpreter_label(&self) -> String {
-        if let Some(s) = self.runs.ssh() {
-            return s.label();
-        }
-        match self.runs.interpreter(&self.root) {
-            Some(i) => i.label(&self.root),
-            None if self.runs.all.is_none() => "Detecting interpreter…".into(),
-            None => "<No interpreter>".into(),
-        }
+    pub(super) fn interpreter_label(&self, cx: &gpui::App) -> String {
+        self.env.read(cx).label()
+    }
+
+    /// The project interpreter (see [`super::python_env::PythonEnv::interpreter`]).
+    pub(super) fn interpreter(&self, cx: &gpui::App) -> Option<Interpreter> {
+        self.env.read(cx).interpreter()
     }
 
     pub(super) fn run_widget_label(&self) -> String {
         self.runs.file.selected_config().map(|c| c.name.clone()).unwrap_or_else(|| "Current File".into())
     }
 
-    pub(super) fn reload_runs(&mut self) {
+    /// Reads `run.json` again when it changed on disk; the interpreter choice in it goes to
+    /// `PythonEnv`.
+    pub(super) fn reload_runs(&mut self, cx: &mut gpui::App) {
         let stamp = brisk_run::run_file_stamp(&self.root);
         if stamp.is_some() && stamp == self.runs.stamp {
             return;
@@ -127,6 +88,11 @@ impl Workspace {
             match serde_json::from_str::<RunFile>(&s) {
                 Ok(mut f) => {
                     brisk_run::project_files::merge(&self.root, &mut f);
+                    let (selected, ssh) = take_choice(&mut f);
+                    self.env.update(cx, |e, _| {
+                        e.selected = selected;
+                        e.ssh = ssh;
+                    });
                     self.runs.file = f;
                     self.runs.stamp = stamp;
                 }
@@ -135,8 +101,11 @@ impl Workspace {
         }
     }
 
-    pub(super) fn save_runs(&mut self) {
-        match brisk_run::save(&self.root, &self.runs.file) {
+    /// Writes `run.json`: the run configurations and `PythonEnv`'s interpreter choice.
+    pub(super) fn save_runs(&mut self, cx: &gpui::App) {
+        let env = self.env.read(cx);
+        let file = RunFile { interpreter: env.selected.clone(), ssh: env.ssh.clone(), ..self.runs.file.clone() };
+        match brisk_run::save(&self.root, &file) {
             Ok(()) => self.runs.stamp = brisk_run::run_file_stamp(&self.root),
             Err(e) => self.status = format!("Cannot save {}: {e}", brisk_run::CONFIG_FILE),
         }
@@ -219,12 +188,12 @@ impl Workspace {
 
     /// The Default test runner: the project's choice, else (Autodetect) pytest when the
     /// project interpreter has it and unittest when it doesn't.
-    pub(super) fn default_test_kind(&self) -> RunKind {
+    pub(super) fn default_test_kind(&self, cx: &gpui::App) -> RunKind {
         match self.runs.file.test_runner {
             Some(brisk_run::TestRunner::Pytest) => RunKind::Pytest,
             Some(brisk_run::TestRunner::Unittest) => RunKind::Unittest,
             None => {
-                let missing = self.runs.interpreter(&self.root).is_some_and(|i| brisk_run::pytest::has_package(&i.path, "pytest") == Some(false));
+                let missing = self.interpreter(cx).is_some_and(|i| brisk_run::pytest::has_package(&i.path, "pytest") == Some(false));
                 if missing {
                     RunKind::Unittest
                 } else {
@@ -239,7 +208,7 @@ impl Workspace {
     /// editor. Test files run with pytest, narrowed to the test or class at the caret.
     pub(super) fn context_config(&self, window: &Window, cx: &mut gpui::App) -> Option<RunConfig> {
         let is_py = |p: &Path| p.extension().is_some_and(|e| e == "py" || e == "pyw");
-        let tests = self.default_test_kind();
+        let tests = self.default_test_kind(cx);
         let for_path = |p: &Path, scope: &[String]| {
             if brisk_run::is_test_file(p) {
                 RunConfig::for_tests_with(&self.root, p, scope, tests)
@@ -282,16 +251,16 @@ impl Workspace {
             return;
         }
         self.save_all(cx);
-        if let Some(remote) = self.ssh_for(&cfg) {
+        if let Some(remote) = self.ssh_for(&cfg, cx) {
             self.run_remote(cfg, remote, window, cx);
             return;
         }
         let python = match &cfg.interpreter {
             Some(p) => Some(brisk_run::resolve(&self.root, p)),
-            None => self.runs.interpreter(&self.root).map(|i| i.path),
+            None => self.interpreter(cx).map(|i| i.path),
         };
         let Some(python) = python else {
-            let msg = if self.runs.all.is_none() {
+            let msg = if self.env.read(cx).all.is_none() {
                 "Still looking for Python interpreters, try again in a moment"
             } else {
                 "No Python interpreter configured: create a .venv or install Python"
@@ -300,12 +269,12 @@ impl Workspace {
             return;
         };
         if cfg.kind == RunKind::Pytest && brisk_run::pytest::has_package(&python, "pytest") == Some(false) {
-            let label = self.runs.lookup(&python).label(&self.root);
+            let label = self.env.read(cx).lookup(&python).label(&self.root);
             self.show_toast(format!("pytest is not installed in {label}: run `pip install pytest` in the Terminal"), true, cx);
             return;
         }
         if let Some(pkg) = brisk_run::web::server_package(cfg.kind).filter(|p| brisk_run::pytest::has_package(&python, p) == Some(false)) {
-            let label = self.runs.lookup(&python).label(&self.root);
+            let label = self.env.read(cx).lookup(&python).label(&self.root);
             self.show_toast(format!("{pkg} is not installed in {label}: run `pip install {pkg}` in the Terminal"), true, cx);
             return;
         }
@@ -320,9 +289,9 @@ impl Workspace {
     /// tree ▶) the way PyCharm does: through the saved configuration of the same target, with
     /// its parameters, environment and interpreter, else a new temporary one from the template.
     pub(super) fn launch_context(&mut self, ctx: RunConfig, debug: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.reload_runs();
+        self.reload_runs(cx);
         let name = self.runs.file.use_for_file(ctx);
-        self.save_runs();
+        self.save_runs(cx);
         let Some(cfg) = self.runs.file.get(&name).cloned() else { return };
         if debug {
             self.start_debug(cfg, window, cx);
@@ -476,7 +445,7 @@ impl Workspace {
         use Action as A;
         match action {
             A::Run => {
-                self.reload_runs();
+                self.reload_runs(cx);
                 if let Some(cfg) = self.runs.file.selected_config().cloned() {
                     self.run_config(cfg, window, cx);
                 } else if let Some(cfg) = self.context_config(window, cx) {
@@ -505,7 +474,7 @@ impl Workspace {
                 }
             }
             A::SelectRunConfiguration => {
-                self.reload_runs();
+                self.reload_runs(cx);
                 self.open_popup(PopupKind::RunConfigs(true));
             }
             A::EditRunConfigurations => self.edit_run_configurations(window, cx),
@@ -594,10 +563,11 @@ impl Workspace {
                 v
             }
             PopupKind::Interpreters => {
-                let current = self.runs.interpreter(&self.root).map(|i| i.path);
+                let current = self.env_view.current.clone();
                 let mut v: Vec<PopupItem> = self
-                    .runs
-                    .known()
+                    .env_view
+                    .known
+                    .iter()
                     .filter(|i| i.path.to_string_lossy().to_lowercase().contains(&ql) || i.label(&self.root).to_lowercase().contains(&ql))
                     .map(|i| PopupItem {
                         label: i.label(&self.root),
@@ -618,17 +588,17 @@ impl Workspace {
                     })
                     .collect();
                 v.dedup_by(|a, b| a.detail == b.detail);
-                if self.runs.all.is_none() {
+                if self.env_view.machine.is_none() {
                     v.push(PopupItem { label: "Detecting interpreters…".into(), detail: String::new(), hint: String::new(), target: Target::Cancel });
                 }
                 // With an SSH interpreter selected, the local fallback gets no check mark.
-                if self.runs.ssh().is_some() {
+                if self.env_view.ssh_selected {
                     for i in &mut v {
                         i.hint.clear();
                     }
                 }
                 v.extend(self.ssh_interpreter_items(&ql));
-                if "add interpreter".contains(&ql) && !self.venv_busy {
+                if "add interpreter".contains(&ql) && !self.env_view.busy {
                     v.push(PopupItem {
                         label: "Add Interpreter…".into(),
                         detail: "a new .venv in the project".into(),
@@ -646,7 +616,7 @@ impl Workspace {
         match target {
             Target::RunConfig(name, run) => {
                 self.runs.file.selected = name;
-                self.save_runs();
+                self.save_runs(cx);
                 self.focus_editor(window, cx);
                 if run {
                     self.run_action(Action::Run, window, cx);
@@ -654,18 +624,19 @@ impl Workspace {
             }
             Target::EditRunConfigs => self.edit_run_configurations(window, cx),
             Target::SaveRunConfig(name) => {
-                self.reload_runs();
+                self.reload_runs(cx);
                 if let Some(c) = self.runs.file.configurations.iter_mut().find(|c| c.name == name) {
                     c.temporary = false;
-                    self.save_runs();
+                    self.save_runs(cx);
                     self.status = format!("Saved run configuration '{name}'");
                 }
                 self.focus_editor(window, cx);
             }
             Target::Interpreter(path) => {
-                self.runs.file.interpreter = Some(brisk_run::relativize(&self.root, &path));
-                self.save_runs();
-                self.status = format!("Interpreter: {}", self.interpreter_label());
+                let selected = Some(brisk_run::relativize(&self.root, &path));
+                self.env.update(cx, |e, _| e.selected = selected);
+                self.save_runs(cx);
+                self.status = format!("Interpreter: {}", self.interpreter_label(cx));
                 self.restart_ty(cx);
                 self.sync_terminal_env(cx);
                 self.focus_editor(window, cx);
@@ -684,7 +655,7 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             // Wait for interpreter discovery when there is no project venv.
             for _ in 0..100 {
-                let ready = this.update(cx, |this, _| this.runs.interpreter(&this.root).is_some() || this.runs.all.is_some()).unwrap_or(true);
+                let ready = this.update(cx, |this, cx| this.interpreter(cx).is_some() || this.env.read(cx).all.is_some()).unwrap_or(true);
                 if ready {
                     break;
                 }
@@ -703,7 +674,7 @@ impl Workspace {
                     eprintln!("smoke-run: nothing ran ({})", this.status);
                     return;
                 };
-                eprintln!("smoke-run: interpreter {}", this.interpreter_label());
+                eprintln!("smoke-run: interpreter {}", this.interpreter_label(cx));
                 eprintln!("smoke-run: console:\n{}", p.read(cx).active_text().unwrap_or_default());
                 eprintln!("smoke-run: status '{}' after {:.1?}", this.status, t0.elapsed());
                 if let Some(tree) = p.read(cx).tests_tree_text() {
@@ -757,7 +728,7 @@ impl Workspace {
             }
         }
         let _ = std::fs::remove_file(root.join(brisk_run::CONFIG_FILE));
-        self.reload_runs();
+        self.reload_runs(cx);
         self.runs.file = Default::default();
         cx.spawn_in(window, async move |this, cx| {
             let wait_idle = async |this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindowContext, what: &str| {
@@ -777,7 +748,7 @@ impl Workspace {
             };
             // Wait for an interpreter.
             for _ in 0..100 {
-                let ready = this.update(cx, |this, _| this.runs.interpreter(&this.root).is_some()).unwrap_or(true);
+                let ready = this.update(cx, |this, cx| this.interpreter(cx).is_some()).unwrap_or(true);
                 if ready {
                     break;
                 }

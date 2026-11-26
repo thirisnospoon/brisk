@@ -23,7 +23,7 @@ impl Workspace {
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
             for _ in 0..100 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.interpreter(cx).is_some()).unwrap_or(false) {
                     break;
                 }
             }
@@ -85,7 +85,7 @@ impl Workspace {
                 }
                 this.smoke_press("enter", window, cx);
                 let saved = brisk_run::load(&this.root).0.test_runner;
-                eprintln!("smoke-testrunners: default test runner saved {saved:?}, kind {:?}", this.default_test_kind());
+                eprintln!("smoke-testrunners: default test runner saved {saved:?}, kind {:?}", this.default_test_kind(cx));
                 this.open_file(&this.root.join("test_u.py"), window, cx);
                 this.dispatch(brisk_keymap::Action::RunContext, window, cx);
             });

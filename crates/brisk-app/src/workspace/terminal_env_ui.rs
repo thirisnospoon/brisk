@@ -32,13 +32,13 @@ async fn wait_text(this: &gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncWindo
 
 impl Workspace {
     /// The activation for new shells; `None` while the interpreter is unknown.
-    pub(super) fn terminal_activation(&self) -> Option<Activation> {
-        self.runs.interpreter(&self.root).map(|i| terminal_env::activation(&i.path, i.kind))
+    pub(super) fn terminal_activation(&self, cx: &gpui::App) -> Option<Activation> {
+        self.interpreter(cx).map(|i| terminal_env::activation(&i.path, i.kind))
     }
 
     /// After the project interpreter changed: shells opened from now on use it.
     pub(super) fn sync_terminal_env(&mut self, cx: &mut Context<Self>) {
-        let a = self.terminal_activation();
+        let a = self.terminal_activation(cx);
         if let Some(t) = &self.terminal {
             t.update(cx, |t, _| t.set_activation(a));
         }
@@ -56,13 +56,15 @@ impl Workspace {
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
             for _ in 0..150 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.runs.all.is_some()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.env.read(cx).all.is_some()).unwrap_or(false) {
                     break;
                 }
             }
             // A .venv in the project.
             let (root, base) = this
-                .update(cx, |t, _| (t.root.clone(), t.runs.all.iter().flatten().find(|i| i.kind != brisk_run::InterpKind::Venv).map(|i| i.path.clone())))
+                .update(cx, |t, cx| {
+                    (t.root.clone(), t.env.read(cx).all.iter().flatten().find(|i| i.kind != brisk_run::InterpKind::Venv).map(|i| i.path.clone()))
+                })
                 .unwrap_or_default();
             if brisk_run::venv_python(&root.join(".venv")).is_none() {
                 if let Some(base) = base.clone() {
@@ -72,9 +74,9 @@ impl Workspace {
                 }
             }
             let _ = this.update_in(cx, |this, window, cx| {
-                this.runs.venvs = brisk_run::project_venvs(&this.root);
-                eprintln!("smoke-termvenv: interpreter {:?}", this.interpreter_label());
-                eprintln!("smoke-termvenv: activation prompt {:?}", this.terminal_activation().and_then(|a| a.prompt));
+                this.env.update(cx, |e, _| e.venvs = brisk_run::project_venvs(&this.root));
+                eprintln!("smoke-termvenv: interpreter {:?}", this.interpreter_label(cx));
+                eprintln!("smoke-termvenv: activation prompt {:?}", this.terminal_activation(cx).and_then(|a| a.prompt));
                 this.dispatch(Action::ToggleTerminalWindow, window, cx);
             });
             let prompt_ok = wait_text(&this, cx, "(.venv) PS ", 20_000).await;
@@ -97,7 +99,7 @@ impl Workspace {
                 if let Some(base) = base.clone() {
                     this.run_popup_pick(super::Target::Interpreter(base), window, cx);
                 }
-                eprintln!("smoke-termvenv: switched to {:?}", this.interpreter_label());
+                eprintln!("smoke-termvenv: switched to {:?}", this.interpreter_label(cx));
                 if let Some(t) = &this.terminal {
                     t.update(cx, |t, _| t.new_tab());
                 }

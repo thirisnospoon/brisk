@@ -6,8 +6,8 @@ use brisk_run::RunConfig;
 use gpui::{Context, Window};
 
 impl Workspace {
-    pub(super) fn open_run_anything(&mut self) {
-        self.reload_runs();
+    pub(super) fn open_run_anything(&mut self, cx: &mut gpui::App) {
+        self.reload_runs(cx);
         self.ra_history = run_anything::load_history(&self.root);
         self.open_popup(PopupKind::RunAnything);
     }
@@ -59,7 +59,7 @@ impl Workspace {
             Some(Parsed::Config(cfg)) => self.run_config(*cfg, window, cx),
             Some(Parsed::Shell(cmdline)) => {
                 self.save_all(cx);
-                let env = self.terminal_activation().map(|a| a.env).unwrap_or_default();
+                let env = self.terminal_activation(cx).map(|a| a.env).unwrap_or_default();
                 let cmd = run_anything::shell_command(&self.root, &cmdline, env);
                 // The configuration only names the tab and lets Rerun repeat the command.
                 let cfg = RunConfig { name: line.clone(), target: cmdline, ..RunConfig::default() };
@@ -86,14 +86,14 @@ impl Workspace {
             "{\n  \"configurations\": [{\"name\": \"Hello cfg\", \"target\": \"hello.py\", \"parameters\": \"cfg\"}]\n}\n",
         );
         let _ = std::fs::remove_file(root.join(run_anything::HISTORY_FILE));
-        self.reload_runs();
+        self.reload_runs(cx);
         self.open_file(&root.join("hello.py"), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let bg = cx.background_executor().clone();
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
             for _ in 0..100 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.interpreter(cx).is_some()).unwrap_or(false) {
                     break;
                 }
             }
@@ -156,7 +156,7 @@ impl Workspace {
                 this.on_modifiers(&mods(false), window, cx);
                 eprintln!("smoke-runanything: ctrl, ctrl+up -> popup {:?}", this.popup.as_ref().map(|p| p.kind));
                 if hold {
-                    this.open_run_anything();
+                    this.open_run_anything(cx);
                     if let Some(p) = this.popup.as_mut() {
                         p.query = "py".into();
                     }

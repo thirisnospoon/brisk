@@ -40,13 +40,13 @@ impl Lsp {
 
 impl Workspace {
     /// ty next to the project interpreter, else next to any other Python found, else on PATH.
-    fn ty_tool(&self) -> Option<PathBuf> {
+    fn ty_tool(&self, cx: &gpui::App) -> Option<PathBuf> {
         if let Some(p) = std::env::var_os("BRISK_TY") {
             // Smokes point it at a missing file to run without ty.
             return Some(PathBuf::from(p)).filter(|p| p.is_file());
         }
-        let project = self.runs.interpreter(&self.root).map(|i| i.path);
-        let others = self.runs.venvs.iter().chain(self.runs.all.iter().flatten()).map(|i| i.path.clone());
+        let project = self.interpreter(cx).map(|i| i.path);
+        let others = self.env.read(cx).venvs.iter().chain(self.env.read(cx).all.iter().flatten()).map(|i| i.path.clone());
         project.into_iter().chain(others).find_map(|p| brisk_lsp::find_tool("ty", Some(&p))).or_else(|| brisk_lsp::find_tool("ty", None))
     }
 
@@ -67,11 +67,11 @@ impl Workspace {
         // The project interpreter is known before every Python on the machine has been probed
         // when it is configured or a project venv: ty need not wait for the rest. Without ty
         // next to it or on PATH, the other interpreters are waited for.
-        let known = self.runs.file.interpreter.as_deref().is_some_and(|p| !p.starts_with(brisk_run::ssh::SCHEME)) || !self.runs.venvs.is_empty();
-        if self.runs.all.is_none() && !(known && self.ty_tool().is_some()) {
+        let known = self.env.read(cx).local_known();
+        if self.env.read(cx).all.is_none() && !(known && self.ty_tool(cx).is_some()) {
             return;
         }
-        let Some(tool) = self.ty_tool() else {
+        let Some(tool) = self.ty_tool(cx) else {
             self.lsp.state = TyState::Missing;
             let msg = "Code insight is off: ty not found. Completion offers words from the file; for types, navigation and quick fixes run `pip install ty` in the project interpreter";
             self.status = msg.into();
@@ -80,7 +80,7 @@ impl Workspace {
         };
         self.lsp.state = TyState::Starting;
         let root = self.root.clone();
-        let python = self.runs.interpreter(&self.root).map(|i| i.path);
+        let python = self.interpreter(cx).map(|i| i.path);
         let epoch = self.lsp.epoch;
         let marks = brisk_project::Structure::load(&root);
         let settings = brisk_lsp::ty_settings(&marks.import_roots(&root), &marks.excluded);

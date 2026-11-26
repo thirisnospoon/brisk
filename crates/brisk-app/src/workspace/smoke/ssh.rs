@@ -36,9 +36,9 @@ impl Workspace {
                 return;
             };
             let _ = this.update_in(cx, |this, window, cx| {
-                this.ssh_found = Some((host.clone(), info));
+                this.env.update(cx, |e, _| e.ssh_found = Some((host.clone(), info)));
                 this.ssh_pick_python(host.clone(), py, ver, window, cx);
-                eprintln!("smoke-ssh: interpreter {:?} / {:?}", this.interpreter_label(), this.runs.file.interpreter);
+                eprintln!("smoke-ssh: interpreter {:?} / {:?}", this.interpreter_label(cx), this.env.read(cx).selected);
             });
             for round in 0..2 {
                 if round == 1 {
@@ -77,7 +77,7 @@ impl Workspace {
                     eprintln!("smoke-ssh: run {round} status {:?}, first link {link:?}", this.status);
                 });
             }
-            let rr = this.update(cx, |t, _| t.runs.ssh().map(|s| s.remote_root)).ok().flatten().unwrap_or_default();
+            let rr = this.update(cx, |t, cx| t.env.read(cx).ssh().map(|s| s.remote_root)).ok().flatten().unwrap_or_default();
             if rr.contains("brisk-projects/") {
                 let h = host.clone();
                 let script = format!("rm -rf {}", brisk_run::ssh::quote(&rr));

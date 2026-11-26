@@ -1271,7 +1271,7 @@ impl Workspace {
                 self.set_next_statement(ed, line, cx);
             }
             A::Debug => {
-                self.reload_runs();
+                self.reload_runs(cx);
                 let cfg = self.runs.file.selected_config().cloned().or_else(|| self.context_config(window, cx));
                 match cfg {
                     Some(cfg) => self.start_debug(cfg, window, cx),
@@ -1456,7 +1456,7 @@ impl Workspace {
         self.debug.last_attach = None;
         let python = match &cfg.interpreter {
             Some(p) => Some(brisk_run::resolve(&self.root, p)),
-            None => self.runs.interpreter(&self.root).map(|i| i.path),
+            None => self.interpreter(cx).map(|i| i.path),
         };
         let Some(python) = python else {
             self.show_toast("No Python interpreter configured: create a .venv or install Python".into(), true, cx);
@@ -1923,7 +1923,7 @@ impl Workspace {
         if self.debug.is_live() {
             self.stop_debug(cx);
         }
-        let Some(python) = self.runs.interpreter(&self.root).map(|i| i.path) else {
+        let Some(python) = self.interpreter(cx).map(|i| i.path) else {
             self.show_toast("No Python interpreter configured: create a .venv or install Python".into(), true, cx);
             return;
         };
@@ -3506,7 +3506,7 @@ impl Workspace {
             let paused = |s: Option<State>| matches!(s, Some(State::Paused(_)));
             // Interpreters are discovered in the background at start.
             for _ in 0..100 {
-                if this.update(cx, |t, _| t.runs.all.is_some()).unwrap_or(true) {
+                if this.update(cx, |t, cx| t.env.read(cx).all.is_some()).unwrap_or(true) {
                     break;
                 }
                 wait(100).await;
@@ -4059,7 +4059,7 @@ impl Workspace {
             let _ = std::fs::remove_file(&jump);
             let spin2 = dir.join("dbg_attach_target.py");
             let _ = std::fs::write(&spin2, "import time\n\nn = 0\nwhile True:\n    n += 1\n    time.sleep(0.05)\n");
-            let python = this.update(cx, |t, _| t.runs.interpreter(&t.root).map(|i| i.path)).ok().flatten();
+            let python = this.update(cx, |t, cx| t.interpreter(cx).map(|i| i.path)).ok().flatten();
             let child = python.and_then(|p| std::process::Command::new(p).arg(&spin2).spawn().ok());
             wait(1500).await;
             if let Some(mut child) = child {

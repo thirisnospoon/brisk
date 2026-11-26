@@ -615,7 +615,7 @@ impl RunDialog {
 impl Workspace {
     /// Run › Edit Configurations…: open the dialog on the selected configuration.
     pub(super) fn open_run_dialog(&mut self, cx: &mut Context<Self>) {
-        self.reload_runs();
+        self.reload_runs(cx);
         let f = &self.runs.file;
         let mut drafts: Vec<Draft> = f.configurations.iter().cloned().map(Draft::new).collect();
         let current = f.selected.as_deref().and_then(|s| f.configurations.iter().position(|c| c.name == s));
@@ -674,7 +674,7 @@ impl Workspace {
         self.runs.file.configurations = cfgs;
         self.runs.file.selected = selected;
         d.error = None;
-        self.save_runs();
+        self.save_runs(cx);
         self.status = format!("Saved {} run configuration(s) to {}", self.runs.file.configurations.len(), brisk_run::CONFIG_FILE);
         if close {
             self.runs.dialog = None;
@@ -789,7 +789,7 @@ impl Workspace {
     pub(super) fn render_run_dialog(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let d = self.runs.dialog.as_ref()?;
         let kind = d.kind();
-        let project_interp = self.interpreter_label();
+        let project_interp = self.interpreter_label(cx);
         let button = |id: &'static str, label: &'static str, primary: bool| {
             div()
                 .id(id)
@@ -1313,7 +1313,7 @@ impl Workspace {
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
             for _ in 0..100 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.interpreter(cx).is_some()).unwrap_or(false) {
                     break;
                 }
             }
@@ -1395,13 +1395,13 @@ impl Workspace {
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
             for _ in 0..100 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.interpreter(cx).is_some()).unwrap_or(false) {
                     break;
                 }
             }
             let _ = this.update_in(cx, |this, window, cx| {
                 this.runs.file.selected = Some("Both".into());
-                this.save_runs();
+                this.save_runs(cx);
                 this.dispatch(brisk_keymap::Action::Run, window, cx);
                 eprintln!("smoke-compound: run -> status {:?}", this.status);
             });
@@ -1500,7 +1500,7 @@ impl Workspace {
         );
         // A teammate edits it (git pull): the next look at the configurations takes it.
         let _ = std::fs::write(&file, xml.replace("8000 --bind 127.0.0.1", "9000"));
-        self.reload_runs();
+        self.reload_runs(cx);
         eprintln!("smoke-runcfg: after the file changed -> demo parameters {:?}", self.runs.file.get("demo").map(|c| c.parameters.clone()));
         // Escape discards edits.
         self.dispatch(brisk_keymap::Action::EditRunConfigurations, window, cx);

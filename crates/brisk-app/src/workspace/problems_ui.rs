@@ -217,18 +217,18 @@ impl Workspace {
     /// The ruff to run. The lookup stats a few files per known interpreter and every `PATH`
     /// entry, and lint asks for it on each pause in typing, so the answer is kept for a few
     /// seconds per set of interpreters (a `pip install ruff` is still picked up soon).
-    fn ruff(&self) -> Option<PathBuf> {
+    fn ruff(&self, cx: &gpui::App) -> Option<PathBuf> {
         type Key = (PathBuf, Option<PathBuf>, usize, Option<usize>);
         thread_local! {
             static CACHE: std::cell::RefCell<Option<(Key, std::time::Instant, Option<PathBuf>)>> = const { std::cell::RefCell::new(None) };
         }
         const KEEP: Duration = Duration::from_secs(10);
-        let project = self.runs.interpreter(&self.root).map(|i| i.path);
-        let key: Key = (self.root.clone(), project.clone(), self.runs.venvs.len(), self.runs.all.as_ref().map(Vec::len));
+        let project = self.interpreter(cx).map(|i| i.path);
+        let key: Key = (self.root.clone(), project.clone(), self.env.read(cx).venvs.len(), self.env.read(cx).all.as_ref().map(Vec::len));
         if let Some(hit) = CACHE.with_borrow(|c| c.as_ref().filter(|(k, at, _)| *k == key && at.elapsed() < KEEP).map(|(_, _, r)| r.clone())) {
             return hit;
         }
-        let others = self.runs.venvs.iter().chain(self.runs.all.iter().flatten()).map(|i| i.path.clone());
+        let others = self.env.read(cx).venvs.iter().chain(self.env.read(cx).all.iter().flatten()).map(|i| i.path.clone());
         let found = project.into_iter().chain(others).find_map(|p| brisk_lint::find_ruff(Some(&p))).or_else(|| brisk_lint::find_ruff(None));
         CACHE.set(Some((key, std::time::Instant::now(), found.clone())));
         found
@@ -289,7 +289,7 @@ impl Workspace {
         *gen += 1;
         let my = *gen;
         let root = self.root.clone();
-        let ruff = self.ruff();
+        let ruff = self.ruff(cx);
         let bg = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             if !delay.is_zero() {
@@ -310,7 +310,7 @@ impl Workspace {
             let Some(ruff) = ruff else {
                 let _ = this.update(cx, |this, cx| {
                     // Still looking for interpreters: discovery re-checks when it is done.
-                    if this.runs.all.is_none() {
+                    if this.env.read(cx).all.is_none() {
                         ed.update(cx, |e, _| e.lint_sent = u64::MAX);
                         return;
                     }
@@ -343,8 +343,8 @@ impl Workspace {
         if self.problems.project_running {
             return;
         }
-        let Some(ruff) = self.ruff() else {
-            if self.runs.all.is_none() {
+        let Some(ruff) = self.ruff(cx) else {
+            if self.env.read(cx).all.is_none() {
                 self.problems.set_project(None);
                 return;
             }
@@ -954,7 +954,7 @@ impl Workspace {
                     Intent::FixAllOfCode(c) => Some(c.clone()),
                     _ => None,
                 };
-                let (Some(ruff), Some(path)) = (self.ruff(), ed.read(cx).path.clone()) else { return };
+                let (Some(ruff), Some(path)) = (self.ruff(cx), ed.read(cx).path.clone()) else { return };
                 let text = ed.read(cx).text_string();
                 match brisk_lint::fix_all(&ruff, &self.root, &path, &text, only.as_deref()) {
                     Ok(fixed) if !fixed.is_empty() => ed.update(cx, |e, cx| e.replace_all_text(&fixed, cx)),
@@ -1076,9 +1076,9 @@ impl Workspace {
         if eds.is_empty() {
             return;
         }
-        let Some(ruff) = self.ruff() else {
+        let Some(ruff) = self.ruff(cx) else {
             // Before interpreter discovery ends, ruff may still turn up next to a Python.
-            if self.runs.all.is_some() && !self.problems.save_actions_warned {
+            if self.env.read(cx).all.is_some() && !self.problems.save_actions_warned {
                 self.problems.save_actions_warned = true;
                 self.show_toast("Actions on Save (Reformat code, Optimize imports) need ruff, which was not found. Install it into the project interpreter: pip install ruff".into(), true, cx);
             }
@@ -1144,7 +1144,7 @@ impl Workspace {
             cx.notify();
             return true;
         }
-        let Some(ruff) = self.ruff() else {
+        let Some(ruff) = self.ruff(cx) else {
             self.show_toast("ruff not found: install it in the project interpreter (pip install ruff)".into(), true, cx);
             return true;
         };
@@ -1228,7 +1228,7 @@ impl Workspace {
             cx.notify();
             return;
         };
-        let Some(ruff) = self.ruff() else {
+        let Some(ruff) = self.ruff(cx) else {
             self.show_toast("ruff not found: install it in the project interpreter (pip install ruff)".into(), true, cx);
             return;
         };

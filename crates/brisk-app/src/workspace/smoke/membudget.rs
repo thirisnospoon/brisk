@@ -46,7 +46,7 @@ impl Workspace {
             let wait = |ms| bg.timer(Duration::from_millis(ms));
             // 1. The flood run, as Ctrl+Shift+F10 on the file.
             for _ in 0..100 {
-                let ready = this.update(cx, |this, _| this.runs.interpreter(&this.root).is_some() || this.runs.all.is_some()).unwrap_or(true);
+                let ready = this.update(cx, |this, cx| this.interpreter(cx).is_some() || this.env.read(cx).all.is_some()).unwrap_or(true);
                 if ready {
                     break;
                 }

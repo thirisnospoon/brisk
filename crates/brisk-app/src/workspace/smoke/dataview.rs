@@ -96,7 +96,7 @@ impl Workspace {
             let bg = cx.background_executor().clone();
             let wait = |ms| bg.timer(Duration::from_millis(ms));
             for _ in 0..150 {
-                if this.update(cx, |t, _| t.runs.all.is_some()).unwrap_or(true) {
+                if this.update(cx, |t, cx| t.env.read(cx).all.is_some()).unwrap_or(true) {
                     break;
                 }
                 wait(100).await;
@@ -105,8 +105,8 @@ impl Workspace {
                 let dir = std::env::var_os("BRISK_SMOKE_DATAVIEW_DIR").map(PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join("brisk-smoke-dataview"));
                 // A machine interpreter to make the venv with (not a venv itself).
                 let base = this
-                    .update(cx, |t, _| {
-                        let all = t.runs.all.clone().unwrap_or_default();
+                    .update(cx, |t, cx| {
+                        let all = t.env.read(cx).all.clone().unwrap_or_default();
                         all.iter().find(|i| i.kind == brisk_run::InterpKind::System).or(all.first()).map(|i| i.path.clone())
                     })
                     .ok()
@@ -129,10 +129,12 @@ impl Workspace {
                 let _ = std::fs::write(&file, FRAMES);
                 // In memory only: the project's run.json does not change.
                 let explicit = this
-                    .update(cx, |t, _| {
-                        let i = t.runs.lookup(&python);
-                        t.runs.venvs.insert(0, i);
-                        t.runs.file.interpreter.is_some()
+                    .update(cx, |t, cx| {
+                        t.env.update(cx, |e, _| {
+                            let i = e.lookup(&python);
+                            e.venvs.insert(0, i);
+                            e.selected.is_some()
+                        })
                     })
                     .unwrap_or(false);
                 if explicit {

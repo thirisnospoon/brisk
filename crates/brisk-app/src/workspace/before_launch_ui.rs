@@ -49,7 +49,7 @@ impl Workspace {
             self.show_toast(format!("Before launch of '{}' is still running", c.cfg.name), true, cx);
             return true;
         }
-        self.reload_runs();
+        self.reload_runs(cx);
         let steps = match self.runs.file.before_steps(cfg) {
             Ok(s) => s,
             Err(e) => {
@@ -90,7 +90,7 @@ impl Workspace {
                 name
             }
             BeforeStep::Command(line) => {
-                let python = self.config_python(&cfg).unwrap_or_else(|| PathBuf::from("python"));
+                let python = self.config_python(&cfg, cx).unwrap_or_else(|| PathBuf::from("python"));
                 let cmd = brisk_run::shell_command(&self.root, &cfg, &python, &line);
                 let tab = command_tab(&cfg);
                 let tab_cfg = RunConfig { name: tab.clone(), target: line, ..Default::default() };
@@ -158,13 +158,13 @@ impl Workspace {
         both.kind = brisk_run::RunKind::Compound;
         let file = brisk_run::RunFile { configurations: vec![c("prep", "prep.py"), app, bad, loops, both], ..Default::default() };
         let _ = brisk_run::save(&root, &file);
-        self.reload_runs();
+        self.reload_runs(cx);
         cx.spawn_in(window, async move |this, cx| {
             let bg = cx.background_executor().clone();
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
             for _ in 0..100 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.interpreter(cx).is_some()).unwrap_or(false) {
                     break;
                 }
             }

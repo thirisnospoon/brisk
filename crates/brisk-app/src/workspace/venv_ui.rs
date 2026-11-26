@@ -23,6 +23,7 @@ pub struct VenvOffer {
     pub installing: bool,
 }
 
+#[derive(Clone)]
 pub enum OfferKind {
     /// Install the project's requirements into a new environment.
     Install(Requirements),
@@ -89,8 +90,8 @@ impl Workspace {
             return managed;
         };
         let mut v: Vec<PopupItem> = self
-            .runs
-            .all
+            .env_view
+            .machine
             .iter()
             .flatten()
             .filter(|i| i.kind != InterpKind::Venv)
@@ -103,7 +104,7 @@ impl Workspace {
             })
             .collect();
         v.dedup_by(|a, b| a.detail == b.detail);
-        if self.runs.all.is_none() {
+        if self.env_view.machine.is_none() {
             v.push(PopupItem { label: "Detecting interpreters…".into(), detail: String::new(), hint: String::new(), target: Target::Cancel });
         } else if v.is_empty() && managed.is_empty() {
             v.push(PopupItem {
@@ -120,10 +121,10 @@ impl Workspace {
     /// `uv sync` / `poetry install` in the background, then make the environment the project
     /// interpreter, as after creating a venv.
     pub(super) fn sync_env(&mut self, m: Manager, cx: &mut Context<Self>) {
-        if self.venv_busy {
+        if self.env.read(cx).busy {
             return;
         }
-        let current = self.runs.interpreter(&self.root).map(|i| i.path);
+        let current = self.interpreter(cx).map(|i| i.path);
         let tool = match py_manager::tool(m, current.as_deref()) {
             Ok(t) => t,
             Err(e) => {
@@ -134,14 +135,14 @@ impl Workspace {
         };
         let what = m.sync_args().join(" ");
         let what = format!("{} {what}", m.name().to_lowercase());
-        self.venv_busy = true;
+        self.env.update(cx, |e, _| e.busy = true);
         self.status = format!("{what}…");
         let root = self.root.clone();
         let task = cx.background_executor().spawn(async move { py_manager::sync(m, &tool, &root) });
         cx.spawn(async move |this, cx| {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.venv_busy = false;
+                this.env.update(cx, |e, _| e.busy = false);
                 match res {
                     Ok(python) => this.use_new_environment(python, format!("{what}: done"), cx),
                     Err(e) => {
@@ -164,34 +165,35 @@ impl Workspace {
             return;
         }
         let fp = std::fs::read_to_string(&file).ok().map(|t| pyproj::deps_fingerprint(&t));
-        let changed = fp != self.pyproject_fp;
-        self.pyproject_fp = fp;
+        let changed = fp != self.env.read(cx).pyproject_fp;
+        self.env.update(cx, |e, _| e.pyproject_fp = fp);
         let Some(m) = pyproj::detect(&self.root) else { return };
-        if !changed || !pyproj::lock_outdated(&self.root, m) || self.venv_busy || self.venv_offer.is_some() {
+        if !changed || !pyproj::lock_outdated(&self.root, m) || self.env.read(cx).busy || self.env.read(cx).offer.is_some() {
             return;
         }
-        let python = self.runs.interpreter(&self.root).map(|i| i.path).unwrap_or_default();
-        self.venv_offer = Some(VenvOffer { python, what: OfferKind::Sync(m), installing: false });
+        let python = self.interpreter(cx).map(|i| i.path).unwrap_or_default();
+        self.env.update(cx, |e, _| e.offer = Some(VenvOffer { python, what: OfferKind::Sync(m), installing: false }));
         cx.notify();
     }
 
     /// Remembers the dependency part of `pyproject.toml`, so a later save can tell whether
     /// the dependencies changed.
-    pub(super) fn remember_pyproject(&mut self) {
-        self.pyproject_fp = std::fs::read_to_string(self.root.join("pyproject.toml")).ok().map(|t| pyproj::deps_fingerprint(&t));
+    pub(super) fn remember_pyproject(&mut self, cx: &mut gpui::App) {
+        self.env.update(cx, |e, _| e.pyproject_fp = std::fs::read_to_string(self.root.join("pyproject.toml")).ok().map(|t| pyproj::deps_fingerprint(&t)));
     }
 
     /// Makes a freshly created or synced environment the project interpreter and tells every
     /// part that depends on it (ty, the terminal, Packages, the interpreter list).
     fn use_new_environment(&mut self, python: PathBuf, msg: String, cx: &mut Context<Self>) {
-        self.remember_pyproject();
-        self.runs.venvs = brisk_run::project_venvs(&self.root);
-        self.runs.file.interpreter = Some(brisk_run::relativize(&self.root, &python));
-        self.save_runs();
+        self.remember_pyproject(cx);
+        self.env.update(cx, |e, _| e.venvs = brisk_run::project_venvs(&self.root));
+        let selected = Some(brisk_run::relativize(&self.root, &python));
+        self.env.update(cx, |e, _| e.selected = selected);
+        self.save_runs(cx);
         self.restart_ty(cx);
         self.sync_terminal_env(cx);
         self.start_interpreter_discovery(cx);
-        let label = self.runs.lookup(&python).label(&self.root);
+        let label = self.env.read(cx).lookup(&python).label(&self.root);
         let msg = format!("{msg}; the project interpreter is {label}");
         self.status = msg.clone();
         self.show_toast(msg, false, cx);
@@ -202,7 +204,7 @@ impl Workspace {
 
     /// `base -m venv .venv` in the background, then make it the project interpreter.
     pub(super) fn create_venv(&mut self, base: PathBuf, cx: &mut Context<Self>) {
-        if self.venv_busy {
+        if self.env.read(cx).busy {
             return;
         }
         let Some(dir) = py_venv::free_dir(&self.root) else {
@@ -210,8 +212,8 @@ impl Workspace {
             return;
         };
         let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let base_label = self.runs.lookup(&base).label(&self.root);
-        self.venv_busy = true;
+        let base_label = self.env.read(cx).lookup(&base).label(&self.root);
+        self.env.update(cx, |e, _| e.busy = true);
         self.status = format!("Creating {name} with {base_label}…");
         let root = self.root.clone();
         let task = cx.background_executor().spawn(async move {
@@ -221,11 +223,11 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.venv_busy = false;
+                this.env.update(cx, |e, _| e.busy = false);
                 match res {
                     Ok((python, req)) => {
                         this.use_new_environment(python.clone(), format!("Created {name}"), cx);
-                        this.venv_offer = req.map(|req| VenvOffer { python, what: OfferKind::Install(req), installing: false });
+                        this.env.update(cx, |e, _| e.offer = req.map(|req| VenvOffer { python, what: OfferKind::Install(req), installing: false }));
                     }
                     Err(e) => {
                         let msg = format!("Cannot create {name}: {e}");
@@ -240,24 +242,27 @@ impl Workspace {
     }
 
     pub(super) fn install_requirements(&mut self, cx: &mut Context<Self>) {
-        let Some(o) = self.venv_offer.as_mut().filter(|o| !o.installing) else { return };
-        let req = match &o.what {
-            OfferKind::Install(req) => req.clone(),
+        let Some((what, python)) = self.env.read(cx).offer.as_ref().filter(|o| !o.installing).map(|o| (o.what.clone(), o.python.clone())) else { return };
+        let req = match what {
+            OfferKind::Install(req) => req,
             OfferKind::Sync(m) => {
-                let m = *m;
-                self.venv_offer = None;
+                self.env.update(cx, |e, _| e.offer = None);
                 self.sync_env(m, cx);
                 return;
             }
         };
-        o.installing = true;
-        let (python, root) = (o.python.clone(), self.root.clone());
+        self.env.update(cx, |e, _| {
+            if let Some(o) = e.offer.as_mut() {
+                o.installing = true;
+            }
+        });
+        let root = self.root.clone();
         self.status = format!("Installing requirements from {}…", req.label());
         let task = cx.background_executor().spawn(async move { py_venv::install(&python, &root, &req) });
         cx.spawn(async move |this, cx| {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.venv_offer = None;
+                this.env.update(cx, |e, _| e.offer = None);
                 let (msg, err) = match res {
                     Ok(()) => ("Requirements installed".to_string(), false),
                     Err(e) => (format!("Installing requirements failed: {e}"), true),
@@ -277,7 +282,7 @@ impl Workspace {
 
     /// The balloon offering to install requirements into the new environment.
     pub(super) fn render_venv_offer(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let o = self.venv_offer.as_ref()?;
+        let o = self.env.read(cx).offer.as_ref()?;
         let button = |id: &'static str, label: &'static str, primary: bool| {
             div()
                 .id(id)
@@ -322,7 +327,7 @@ impl Workspace {
                         .gap(px(8.))
                         .child(button("venv-install", o.button(), true).on_click(cx.listener(|this, _, _, cx| this.install_requirements(cx))))
                         .child(button("venv-dismiss", "Not now", false).on_click(cx.listener(|this, _, _, cx| {
-                            this.venv_offer = None;
+                            this.env.update(cx, |e, _| e.offer = None);
                             cx.notify();
                         })))
                         .into_any_element()
@@ -345,13 +350,13 @@ impl Workspace {
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
             for _ in 0..150 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.runs.all.is_some()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.env.read(cx).all.is_some()).unwrap_or(false) {
                     break;
                 }
             }
             let _ = this.update_in(cx, |this, window, cx| {
-                eprintln!("smoke-venv: interpreter before {:?}", this.interpreter_label());
-                this.open_popup(super::PopupKind::Interpreters);
+                eprintln!("smoke-venv: interpreter before {:?}", this.interpreter_label(cx));
+                this.open_env_popup(super::PopupKind::Interpreters, cx);
                 let labels: Vec<String> = this.popup.as_ref().map(|p| p.items.iter().map(|i| i.label.clone()).collect()).unwrap_or_default();
                 eprintln!("smoke-venv: interpreter popup {labels:?}");
                 if let Some(p) = this.popup.as_mut() {
@@ -366,20 +371,20 @@ impl Workspace {
             });
             for _ in 0..600 {
                 pause(100).await;
-                if this.update(cx, |t, _| !t.venv_busy).unwrap_or(true) {
+                if this.update(cx, |t, cx| !t.env.read(cx).busy).unwrap_or(true) {
                     break;
                 }
             }
             pause(200).await;
             let hold = std::env::var("BRISK_SMOKE_VENV").as_deref() == Ok("hold");
-            let _ = this.update_in(cx, |this, _, _| {
+            let _ = this.update_in(cx, |this, _, cx| {
                 eprintln!(
                     "smoke-venv: created -> interpreter {:?}, .venv exists {}, toast {:?}",
-                    this.interpreter_label(),
+                    this.interpreter_label(cx),
                     this.root.join(".venv").join("pyvenv.cfg").is_file(),
                     this.toast.as_ref().map(|t| t.0.clone())
                 );
-                eprintln!("smoke-venv: offer {:?}", this.venv_offer.as_ref().map(|o| o.text()));
+                eprintln!("smoke-venv: offer {:?}", this.env.read(cx).offer.as_ref().map(|o| o.text()));
             });
             if hold {
                 return;
@@ -404,14 +409,14 @@ impl Workspace {
             });
             for _ in 0..20 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.venv_offer.as_ref().is_some_and(|o| o.installing)).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.env.read(cx).offer.as_ref().is_some_and(|o| o.installing)).unwrap_or(false) {
                     break;
                 }
             }
-            eprintln!("smoke-venv: after click installing {:?}", this.update(cx, |t, _| t.venv_offer.as_ref().map(|o| o.installing)).ok().flatten());
+            eprintln!("smoke-venv: after click installing {:?}", this.update(cx, |t, cx| t.env.read(cx).offer.as_ref().map(|o| o.installing)).ok().flatten());
             for _ in 0..600 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.venv_offer.is_none()).unwrap_or(true) {
+                if this.update(cx, |t, cx| t.env.read(cx).offer.is_none()).unwrap_or(true) {
                     break;
                 }
             }
@@ -421,8 +426,9 @@ impl Workspace {
                 // The offer again (as after another Add Interpreter), to click Not now.
                 OFFER_BUTTONS.with(|c| *c.borrow_mut() = [None, None]);
                 let python = brisk_run::venv_python(&this.root.join(".venv"));
-                this.venv_offer =
+                let offer =
                     python.zip(py_venv::requirements(&this.root)).map(|(python, req)| VenvOffer { python, what: OfferKind::Install(req), installing: false });
+                this.env.update(cx, |e, _| e.offer = offer);
                 cx.notify();
             });
             for _ in 0..30 {
@@ -438,12 +444,12 @@ impl Workspace {
             });
             for _ in 0..20 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.venv_offer.is_none()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.env.read(cx).offer.is_none()).unwrap_or(false) {
                     break;
                 }
             }
             let _ = this.update_in(cx, |this, _, cx| {
-                eprintln!("smoke-venv: after Not now offer {:?}, status {:?}", this.venv_offer.as_ref().map(|o| o.text()), this.status);
+                eprintln!("smoke-venv: after Not now offer {:?}, status {:?}", this.env.read(cx).offer.as_ref().map(|o| o.text()), this.status);
                 cx.quit();
             });
         })

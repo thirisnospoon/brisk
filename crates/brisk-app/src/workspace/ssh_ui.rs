@@ -9,18 +9,18 @@ use gpui::{Context, Window};
 
 impl Workspace {
     /// The SSH interpreter a configuration runs with: its own, else the project's.
-    pub(super) fn ssh_for(&self, cfg: &RunConfig) -> Option<SshInterpreter> {
+    pub(super) fn ssh_for(&self, cfg: &RunConfig, cx: &gpui::App) -> Option<SshInterpreter> {
         match cfg.interpreter.as_deref() {
-            Some(p) if p.starts_with(ssh::SCHEME) => self.runs.file.ssh.iter().find(|s| s.uri() == p).cloned(),
+            Some(p) if p.starts_with(ssh::SCHEME) => self.env.read(cx).ssh_by_uri(p),
             Some(_) => None,
-            None => self.runs.ssh(),
+            None => self.env.read(cx).ssh(),
         }
     }
 
     /// Debug, coverage and profiling run locally: with an SSH interpreter they say so instead
     /// of quietly using a local Python. True when blocked.
     pub(super) fn remote_blocks(&mut self, cfg: &RunConfig, what: &str, cx: &mut Context<Self>) -> bool {
-        let Some(s) = self.ssh_for(cfg) else { return false };
+        let Some(s) = self.ssh_for(cfg, cx) else { return false };
         self.show_toast(
             format!("{what} is not available with an SSH interpreter yet ({}): run it, or pick a local interpreter in the status bar", s.label()),
             true,
@@ -70,10 +70,9 @@ impl Workspace {
 
     /// The interpreter popup's rows for SSH interpreters, and "Add SSH Interpreter…".
     pub(super) fn ssh_interpreter_items(&self, ql: &str) -> Vec<PopupItem> {
-        let current = self.runs.file.interpreter.clone();
+        let current = self.env_view.selected.clone();
         let mut v: Vec<PopupItem> = self
-            .runs
-            .file
+            .env_view
             .ssh
             .iter()
             .filter(|s| s.label().to_lowercase().contains(ql) || s.uri().to_lowercase().contains(ql))
@@ -129,7 +128,7 @@ impl Workspace {
 
     pub(super) fn ssh_python_items(&self, q: &str) -> Vec<PopupItem> {
         let ql = q.to_lowercase();
-        let Some((host, info)) = &self.ssh_found else { return Vec::new() };
+        let Some((host, info)) = &self.env_view.ssh_found else { return Vec::new() };
         let mut v: Vec<PopupItem> = info
             .pythons
             .iter()
@@ -164,8 +163,8 @@ impl Workspace {
                 match res {
                     Ok(info) => {
                         this.status = format!("{host}: {} Python interpreter(s)", info.pythons.len());
-                        this.ssh_found = Some((host, info));
-                        this.open_popup(PopupKind::SshPythons);
+                        this.env.update(cx, |e, _| e.ssh_found = Some((host, info)));
+                        this.open_env_popup(PopupKind::SshPythons, cx);
                     }
                     Err(e) => {
                         this.status = format!("Cannot connect to {host}: {e}");
@@ -183,15 +182,17 @@ impl Workspace {
     /// at `~/brisk-projects/<name>`.
     pub(super) fn ssh_pick_python(&mut self, host: String, python: String, version: String, window: &mut Window, cx: &mut Context<Self>) {
         self.popup = None;
-        let home = self.ssh_found.take().map(|(_, i)| i.home).unwrap_or_default();
-        self.reload_runs();
-        let existing = self.runs.file.ssh.iter().find(|s| s.host == host).map(|s| s.remote_root.clone());
+        let home = self.env.update(cx, |e, _| e.ssh_found.take()).map(|(_, i)| i.home).unwrap_or_default();
+        self.reload_runs(cx);
+        let existing = self.env.read(cx).ssh.iter().find(|s| s.host == host).map(|s| s.remote_root.clone());
         let remote_root = existing.unwrap_or_else(|| ssh::default_remote_root(&home, &self.root));
         let s = SshInterpreter { host, python, version, remote_root };
-        self.runs.file.ssh.retain(|x| x.uri() != s.uri());
-        self.runs.file.ssh.push(s.clone());
-        self.runs.file.interpreter = Some(s.uri());
-        self.save_runs();
+        self.env.update(cx, |e, _| {
+            e.ssh.retain(|x| x.uri() != s.uri());
+            e.ssh.push(s.clone());
+            e.selected = Some(s.uri());
+        });
+        self.save_runs(cx);
         self.status = format!("Interpreter: {}", s.label());
         self.show_toast(format!("Runs use {} on {}. The project is uploaded to {} before each run.", s.label(), s.host, s.remote_root), false, cx);
         self.focus_editor(window, cx);
@@ -200,9 +201,9 @@ impl Workspace {
 
     pub(super) fn ssh_use(&mut self, uri: String, window: &mut Window, cx: &mut Context<Self>) {
         self.popup = None;
-        self.runs.file.interpreter = Some(uri);
-        self.save_runs();
-        self.status = format!("Interpreter: {}", self.interpreter_label());
+        self.env.update(cx, |e, _| e.selected = Some(uri));
+        self.save_runs(cx);
+        self.status = format!("Interpreter: {}", self.interpreter_label(cx));
         self.focus_editor(window, cx);
         cx.notify();
     }

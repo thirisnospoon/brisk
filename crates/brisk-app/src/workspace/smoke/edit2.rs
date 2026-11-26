@@ -103,7 +103,7 @@ impl Workspace {
         let bg = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             for _ in 0..100 {
-                if this.read_with(cx, |this, _| this.runs.all.is_some()).unwrap_or(true) {
+                if this.read_with(cx, |this, cx| this.env.read(cx).all.is_some()).unwrap_or(true) {
                     break;
                 }
                 bg.timer(std::time::Duration::from_millis(100)).await;

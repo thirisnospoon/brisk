@@ -28,7 +28,7 @@ pub struct InstallOffer {
 impl Workspace {
     pub(super) fn render_install_offer(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let offer = self.install_offer.as_ref()?;
-        let label = self.runs.lookup(&offer.python).label(&self.root);
+        let label = self.env.read(cx).lookup(&offer.python).label(&self.root);
         let shown = match offer.package {
             "coverage" => "coverage.py",
             p => p,
@@ -142,11 +142,11 @@ impl Workspace {
             let pause = |ms| bg.timer(std::time::Duration::from_millis(ms));
             for _ in 0..100 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.interpreter(cx).is_some()).unwrap_or(false) {
                     break;
                 }
             }
-            let python = this.update(cx, |t, _| t.runs.interpreter(&t.root).map(|i| i.path)).ok().flatten();
+            let python = this.update(cx, |t, cx| t.interpreter(cx).map(|i| i.path)).ok().flatten();
             let Some(python) = python else {
                 eprintln!("smoke-debugpy-offer: SKIP no interpreter");
                 let _ = this.update(cx, |_, cx| cx.quit());

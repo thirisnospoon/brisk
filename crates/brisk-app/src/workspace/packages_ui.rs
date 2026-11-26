@@ -202,7 +202,7 @@ impl Workspace {
         }
         self.toggle_bottom(BottomTool::Packages, window, cx);
         if self.bottom == Some(BottomTool::Packages) {
-            let python = self.runs.interpreter(&self.root).map(|i| i.path);
+            let python = self.interpreter(cx).map(|i| i.path);
             let stale = self.packages.as_ref().is_some_and(|p| p.list.is_empty() || p.python != python);
             if stale {
                 self.refresh_packages(cx);
@@ -215,7 +215,7 @@ impl Workspace {
     }
 
     pub(super) fn refresh_packages(&mut self, cx: &mut Context<Self>) {
-        let python = self.runs.interpreter(&self.root).map(|i| i.path);
+        let python = self.interpreter(cx).map(|i| i.path);
         let Some(p) = self.packages.as_mut() else { return };
         let Some(py) = python.clone() else {
             p.error = Some("No Python interpreter: set one for the project to manage its packages.".into());

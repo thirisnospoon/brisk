@@ -89,7 +89,7 @@ impl Workspace {
     pub(super) fn run_mark_menu(&mut self, ed: Entity<Editor>, line: usize, at: Point<Pixels>, cx: &mut Context<Self>) {
         let (path, mark) = ed.update(cx, |e, _| (e.path.clone(), e.run_marks().into_iter().find(|m| m.line == line)));
         let (Some(path), Some(mark)) = (path, mark) else { return };
-        let kind = self.default_test_kind();
+        let kind = self.default_test_kind(cx);
         let cfg = match &mark.target {
             RunTarget::Script => RunConfig::for_file(&self.root, &path),
             RunTarget::Test(scope) => RunConfig::for_tests_with(&self.root, &path, scope, kind),
@@ -181,7 +181,7 @@ impl Workspace {
         );
         let saved = RunConfig { name: "app".into(), target: "app.py".into(), parameters: "from-config".into(), ..Default::default() };
         let _ = brisk_run::save(&root, &brisk_run::RunFile { configurations: vec![saved], ..Default::default() });
-        self.reload_runs();
+        self.reload_runs(cx);
         let _ = std::fs::write(
             root.join("test_calc.py"),
             "def add(a, b):\n    return a + b\n\n\ndef test_add():\n    assert add(2, 2) == 4\n\n\nclass TestCalc:\n    def test_ok(self):\n        assert add(1, 1) == 2\n\n    def test_broken(self):\n        assert add(1, 1) == 3\n",
@@ -194,7 +194,7 @@ impl Workspace {
             // Interpreter discovery runs at startup.
             for _ in 0..100 {
                 pause(100).await;
-                if this.update(cx, |t, _| t.runs.interpreter(&t.root).is_some()).unwrap_or(false) {
+                if this.update(cx, |t, cx| t.interpreter(cx).is_some()).unwrap_or(false) {
                     break;
                 }
             }
