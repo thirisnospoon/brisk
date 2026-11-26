@@ -815,6 +815,37 @@ Reached from 3 files (`workspace.rs`, `db_ui.rs`,
 `services_ui.rs`). Events: open a grid tab, toast. Verify: SERVICES, DATAVIEW smokes;
 `brisk-db` tests. Risk: low.
 
+Done on branch `arch4`, in two commits as described above. `DbModel` (in `db_ui.rs`) owns
+the data sources, connections, tree, Data Source dialog, the console's result grid and the
+table grids it opened, and draws the tool window (`impl Render`). `Workspace` keeps a small
+`db_ui::Db`: the tool window's layout (`open`, `focus`), the model, and three reads for
+the rest of the workspace (`dialog_open`, `running`, `results`). The model is created on
+first use, so the data sources are no longer read before the first frame; the
+`.idea/dataSources.xml` import toast shows then. `DbModel` asks for everything outside
+its state with `DbEvent` (toast, status, open a console file, show a grid tab, show the
+results in Services, open or focus the tool window, focus after the dialog, run a header
+button's action), and `Workspace::on_db_event` is the only place that turns them into
+tabs, toasts and focus. `workspace.rs` changed in three lines.
+
+The pattern, for the steps that follow:
+
+- Split the area's struct in two: a handle that stays a `Workspace` field under its old
+  name, with the layout state (open, focus handle) and `Option<Entity<Model>>`, and the
+  model entity with the rest. Code outside the area keeps `self.<area>.open` and reads
+  the model through a few methods on the handle, so `workspace.rs` hardly changes.
+- Create the model on first use (`Workspace::<area>_model(window, cx)`), and subscribe
+  to its events and observe it there.
+- The model never sees `Workspace`. What it needs from outside comes in through `new`
+  (root, focus handle) or as arguments; what it wants done goes out as an event. The
+  focus handle of its tool window is created with the handle, so focus checks work
+  before the model exists.
+- When the workspace starts something and needs its result in the same turn (open the
+  console, then type into it), call a model method that returns the value instead of
+  sending an event: events are delivered after the current update.
+- The tool window is the model's `Render`. A modal dialog the workspace draws over
+  everything is a model method returning an element, called from the workspace's
+  render; its keys reach the model through the workspace, which still holds focus.
+
 #### Step 16. `DebugModel`
 
 Reached from 3 files, but `debug_ui.rs` is the largest file:
