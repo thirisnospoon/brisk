@@ -987,6 +987,16 @@ sys.exit(r)";
                         window.focus(&this.focus);
                         cx.notify();
                     }))
+                    // A middle click closes the tab, as in the editor and PyCharm.
+                    .on_mouse_down(MouseButton::Middle, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_up(
+                        MouseButton::Middle,
+                        cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.close_tab_id(id);
+                            cx.notify();
+                        }),
+                    )
                     .when_some(state, |d, (g, c)| d.child(crate::icons::icon(g, 12., c)))
                     .when(t.run.as_ref().is_some_and(|r| r.pinned), |d| d.child(crate::icons::icon("pin", 12., Theme::accent())))
                     .child(name)

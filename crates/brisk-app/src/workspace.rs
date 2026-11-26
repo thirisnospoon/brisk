@@ -492,6 +492,38 @@ pub struct Workspace {
 }
 
 /// An icon button of the title bar: 28 px square, hover background with radius 5.
+/// Minimize, maximize / restore and close at the right end of the toolbar, drawn like
+/// Windows 11's. Windows itself handles them (the areas answer WM_NCHITTEST with HTMINBUTTON
+/// and the like), so Snap Layouts show on hovering maximize.
+fn caption_buttons(maximized: bool) -> impl IntoElement {
+    let glyph = |c: gpui::Hsla| div().size(px(10.)).flex().items_center().justify_center().text_color(c);
+    let button =
+        |id: &'static str, area: gpui::WindowControlArea| div().id(id).w(px(46.)).h_full().flex().items_center().justify_center().window_control_area(area);
+    let fg = Theme::text_muted();
+    let square = |size: f32| div().size(px(size)).border_1().border_color(fg);
+    div()
+        .h_full()
+        .flex()
+        .child(
+            button("caption-min", gpui::WindowControlArea::Min).hover(|s| s.bg(Theme::hover_row())).child(glyph(fg).child(div().w(px(10.)).h(px(1.)).bg(fg))),
+        )
+        .child(button("caption-max", gpui::WindowControlArea::Max).hover(|s| s.bg(Theme::hover_row())).child(if maximized {
+            // Restore: two overlapping squares.
+            glyph(fg)
+                .relative()
+                .child(div().absolute().top(px(-2.)).left(px(2.)).child(square(8.)))
+                .child(div().absolute().top(px(0.)).left(px(0.)).bg(if crate::theme::islands() { Theme::frame() } else { Theme::panel() }).child(square(8.)))
+        } else {
+            glyph(fg).child(square(10.))
+        }))
+        .child(
+            button("caption-close", gpui::WindowControlArea::Close)
+                .hover(|s| s.bg(gpui::rgb(0xc42b1c)))
+                .group("caption-close")
+                .child(crate::icons::ui_icon("x", 15., fg).group_hover("caption-close", |s| s.text_color(gpui::white()))),
+        )
+}
+
 fn title_button(id: &'static str, icon: &'static str, color: gpui::Hsla, tip: &'static str) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
@@ -2068,7 +2100,10 @@ impl Workspace {
         )
     }
 
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The top bar. On Windows it is also the title bar: its empty space drags the window
+    /// (a double click maximizes, Snap works) and it ends with the caption buttons.
+    fn render_toolbar(&self, maximized: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let caption = cfg!(windows);
         // A toolbar widget: text plus a small dimmed chevron, vertically centered.
         let chip = |id: &'static str, lead: Option<&'static str>, text: String| {
             div()
@@ -2086,11 +2121,13 @@ impl Workspace {
                 .child(text)
                 .child(crate::icons::ui_icon("chevron-down", 12., Theme::text_muted()))
         };
+        let drag = || div().h_full().when(caption, |d| d.window_control_area(gpui::WindowControlArea::Drag));
         div()
             .h(ui_px(40.))
             .flex()
             .items_center()
-            .px(px(10.))
+            .pl(px(10.))
+            .pr(px(if caption { 0. } else { 10. }))
             .gap(px(6.))
             .bg(if crate::theme::islands() { Theme::frame() } else { Theme::panel() })
             .when(!crate::theme::islands(), |d| d.border_b_1().border_color(Theme::border()))
@@ -2137,7 +2174,7 @@ impl Workspace {
                 cx.notify();
             })))
             .child(chip("tb-branch", Some("git-branch"), self.branch_label(cx)).on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Branches, w, cx))))
-            .child(div().flex_1())
+            .child(drag().flex_1())
             .child(chip("tb-config", None, self.run_widget_label()).on_click(cx.listener(|this, _, _, cx| {
                 this.reload_runs(cx);
                 this.open_popup(PopupKind::RunConfigs(false));
@@ -2149,6 +2186,7 @@ impl Workspace {
                 title_button("tb-search", "search", Theme::text_muted(), "Search Everywhere  Double Shift")
                     .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::SearchEverywhere, w, cx))),
             )
+            .when(caption, |d| d.child(drag().w(px(10.))).child(caption_buttons(maximized)))
     }
 
     fn render_left_stripe(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3274,7 +3312,7 @@ impl Render for Workspace {
             .bg(if islands { Theme::frame() } else { Theme::bg() })
             .text_color(Theme::text())
             .font_family(ui_font())
-            .child(self.render_toolbar(cx))
+            .child(self.render_toolbar(window.is_maximized(), cx))
             .child(
                 div()
                     .flex_1()

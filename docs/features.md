@@ -7,6 +7,7 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 ### Layout
 
 - The window layout follows PyCharm's New UI: a toolbar with the project, the Git branch (read from `.git/HEAD`) and the run configuration; tool window stripes on the left and right; a status bar with `Ln:Col`, line separator (LF/CRLF), encoding, indent, language and interpreter.
+- On Windows the toolbar is also the title bar: its empty space drags the window (double click maximizes) and it ends with the minimize, maximize and close buttons.
 - Popups, menus and toasts fade in and rise the last few pixels (120 to 200 ms); modal dialogs also dim the window behind them. A tool window slides the last 14 px in from its edge while the editor takes its new size at once. Nothing waits for an animation: keys go to the new window from the first frame. Settings → Appearance → Animations turns them off.
 - Status bar messages fade out after about 6 s. A click on the message area opens Recent Messages, the last messages with how long ago they came. The language is not repeated when it is just "Python".
 - The project root in Project shows its folder next to the name, shortened (`~\…\work`); the full path is in the tooltip.
@@ -442,7 +443,7 @@ Brisk stays usable while ty is missing or still starting (its first answers can 
 
 ## Terminal
 
-- Terminal (`Alt+F12`). The shell starts the first time the window opens: PowerShell through ConPTY on Windows, `$SHELL` on Linux. The ▾ next to `+` opens a tab with another shell found on the machine: PowerShell 7, Command Prompt, Git Bash. Tabs are named after their shell.
+- Terminal (`Alt+F12`). The shell starts the first time the window opens: PowerShell through ConPTY on Windows, `$SHELL` on Linux. The ▾ next to `+` opens a tab with another shell found on the machine: PowerShell 7, Command Prompt, Git Bash. Tabs are named after their shell. A middle click closes a Terminal or Run tab.
 - It starts in the project root with the project interpreter's environment activated. For a venv (wherever it is), its folder goes first on `PATH` and `VIRTUAL_ENV` and `VIRTUAL_ENV_PROMPT` are set. For conda, the environment folders go on `PATH` and `CONDA_PREFIX` and `CONDA_DEFAULT_ENV` are set. In PowerShell the prompt starts with `(.venv)`, as after `activate`. Until the interpreter is detected, `.venv` / `venv` in the project root is used. A system interpreter activates nothing. Changing the interpreter applies to new tabs.
 - Tabs Local, Local (2), …: `Ctrl+Shift+T` new, `Ctrl+F4` close, `Alt+←/→` switch, or the `+` button. A tab closes when its shell exits.
 - Override IDE shortcuts: keys go to the shell, except tool window shortcuts (`Alt+<digit>`, `Alt+F12`), `Ctrl+Shift+A`, `Shift+F10` and similar.
