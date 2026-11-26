@@ -259,12 +259,13 @@ fn stdout_stderr_lines_whole() {
     let root = tmp("order");
     let Some(py) = discover_all(&root).into_iter().next() else { return };
     let script = root.join("order.py");
-    // The short pause keeps the program slower than the readers, as a program in the Run
-    // console usually is. Without it all 60 lines sit in the two pipes before either reader
-    // wakes, and their order is up to the scheduler (17 of 30 swapped on a Linux runner).
+    // The pauses keep the program slower than the readers, as a program in the Run console
+    // usually is. Lines written back to back on two pipes reach the two reader threads at
+    // the same moment, and which one sends first is up to the scheduler: on a busy Linux
+    // machine that swapped about half the pairs, with or without a pause between pairs.
     std::fs::write(
         &script,
-        "import sys, time\nfor i in range(30):\n    print('out', i, 'x', 'y')\n    print('err', i, file=sys.stderr)\n    time.sleep(0.005)\n",
+        "import sys, time\nfor i in range(30):\n    print('out', i, 'x', 'y')\n    time.sleep(0.005)\n    print('err', i, file=sys.stderr)\n    time.sleep(0.005)\n",
     )
     .unwrap();
     let cmd = build(&root, &RunConfig::for_file(&root, &script), &py.path);
