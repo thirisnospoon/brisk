@@ -42,7 +42,7 @@ of `src/`.
 | Crate | Lines | Tests | Depends on | Owns |
 |---|---|---|---|---|
 | `brisk-proc` | 178 | 2 | | The kill-on-close Job Object every long-lived child is adopted into. |
-| `brisk-keymap` | 1,415 | 11 | | The `Action` enum (236 actions, `action.rs`), the PyCharm default keymap (`pycharm.rs`), the user keymap and its import from PyCharm XML, and `KeyResolver` (chords, double Shift). |
+| `brisk-keymap` | 1,512 | 13 | | The `Action` enum (236 actions, `action.rs`), the `KeyContext` enum of focus contexts (`context.rs`), the PyCharm default keymap (`pycharm.rs`), the user keymap and its import from PyCharm XML, and `KeyResolver` (chords, double Shift). |
 | `brisk-text` | 2,459 | 40 | | The rope buffer, multi-caret selections, undo / redo, edit operations. |
 | `brisk-project` | 672 | 6 | | The lazy project tree and the flat file list for Go to File. |
 | `brisk-syntax` | 3,396 | 35 | | tree-sitter parsing, highlighting of the visible range, folding, outline, the symbol index. |
@@ -770,6 +770,15 @@ Risk: medium.
 A `KeyContext` enum in `brisk-keymap`; `pycharm.rs`, `user.rs` and `Workspace::contexts`
 use it; user keymap files keep the string form. Verify: `cargo test -p brisk-keymap`;
 KEYMAP smoke. Risk: low.
+
+Done on branch `arch2`. `brisk_keymap::KeyContext` has the 13 contexts the keymap and
+`Workspace` use. `Binding::context`, `Keymap::bind`, `KeyResolver::key_down`,
+`Keymap::context_of` and `Workspace::contexts` take it instead of `&'static str`, so a
+misspelt context no longer compiles. `as_str` and `parse` give the string form (`parse`
+returns `None` for a name Brisk does not know), with a round-trip test. User keymap files
+store no context today (an action's shortcuts take the context of its defaults), so their
+format is unchanged. GPUI's own `.key_context("…")` strings are a separate mechanism and
+stay as they are.
 
 ### Phase 4: split `Workspace`
 

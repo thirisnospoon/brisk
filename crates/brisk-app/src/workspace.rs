@@ -63,7 +63,7 @@ use crate::merge_view::MergeView;
 use crate::terminal_view::TerminalPanel;
 use crate::theme::ui_px;
 use crate::theme::{mono_font, ui_font, Theme};
-use brisk_keymap::{Action, KeyResolver, Resolution, ALL_ACTIONS};
+use brisk_keymap::{Action, KeyContext, KeyResolver, Resolution, ALL_ACTIONS};
 use brisk_project::{FileList, NodeId, ProjectTree};
 use gpui::prelude::*;
 use gpui::{
@@ -998,29 +998,29 @@ impl Workspace {
 
     // --- Key routing ---------------------------------------------------------
 
-    fn contexts(&self, window: &Window, cx: &App) -> Vec<&'static str> {
+    fn contexts(&self, window: &Window, cx: &App) -> Vec<KeyContext> {
         if let Some(e) = self.focused_editor(window, cx) {
             if e.read(cx).is_sql() {
-                vec!["SqlConsole", "Editor"]
+                vec![KeyContext::SqlConsole, KeyContext::Editor]
             } else {
-                vec!["Editor"]
+                vec![KeyContext::Editor]
             }
         } else if self.db.focus.is_focused(window) {
-            vec!["DatabaseView", "ToolWindow"]
+            vec![KeyContext::DatabaseView, KeyContext::ToolWindow]
         } else if self.focused_grid(window, cx).is_some() {
-            vec!["DataGrid"]
+            vec![KeyContext::DataGrid]
         } else if self.tree_focus.is_focused(window) {
-            vec!["ProjectView", "ToolWindow"]
+            vec![KeyContext::ProjectView, KeyContext::ToolWindow]
         } else if self.commit_focus.is_focused(window) {
-            vec!["CommitView", "ToolWindow"]
+            vec![KeyContext::CommitView, KeyContext::ToolWindow]
         } else if self.git.as_ref().is_some_and(|g| g.log_focus.is_focused(window)) {
-            vec!["GitLog", "ToolWindow"]
+            vec![KeyContext::GitLog, KeyContext::ToolWindow]
         } else if self.find_window_focused(window) {
-            vec!["FindView", "ToolWindow"]
+            vec![KeyContext::FindView, KeyContext::ToolWindow]
         } else if self.problems_focused(window) {
-            vec!["ProblemsView", "ToolWindow"]
+            vec![KeyContext::ProblemsView, KeyContext::ToolWindow]
         } else if self.active_diff(window, cx).is_some() {
-            vec!["DiffView"]
+            vec![KeyContext::DiffView]
         } else {
             vec![]
         }
@@ -1137,13 +1137,13 @@ impl Workspace {
         }
         if self.terminal_focused(window, cx) {
             let t = self.terminal.clone();
-            self.terminal_key(t, &["Terminal"], e, stroke, window, cx);
+            self.terminal_key(t, &[KeyContext::Terminal], e, stroke, window, cx);
             cx.stop_propagation();
             return;
         }
         if self.run_panel_focused(window, cx) {
             let t = self.runs.panel.clone();
-            self.terminal_key(t, &["RunConsole", "Terminal"], e, stroke, window, cx);
+            self.terminal_key(t, &[KeyContext::RunConsole, KeyContext::Terminal], e, stroke, window, cx);
             cx.stop_propagation();
             return;
         }
@@ -1182,13 +1182,13 @@ impl Workspace {
             Resolution::Pending => cx.stop_propagation(),
             Resolution::Unhandled => {
                 let handled = match ctx.first() {
-                    Some(&"ProjectView") => self.tree_key(&e.keystroke.key, window, cx),
-                    Some(&"CommitView") => self.commit_key(&e.keystroke, window, cx),
-                    Some(&"GitLog") => self.log_key(&e.keystroke, window, cx),
-                    Some(&"FindView") => self.find_window_key(&e.keystroke, window, cx),
-                    Some(&"ProblemsView") => self.problems_key(&e.keystroke, window, cx),
-                    Some(&"DatabaseView") => self.db_tree_key(&e.keystroke, window, cx),
-                    Some(&"DataGrid") => match self.focused_grid(window, cx) {
+                    Some(&KeyContext::ProjectView) => self.tree_key(&e.keystroke.key, window, cx),
+                    Some(&KeyContext::CommitView) => self.commit_key(&e.keystroke, window, cx),
+                    Some(&KeyContext::GitLog) => self.log_key(&e.keystroke, window, cx),
+                    Some(&KeyContext::FindView) => self.find_window_key(&e.keystroke, window, cx),
+                    Some(&KeyContext::ProblemsView) => self.problems_key(&e.keystroke, window, cx),
+                    Some(&KeyContext::DatabaseView) => self.db_tree_key(&e.keystroke, window, cx),
+                    Some(&KeyContext::DataGrid) => match self.focused_grid(window, cx) {
                         Some(g) => g.update(cx, |g, cx| g.key(&e.keystroke, cx)),
                         None => false,
                     },
@@ -1209,7 +1209,7 @@ impl Workspace {
     fn terminal_key(
         &mut self,
         term: Option<Entity<TerminalPanel>>,
-        ctx: &[&str],
+        ctx: &[KeyContext],
         e: &KeyDownEvent,
         stroke: brisk_keymap::Keystroke,
         window: &mut Window,

@@ -2,7 +2,7 @@
 //! imported once). An action listed here gets exactly these shortcuts instead of its
 //! defaults; an empty list removes them. Double Shift is not affected.
 
-use crate::{Action, Binding, Keymap, Keystroke, Trigger};
+use crate::{Action, Binding, KeyContext, Keymap, Keystroke, Trigger};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -24,7 +24,7 @@ pub fn parse_chord(s: &str) -> Option<Vec<Keystroke>> {
 }
 
 /// Two bindings can fire in the same place: one is global or both share a context.
-fn overlaps(a: Option<&str>, b: Option<&str>) -> bool {
+fn overlaps(a: Option<KeyContext>, b: Option<KeyContext>) -> bool {
     a.is_none() || b.is_none() || a == b
 }
 
@@ -49,7 +49,7 @@ impl Keymap {
     }
 
     /// Where an action's shortcuts apply: the context of its default bindings.
-    pub fn context_of(&self, action: Action) -> Option<&'static str> {
+    pub fn context_of(&self, action: Action) -> Option<KeyContext> {
         self.bindings.iter().find(|b| b.action == action).and_then(|b| b.context)
     }
 
@@ -145,8 +145,8 @@ mod tests {
         assert_eq!(taken, [Action::DuplicateLine]);
         let km = u.apply(&base);
         let mut r = KeyResolver::new(km.clone());
-        assert_eq!(r.key_down(ks("ctrl-d").remove(0), &["Editor"]), Resolution::Action(Action::DeleteLine));
-        assert_eq!(r.key_down(ks("ctrl-y").remove(0), &["Editor"]), Resolution::Action(Action::DeleteLine));
+        assert_eq!(r.key_down(ks("ctrl-d").remove(0), &[KeyContext::Editor]), Resolution::Action(Action::DeleteLine));
+        assert_eq!(r.key_down(ks("ctrl-y").remove(0), &[KeyContext::Editor]), Resolution::Action(Action::DeleteLine));
         assert!(km.chords_for(Action::DuplicateLine).is_empty());
         // Double Shift survives an override of Search Everywhere.
         u.set(&base, Action::SearchEverywhere, vec![ks("ctrl-alt-shift-s")]);
@@ -177,8 +177,8 @@ mod tests {
         let km = u.apply(&base);
         assert!(km.chords_for(Action::Commit).is_empty());
         let mut r = KeyResolver::new(km);
-        assert_eq!(r.key_down(ks("ctrl-k").remove(0), &["Editor"]), Resolution::Pending);
-        assert_eq!(r.key_down(ks("ctrl-c").remove(0), &["Editor"]), Resolution::Action(Action::CommentLine));
+        assert_eq!(r.key_down(ks("ctrl-k").remove(0), &[KeyContext::Editor]), Resolution::Pending);
+        assert_eq!(r.key_down(ks("ctrl-c").remove(0), &[KeyContext::Editor]), Resolution::Action(Action::CommentLine));
     }
 
     #[test]

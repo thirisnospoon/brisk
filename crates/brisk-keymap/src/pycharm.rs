@@ -1,9 +1,9 @@
 //! Default PyCharm keymap for Windows / Linux ("Windows" keymap in IntelliJ terms).
 
-use crate::{Action as A, Keymap};
+use crate::{Action as A, KeyContext, Keymap};
 
-const ED: Option<&str> = Some("Editor");
-const PV: Option<&str> = Some("ProjectView");
+const ED: Option<KeyContext> = Some(KeyContext::Editor);
+const PV: Option<KeyContext> = Some(KeyContext::ProjectView);
 
 pub fn pycharm_keymap() -> Keymap {
     let mut k = Keymap::default();
@@ -173,7 +173,7 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("ctrl-shift-f9", A::DebugContext, None);
     k.bind("ctrl-f2", A::Stop, None);
     k.bind("alt-shift-f10", A::SelectRunConfiguration, None);
-    k.bind("ctrl-f5", A::Rerun, Some("RunConsole"));
+    k.bind("ctrl-f5", A::Rerun, Some(KeyContext::RunConsole));
     k.bind("ctrl-f8", A::ToggleBreakpoint, ED);
     k.bind("ctrl-shift-f8", A::ViewBreakpoints, None);
     k.bind("f8", A::StepOver, None);
@@ -192,13 +192,13 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("alt-`", A::VcsQuickList, None);
     k.bind("ctrl-shift-`", A::Branches, None);
     k.bind("ctrl-alt-z", A::RollbackChanges, None);
-    k.bind("ctrl-d", A::ShowDiff, Some("CommitView"));
-    k.bind("ctrl-d", A::ShowDiff, Some("GitLog"));
+    k.bind("ctrl-d", A::ShowDiff, Some(KeyContext::CommitView));
+    k.bind("ctrl-d", A::ShowDiff, Some(KeyContext::GitLog));
 
     // --- Database (PyCharm Professional / DataGrip) ----------------------------
-    const DB: Option<&str> = Some("DatabaseView");
-    const SQL: Option<&str> = Some("SqlConsole");
-    const GRID: Option<&str> = Some("DataGrid");
+    const DB: Option<KeyContext> = Some(KeyContext::DatabaseView);
+    const SQL: Option<KeyContext> = Some(KeyContext::SqlConsole);
+    const GRID: Option<KeyContext> = Some(KeyContext::DataGrid);
     k.bind("ctrl-enter", A::ExecuteQuery, SQL);
     k.bind("ctrl-shift-f10", A::OpenQueryConsole, DB);
     k.bind("ctrl-shift-f10", A::OpenQueryConsole, SQL);
@@ -224,7 +224,7 @@ pub fn pycharm_keymap() -> Keymap {
     k.bind("alt-f12", A::ToggleTerminalWindow, None);
     k.bind("ctrl-shift-f12", A::HideAllToolWindows, None);
     k.bind("shift-escape", A::HideActiveToolWindow, None);
-    k.bind("escape", A::FocusEditor, Some("ToolWindow"));
+    k.bind("escape", A::FocusEditor, Some(KeyContext::ToolWindow));
 
     k
 }

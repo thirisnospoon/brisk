@@ -736,14 +736,14 @@ impl Workspace {
             }
             A::ShowDiff => {
                 let ctx = self.contexts(window, cx);
-                if ctx.first() == Some(&"GitLog") {
+                if ctx.first() == Some(&KeyContext::GitLog) {
                     if let Some((hash, c)) = self.git.as_ref().and_then(|g| {
                         let d = g.details.as_ref()?;
                         Some((d.hash.clone(), d.files.get(g.details_sel.unwrap_or(0))?.clone()))
                     }) {
                         self.show_commit_diff(&hash, &c, window, cx);
                     }
-                } else if ctx.first() == Some(&"CommitView") {
+                } else if ctx.first() == Some(&KeyContext::CommitView) {
                     if let Some(c) = self.selected_change() {
                         self.show_change_diff(&c, window, cx);
                     }

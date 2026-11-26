@@ -296,7 +296,7 @@ pub fn active_keymap(config: &Path) -> Option<(String, String, Vec<KeymapFile>)>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{pycharm_keymap, KeyResolver, Resolution};
+    use crate::{pycharm_keymap, KeyContext, KeyResolver, Resolution};
 
     #[test]
     fn imports_a_keymap_with_its_parent() {
@@ -322,8 +322,8 @@ mod tests {
         assert!(b["DeleteLine"].is_empty());
         let mut r = KeyResolver::new(got.keymap.apply(&pycharm_keymap()));
         let k = |s| Keystroke::parse(s).unwrap();
-        assert_eq!(r.key_down(k("ctrl-alt-f"), &["Editor"]), Resolution::Action(Action::ReformatCode));
-        assert_eq!(r.key_down(k("ctrl-y"), &["Editor"]), Resolution::Unhandled);
+        assert_eq!(r.key_down(k("ctrl-alt-f"), &[KeyContext::Editor]), Resolution::Action(Action::ReformatCode));
+        assert_eq!(r.key_down(k("ctrl-y"), &[KeyContext::Editor]), Resolution::Unhandled);
 
         let eclipse = r#"<keymap version="1" name="Mine" parent="Eclipse copy"></keymap>"#;
         assert_eq!(import_xml(eclipse, &[]).unwrap().foreign_parent.as_deref(), Some("Eclipse copy"));

@@ -4,11 +4,13 @@
 //! [`KeyResolver`], which handles multi-stroke chords and the PyCharm "double Shift" gesture.
 
 mod action;
+mod context;
 mod pycharm;
 mod pycharm_import;
 mod user;
 
 pub use action::{Action, ActionInfo, ALL_ACTIONS};
+pub use context::KeyContext;
 pub use pycharm::pycharm_keymap;
 pub use pycharm_import::{active_keymap, import_xml, pycharm_config_dirs, Imported};
 pub use user::{chord_id, parse_chord, UserKeymap};
@@ -146,8 +148,8 @@ impl fmt::Display for Trigger {
 pub struct Binding {
     pub trigger: Trigger,
     pub action: Action,
-    /// `None` = everywhere, otherwise only when this context is focused ("Editor", "ProjectView", ...).
-    pub context: Option<&'static str>,
+    /// `None` = everywhere, otherwise only when this context is focused.
+    pub context: Option<KeyContext>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -156,7 +158,7 @@ pub struct Keymap {
 }
 
 impl Keymap {
-    pub fn bind(&mut self, keys: &str, action: Action, context: Option<&'static str>) {
+    pub fn bind(&mut self, keys: &str, action: Action, context: Option<KeyContext>) {
         let strokes: Vec<Keystroke> =
             keys.split_whitespace().map(|k| Keystroke::parse(k).unwrap_or_else(|| panic!("bad keystroke {k:?} in {keys:?}"))).collect();
         self.bindings.push(Binding { trigger: Trigger::Keys(strokes), action, context });
@@ -175,7 +177,7 @@ impl Keymap {
         self.triggers_for(action).first().map(|t| t.to_string())
     }
 
-    fn context_matches(binding: Option<&'static str>, active: &[&str]) -> bool {
+    fn context_matches(binding: Option<KeyContext>, active: &[KeyContext]) -> bool {
         match binding {
             None => true,
             Some(c) => active.contains(&c),
@@ -214,7 +216,7 @@ impl KeyResolver {
     }
 
     /// A key-down of a non-modifier key. `contexts` lists focused contexts, innermost first.
-    pub fn key_down(&mut self, stroke: Keystroke, contexts: &[&str]) -> Resolution {
+    pub fn key_down(&mut self, stroke: Keystroke, contexts: &[KeyContext]) -> Resolution {
         // Any real key breaks a double-tap sequence.
         self.last_modifier_tap = None;
         self.pending.push(stroke);
@@ -300,10 +302,10 @@ mod tests {
     #[test]
     fn resolves_pycharm_defaults() {
         let mut r = KeyResolver::new(pycharm_keymap());
-        assert_eq!(r.key_down(ks("ctrl-shift-a"), &["Editor"]), Resolution::Action(Action::FindAction));
-        assert_eq!(r.key_down(ks("alt-1"), &["Editor"]), Resolution::Action(Action::ToggleProjectWindow));
-        assert_eq!(r.key_down(ks("ctrl-b"), &["Editor"]), Resolution::Action(Action::GotoDeclaration));
-        assert_eq!(r.key_down(ks("x"), &["Editor"]), Resolution::Unhandled);
+        assert_eq!(r.key_down(ks("ctrl-shift-a"), &[KeyContext::Editor]), Resolution::Action(Action::FindAction));
+        assert_eq!(r.key_down(ks("alt-1"), &[KeyContext::Editor]), Resolution::Action(Action::ToggleProjectWindow));
+        assert_eq!(r.key_down(ks("ctrl-b"), &[KeyContext::Editor]), Resolution::Action(Action::GotoDeclaration));
+        assert_eq!(r.key_down(ks("x"), &[KeyContext::Editor]), Resolution::Unhandled);
     }
 
     #[test]
@@ -321,11 +323,11 @@ mod tests {
     #[test]
     fn context_specificity() {
         let mut km = Keymap::default();
-        km.bind("enter", Action::EditorNewline, Some("Editor"));
-        km.bind("enter", Action::OpenSelected, Some("ProjectView"));
+        km.bind("enter", Action::EditorNewline, Some(KeyContext::Editor));
+        km.bind("enter", Action::OpenSelected, Some(KeyContext::ProjectView));
         let mut r = KeyResolver::new(km);
-        assert_eq!(r.key_down(ks("enter"), &["ProjectView"]), Resolution::Action(Action::OpenSelected));
-        assert_eq!(r.key_down(ks("enter"), &["Editor"]), Resolution::Action(Action::EditorNewline));
+        assert_eq!(r.key_down(ks("enter"), &[KeyContext::ProjectView]), Resolution::Action(Action::OpenSelected));
+        assert_eq!(r.key_down(ks("enter"), &[KeyContext::Editor]), Resolution::Action(Action::EditorNewline));
     }
 
     #[test]
@@ -346,9 +348,9 @@ mod tests {
         assert_eq!(r.key_down(ks("ctrl-k"), &[]), Resolution::Pending);
         assert_eq!(r.key_down(ks("ctrl-c"), &[]), Resolution::Action(Action::CommentLine));
         // A more specific single stroke still wins over a global chord.
-        km.bind("ctrl-k", Action::EditorNewline, Some("Editor"));
+        km.bind("ctrl-k", Action::EditorNewline, Some(KeyContext::Editor));
         let mut r = KeyResolver::new(km);
-        assert_eq!(r.key_down(ks("ctrl-k"), &["Editor"]), Resolution::Action(Action::EditorNewline));
+        assert_eq!(r.key_down(ks("ctrl-k"), &[KeyContext::Editor]), Resolution::Action(Action::EditorNewline));
     }
 
     #[test]
