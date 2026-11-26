@@ -185,7 +185,7 @@ fn hsla(c: [u8; 3]) -> Hsla {
     // The terminal's default colors follow the theme.
     match c {
         [0xdf, 0xe1, 0xe5] => return Theme::text(),
-        [0x1e, 0x1f, 0x22] => return Theme::editor_bg(),
+        [0x1e, 0x1f, 0x22] => return Theme::console_bg(),
         _ => {}
     }
     rgb(((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32).into()
@@ -1248,6 +1248,8 @@ impl Render for TerminalPanel {
                                                 .flex_1()
                                                 .min_h_0()
                                                 .flex()
+                                                .pt(px(4.))
+                                                .bg(Theme::console_bg())
                                                 .child(
                                                     div()
                                                         .id("terminal-grid")

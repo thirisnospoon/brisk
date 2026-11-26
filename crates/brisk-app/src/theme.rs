@@ -119,6 +119,17 @@ impl Theme {
     pub fn editor_bg() -> Hsla {
         ui("editor_bg", 0x1e1f22, 0xffffff)
     }
+    /// Consoles (Terminal, Run, Debug, Python Console): a shade darker than the editor, so their
+    /// output reads as its own surface next to the code and under the panel's header.
+    pub fn console_bg() -> Hsla {
+        let mut c = Self::editor_bg();
+        if Self::is_light() {
+            c.l = (c.l - 0.025).max(0.);
+        } else {
+            c.l *= 0.74;
+        }
+        c
+    }
     pub fn gutter_fg() -> Hsla {
         ui("gutter_fg", 0x4b5059, 0xaeb3c2)
     }

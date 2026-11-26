@@ -647,6 +647,7 @@ impl Workspace {
             .h_full()
             .flex()
             .flex_col()
+            .bg(Theme::console_bg())
             .child(
                 div()
                     .relative()

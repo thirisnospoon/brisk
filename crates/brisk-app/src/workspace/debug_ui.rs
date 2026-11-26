@@ -3794,7 +3794,7 @@ impl Workspace {
                         .child(div().text_color(Theme::text_dim()).text_size(ui_px(11.)).child(kind.clone()))
                 }))
         });
-        div().size_full().relative().flex().flex_col().child(lines).child(input).children(popup).into_any_element()
+        div().size_full().relative().flex().flex_col().bg(Theme::console_bg()).child(lines).child(input).children(popup).into_any_element()
     }
 
     // --- Smoke --------------------------------------------------------------------------
