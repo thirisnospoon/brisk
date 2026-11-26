@@ -259,7 +259,14 @@ fn stdout_stderr_lines_whole() {
     let root = tmp("order");
     let Some(py) = discover_all(&root).into_iter().next() else { return };
     let script = root.join("order.py");
-    std::fs::write(&script, "import sys\nfor i in range(30):\n    print('out', i, 'x', 'y')\n    print('err', i, file=sys.stderr)\n").unwrap();
+    // The short pause keeps the program slower than the readers, as a program in the Run
+    // console usually is. Without it all 60 lines sit in the two pipes before either reader
+    // wakes, and their order is up to the scheduler (17 of 30 swapped on a Linux runner).
+    std::fs::write(
+        &script,
+        "import sys, time\nfor i in range(30):\n    print('out', i, 'x', 'y')\n    print('err', i, file=sys.stderr)\n    time.sleep(0.005)\n",
+    )
+    .unwrap();
     let cmd = build(&root, &RunConfig::for_file(&root, &script), &py.path);
     let (tx, rx) = mpsc::channel();
     let s = brisk_terminal::Session::spawn_process(cmd.to_std(), &cmd.display(), 100, 30, move |e| {
