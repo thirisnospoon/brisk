@@ -150,11 +150,6 @@ fn config_and_idea_import() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-#[test]
-fn password_sealing() {
-    assert_eq!(crate::secrets::roundtrip("pä$$ wörd").as_deref(), Some("pä$$ wörd"));
-}
-
 /// Live server tests: `BRISK_TEST_PG_URL=postgresql://postgres:pw@127.0.0.1:5432/postgres cargo test -p brisk-db -- --ignored`
 fn live(var: &str) -> Option<(DataSource, String)> {
     let url = std::env::var(var).ok()?;

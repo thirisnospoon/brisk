@@ -7,14 +7,13 @@
 mod config;
 mod my;
 mod pg;
-mod secrets;
 mod split;
 mod sqlite;
 #[cfg(test)]
 mod tests;
 
+pub use brisk_platform::secrets::{forget_password, load_password, store_password};
 pub use config::{config_dir, load as load_sources, save as save_sources, CONFIG_FILE};
-pub use secrets::{forget_password, load_password, store_password};
 pub use split::{split_statements, statement_at};
 
 use serde::{Deserialize, Serialize};

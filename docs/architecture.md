@@ -654,6 +654,15 @@ Move DPAPI into the crate. On other platforms, refuse to save a password without
 Files: `brisk-db/src/secrets.rs`, the data source dialog. Verify: `cargo test -p brisk-db`
 (round trip, damaged file kept). Risk: low on Windows.
 
+Done on branch `arch3`. `brisk-db/src/secrets.rs` is `brisk_platform::secrets`: the
+`credentials.json` map, the atomic write and the refusal to overwrite a damaged file are
+unchanged in `mod.rs`; `windows.rs` seals with DPAPI (`dpapi:<hex>`, and still reads `plain:`).
+`unix.rs` has no keyring yet, so saving fails with an `Unsupported` error that the data source
+dialog shows (the password is kept for the session), and loading returns nothing; before, it
+wrote `plain:<hex>`. `brisk-db` re-exports the three functions, so its callers are unchanged.
+Tests: round trip (DPAPI on Windows, the refusal elsewhere) and the damaged file. A Secret
+Service or Keychain backend is left for the Linux and macOS ports.
+
 #### Step P6. `xtask`
 
 Port `package-portable.ps1` and `budget.ps1` to `cargo xtask`; CI calls the xtask. The

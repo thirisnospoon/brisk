@@ -13,6 +13,3 @@ postgres = "0.19"
 native-tls = "0.2"
 postgres-native-tls = "0.5"
 mysql = { version = "25", default-features = false, features = ["minimal-rust", "native-tls"] }
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
