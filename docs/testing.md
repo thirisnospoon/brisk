@@ -487,6 +487,8 @@ Checks the diff viewer (side by side and unified, live while the file changes) a
 
 `BRISK_SMOKE_VCS_HOLD=diff|unified|merge|merged|annotate|previous|popup|partial|log` stops at that phase.
 
+It prints a `smoke-vcs: …` line per check, `smoke-vcs: FAIL …` for a failed one and `smoke-vcs: done` at the end, then quits (with a hold the window stays open). On a folder that is already a repository it prints why and quits without changing anything.
+
 ### `BRISK_SMOKE_GITX=1`
 
 Folder: empty only. Creates a repository in it and commits.
