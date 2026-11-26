@@ -302,14 +302,14 @@ far less mature.
 
 - **Released:** everything in [docs/features.md](docs/features.md) that is in the
   latest release.
+- **New in 0.4.1:** updates from inside the app: a balloon when a new version is out, its
+  release notes, and Update and Restart (Help › Check for Updates).
 - **New in 0.4.0:** Brisk's own folder picker for Open and New Project; darker consoles;
   a round of speed and memory work (the heavy session from 152 to 85 MB, the exe from
   26 to 22 MB).
 - **New in 0.3.0:** uv and Poetry projects; Django, FastAPI and Flask navigation with an
   Endpoints window; SSH interpreters; Mark Directory as; a configurable keymap with
   PyCharm keymap import; animations and a round of interface polish.
-- **Next release:** updates from inside the app (Help › Check for Updates, a balloon when a
-  new version is out, its release notes, and Update and Restart).
 - **In progress:** remote debugging and tests over SSH; completion of template and URL
   names.
 - **Planned:** WSL and Docker interpreters; Compose services in the Services window and a

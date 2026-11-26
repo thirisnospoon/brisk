@@ -31,7 +31,7 @@ exclude = ["third_party"]
 xattr = { path = "third_party/xattr" }
 
 [workspace.package]
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
