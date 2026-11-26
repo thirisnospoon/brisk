@@ -56,7 +56,7 @@ impl Workspace {
         commit_as(&root, "Alice", "2024-01-10T10:00:00", "Add diffme.py");
         let _ = std::fs::write(root.join("diffme.py"), sample(2));
         if let Some(repo) = brisk_git::Repo::discover(&root) {
-            self.git = Some(crate::workspace::git_ui::Git::new(repo, cx));
+            self.set_git(Some(crate::workspace::git_ui::Git::new(repo, cx)), cx);
             self.refresh_git(cx);
         }
         let bg = cx.background_executor().clone();
@@ -207,15 +207,15 @@ added = True
             let Some(d) = this.active_diff_view() else { return eprintln!("smoke-vcs: partial: no diff tab") };
             eprintln!("smoke-vcs: partial diff -> {} blocks", d.read(cx).hunk_keys(cx).len());
             d.update(cx, |d, cx| d.toggle_hunk(1, cx));
-            let partial = this.git.as_ref().is_some_and(|g| g.partial(&change));
+            let partial = this.git(cx).is_some_and(|g| g.partial(&change));
             eprintln!("smoke-vcs: second block left out -> commit row partial {partial}");
         });
         if hold("partial") {
             return;
         }
         let _ = this.update_in(cx, |this, window, cx| {
-            if let Some(g) = this.git.as_ref() {
-                g.message.update(cx, |e, cx| e.replace_all_text("Partial commit", cx));
+            if let Some(message) = this.git(cx).map(|g| g.message.clone()) {
+                message.update(cx, |e, cx| e.replace_all_text("Partial commit", cx));
             }
             this.do_commit(false, window, cx);
         });
@@ -268,7 +268,7 @@ added = True
             });
             pause(bg, 2500).await;
             let _ = this.update(cx, |this, cx| {
-                let i = this.git.as_ref().and_then(|g| g.log.iter().position(|c| c.hash == pick.hash));
+                let i = this.git(cx).and_then(|g| g.log.iter().position(|c| c.hash == pick.hash));
                 if let Some(i) = i {
                     this.select_log(i, cx);
                 }
@@ -289,7 +289,7 @@ added = True
         });
         pause(bg, 2000).await;
         let message = |this: &WeakEntity<Self>, cx: &mut AsyncWindowContext| {
-            this.update(cx, |this, cx| this.git.as_ref().map(|g| g.message.read(cx).text_string())).ok().flatten().unwrap_or_default()
+            this.update(cx, |this, cx| this.git(cx).map(|g| g.message.read(cx).text_string())).ok().flatten().unwrap_or_default()
         };
         let picked = head();
         eprintln!(
@@ -325,8 +325,8 @@ added = True
         pause(bg, 2000).await;
         eprintln!("smoke-vcs: hard reset to the first commit's place -> HEAD {}, pick.py {}", head() == orig, root.join("pick.py").exists());
         let _ = this.update(cx, |this, cx| {
-            if let Some(g) = this.git.as_ref() {
-                g.message.update(cx, |e, cx| e.replace_all_text("", cx));
+            if let Some(message) = this.git(cx).map(|g| g.message.clone()) {
+                message.update(cx, |e, cx| e.replace_all_text("", cx));
             }
         });
     }
@@ -476,7 +476,7 @@ tail = 0
         let _ = this.update(cx, |this, cx| this.refresh_git(cx));
         pause(bg, 1500).await;
         let _ = this.update_in(cx, |this, window, cx| {
-            eprintln!("smoke-vcs: merge stopped -> conflicts dialog {}", this.git_dialog_open());
+            eprintln!("smoke-vcs: merge stopped -> conflicts dialog {}", this.git_dialog_open(cx));
             // Show Diff on the conflicted file in the Commit window opens the merge window.
             let c = brisk_git::FileChange { path: "merge2.py".into(), old_path: None, status: brisk_git::FileStatus::Conflict };
             this.show_change_diff(&c, window, cx);

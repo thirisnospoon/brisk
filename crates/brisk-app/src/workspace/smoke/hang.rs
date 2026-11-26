@@ -114,7 +114,7 @@ impl Workspace {
             }
             let _ = this.update_in(cx, |this, window, cx| {
                 this.dispatch(Action::ToggleCommitWindow, window, cx);
-                if this.git.is_none() {
+                if this.git(cx).is_none() {
                     this.create_git_repo(cx);
                 } else {
                     this.refresh_git(cx);
@@ -122,12 +122,12 @@ impl Workspace {
             });
             for _ in 0..600 {
                 wait(100).await;
-                let done = this.update(cx, |this, _| this.git.as_ref().is_some_and(|g| g.loaded)).unwrap_or(true);
+                let done = this.update(cx, |this, cx| this.git(cx).is_some_and(|g| g.loaded)).unwrap_or(true);
                 if done {
                     break;
                 }
             }
-            let rows = this.update(cx, |this, _| this.git.as_ref().map_or(0, |g| g.status.untracked().count())).unwrap_or(0);
+            let rows = this.update(cx, |this, cx| this.git(cx).map_or(0, |g| g.status.untracked().count())).unwrap_or(0);
             eprintln!("smoke-hang: git status: {rows} unversioned files");
             wait(1500).await;
             let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::ToggleGitWindow, window, cx));
@@ -159,7 +159,7 @@ impl Workspace {
             let _ = this.update(cx, |this, cx| this.refresh_git(cx));
             for _ in 0..100 {
                 wait(100).await;
-                if this.update(cx, |this, _| this.git.as_ref().map_or(0, |g| g.branches.len())).unwrap_or(0) > 400 {
+                if this.update(cx, |this, cx| this.git(cx).map_or(0, |g| g.branches.len())).unwrap_or(0) > 400 {
                     break;
                 }
             }

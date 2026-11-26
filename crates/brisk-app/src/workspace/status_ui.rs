@@ -93,7 +93,7 @@ impl Workspace {
     /// What runs in the background now, for the indicator: one line each, most important
     /// first.
     /// `env`: [`super::python_env::PythonEnv::tasks`].
-    pub(super) fn bg_tasks(&self, env: &[&str]) -> Vec<String> {
+    pub(super) fn bg_tasks(&self, env: &[&str], cx: &gpui::App) -> Vec<String> {
         let mut v: Vec<String> = Vec::new();
         if self.files.is_none() {
             v.push("Indexing files…".into());
@@ -101,7 +101,7 @@ impl Workspace {
         if self.symbols_indexing() {
             v.push("Indexing symbols…".into());
         }
-        if let Some(g) = &self.git {
+        if let Some(g) = self.git(cx) {
             if let Some(b) = g.busy {
                 v.push(format!("{b}…"));
             }
@@ -120,10 +120,26 @@ impl Workspace {
         v
     }
 
+    /// `refresh_popup`, and for the popups that list VCS state (the background tasks, the
+    /// branches) that state too: it lives in the VCS model, which needs `cx`.
+    pub(super) fn refresh_popup_in(&mut self, cx: &gpui::App) {
+        self.refresh_popup();
+        let Some((kind, q)) = self.popup.as_ref().map(|p| (p.kind, p.query.clone())) else { return };
+        let items = match kind {
+            PopupKind::BackgroundTasks => self.bg_task_items(&q, cx),
+            PopupKind::Branches | PopupKind::NewBranch => self.git_popup_items(kind, &q, Some(cx)),
+            _ => return,
+        };
+        if let Some(p) = self.popup.as_mut() {
+            p.items = items;
+            p.selected = p.selected.min(p.items.len().saturating_sub(1));
+        }
+    }
+
     /// The background tasks popup: one row per task.
-    pub(super) fn bg_task_items(&self, q: &str) -> Vec<PopupItem> {
+    pub(super) fn bg_task_items(&self, q: &str, cx: &gpui::App) -> Vec<PopupItem> {
         let ql = q.to_lowercase();
-        let tasks = self.bg_tasks(&self.env_view.tasks);
+        let tasks = self.bg_tasks(&self.env.read(cx).tasks(), cx);
         if tasks.is_empty() {
             return vec![PopupItem { label: "No background tasks".into(), detail: String::new(), hint: String::new(), target: Target::Task }];
         }
@@ -139,7 +155,7 @@ impl Workspace {
         // The routine `git status` after every save and window switch is not shown in the bar:
         // its spinner would redraw the whole window at the display's rate while it runs. It
         // is still listed in the background tasks popup.
-        let tasks: Vec<String> = self.bg_tasks(&self.env.read(cx).tasks()).into_iter().filter(|t| t != "git status…").collect();
+        let tasks: Vec<String> = self.bg_tasks(&self.env.read(cx).tasks(), cx).into_iter().filter(|t| t != "git status…").collect();
         // A widget: muted text, a pill on hover; `click` makes it a button.
         let widget = |id: &'static str| {
             div()
@@ -175,8 +191,8 @@ impl Workspace {
             cx.notify();
         })));
         // The live branch (after a checkout), not the one read at startup.
-        if self.branch.is_some() {
-            let b = self.branch_label();
+        if self.start_branch(cx).is_some() {
+            let b = self.branch_label(cx);
             right = right.child(
                 widget("sb-branch")
                     .cursor_pointer()
@@ -203,6 +219,7 @@ impl Workspace {
                 .when(more > 0, |d| d.child(div().text_color(Theme::text_dim()).child(format!("+{more}"))))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.open_env_popup(PopupKind::BackgroundTasks, cx);
+                    this.refresh_popup_in(cx);
                     cx.notify();
                 }))
         });

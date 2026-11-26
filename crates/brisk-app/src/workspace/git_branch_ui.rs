@@ -19,8 +19,8 @@ pub enum BranchOp {
 }
 
 impl Workspace {
-    fn branch_ops(&self, b: &Branch) -> Vec<(String, BranchOp)> {
-        let cur = self.branch_label();
+    fn branch_ops(&self, b: &Branch, cx: &gpui::App) -> Vec<(String, BranchOp)> {
+        let cur = self.branch_label(cx);
         let mut v = Vec::new();
         if !b.current {
             v.push((format!("Checkout {}", b.name), BranchOp::Checkout(b.clone())));
@@ -34,9 +34,9 @@ impl Workspace {
     }
 
     /// → on a branch in the Branches popup: its actions as the next popup.
-    pub(super) fn open_branch_actions(&mut self, b: &Branch) {
+    pub(super) fn open_branch_actions(&mut self, b: &Branch, cx: &gpui::App) {
         let items = self
-            .branch_ops(b)
+            .branch_ops(b, cx)
             .into_iter()
             .map(|(label, op)| PopupItem { label, detail: String::new(), hint: String::new(), target: Target::Confirm(Pending::Branch(op)) })
             .collect();
@@ -46,7 +46,7 @@ impl Workspace {
     /// Right click on a branch in the Git log's branch list.
     pub(super) fn branch_menu(&mut self, b: &Branch, pos: Point<Pixels>, cx: &mut Context<Self>) {
         let entries = self
-            .branch_ops(b)
+            .branch_ops(b, cx)
             .into_iter()
             .map(|(label, op)| Entry::Item {
                 label,
@@ -59,7 +59,7 @@ impl Workspace {
     }
 
     pub(super) fn run_branch_op(&mut self, op: BranchOp, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_ref() else { return };
+        let Some(g) = self.git(cx) else { return };
         match op {
             BranchOp::Checkout(b) => self.checkout(b, cx),
             BranchOp::Merge(name) => {
@@ -95,7 +95,7 @@ impl Workspace {
                                 cx,
                             );
                         };
-                        let cur = this.branch_label();
+                        let cur = this.branch_label(cx);
                         let detail = format!("not merged into {cur}: {n} commit(s) will be lost");
                         let items = vec![
                             PopupItem {

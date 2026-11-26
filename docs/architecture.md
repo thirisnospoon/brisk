@@ -872,8 +872,18 @@ lines. Verify: DEBUG smoke, `brisk-dap` tests. Risk: medium.
 #### Step 17. `VcsModel`
 
 Reached from 12 files, all git ones plus `workspace.rs` and
-`status_ui.rs`. The Commit and Git windows become views of it. Verify: GIT and VCS smokes (VCS is missing from `testing.md`; document it in step 4),
-`brisk-git` tests. Risk: medium.
+`status_ui.rs`. The Commit and Git windows become views of it. Verify: GIT, GITX and VCS smokes
+(all three are in `testing.md`), `brisk-git` tests. Risk: medium.
+
+Part 1 done on branch `arch3`: the repository, the startup branch, the `git init` flag and
+the Commit window's focus moved into `workspace/vcs_model.rs`, an entity created on first
+use; the methods stay on `Workspace` and reach the state through `git(cx)` (read) and
+`git_mut(cx)` (a guard that derefs to `Git`; a dialog's guard comes from `vcs_mut` with a
+projection). A guard holds `cx`, so code drops it before the next `cx` call. Functions that
+read the state take `cx` now (`branch_label`, `file_status`, `bg_tasks`, the dialog
+accessors). `refresh_popup` has no `cx`: it leaves the Branches, New Branch and background
+tasks popups as they are, and `refresh_popup_in(cx)` builds them; it is called where those
+popups open and where the query changes. Part 2 (the windows as views of the model) is left.
 
 #### Step 18. `PythonEnv`
 

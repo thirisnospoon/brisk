@@ -313,20 +313,20 @@ fn checkbox(on: Option<bool>) -> gpui::Div {
 }
 
 impl Workspace {
-    pub(super) fn branch_label(&self) -> String {
-        match &self.git {
+    pub(super) fn branch_label(&self, cx: &App) -> String {
+        match self.git(cx) {
             Some(g) => match (&g.status.branch, &g.status.head) {
                 (Some(b), _) => b.clone(),
                 (None, Some(h)) => format!("{} (detached)", &h[..h.len().min(8)]),
                 (None, None) if g.loaded => "main".into(),
-                _ => self.branch.clone().unwrap_or_default(),
+                _ => self.start_branch(cx).unwrap_or_default(),
             },
             None => "Version Control".into(),
         }
     }
 
-    pub(super) fn file_status(&self, path: &Path) -> Option<FileStatus> {
-        let g = self.git.as_ref()?;
+    pub(super) fn file_status(&self, path: &Path, cx: &App) -> Option<FileStatus> {
+        let g = self.git(cx)?;
         if g.by_path.is_empty() {
             return None;
         }
@@ -336,20 +336,20 @@ impl Workspace {
     /// VCS → Create Git Repository: `git init` off the UI thread, then the first status (on a
     /// big tree that lists every file as unversioned) also in the background.
     pub(super) fn create_git_repo(&mut self, cx: &mut Context<Self>) {
-        if self.git_init_running {
+        if self.git_init_running(cx) {
             return;
         }
-        self.git_init_running = true;
+        self.set_git_init_running(true, cx);
         self.status = "Creating Git repository…".into();
         let root = self.root.clone();
         let task = cx.background_executor().spawn(async move { brisk_git::Repo::init(&root) });
         cx.spawn(async move |this, cx| {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.git_init_running = false;
+                this.set_git_init_running(false, cx);
                 match res {
                     Ok(repo) => {
-                        this.git = Some(Git::new(repo, cx));
+                        this.set_git(Some(Git::new(repo, cx)), cx);
                         this.status = "Created Git repository; reading status…".into();
                         this.show_toast("Created Git repository".into(), false, cx);
                         this.refresh_git(cx);
@@ -368,7 +368,7 @@ impl Workspace {
     /// afterwards. Branches are read again only when the refs on disk changed, and the log
     /// only when HEAD, the current branch, a ref or the filters changed.
     pub(super) fn refresh_git(&mut self, cx: &mut Context<Self>) {
-        let delay = if self.git.as_ref().is_some_and(|g| g.loaded) { REFRESH_DELAY } else { Duration::ZERO };
+        let delay = if self.git(cx).is_some_and(|g| g.loaded) { REFRESH_DELAY } else { Duration::ZERO };
         self.schedule_git_refresh(delay, cx);
     }
 
@@ -379,7 +379,7 @@ impl Workspace {
     }
 
     fn schedule_git_refresh(&mut self, delay: Duration, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_mut() else { return };
+        let Some(mut g) = self.git_mut(cx) else { return };
         if g.refresh_running {
             g.refresh_again = true;
             return;
@@ -390,6 +390,7 @@ impl Workspace {
         g.refreshing = true;
         g.refresh_gen += 1;
         let gen = g.refresh_gen;
+        drop(g);
         // The first status comes at once; later ones wait for calls that come right after
         // (a save and the window activation that caused it).
         let timer = cx.background_executor().timer(delay);
@@ -403,7 +404,7 @@ impl Workspace {
     /// Refresh with the branches and the log read again whatever the stamps say (the Refresh
     /// buttons).
     pub(super) fn reload_git(&mut self, cx: &mut Context<Self>) {
-        if let Some(g) = self.git.as_mut() {
+        if let Some(mut g) = self.git_mut(cx) {
             g.refs_stamp = None;
             g.log_fp = None;
         }
@@ -413,7 +414,7 @@ impl Workspace {
     /// At startup: the repository found without git is confirmed by the first refresh; without
     /// one, git is asked in the background (`GIT_DIR` and the like point elsewhere).
     pub(super) fn start_git(&mut self, cx: &mut Context<Self>) {
-        if self.git.is_some() {
+        if self.git(cx).is_some() {
             return self.refresh_git(cx);
         }
         let root = self.root.clone();
@@ -421,10 +422,10 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let found = task.await;
             let _ = this.update(cx, |this, cx| {
-                if let (Some(repo), None) = (found, &this.git) {
+                if let (Some(repo), true) = (found, this.git(cx).is_none()) {
                     let mut g = Git::new(repo, cx);
                     g.confirmed = true;
-                    this.git = Some(g);
+                    this.set_git(Some(g), cx);
                     this.refresh_git(cx);
                     cx.notify();
                 }
@@ -436,13 +437,14 @@ impl Workspace {
     fn start_git_refresh(&mut self, gen: u64, cx: &mut Context<Self>) {
         let want_log = self.bottom == Some(BottomTool::Git);
         let ws_root = self.root.clone();
-        let Some(g) = self.git.as_mut().filter(|g| g.refresh_gen == gen) else { return };
+        let Some(mut g) = self.git_mut(cx).filter(|g| g.refresh_gen == gen) else { return };
         g.refresh_running = true;
         g.refresh_again = false;
         let repo = g.repo.clone();
         let query = g.filter.query.clone();
         let (old_stamp, old_refs_fp, old_log_fp) = (g.refs_stamp, g.refs_fp, g.log_fp);
         let confirm = !g.confirmed;
+        drop(g);
         let task = cx.background_executor().spawn(async move {
             if confirm {
                 let found = Repo::discover(&ws_root);
@@ -479,7 +481,7 @@ impl Workspace {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
                 // The repository was replaced (Create Git Repository) while this ran.
-                if this.git.as_ref().is_none_or(|g| g.refresh_gen != gen) {
+                if this.git(cx).is_none_or(|g| g.refresh_gen != gen) {
                     return;
                 }
                 let (st, refs, log, query) = match res {
@@ -487,22 +489,23 @@ impl Workspace {
                     // git disagrees with the `.git` found on disk (`GIT_DIR`, `safe.directory`,
                     // no git installed): its answer stands.
                     Err(found) => {
-                        this.git = found.map(|repo| {
+                        let git = found.map(|repo| {
                             let mut g = Git::new(repo, cx);
                             g.confirmed = true;
                             g
                         });
+                        this.set_git(git, cx);
                         this.refresh_git(cx);
                         cx.notify();
                         return;
                     }
                 };
-                if let Some(g) = this.git.as_mut() {
+                if let Some(mut g) = this.git_mut(cx) {
                     g.confirmed = true;
                 }
                 // The filters changed while this ran: the refresh queued for it brings the log.
-                let log = log.filter(|_| this.git.as_ref().is_some_and(|g| g.filter.query == query));
-                if let Some(g) = this.git.as_mut() {
+                let log = log.filter(|_| this.git(cx).is_some_and(|g| g.filter.query == query));
+                if let Some(mut g) = this.git_mut(cx) {
                     g.refresh_running = false;
                     if let Some((_, stamp, fp)) = &refs {
                         g.refs_stamp = *stamp;
@@ -513,7 +516,7 @@ impl Workspace {
                     }
                 }
                 this.apply_git(st, refs.map(|r| r.0), log.map(|l| l.0), cx);
-                if this.git.as_ref().is_some_and(|g| g.refresh_again) {
+                if this.git(cx).is_some_and(|g| g.refresh_again) {
                     this.refresh_git(cx);
                 }
             });
@@ -523,7 +526,8 @@ impl Workspace {
 
     fn apply_git(&mut self, st: brisk_git::Result<Status>, br: Option<Vec<Branch>>, log: Option<(Vec<Commit>, Vec<GraphRow>)>, cx: &mut Context<Self>) {
         crate::stall::note("apply git status");
-        let Some(g) = self.git.as_mut() else { return };
+        let Some(mut guard) = self.git_mut(cx) else { return };
+        let g = &mut *guard;
         g.refreshing = false;
         let mut head_changed = false;
         match st {
@@ -553,6 +557,7 @@ impl Workspace {
             g.log = log;
             g.log_selected = sel_hash.and_then(|h| g.log.iter().position(|c| c.hash == h));
         }
+        drop(guard);
         if head_changed {
             let eds: Vec<_> = self.editors().cloned().collect();
             for e in eds {
@@ -561,22 +566,23 @@ impl Workspace {
         }
         self.refresh_annotations(head_changed, cx);
         // New conflicts (a merge, pull or rebase stopped): show them, like PyCharm.
-        if let Some(g) = self.git.as_mut() {
+        let show = self.git_mut(cx).is_some_and(|mut g| {
             let n = g.status.changes.iter().filter(|c| c.status == FileStatus::Conflict).count();
             let appeared = n > 0 && g.conflicts_seen == 0;
             g.conflicts_seen = n;
-            if appeared && g.dialog.is_none() {
-                self.open_conflicts(cx);
-            }
+            appeared && g.dialog.is_none()
+        });
+        if show {
+            self.open_conflicts(cx);
         }
-        if self.git.as_ref().is_some_and(|g| g.log_selected.is_none() && !g.log.is_empty()) {
+        if self.git(cx).is_some_and(|g| g.log_selected.is_none() && !g.log.is_empty()) {
             self.select_log(0, cx);
         }
         cx.notify();
     }
 
     pub(super) fn load_vcs_base(&self, ed: Entity<Editor>, cx: &mut Context<Self>) {
-        let Some(g) = &self.git else { return };
+        let Some(g) = self.git(cx) else { return };
         let Some(path) = ed.read(cx).path.clone() else { return };
         let Some(rel) = g.repo.rel(&path) else { return };
         let repo = g.repo.clone();
@@ -639,22 +645,24 @@ impl Workspace {
         done: impl FnOnce(&mut Self, bool, T, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(g) = self.git.as_mut() else {
+        let Some(mut g) = self.git_mut(cx) else {
             self.show_toast("Version control is not enabled for this project".into(), true, cx);
             return false;
         };
         if let Some(b) = g.busy {
+            drop(g);
             self.show_toast(format!("Wait for “{b}” to finish"), true, cx);
             return false;
         }
         g.busy = Some(title);
         let repo = g.repo.clone();
+        drop(g);
         self.status = format!("{title}…");
         let task = cx.background_executor().spawn(async move { op(&repo) });
         cx.spawn(async move |this, cx| {
             let (res, v) = task.await;
             let _ = this.update(cx, |this, cx| {
-                if let Some(g) = this.git.as_mut() {
+                if let Some(mut g) = this.git_mut(cx) {
                     g.busy = None;
                 }
                 this.status.clear();
@@ -707,19 +715,19 @@ impl Workspace {
 
     pub(super) fn git_action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         use Action as A;
-        if self.git.is_none() && action != A::Commit {
+        if self.git(cx).is_none() && action != A::Commit {
             self.left = Some(LeftTool::Commit);
             return self.show_toast("Version control is not enabled. Use “Create Git Repository” in the Commit window.".into(), true, cx);
         }
         match action {
             A::Commit => {
                 self.left = Some(LeftTool::Commit);
-                match &self.git {
+                match self.git(cx) {
                     Some(g) => {
                         let f = g.message.read(cx).focus_handle(cx);
                         window.focus(&f);
                     }
-                    None => window.focus(&self.commit_focus),
+                    None => window.focus(&self.commit_focus(cx)),
                 }
                 self.refresh_git(cx);
             }
@@ -733,18 +741,19 @@ impl Workspace {
             A::Branches => {
                 self.refresh_git(cx);
                 self.open_popup(PopupKind::Branches);
+                self.refresh_popup_in(cx);
             }
             A::ShowDiff => {
                 let ctx = self.contexts(window, cx);
                 if ctx.first() == Some(&KeyContext::GitLog) {
-                    if let Some((hash, c)) = self.git.as_ref().and_then(|g| {
+                    if let Some((hash, c)) = self.git(cx).and_then(|g| {
                         let d = g.details.as_ref()?;
                         Some((d.hash.clone(), d.files.get(g.details_sel.unwrap_or(0))?.clone()))
                     }) {
                         self.show_commit_diff(&hash, &c, window, cx);
                     }
                 } else if ctx.first() == Some(&KeyContext::CommitView) {
-                    if let Some(c) = self.selected_change() {
+                    if let Some(c) = self.selected_change(cx) {
                         self.show_change_diff(&c, window, cx);
                     }
                 } else if let Some(c) = self.active_file_change(cx) {
@@ -759,7 +768,7 @@ impl Workspace {
             },
             // Ctrl+Alt+Z with the caret in a changed block of the editor: Rollback Lines.
             A::RollbackChanges
-                if !self.commit_focus.is_focused(window) && self.focused_editor(window, cx).is_some_and(|e| e.read(cx).vcs_change_at_caret().is_some()) =>
+                if !self.commit_focused(window, cx) && self.focused_editor(window, cx).is_some_and(|e| e.read(cx).vcs_change_at_caret().is_some()) =>
             {
                 if let Some(e) = self.focused_editor(window, cx) {
                     e.update(cx, |e, cx| {
@@ -770,14 +779,11 @@ impl Workspace {
                 }
             }
             A::RollbackChanges => {
-                let files: Vec<FileChange> = if self.commit_focus.is_focused(window) {
-                    let checked: Vec<FileChange> = self
-                        .git
-                        .as_ref()
-                        .map(|g| g.rows().into_iter().filter(|c| c.status != FileStatus::Untracked && g.included(c)).collect())
-                        .unwrap_or_default();
+                let files: Vec<FileChange> = if self.commit_focused(window, cx) {
+                    let checked: Vec<FileChange> =
+                        self.git(cx).map(|g| g.rows().into_iter().filter(|c| c.status != FileStatus::Untracked && g.included(c)).collect()).unwrap_or_default();
                     if checked.is_empty() {
-                        self.selected_change().into_iter().collect()
+                        self.selected_change(cx).into_iter().collect()
                     } else {
                         checked
                     }
@@ -795,8 +801,8 @@ impl Workspace {
         }
     }
 
-    fn selected_change(&self) -> Option<FileChange> {
-        let g = self.git.as_ref()?;
+    fn selected_change(&self, cx: &App) -> Option<FileChange> {
+        let g = self.git(cx)?;
         g.row(g.commit_sel?).cloned()
     }
 
@@ -807,7 +813,7 @@ impl Workspace {
 
     /// An editor's file as a change.
     pub(super) fn editor_file_change(&self, ed: &Entity<Editor>, cx: &App) -> Option<FileChange> {
-        let g = self.git.as_ref()?;
+        let g = self.git(cx)?;
         let path = ed.read(cx).path.clone()?;
         let rel = g.repo.rel(&path)?;
         let st = g.by_path.get(&rel).copied().unwrap_or(FileStatus::Modified);
@@ -834,8 +840,8 @@ impl Workspace {
             return self.merge_file(c.path.clone(), window, cx);
         }
         // A modified file's change blocks get "include into commit" checkboxes.
-        let hunks = self.git.as_mut().filter(|_| c.status == FileStatus::Modified).map(|g| g.hunks.entry(c.path.clone()).or_default().clone());
-        let Some(g) = &self.git else { return };
+        let hunks = self.git_mut(cx).filter(|_| c.status == FileStatus::Modified).map(|mut g| g.hunks.entry(c.path.clone()).or_default().clone());
+        let Some(g) = self.git(cx) else { return };
         let abs = g.repo.abs(&c.path);
         let base_path = c.old_path.clone().unwrap_or_else(|| c.path.clone());
         let tab_editor = self.editors().find(|e| e.read(cx).path.as_deref().is_some_and(|p| g.repo.rel(p).as_deref() == Some(c.path.as_str()))).cloned();
@@ -886,7 +892,7 @@ impl Workspace {
     }
 
     pub(super) fn show_commit_diff(&mut self, hash: &str, c: &FileChange, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(g) = &self.git else { return };
+        let Some(g) = self.git(cx) else { return };
         let short = hash[..hash.len().min(8)].to_string();
         let base_path = c.old_path.clone().unwrap_or_else(|| c.path.clone());
         let (repo, hash, c) = (g.repo.clone(), hash.to_string(), c.clone());
@@ -913,15 +919,15 @@ impl Workspace {
     }
 
     pub(super) fn select_log(&mut self, i: usize, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_mut() else { return };
-        let Some(c) = g.log.get(i) else { return };
+        let Some(mut g) = self.git_mut(cx) else { return };
+        let Some(hash) = g.log.get(i).map(|c| c.hash.clone()) else { return };
         g.log_selected = Some(i);
         g.details_sel = None;
-        let hash = c.hash.clone();
         if g.details.as_ref().is_some_and(|d| d.hash == hash) {
             return;
         }
         let repo = g.repo.clone();
+        drop(g);
         let task = cx.background_executor().spawn(async move {
             let msg = repo.commit_message(&hash).unwrap_or_default();
             let files = repo.commit_files(&hash).unwrap_or_default();
@@ -930,11 +936,11 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let d = task.await;
             let _ = this.update(cx, |this, cx| {
-                if let Some(g) = this.git.as_mut() {
-                    if g.log_selected.and_then(|i| g.log.get(i)).is_some_and(|c| c.hash == d.hash) {
-                        g.details = Some(d);
-                        cx.notify();
-                    }
+                let Some(mut g) = this.git_mut(cx) else { return };
+                if g.log_selected.and_then(|i| g.log.get(i)).is_some_and(|c| c.hash == d.hash) {
+                    g.details = Some(d);
+                    drop(g);
+                    cx.notify();
                 }
             });
         })
@@ -943,7 +949,7 @@ impl Workspace {
     }
 
     pub(super) fn do_commit(&mut self, push: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(g) = &self.git else { return };
+        let Some(g) = self.git(cx) else { return };
         let msg = g.message.read(cx).text_string();
         let files: Vec<FileChange> = g.rows().into_iter().filter(|c| g.included(c)).collect();
         let amend = g.amend;
@@ -976,14 +982,17 @@ impl Workspace {
                 if push {
                     this.open_push_dialog(cx);
                 }
-                if let Some(g) = this.git.as_mut() {
+                let message = this.git_mut(cx).map(|mut g| {
                     // What is left of a partial file is a new change: included again.
                     for s in g.hunks.values() {
                         s.borrow_mut().clear();
                     }
                     g.amend = false;
                     g.amend_message = None;
-                    g.message.update(cx, |e, cx| {
+                    g.message.clone()
+                });
+                if let Some(message) = message {
+                    message.update(cx, |e, cx| {
                         e.buffer.set_text("");
                         e.buffer.mark_saved();
                         cx.notify();
@@ -998,32 +1007,37 @@ impl Workspace {
     /// fills it (read off the UI thread); unchecked with that text unedited, the box is
     /// empty again.
     pub(super) fn toggle_amend(&mut self, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_mut() else { return };
+        let Some(mut g) = self.git_mut(cx) else { return };
         g.amend = !g.amend;
-        let text = g.message.read(cx).text_string();
-        if !g.amend {
-            if g.amend_message.take().is_some_and(|m| m == text) {
-                g.message.update(cx, |e, cx| e.replace_all_text("", cx));
+        let (amend, message, repo) = (g.amend, g.message.clone(), g.repo.clone());
+        let typed = if amend { None } else { g.amend_message.take() };
+        drop(g);
+        let text = message.read(cx).text_string();
+        if !amend {
+            if typed.is_some_and(|m| m == text) {
+                message.update(cx, |e, cx| e.replace_all_text("", cx));
             }
             return cx.notify();
         }
         if !text.trim().is_empty() {
             return cx.notify();
         }
-        let repo = g.repo.clone();
         let task = cx.background_executor().spawn(async move { repo.commit_message("HEAD") });
         cx.spawn(async move |this, cx| {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
-                let Some(g) = this.git.as_mut() else { return };
+                let Some(g) = this.git(cx) else { return };
+                let message = g.message.clone();
                 // Unchecked again, or typed into meanwhile: the box is the user's.
-                if !g.amend || !g.message.read(cx).text_string().trim().is_empty() {
+                if !g.amend || !message.read(cx).text_string().trim().is_empty() {
                     return;
                 }
                 match res {
                     Ok(m) if !m.is_empty() => {
-                        g.message.update(cx, |e, cx| e.replace_all_text(&m, cx));
-                        g.amend_message = Some(m);
+                        message.update(cx, |e, cx| e.replace_all_text(&m, cx));
+                        if let Some(mut g) = this.git_mut(cx) {
+                            g.amend_message = Some(m);
+                        }
                     }
                     Ok(_) => {}
                     Err(e) => this.show_toast(format!("Cannot read the last commit message: {e}"), true, cx),
@@ -1035,11 +1049,13 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(super) fn git_popup_items(&self, kind: PopupKind, q: &str) -> Vec<PopupItem> {
+    /// The VCS popups' rows. The branch rows need the VCS model: `refresh_popup` (no `cx`)
+    /// asks only for the others, `refresh_popup_in` for these.
+    pub(super) fn git_popup_items(&self, kind: PopupKind, q: &str, cx: Option<&App>) -> Vec<PopupItem> {
         let ql = q.to_lowercase();
         match kind {
             PopupKind::Branches => {
-                let Some(g) = &self.git else { return Vec::new() };
+                let Some(g) = cx.and_then(|cx| self.git(cx)) else { return Vec::new() };
                 let mut v = Vec::new();
                 if ql.is_empty() {
                     v.push(PopupItem { label: "New Branch…".into(), detail: String::new(), hint: String::new(), target: Target::NewBranch });
@@ -1070,7 +1086,7 @@ impl Workspace {
                 } else {
                     vec![PopupItem {
                         label: format!("Create branch “{name}” and check it out"),
-                        detail: format!("from {}", self.branch_label()),
+                        detail: cx.map(|cx| format!("from {}", self.branch_label(cx))).unwrap_or_default(),
                         hint: "Enter".into(),
                         target: Target::Confirm(Pending::CreateBranch(name.to_string())),
                     }]
@@ -1121,7 +1137,7 @@ impl Workspace {
         }
         let k = &e.keystroke;
         let m = &k.modifiers;
-        if let Some(g) = &self.git {
+        if let Some(g) = self.git(cx) {
             if g.message.read(cx).focus_handle(cx).is_focused(window) {
                 if k.key == "enter" && m.control {
                     self.do_commit(false, window, cx);
@@ -1135,7 +1151,7 @@ impl Workspace {
                     if self.active.is_some() {
                         self.focus_editor(window, cx);
                     } else {
-                        window.focus(&self.commit_focus);
+                        window.focus(&self.commit_focus(cx));
                     }
                     cx.notify();
                     return true;
@@ -1185,9 +1201,11 @@ impl Workspace {
     }
 
     pub(super) fn commit_key(&mut self, k: &gpui::Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(g) = self.git.as_mut() else { return false };
+        let Some(mut guard) = self.git_mut(cx) else { return false };
+        let g = &mut *guard;
         let n = g.order.len();
         let cur = g.commit_sel.unwrap_or(0);
+        let (mut open, mut focus) = (None, None);
         match k.key.as_str() {
             "up" | "down" => {
                 let to = if k.key == "up" { cur.saturating_sub(1) } else { (cur + 1).min(n.saturating_sub(1)) };
@@ -1200,25 +1218,27 @@ impl Workspace {
                 }
             }
             "enter" | "f4" => {
-                if let Some(c) = g.row(cur).cloned() {
-                    let p = g.repo.abs(&c.path);
-                    if c.status != FileStatus::Deleted {
-                        self.open_file(&p, window, cx);
-                    }
+                if let Some(c) = g.row(cur).filter(|c| c.status != FileStatus::Deleted) {
+                    open = Some(g.repo.abs(&c.path));
                 }
             }
-            "tab" => {
-                let f = g.message.read(cx).focus_handle(cx);
-                window.focus(&f);
-            }
+            "tab" => focus = Some(g.message.clone()),
             _ => return false,
+        }
+        drop(guard);
+        if let Some(p) = open {
+            self.open_file(&p, window, cx);
+        }
+        if let Some(message) = focus {
+            let f = message.read(cx).focus_handle(cx);
+            window.focus(&f);
         }
         cx.notify();
         true
     }
 
     pub(super) fn log_key(&mut self, k: &gpui::Keystroke, _window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(g) = self.git.as_ref() else { return false };
+        let Some(g) = self.git(cx) else { return false };
         let n = g.log.len();
         let cur = g.log_selected.unwrap_or(0);
         // Copy Revision Number.
@@ -1291,10 +1311,10 @@ impl Workspace {
             .when(selected, |d| d.bg(Theme::selection_row()))
             .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
-                if let Some(g) = this.git.as_mut() {
+                if let Some(mut g) = this.git_mut(cx) {
                     g.commit_sel = Some(i);
                 }
-                window.focus(&this.commit_focus);
+                window.focus(&this.commit_focus(cx));
                 if e.click_count() >= 2 {
                     this.show_change_diff(&c2, window, cx);
                 }
@@ -1302,7 +1322,7 @@ impl Workspace {
             }))
             .child(div().id(("chk", i)).child(checkbox(included)).on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
-                if let Some(g) = this.git.as_mut() {
+                if let Some(mut g) = this.git_mut(cx) {
                     g.toggle(&c3);
                 }
                 cx.notify();
@@ -1331,7 +1351,7 @@ impl Workspace {
             .text_size(ui_px(13.))
             .child(crate::icons::tree_arrow(true, true, Theme::text_muted()))
             .child(div().id((id, 1usize)).child(checkbox(state)).on_click(cx.listener(move |this, _, _, cx| {
-                if let Some(g) = this.git.as_mut() {
+                if let Some(mut g) = this.git_mut(cx) {
                     let on = state != Some(true);
                     // The group's files are read at click time, not captured per frame.
                     let items: Vec<FileChange> = g.status.changes.iter().filter(|c| (c.status == FileStatus::Untracked) == untracked).cloned().collect();
@@ -1346,7 +1366,8 @@ impl Workspace {
     }
 
     pub(super) fn render_commit(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let Some(g) = &self.git else {
+        let focused_list = self.commit_focus(cx);
+        let Some(g) = self.git(cx) else {
             return div()
                 .flex()
                 .flex_col()
@@ -1368,7 +1389,6 @@ impl Workspace {
                 )
                 .into_any_element();
         };
-        let focused_list = self.commit_focus.clone();
         let amend = g.amend;
         let message = g.message.clone();
         let (inc_t, inc_u) = g.included_counts();
@@ -1393,7 +1413,7 @@ impl Workspace {
                     "commit-rows",
                     n_rows,
                     cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                        let Some(g) = this.git.as_ref() else { return Vec::new() };
+                        let Some(g) = this.git(cx) else { return Vec::new() };
                         let (inc_t, inc_u) = g.included_counts();
                         let state = |on: usize, n: usize| {
                             if on == 0 {
@@ -1438,15 +1458,15 @@ impl Workspace {
         let shortcut = |a: Action| self.resolver.keymap().shortcut_label(a).unwrap_or_default();
         let header = crate::ui_kit::tool_header()
             .child(crate::ui_kit::tool_title("Commit"))
-            .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(self.branch_label()))
+            .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(self.branch_label(cx)))
             .child(div().flex_1())
             .child(tool("cm-refresh", "⟳", "Refresh").on_click(cx.listener(|this, _, _, cx| this.reload_git(cx))))
             .child(tool("cm-rollback", "↶", "Rollback  Ctrl+Alt+Z").on_click(cx.listener(|this, _, window, cx| {
-                window.focus(&this.commit_focus);
+                window.focus(&this.commit_focus(cx));
                 this.dispatch(Action::RollbackChanges, window, cx);
             })))
             .child(tool("cm-diff", "⇆", "Show Diff  Ctrl+D").on_click(cx.listener(|this, _, window, cx| {
-                if let Some(c) = this.selected_change() {
+                if let Some(c) = this.selected_change(cx) {
                     this.show_change_diff(&c, window, cx);
                 }
             })));
@@ -1539,7 +1559,7 @@ impl Workspace {
     }
 
     pub(super) fn render_git_log(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let Some(g) = &self.git else {
+        let Some(g) = self.git(cx) else {
             return Self::render_placeholder(
                 "Git",
                 "Version control is not enabled for this project. Use “Create Git Repository” in the Commit window (Alt+0).",
@@ -1548,7 +1568,7 @@ impl Workspace {
         let log_focused = g.log_focus.clone();
 
         // Branches pane.
-        let branch_row = |b: &Branch, cx: &mut Context<Self>| {
+        let branch_row = |b: &Branch, cx: &Context<Self>| {
             let hash = b.hash.clone();
             let b2 = b.clone();
             div()
@@ -1570,7 +1590,7 @@ impl Workspace {
                         this.checkout(b2.clone(), cx);
                         return;
                     }
-                    let Some(g) = this.git.as_ref() else { return };
+                    let Some(g) = this.git(cx) else { return };
                     if let Some(i) = g.log.iter().position(|c| c.hash == hash) {
                         g.log_scroll.scroll_to_item(i, gpui::ScrollStrategy::Center);
                         window.focus(&g.log_focus.clone());
@@ -1602,7 +1622,7 @@ impl Workspace {
             .pl(px(10.))
             .text_size(ui_px(13.))
             .text_color(Theme::text())
-            .child(format!("HEAD ({})", self.branch_label()));
+            .child(format!("HEAD ({})", self.branch_label(cx)));
         branches = branches.child(head);
         let local: Vec<Branch> = g.branches.iter().filter(|b| !b.remote).cloned().collect();
         let remote: Vec<Branch> = g.branches.iter().filter(|b| b.remote).cloned().collect();
@@ -1638,7 +1658,7 @@ impl Workspace {
             "git-log",
             n,
             cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
-                let Some(g) = this.git.as_ref() else { return Vec::new() };
+                let Some(g) = this.git(cx) else { return Vec::new() };
                 let focused = g.log_focus.is_focused(window);
                 range
                     .map(|i| {
@@ -1710,7 +1730,7 @@ impl Workspace {
                             .when(selected, |d| d.bg(if focused { Theme::selection_row() } else { Theme::hover_row() }))
                             .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                if let Some(g) = this.git.as_ref() {
+                                if let Some(g) = this.git(cx) {
                                     window.focus(&g.log_focus.clone());
                                 }
                                 this.select_log(i, cx);
@@ -1718,7 +1738,7 @@ impl Workspace {
                             .on_mouse_down(
                                 gpui::MouseButton::Right,
                                 cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
-                                    let Some(g) = this.git.as_ref() else { return };
+                                    let Some(g) = this.git(cx) else { return };
                                     window.focus(&g.log_focus.clone());
                                     let Some(c) = g.log.get(i).cloned() else { return };
                                     this.select_log(i, cx);
@@ -1835,14 +1855,14 @@ impl Workspace {
                         .on_mouse_down(gpui::MouseButton::Right, {
                             let (h, f) = (hash.clone(), f.clone());
                             cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
-                                if let Some(g) = this.git.as_mut() {
+                                if let Some(mut g) = this.git_mut(cx) {
                                     g.details_sel = Some(fi);
                                 }
                                 this.log_file_menu(h.clone(), f.clone(), e.position, cx);
                             })
                         })
                         .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
-                            if let Some(g) = this.git.as_mut() {
+                            if let Some(mut g) = this.git_mut(cx) {
                                 g.details_sel = Some(fi);
                             }
                             if e.click_count() >= 2 {

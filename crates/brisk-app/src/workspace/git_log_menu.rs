@@ -45,8 +45,8 @@ impl Workspace {
     /// Put `text` into the commit message. With `keep_draft` a non-empty draft stays, with
     /// `text` after it.
     fn put_message(&mut self, text: &str, keep_draft: bool, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_ref() else { return };
-        let draft = g.message.read(cx).text_string();
+        let Some(message) = self.git(cx).map(|g| g.message.clone()) else { return };
+        let draft = message.read(cx).text_string();
         let draft = draft.trim_end();
         let new = if !keep_draft || draft.is_empty() {
             text.to_string()
@@ -55,7 +55,7 @@ impl Workspace {
         } else {
             format!("{draft}\n\n{text}")
         };
-        g.message.update(cx, |e, cx| e.replace_all_text(&new, cx));
+        message.update(cx, |e, cx| e.replace_all_text(&new, cx));
     }
 
     /// Cherry-Pick / Revert. The draft in the Commit window is left alone, except when the

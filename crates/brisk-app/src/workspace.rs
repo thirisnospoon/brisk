@@ -54,6 +54,7 @@ mod status_ui;
 mod tabs_ui;
 mod templates_ui;
 mod terminal_env_ui;
+mod vcs_model;
 mod venv_ui;
 
 use crate::diff_view::DiffView;
@@ -368,7 +369,6 @@ struct StructureView {
 
 pub struct Workspace {
     root: PathBuf,
-    branch: Option<String>,
     runs: run_ui::Runs,
     /// Interpreters, the project interpreter, creating and syncing environments.
     env: Entity<python_env::PythonEnv>,
@@ -399,10 +399,8 @@ pub struct Workspace {
     /// count) each last scrolled to, so a newly active tab is brought into view once.
     tab_scroll: [gpui::ScrollHandle; 2],
     tab_seen: [std::cell::Cell<(Option<usize>, usize)>; 2],
-    git: Option<git_ui::Git>,
-    git_init_running: bool,
-    /// Commit window state exists even without a repo (it offers "Create Git Repository").
-    commit_focus: FocusHandle,
+    /// The repository and the Git and Commit windows' state (step 17), created on first use.
+    vcs: Option<Entity<vcs_model::VcsModel>>,
     toast: Option<(String, bool)>,
     toast_gen: u64,
     find: find_ui::Find,
@@ -546,7 +544,7 @@ impl Workspace {
                 // the Python files of this list.
                 this.scan_web_from(this.files.clone(), None, cx);
                 this.status = format!("Indexed {n} files in {:.0?}", this.started.elapsed());
-                this.refresh_popup();
+                this.refresh_popup_in(cx);
                 if this.find.open {
                     this.schedule_search(cx);
                 }
@@ -571,6 +569,11 @@ impl Workspace {
         let db = db_ui::Db::new(cx);
         // `.git` is looked for on disk; git confirms it in the background.
         let git = brisk_git::Repo::find(&root).map(|repo| git_ui::Git::new(repo, cx));
+        let vcs = (git.is_some() || branch.is_some()).then(|| {
+            let v = vcs_model::VcsModel::new(branch, cx);
+            v.update(cx, |m, _| m.git = git);
+            v
+        });
         budget_probe::mark("git");
         cx.defer_in(window, |this: &mut Self, _, cx| this.start_git(cx));
 
@@ -586,7 +589,6 @@ impl Workspace {
         smoke::schedule(window, cx);
         Self {
             root,
-            branch,
             runs,
             env,
             env_view: Default::default(),
@@ -610,9 +612,7 @@ impl Workspace {
             tab_scroll: [gpui::ScrollHandle::new(), gpui::ScrollHandle::new()],
             tab_seen: Default::default(),
             active: None,
-            git,
-            git_init_running: false,
-            commit_focus: cx.focus_handle(),
+            vcs,
             toast: None,
             toast_gen: 0,
             find: find_ui::Find::new(),
@@ -711,7 +711,7 @@ impl Workspace {
                 }
             }
         }
-        let git_fields = self.git.as_ref().map(|g| [g.message.clone(), g.filter.field.clone()]).into_iter().flatten();
+        let git_fields = self.git(cx).map(|g| [g.message.clone(), g.filter.field.clone()]).into_iter().flatten();
         let console = self.pyc.as_ref().map(|p| p.input.clone());
         let packages = self.packages.as_ref().map(|p| p.fields()).into_iter().flatten();
         git_fields.chain(console).chain(packages).find(|m| m.read(cx).focus_handle(cx).is_focused(window))
@@ -1003,9 +1003,9 @@ impl Workspace {
             vec![KeyContext::DataGrid]
         } else if self.tree_focus.is_focused(window) {
             vec![KeyContext::ProjectView, KeyContext::ToolWindow]
-        } else if self.commit_focus.is_focused(window) {
+        } else if self.commit_focused(window, cx) {
             vec![KeyContext::CommitView, KeyContext::ToolWindow]
-        } else if self.git.as_ref().is_some_and(|g| g.log_focus.is_focused(window)) {
+        } else if self.git(cx).is_some_and(|g| g.log_focus.is_focused(window)) {
             vec![KeyContext::GitLog, KeyContext::ToolWindow]
         } else if self.find_window_focused(window) {
             vec![KeyContext::FindView, KeyContext::ToolWindow]
@@ -1079,7 +1079,7 @@ impl Workspace {
             cx.stop_propagation();
             return;
         }
-        if self.git_dialog_open() {
+        if self.git_dialog_open(cx) {
             self.git_dialog_key(e, window, cx);
             cx.stop_propagation();
             return;
@@ -1315,7 +1315,7 @@ impl Workspace {
             A::ToggleCommitWindow => {
                 self.toggle_left(LeftTool::Commit, window, cx);
                 if self.left == Some(LeftTool::Commit) {
-                    window.focus(&self.commit_focus);
+                    window.focus(&self.commit_focus(cx));
                     self.refresh_git(cx);
                 }
             }
@@ -1351,7 +1351,7 @@ impl Workspace {
             A::ToggleGitWindow => {
                 self.toggle_bottom(BottomTool::Git, window, cx);
                 if self.bottom == Some(BottomTool::Git) {
-                    if let Some(g) = &self.git {
+                    if let Some(g) = self.git(cx) {
                         window.focus(&g.log_focus);
                     }
                     self.refresh_git(cx);
@@ -1461,8 +1461,8 @@ impl Workspace {
                 } else if self.db.focus.is_focused(window) {
                     self.db.open = false;
                 } else if self.tree_focus.is_focused(window)
-                    || self.commit_focus.is_focused(window)
-                    || self.git.as_ref().is_some_and(|g| g.message.read(cx).focus_handle(cx).is_focused(window))
+                    || self.commit_focused(window, cx)
+                    || self.git(cx).is_some_and(|g| g.message.read(cx).focus_handle(cx).is_focused(window))
                 {
                     self.left = None;
                 } else {
@@ -1755,7 +1755,9 @@ impl Workspace {
                     _ => Vec::new(),
                 }
             }
-            k @ (PopupKind::Branches | PopupKind::NewBranch | PopupKind::VcsOperations | PopupKind::Confirm) => self.git_popup_items(k, &q),
+            k @ (PopupKind::VcsOperations | PopupKind::Confirm) => self.git_popup_items(k, &q, None),
+            // Rows read from the VCS model: `refresh_popup_in` builds them.
+            PopupKind::Branches | PopupKind::NewBranch | PopupKind::BackgroundTasks => return,
             k @ (PopupKind::RunConfigs(_) | PopupKind::Interpreters) => self.run_popup_items(k, &q),
             PopupKind::AddInterpreter => self.add_interpreter_items(&q),
             PopupKind::SshHosts => self.ssh_host_items(&q),
@@ -1768,7 +1770,6 @@ impl Workspace {
             PopupKind::FolderCrumb => self.folder_items(&q),
             PopupKind::PutLabel => self.put_label_items(&q),
             PopupKind::NewScratch | PopupKind::RecentLocations => self.structure_items(&q),
-            PopupKind::BackgroundTasks => self.bg_task_items(&q),
             PopupKind::StatusHistory => self.status_history_items(&q),
             PopupKind::TabList => self.structure_items(&q),
         };
@@ -1805,7 +1806,7 @@ impl Workspace {
             // Branches popup: → shows the actions of the selected branch.
             "right" if p.kind == PopupKind::Branches => {
                 if let Some(Target::Branch(b)) = p.items.get(p.selected).map(|i| i.target.clone()) {
-                    self.open_branch_actions(&b);
+                    self.open_branch_actions(&b, cx);
                 }
             }
             "right" | "left" if p.kind == PopupKind::FolderCrumb => {
@@ -1867,7 +1868,10 @@ impl Workspace {
                         self.focus_editor(window, cx);
                         self.checkout(b, cx);
                     }
-                    Some(Target::NewBranch) => self.open_popup(PopupKind::NewBranch),
+                    Some(Target::NewBranch) => {
+                        self.open_popup(PopupKind::NewBranch);
+                        self.refresh_popup_in(cx);
+                    }
                     Some(Target::Confirm(p)) => {
                         self.focus_editor(window, cx);
                         self.run_pending(p, cx);
@@ -1955,7 +1959,7 @@ impl Workspace {
                     p.query.pop();
                 }
                 p.selected = 0;
-                self.refresh_popup();
+                self.refresh_popup_in(cx);
             }
             _ => {
                 if !(k.modifiers.control || k.modifiers.alt || k.modifiers.platform) {
@@ -1963,7 +1967,7 @@ impl Workspace {
                         if !ch.chars().any(|c| c.is_control()) {
                             p.query.push_str(ch);
                             p.selected = 0;
-                            self.refresh_popup();
+                            self.refresh_popup_in(cx);
                         }
                     }
                 } else if k.modifiers.control && !k.modifiers.alt && k.key == "v" {
@@ -1972,7 +1976,7 @@ impl Workspace {
                         let line = t.lines().next().unwrap_or_default().trim().trim_matches('"');
                         p.query.push_str(line);
                         p.selected = 0;
-                        self.refresh_popup();
+                        self.refresh_popup_in(cx);
                     }
                 } else if k.modifiers.control && k.key == "e" && p.kind == PopupKind::RecentFiles {
                     p.selected = (p.selected + 1).min(p.items.len().saturating_sub(1));
@@ -2120,7 +2124,7 @@ impl Workspace {
                 this.open_popup(PopupKind::Projects);
                 cx.notify();
             })))
-            .child(chip("tb-branch", Some("git-branch"), self.branch_label()).on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Branches, w, cx))))
+            .child(chip("tb-branch", Some("git-branch"), self.branch_label(cx)).on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Branches, w, cx))))
             .child(div().flex_1())
             .child(chip("tb-config", None, self.run_widget_label()).on_click(cx.listener(|this, _, _, cx| {
                 this.reload_runs(cx);
@@ -2245,7 +2249,7 @@ impl Workspace {
                                             None => file_icon(&node.name, node.is_dir),
                                         };
                                         let open = this.active_editor().is_some_and(|e| e.read(cx).path.as_deref() == Some(node.path.as_path()));
-                                        let vcs = if node.is_dir { None } else { this.file_status(&node.path).map(git_ui::status_color) };
+                                        let vcs = if node.is_dir { None } else { this.file_status(&node.path, cx).map(git_ui::status_color) };
                                         let name_color = if node.excluded {
                                             Theme::excluded()
                                         } else if let Some(c) = vcs {
@@ -2490,7 +2494,7 @@ impl Workspace {
                         // A file at a revision: the icon of its name ("x.py (1a2b3c4d)").
                         let name = ed.revision.as_ref().map(|r| r.0.rsplit('/').next().unwrap_or(&r.0).to_string());
                         let (icon, color) = file_icon(name.as_deref().unwrap_or(&title), false);
-                        let vcs = ed.path.as_deref().and_then(|p| self.file_status(p)).map(git_ui::status_color);
+                        let vcs = ed.path.as_deref().and_then(|p| self.file_status(p, cx)).map(git_ui::status_color);
                         let vcs = if ed.disk_conflict.is_some() { Some(gpui::rgb(0xe0b84a).into()) } else { vcs };
                         (title, icon, color, vcs, ed.buffer.is_dirty())
                     }
@@ -3064,7 +3068,7 @@ impl Workspace {
                 d.on_mouse_down(
                     gpui::MouseButton::Right,
                     cx.listener(move |this, _, _, cx| {
-                        this.open_branch_actions(&b);
+                        this.open_branch_actions(&b, cx);
                         cx.notify();
                     }),
                 )
@@ -3112,7 +3116,7 @@ impl Workspace {
                         d.child(div().id(("branch-actions", i)).px(px(3.)).rounded(px(3.)).hover(|s| s.bg(Theme::hover_row())).child("→").on_click(
                             cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
-                                this.open_branch_actions(&b);
+                                this.open_branch_actions(&b, cx);
                                 cx.notify();
                             }),
                         ))

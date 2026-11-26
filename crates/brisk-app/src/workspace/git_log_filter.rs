@@ -47,24 +47,25 @@ fn track(i: usize) -> impl IntoElement {
 
 impl Workspace {
     fn log_filter_text(&self, cx: &Context<Self>) -> Option<String> {
-        let g = self.git.as_ref()?;
+        let g = self.git(cx)?;
         Some(g.filter.field.read(cx).buffer.text().replace(['\n', '\r'], " ").trim().to_string())
     }
 
     fn log_filter_edited(&mut self, cx: &mut Context<Self>) {
         let Some(text) = self.log_filter_text(cx) else { return };
-        let Some(g) = self.git.as_mut() else { return };
+        let Some(mut g) = self.git_mut(cx) else { return };
         if g.filter.query.text == text {
             return;
         }
         g.filter.query.text = text;
         g.filter.generation += 1;
         let gen = g.filter.generation;
+        drop(g);
         let timer = cx.background_executor().timer(Duration::from_millis(250));
         cx.spawn(async move |this, cx| {
             timer.await;
             let _ = this.update(cx, |this, cx| {
-                if this.git.as_ref().is_some_and(|g| g.filter.generation == gen) {
+                if this.git(cx).is_some_and(|g| g.filter.generation == gen) {
                     this.refresh_git_now(cx);
                 }
             });
@@ -73,7 +74,7 @@ impl Workspace {
     }
 
     pub(super) fn set_log_branch(&mut self, branch: Option<String>, cx: &mut Context<Self>) {
-        if let Some(g) = self.git.as_mut() {
+        if let Some(mut g) = self.git_mut(cx) {
             g.filter.query.branch = branch;
         }
         self.refresh_git_now(cx);
@@ -81,7 +82,7 @@ impl Workspace {
     }
 
     pub(super) fn set_log_author(&mut self, author: Option<String>, cx: &mut Context<Self>) {
-        if let Some(g) = self.git.as_mut() {
+        if let Some(mut g) = self.git_mut(cx) {
             g.filter.query.author = author;
         }
         self.refresh_git_now(cx);
@@ -89,7 +90,7 @@ impl Workspace {
     }
 
     pub(super) fn set_log_since(&mut self, days: Option<u32>, cx: &mut Context<Self>) {
-        if let Some(g) = self.git.as_mut() {
+        if let Some(mut g) = self.git_mut(cx) {
             g.filter.query.since_days = days;
         }
         self.refresh_git_now(cx);
@@ -97,7 +98,7 @@ impl Workspace {
     }
 
     pub(super) fn set_log_path(&mut self, path: Option<String>, cx: &mut Context<Self>) {
-        if let Some(g) = self.git.as_mut() {
+        if let Some(mut g) = self.git_mut(cx) {
             g.filter.query.path = path;
         }
         self.refresh_git_now(cx);
@@ -106,10 +107,11 @@ impl Workspace {
 
     /// All filters off (the ✕ of the filter bar).
     pub(super) fn clear_log_filters(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_mut() else { return };
+        let Some(mut g) = self.git_mut(cx) else { return };
         g.filter.query = LogQuery::default();
         g.filter.generation += 1;
         let field = g.filter.field.clone();
+        drop(g);
         field.update(cx, |e, cx| e.replace_all_text("", cx));
         self.refresh_git_now(cx);
         cx.notify();
@@ -117,7 +119,7 @@ impl Workspace {
 
     /// Enter in the text field reloads now and moves to the list; Esc clears it, then leaves.
     pub(super) fn log_filter_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(g) = self.git.as_ref() else { return false };
+        let Some(g) = self.git(cx) else { return false };
         if !g.filter.field.read(cx).focus_handle(cx).is_focused(window) {
             return false;
         }
@@ -128,7 +130,7 @@ impl Workspace {
         match k.key.as_str() {
             "enter" | "down" => {
                 let focus = g.log_focus.clone();
-                if let Some(g) = self.git.as_mut() {
+                if let Some(mut g) = self.git_mut(cx) {
                     g.filter.generation += 1;
                 }
                 self.refresh_git_now(cx);
@@ -151,7 +153,7 @@ impl Workspace {
     }
 
     fn branch_filter_menu(&mut self, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_ref() else { return };
+        let Some(g) = self.git(cx) else { return };
         let cur = g.filter.query.branch.clone();
         let item = |label: String, value: Option<String>, on: bool| Entry::Item {
             label: if on { format!("✓ {label}") } else { format!("   {label}") },
@@ -170,7 +172,7 @@ impl Workspace {
 
     fn author_filter_menu(&mut self, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
         // Listing authors walks the whole history: do it off the UI thread, then open the menu.
-        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        let Some(repo) = self.git(cx).map(|g| g.repo.clone()) else { return };
         let task = cx.background_executor().spawn(async move { repo.authors().unwrap_or_default() });
         cx.spawn(async move |this, cx| {
             let authors = task.await;
@@ -180,7 +182,7 @@ impl Workspace {
     }
 
     fn author_filter_menu_with(&mut self, pos: gpui::Point<gpui::Pixels>, authors: Vec<String>, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_ref() else { return };
+        let Some(g) = self.git(cx) else { return };
         let cur = g.filter.query.author.clone();
         let item = |label: String, value: Option<String>, on: bool| Entry::Item {
             label: if on { format!("✓ {label}") } else { format!("   {label}") },
@@ -198,7 +200,7 @@ impl Workspace {
 
     /// PyCharm's Date filter: All, Last 24 hours, Last 7 days, and so on.
     pub(super) fn date_filter_menu(&mut self, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_ref() else { return };
+        let Some(g) = self.git(cx) else { return };
         let cur = g.filter.query.since_days;
         let v = DATES
             .iter()
@@ -215,7 +217,7 @@ impl Workspace {
     /// The Paths filter: the active file, its folder, the project's top-level folders (listed
     /// off the UI thread, then the menu opens).
     pub(super) fn path_filter_menu(&mut self, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
-        let Some(root) = self.git.as_ref().map(|g| g.repo.root().to_path_buf()) else { return };
+        let Some(root) = self.git(cx).map(|g| g.repo.root().to_path_buf()) else { return };
         let task = cx.background_executor().spawn(async move { log_query::top_level_dirs(&root) });
         cx.spawn(async move |this, cx| {
             let dirs = task.await;
@@ -225,7 +227,7 @@ impl Workspace {
     }
 
     fn path_filter_menu_with(&mut self, pos: gpui::Point<gpui::Pixels>, dirs: Vec<String>, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_ref() else { return };
+        let Some(g) = self.git(cx) else { return };
         let cur = g.filter.query.path.clone();
         let item = |label: String, value: Option<String>| Entry::Item {
             label: if cur == value { format!("✓ {label}") } else { format!("   {label}") },
@@ -247,7 +249,7 @@ impl Workspace {
 
     /// The filter bar in the Git log header.
     pub(super) fn render_log_filters(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let Some(g) = self.git.as_ref() else { return div().into_any_element() };
+        let Some(g) = self.git(cx) else { return div().into_any_element() };
         let q = &g.filter.query;
         let focused_hint = q.text.is_empty();
         let h = crate::ui_kit::COMPACT_H;

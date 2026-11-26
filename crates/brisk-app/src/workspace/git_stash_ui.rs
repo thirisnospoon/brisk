@@ -11,6 +11,7 @@ use brisk_git::{FileChange, FileStatus, StashEntry};
 use gpui::prelude::*;
 use gpui::{div, px, Context, KeyDownEvent, Window};
 
+#[derive(Clone)]
 pub enum StashDialog {
     Push {
         message: String,
@@ -26,15 +27,22 @@ pub enum StashDialog {
 }
 
 impl Workspace {
-    fn stash_dialog(&mut self) -> Option<&mut StashDialog> {
-        match self.git.as_mut()?.dialog.as_mut()? {
-            GitDialog::Stash(d) => Some(d),
-            _ => None,
-        }
+    fn stash_dialog<'a>(&self, cx: &'a mut gpui::App) -> Option<super::vcs_model::VcsMut<'a, StashDialog>> {
+        self.vcs_mut(
+            cx,
+            |m| match m.git.as_ref()?.dialog.as_ref()? {
+                GitDialog::Stash(d) => Some(d),
+                _ => None,
+            },
+            |m| match m.git.as_mut()?.dialog.as_mut()? {
+                GitDialog::Stash(d) => Some(d),
+                _ => None,
+            },
+        )
     }
 
     fn set_stash_dialog(&mut self, d: Option<StashDialog>, cx: &mut Context<Self>) {
-        if let Some(g) = self.git.as_mut() {
+        if let Some(mut g) = self.git_mut(cx) {
             g.dialog = d.map(GitDialog::Stash);
         }
         cx.notify();
@@ -42,7 +50,7 @@ impl Workspace {
 
     pub(super) fn git_more_action(&mut self, action: brisk_keymap::Action, window: &mut Window, cx: &mut Context<Self>) {
         use brisk_keymap::Action as A;
-        if self.git.is_none() {
+        if self.git(cx).is_none() {
             return self.show_toast("Version control is not enabled for this project".into(), true, cx);
         }
         match action {
@@ -56,7 +64,7 @@ impl Workspace {
 
     /// Stash Changes…: nothing to stash → a toast, like PyCharm.
     pub(super) fn open_stash_push(&mut self, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_ref() else { return };
+        let Some(g) = self.git(cx) else { return };
         if g.status.changes.is_empty() {
             return self.show_toast("No local changes to stash".into(), false, cx);
         }
@@ -72,7 +80,7 @@ impl Workspace {
 
     /// The stash list with row `keep` selected. The git calls run off the UI thread.
     fn open_unstash_at(&mut self, keep: usize, cx: &mut Context<Self>) {
-        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        let Some(repo) = self.git(cx).map(|g| g.repo.clone()) else { return };
         let task = cx.background_executor().spawn(async move {
             let entries = repo.stash_list().unwrap_or_default();
             let keep = keep.min(entries.len().saturating_sub(1));
@@ -93,43 +101,51 @@ impl Workspace {
     }
 
     fn stash_select(&mut self, i: usize, cx: &mut Context<Self>) {
-        let repo = self.git.as_ref().map(|g| g.repo.clone());
-        if let (Some(repo), Some(StashDialog::List { entries, selected, files, confirm_drop })) = (repo, self.stash_dialog()) {
-            *confirm_drop = false;
-            let i = i.min(entries.len().saturating_sub(1));
-            if *selected != i || files.is_empty() {
-                *selected = i;
-                files.clear();
-                let name = entries[i].name.clone();
-                let task = cx.background_executor().spawn(async move { repo.stash_files(&name).unwrap_or_default() });
-                cx.spawn(async move |this, cx| {
-                    let got = task.await;
-                    let _ = this.update(cx, |this, cx| {
-                        if let Some(StashDialog::List { selected, files, .. }) = this.stash_dialog() {
-                            if *selected == i {
-                                *files = got;
-                                cx.notify();
-                            }
-                        }
-                    });
-                })
-                .detach();
+        let repo = self.git(cx).map(|g| g.repo.clone());
+        let mut fetch = None;
+        if let (Some(repo), Some(mut dialog)) = (repo, self.stash_dialog(cx)) {
+            if let StashDialog::List { entries, selected, files, confirm_drop } = &mut *dialog {
+                *confirm_drop = false;
+                let i = i.min(entries.len().saturating_sub(1));
+                if *selected != i || files.is_empty() {
+                    *selected = i;
+                    files.clear();
+                    fetch = Some((repo, entries[i].name.clone(), i));
+                }
             }
+        }
+        if let Some((repo, name, i)) = fetch {
+            let task = cx.background_executor().spawn(async move { repo.stash_files(&name).unwrap_or_default() });
+            cx.spawn(async move |this, cx| {
+                let got = task.await;
+                let _ = this.update(cx, |this, cx| {
+                    let Some(mut dialog) = this.stash_dialog(cx) else { return };
+                    let StashDialog::List { selected, files, .. } = &mut *dialog else { return };
+                    if *selected == i {
+                        *files = got;
+                        drop(dialog);
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
         }
         cx.notify();
     }
 
     /// Create the stash: open files are saved first so their edits go into it.
     pub(super) fn stash_push(&mut self, cx: &mut Context<Self>) {
-        let Some(StashDialog::Push { message, untracked }) = self.stash_dialog() else { return };
+        let Some(dialog) = self.stash_dialog(cx) else { return };
+        let StashDialog::Push { message, untracked } = &*dialog else { return };
         let (message, untracked) = (message.trim().to_string(), *untracked);
+        drop(dialog);
         self.save_all(cx);
         self.set_stash_dialog(None, cx);
         self.git_op("Stash", move |r| r.stash_push(&message, untracked).map(|_| "Changes stashed".to_string()), |_, _| {}, cx);
     }
 
-    fn selected_stash(&mut self) -> Option<String> {
-        match self.stash_dialog()? {
+    fn selected_stash(&self, cx: &mut gpui::App) -> Option<String> {
+        match &*self.stash_dialog(cx)? {
             StashDialog::List { entries, selected, .. } => entries.get(*selected).map(|e| e.name.clone()),
             _ => None,
         }
@@ -137,7 +153,7 @@ impl Workspace {
 
     /// Apply / Pop: the dialog closes; a conflict opens the Conflicts dialog through refresh_git.
     pub(super) fn stash_apply(&mut self, pop: bool, cx: &mut Context<Self>) {
-        let Some(name) = self.selected_stash() else { return };
+        let Some(name) = self.selected_stash(cx) else { return };
         self.save_all(cx);
         self.set_stash_dialog(None, cx);
         let title = if pop { "Pop Stash" } else { "Apply Stash" };
@@ -146,42 +162,51 @@ impl Workspace {
 
     /// Drop asks first (it cannot be undone), like Rollback.
     pub(super) fn stash_drop(&mut self, cx: &mut Context<Self>) {
-        if let Some(StashDialog::List { entries, confirm_drop, .. }) = self.stash_dialog() {
-            *confirm_drop = !entries.is_empty();
+        if let Some(mut dialog) = self.stash_dialog(cx) {
+            if let StashDialog::List { entries, confirm_drop, .. } = &mut *dialog {
+                *confirm_drop = !entries.is_empty();
+            }
         }
         cx.notify();
     }
 
     /// Esc on the Drop confirmation cancels just that; true when there was one.
     pub(super) fn stash_cancel_drop(&mut self, cx: &mut Context<Self>) -> bool {
-        match self.stash_dialog() {
-            Some(StashDialog::List { confirm_drop, .. }) if *confirm_drop => {
-                *confirm_drop = false;
-                cx.notify();
-                true
-            }
-            _ => false,
+        let Some(mut dialog) = self.stash_dialog(cx) else { return false };
+        let StashDialog::List { confirm_drop, .. } = &mut *dialog else { return false };
+        if !*confirm_drop {
+            return false;
         }
+        *confirm_drop = false;
+        drop(dialog);
+        cx.notify();
+        true
     }
 
     /// The confirmed Drop, through `git_op` (one git operation at a time). The stash is
     /// addressed by its commit: `stash@{N}` may have shifted since the list was read.
     fn stash_drop_confirmed(&mut self, cx: &mut Context<Self>) {
-        let Some(StashDialog::List { entries, selected, confirm_drop, .. }) = self.stash_dialog() else { return };
+        let Some(mut dialog) = self.stash_dialog(cx) else { return };
+        let StashDialog::List { entries, selected, confirm_drop, .. } = &mut *dialog else { return };
         *confirm_drop = false;
         let Some(e) = entries.get(*selected).cloned() else { return };
         // The list stays open on the next stash (or closes when none is left).
         let keep = *selected;
+        drop(dialog);
         let name = e.name.clone();
         self.git_op("Drop Stash", move |r| r.stash_drop(&e.hash).map(|_| format!("Dropped {name}")), move |this, cx| this.open_unstash_at(keep, cx), cx);
     }
 
     /// The diff of one file of the selected stash: the commit it was made on vs the stash.
     pub(super) fn stash_file_diff(&mut self, fi: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(name) = self.selected_stash() else { return };
-        let Some(StashDialog::List { files, .. }) = self.stash_dialog() else { return };
-        let Some(c) = files.get(fi).cloned() else { return };
-        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        let Some(name) = self.selected_stash(cx) else { return };
+        let Some(c) = self.stash_dialog(cx).and_then(|d| match &*d {
+            StashDialog::List { files, .. } => files.get(fi).cloned(),
+            StashDialog::Push { .. } => None,
+        }) else {
+            return;
+        };
+        let Some(repo) = self.git(cx).map(|g| g.repo.clone()) else { return };
         let abs = repo.abs(&c.path);
         let title = format!("{} ({name})", file_name(&c.path));
         // The tab shows behind the modal otherwise.
@@ -202,69 +227,84 @@ impl Workspace {
         let k = &e.keystroke;
         let m = &k.modifiers;
         let key = k.key.as_str();
-        match self.stash_dialog() {
-            Some(StashDialog::Push { message, untracked }) => match key {
-                "enter" => self.stash_push(cx),
-                "backspace" => {
-                    if m.control {
-                        let t = message.trim_end().len();
-                        let cut = message[..t].rfind(' ').map(|i| i + 1).unwrap_or(0);
-                        message.truncate(cut);
-                    } else {
-                        message.pop();
-                    }
-                }
-                "u" if m.alt => *untracked = !*untracked,
-                "v" if m.control => {
-                    if let Some(t) = cx.read_from_clipboard().and_then(|c| c.text()) {
-                        message.push_str(t.lines().next().unwrap_or(""));
-                    }
-                }
-                _ => {
-                    if !(m.control || m.alt || m.platform) {
-                        if let Some(ch) = crate::keys::typed_text(k) {
-                            if !ch.chars().any(|c| c.is_control()) {
-                                message.push_str(ch);
+        enum Open {
+            Push,
+            ConfirmDrop,
+            List(usize),
+        }
+        let open = match self.stash_dialog(cx).as_deref() {
+            Some(StashDialog::Push { .. }) => Some(Open::Push),
+            Some(StashDialog::List { confirm_drop: true, .. }) => Some(Open::ConfirmDrop),
+            Some(StashDialog::List { selected, .. }) => Some(Open::List(*selected)),
+            None => None,
+        };
+        match open {
+            Some(Open::Push) if key == "enter" => self.stash_push(cx),
+            Some(Open::Push) => {
+                let pasted = if key == "v" && m.control { cx.read_from_clipboard().and_then(|c| c.text()) } else { None };
+                if let Some(mut dialog) = self.stash_dialog(cx) {
+                    if let StashDialog::Push { message, untracked } = &mut *dialog {
+                        match key {
+                            "backspace" => {
+                                if m.control {
+                                    let t = message.trim_end().len();
+                                    let cut = message[..t].rfind(' ').map(|i| i + 1).unwrap_or(0);
+                                    message.truncate(cut);
+                                } else {
+                                    message.pop();
+                                }
+                            }
+                            "u" if m.alt => *untracked = !*untracked,
+                            "v" if m.control => {
+                                if let Some(t) = pasted {
+                                    message.push_str(t.lines().next().unwrap_or(""));
+                                }
+                            }
+                            _ => {
+                                if !(m.control || m.alt || m.platform) {
+                                    if let Some(ch) = crate::keys::typed_text(k) {
+                                        if !ch.chars().any(|c| c.is_control()) {
+                                            message.push_str(ch);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            },
-            Some(StashDialog::List { confirm_drop: true, .. }) => {
+            }
+            Some(Open::ConfirmDrop) => {
                 if key == "enter" {
                     self.stash_drop_confirmed(cx);
                 }
             }
-            Some(StashDialog::List { selected, .. }) => {
-                let sel = *selected;
-                match key {
-                    "up" => self.stash_select(sel.saturating_sub(1), cx),
-                    "down" => self.stash_select(sel + 1, cx),
-                    "enter" => self.stash_apply(m.shift, cx),
-                    "delete" => self.stash_drop(cx),
-                    "d" if m.control => self.stash_file_diff(0, window, cx),
-                    _ => {}
-                }
-            }
+            Some(Open::List(sel)) => match key {
+                "up" => self.stash_select(sel.saturating_sub(1), cx),
+                "down" => self.stash_select(sel + 1, cx),
+                "enter" => self.stash_apply(m.shift, cx),
+                "delete" => self.stash_drop(cx),
+                "d" if m.control => self.stash_file_diff(0, window, cx),
+                _ => {}
+            },
             None => self.history_key(e, window, cx),
         }
         cx.notify();
     }
 
     pub(super) fn render_stash_dialog(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let d = match self.git.as_ref()?.dialog.as_ref()? {
-            GitDialog::Stash(d) => d,
+        let d = match self.git(cx)?.dialog.as_ref()? {
+            GitDialog::Stash(d) => d.clone(),
             _ => return self.render_history_dialog(cx),
         };
-        Some(match d {
+        Some(match &d {
             StashDialog::Push { message, untracked } => self.render_stash_push(message, *untracked, cx),
             StashDialog::List { entries, selected, files, confirm_drop } => self.render_unstash(entries, *selected, files, *confirm_drop, cx),
         })
     }
 
     fn render_stash_push(&self, message: &str, untracked: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let branch = self.git.as_ref().and_then(|g| g.status.branch.clone()).unwrap_or_else(|| "HEAD".into());
-        let n = self.git.as_ref().map(|g| g.status.changes.len()).unwrap_or(0);
+        let branch = self.git(cx).and_then(|g| g.status.branch.clone()).unwrap_or_else(|| "HEAD".into());
+        let n = self.git(cx).map(|g| g.status.changes.len()).unwrap_or(0);
         let field = div()
             .id("stash-message")
             .h(ui_px(30.))
@@ -303,7 +343,7 @@ impl Workspace {
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if let Some(StashDialog::Push { untracked, .. }) = this.stash_dialog() {
+                    if let Some(StashDialog::Push { untracked, .. }) = this.stash_dialog(cx).as_deref_mut() {
                         *untracked = !*untracked;
                     }
                     cx.notify();
@@ -382,7 +422,7 @@ impl Workspace {
             .child(button("st-apply", "Apply", true).on_click(cx.listener(|this, _, _, cx| this.stash_apply(false, cx))))
             .child(button("st-pop", "Pop", false).on_click(cx.listener(|this, _, _, cx| this.stash_apply(true, cx))))
             .child(button("st-drop", "Drop", false).on_click(cx.listener(|this, _, _, cx| this.stash_drop(cx))));
-        let branch = self.git.as_ref().and_then(|g| g.status.branch.clone()).unwrap_or_else(|| "HEAD".into());
+        let branch = self.git(cx).and_then(|g| g.status.branch.clone()).unwrap_or_else(|| "HEAD".into());
         dialog_frame("unstash-dialog", 720., "Unstash Changes")
             .child(div().pb(px(8.)).text_color(Theme::text_muted()).child(format!("{} stash(es) · changes go to {branch}", entries.len())))
             .child(div().flex().gap(px(12.)).child(div().id("stash-list").flex_1().max_h(ui_px(220.)).overflow_y_scroll().children(rows)).child(side))

@@ -325,8 +325,8 @@ impl Workspace {
             if want("git-log") {
                 let _ = this.update_in(cx, |this, window, cx| {
                     // On a fresh folder the repository was created after the project opened.
-                    if this.git.is_none() {
-                        this.git = brisk_git::Repo::discover(&this.root).map(|repo| crate::workspace::git_ui::Git::new(repo, cx));
+                    if this.git(cx).is_none() {
+                        this.set_git(brisk_git::Repo::discover(&this.root).map(|repo| crate::workspace::git_ui::Git::new(repo, cx)), cx);
                     }
                     this.bottom = None;
                     this.dispatch(brisk_keymap::Action::ToggleGitWindow, window, cx);
@@ -334,17 +334,17 @@ impl Workspace {
                 });
                 for _ in 0..200 {
                     wait(cx, 100).await;
-                    if this.update(cx, |this, _| this.git.as_ref().is_some_and(|g| g.log.len() >= 1000)).unwrap_or(true) {
+                    if this.update(cx, |this, cx| this.git(cx).is_some_and(|g| g.log.len() >= 1000)).unwrap_or(true) {
                         break;
                     }
                 }
-                let n = this.update(cx, |this, _| this.git.as_ref().map_or(0, |g| g.log.len())).unwrap_or(0);
+                let n = this.update(cx, |this, cx| this.git(cx).map_or(0, |g| g.log.len())).unwrap_or(0);
                 if n < 1000 {
                     // An empty log scrolls nothing: report it instead of measuring it.
                     eprintln!("smoke-scroll: git-log shows {n} commits, expected {COMMITS}");
                     results.push(("git-log (2000 commits)", stats(Vec::new())));
                 } else {
-                    let at = this.update(cx, |this, _| this.git.as_ref().map(|g| At::List(g.log_handle()))).ok().flatten().unwrap_or(At::Bottom(0.45));
+                    let at = this.update(cx, |this, cx| this.git(cx).map(|g| At::List(g.log_handle()))).ok().flatten().unwrap_or(At::Bottom(0.45));
                     results.push(("git-log (2000 commits)", best(&this, cx, at).await));
                 }
             }

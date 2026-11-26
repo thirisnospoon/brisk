@@ -14,7 +14,7 @@ use std::rc::Rc;
 impl Workspace {
     /// The file as it is now: the open editor's text, or the disk.
     fn working_text(&self, rel: &str, cx: &Context<Self>) -> String {
-        let Some(g) = self.git.as_ref() else { return String::new() };
+        let Some(g) = self.git(cx) else { return String::new() };
         let abs = g.repo.abs(rel);
         self.editors()
             .find(|e| e.read(cx).path.as_deref().is_some_and(|p| g.repo.rel(p).as_deref() == Some(rel)))
@@ -26,7 +26,7 @@ impl Workspace {
     /// `rev`'s version of the file (at `path_in_rev`) on the left, the local copy of `rel` on
     /// the right.
     pub(super) fn compare_with_rev(&mut self, rel: &str, rev: &str, path_in_rev: &str, label: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        let Some(repo) = self.git(cx).map(|g| g.repo.clone()) else { return };
         let abs = repo.abs(rel);
         let right = self.working_text(rel, cx);
         let title = format!("{} ({label} ↔ Local)", file_name(rel));
@@ -56,7 +56,7 @@ impl Workspace {
 
     /// Compare with Branch…: the branches (but the current one) in a menu at `pos`.
     pub(super) fn compare_with_branch_menu(&mut self, path: &Path, pos: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_ref() else { return };
+        let Some(g) = self.git(cx) else { return };
         let Some(rel) = g.repo.rel(path) else { return };
         let mut v = Vec::new();
         for b in g.branches.iter().filter(|b| !b.current) {
@@ -86,7 +86,7 @@ impl Workspace {
     /// Right click on a file of a commit (Git log details): its diffs and Open.
     pub(super) fn log_file_menu(&mut self, hash: String, f: FileChange, pos: Point<Pixels>, cx: &mut Context<Self>) {
         let short = hash[..hash.len().min(8)].to_string();
-        let exists = self.git.as_ref().is_some_and(|g| g.repo.abs(&f.path).exists());
+        let exists = self.git(cx).is_some_and(|g| g.repo.abs(&f.path).exists());
         let v = vec![
             Entry::Item {
                 label: "Show Diff".into(),
@@ -112,7 +112,7 @@ impl Workspace {
                 shortcut: String::new(),
                 enabled: exists,
                 run: Rc::new(move |this, window, cx| {
-                    if let Some(abs) = this.git.as_ref().map(|g| g.repo.abs(&f.path)) {
+                    if let Some(abs) = this.git(cx).map(|g| g.repo.abs(&f.path)) {
                         this.open_file(&abs, window, cx);
                     }
                 }),

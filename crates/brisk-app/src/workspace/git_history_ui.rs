@@ -32,11 +32,18 @@ pub struct HistoryDialog {
 }
 
 impl Workspace {
-    fn history(&mut self) -> Option<&mut HistoryDialog> {
-        match self.git.as_mut()?.dialog.as_mut()? {
-            GitDialog::History(d) => Some(d),
-            _ => None,
-        }
+    fn history<'a>(&self, cx: &'a mut gpui::App) -> Option<super::vcs_model::VcsMut<'a, HistoryDialog>> {
+        self.vcs_mut(
+            cx,
+            |m| match m.git.as_ref()?.dialog.as_ref()? {
+                GitDialog::History(d) => Some(d),
+                _ => None,
+            },
+            |m| match m.git.as_mut()?.dialog.as_mut()? {
+                GitDialog::History(d) => Some(d),
+                _ => None,
+            },
+        )
     }
 
     /// The editor's selected lines (1-based), when the selection spans text.
@@ -55,7 +62,7 @@ impl Workspace {
 
     /// The Git entries of the tree and editor context menus.
     pub(super) fn git_menu_entries(&self, path: &Path, editor: Option<&Entity<Editor>>, cx: &Context<Self>) -> Vec<Entry> {
-        let Some(g) = self.git.as_ref() else { return Vec::new() };
+        let Some(g) = self.git(cx) else { return Vec::new() };
         if g.repo.rel(path).is_none() || path.is_dir() {
             return Vec::new();
         }
@@ -103,8 +110,9 @@ impl Workspace {
     }
 
     pub(super) fn show_history(&mut self, path: &Path, lines: Option<(usize, usize)>, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_mut() else { return };
+        let Some(mut g) = self.git_mut(cx) else { return };
         let Some(rel) = g.repo.rel(path) else {
+            drop(g);
             return self.show_toast(format!("{} is not in the repository", path.display()), true, cx);
         };
         g.dialog = Some(GitDialog::History(HistoryDialog {
@@ -117,6 +125,7 @@ impl Workspace {
             loading: true,
         }));
         let repo = g.repo.clone();
+        drop(g);
         let task = cx.background_executor().spawn(async move {
             match lines {
                 Some((a, b)) => repo.line_log(&rel, a, b, LIMIT).map(|v| v.into_iter().unzip()),
@@ -126,15 +135,19 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
-                let Some(d) = this.history() else { return };
+                let Some(mut d) = this.history(cx) else { return };
                 d.loading = false;
                 match res {
                     Ok((commits, patches)) => {
                         d.commits = commits;
                         d.line_patches = patches;
+                        drop(d);
                         this.history_select(0, cx);
                     }
-                    Err(e) => this.show_toast(format!("Cannot read the history: {e}"), true, cx),
+                    Err(e) => {
+                        drop(d);
+                        this.show_toast(format!("Cannot read the history: {e}"), true, cx)
+                    }
                 }
                 cx.notify();
             });
@@ -144,49 +157,53 @@ impl Workspace {
     }
 
     pub(super) fn history_select(&mut self, i: usize, cx: &mut Context<Self>) {
-        let repo = self.git.as_ref().map(|g| g.repo.clone());
-        let Some(d) = self.history() else { return };
-        let Some(c) = d.commits.get(i.min(d.commits.len().saturating_sub(1))) else { return };
+        let repo = self.git(cx).map(|g| g.repo.clone());
+        let Some(mut d) = self.history(cx) else { return };
+        let Some(hash) = d.commits.get(i.min(d.commits.len().saturating_sub(1))).map(|c| c.hash.clone()) else { return };
         d.selected = i.min(d.commits.len() - 1);
-        match (d.line_patches.get(d.selected), repo) {
-            (Some(p), _) => d.patch = p.clone(),
+        let mut fetch = None;
+        match (d.line_patches.get(d.selected).cloned(), repo) {
+            (Some(p), _) => d.patch = p,
             (None, Some(repo)) => {
-                // `git log --follow` + `git show` per row: off the UI thread, so holding ↓ in a
-                // long history scrolls instead of freezing. A stale answer (the selection moved
-                // on meanwhile) is dropped.
-                let (hash, rel, sel) = (c.hash.clone(), d.rel.clone(), d.selected);
+                fetch = Some((repo, hash, d.rel.clone(), d.selected));
                 d.patch = "Loading…".into();
-                let task = cx.background_executor().spawn(async move {
-                    let path = repo.path_in_commit(&hash, &rel);
-                    repo.file_patch(&hash, &path).unwrap_or_else(|e| e.to_string())
-                });
-                cx.spawn(async move |this, cx| {
-                    let patch = task.await;
-                    let _ = this.update(cx, |this, cx| {
-                        if let Some(d) = this.history() {
-                            if d.selected == sel {
-                                d.patch = patch;
-                                cx.notify();
-                            }
-                        }
-                    });
-                })
-                .detach();
             }
             _ => d.patch = String::new(),
+        }
+        drop(d);
+        // `git log --follow` + `git show` per row: off the UI thread, so holding ↓ in a long
+        // history scrolls instead of freezing. A stale answer (the selection moved on
+        // meanwhile) is dropped.
+        if let Some((repo, hash, rel, sel)) = fetch {
+            let task = cx.background_executor().spawn(async move {
+                let path = repo.path_in_commit(&hash, &rel);
+                repo.file_patch(&hash, &path).unwrap_or_else(|e| e.to_string())
+            });
+            cx.spawn(async move |this, cx| {
+                let patch = task.await;
+                let _ = this.update(cx, |this, cx| {
+                    let Some(mut d) = this.history(cx).filter(|d| d.selected == sel) else { return };
+                    d.patch = patch;
+                    drop(d);
+                    cx.notify();
+                });
+            })
+            .detach();
         }
         cx.notify();
     }
 
     /// The whole file's diff for the selected commit (the dialog closes so the tab shows).
     pub(super) fn history_open_diff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(d) = self.history() else { return };
+        let Some(d) = self.history(cx) else { return };
         let Some(c) = d.commits.get(d.selected) else { return };
         let (hash, rel) = (c.hash.clone(), d.rel.clone());
         let first = c.parents.is_empty();
-        let Some(g) = self.git.as_mut() else { return };
+        drop(d);
+        let Some(mut g) = self.git_mut(cx) else { return };
         let repo = g.repo.clone();
         g.dialog = None;
+        drop(g);
         let status = if first { FileStatus::Added } else { FileStatus::Modified };
         // The file's name in that commit (`git log --follow`) off the UI thread.
         let h = hash.clone();
@@ -201,12 +218,14 @@ impl Workspace {
 
     /// The selected commit's version against the local file (Show Diff with Working Tree).
     pub(super) fn history_compare_local(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(d) = self.history() else { return };
+        let Some(d) = self.history(cx) else { return };
         let Some(c) = d.commits.get(d.selected) else { return };
         let (hash, rel) = (c.hash.clone(), d.rel.clone());
-        let Some(g) = self.git.as_mut() else { return };
+        drop(d);
+        let Some(mut g) = self.git_mut(cx) else { return };
         let repo = g.repo.clone();
         g.dialog = None;
+        drop(g);
         let short = hash[..hash.len().min(8)].to_string();
         let (h, r) = (hash.clone(), rel.clone());
         let task = cx.background_executor().spawn(async move { repo.path_in_commit(&h, &r) });
@@ -219,8 +238,7 @@ impl Workspace {
     }
 
     pub(super) fn history_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(d) = self.history() else { return self.push_key(e, window, cx) };
-        let sel = d.selected;
+        let Some(sel) = self.history(cx).map(|d| d.selected) else { return self.push_key(e, window, cx) };
         match e.keystroke.key.as_str() {
             "up" => self.history_select(sel.saturating_sub(1), cx),
             "down" => self.history_select(sel + 1, cx),
@@ -233,7 +251,7 @@ impl Workspace {
     }
 
     pub(super) fn render_history_dialog(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let d = match self.git.as_ref()?.dialog.as_ref()? {
+        let d = match self.git(cx)?.dialog.as_ref()? {
             GitDialog::History(d) => d,
             _ => return self.render_push_dialog(cx),
         };
@@ -349,7 +367,7 @@ impl Workspace {
                         .child(button("hist-local", "Compare with Local", false).on_click(cx.listener(|this, _, w, cx| this.history_compare_local(w, cx))))
                         .child(button("hist-diff", "Show Diff", false).on_click(cx.listener(|this, _, w, cx| this.history_open_diff(w, cx))))
                         .child(button("hist-close", "Close", true).on_click(cx.listener(|this, _, w, cx| {
-                            if let Some(g) = this.git.as_mut() {
+                            if let Some(mut g) = this.git_mut(cx) {
                                 g.dialog = None;
                             }
                             this.focus_editor(w, cx);

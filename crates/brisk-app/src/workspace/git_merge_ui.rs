@@ -8,6 +8,7 @@ use crate::theme::Theme;
 use gpui::prelude::*;
 use gpui::{div, px, Context, Entity, KeyDownEvent, Window};
 
+#[derive(Clone)]
 pub struct ConflictsDialog {
     pub files: Vec<String>,
     pub selected: usize,
@@ -22,18 +23,18 @@ pub enum GitDialog {
 }
 
 impl Workspace {
-    fn git_dialog(&mut self) -> Option<&mut GitDialog> {
-        self.git.as_mut()?.dialog.as_mut()
+    fn git_dialog<'a>(&self, cx: &'a mut gpui::App) -> Option<super::vcs_model::VcsMut<'a, GitDialog>> {
+        self.vcs_mut(cx, |m| m.git.as_ref()?.dialog.as_ref(), |m| m.git.as_mut()?.dialog.as_mut())
     }
 
-    pub(super) fn git_dialog_open(&self) -> bool {
-        self.git.as_ref().is_some_and(|g| g.dialog.is_some())
+    pub(super) fn git_dialog_open(&self, cx: &gpui::App) -> bool {
+        self.git(cx).is_some_and(|g| g.dialog.is_some())
     }
 
     /// The Conflicts dialog with the repository's conflicted files (after merge, pull, rebase).
     /// The list is read off the UI thread.
     pub(super) fn open_conflicts(&mut self, cx: &mut Context<Self>) {
-        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        let Some(repo) = self.git(cx).map(|g| g.repo.clone()) else { return };
         let task = cx.background_executor().spawn(async move { repo.conflicts() });
         cx.spawn(async move |this, cx| {
             let res = task.await;
@@ -42,25 +43,27 @@ impl Workspace {
                     Ok(files) => files,
                     Err(e) => return this.show_toast(format!("Cannot list the conflicts: {e}"), true, cx),
                 };
-                let Some(g) = this.git.as_mut() else { return };
+                let Some(mut g) = this.git_mut(cx) else { return };
                 // Another dialog opened meanwhile: it stays.
                 if g.dialog.as_ref().is_some_and(|d| !matches!(d, GitDialog::Conflicts(_))) {
                     return;
                 }
                 if files.is_empty() {
                     g.dialog = None;
+                    drop(g);
                     this.show_toast("No conflicts to resolve".into(), false, cx);
                     return;
                 }
                 g.dialog = Some(GitDialog::Conflicts(ConflictsDialog { files, selected: 0 }));
+                drop(g);
                 cx.notify();
             });
         })
         .detach();
     }
 
-    fn selected_conflicts(&self) -> Vec<String> {
-        match self.git.as_ref().and_then(|g| g.dialog.as_ref()) {
+    fn selected_conflicts(&self, cx: &gpui::App) -> Vec<String> {
+        match self.git(cx).and_then(|g| g.dialog.as_ref()) {
             Some(GitDialog::Conflicts(d)) => d.files.get(d.selected).cloned().into_iter().collect(),
             _ => Vec::new(),
         }
@@ -68,7 +71,7 @@ impl Workspace {
 
     /// Accept Yours / Accept Theirs for the selected file.
     pub(super) fn conflicts_accept(&mut self, ours: bool, cx: &mut Context<Self>) {
-        let files = self.selected_conflicts();
+        let files = self.selected_conflicts(cx);
         if files.is_empty() {
             return;
         }
@@ -92,13 +95,15 @@ impl Workspace {
         cx: &mut Context<Self>,
         op: impl FnOnce(&brisk_git::Repo) -> brisk_git::Result<String> + Send + 'static,
     ) -> Option<gpui::Task<(brisk_git::Result<String>, Vec<String>)>> {
-        let g = self.git.as_mut()?;
+        let mut g = self.git_mut(cx)?;
         if let Some(b) = g.busy {
+            drop(g);
             self.show_toast(format!("Wait for “{b}” to finish"), true, cx);
             return None;
         }
         g.busy = Some(title);
         let repo = g.repo.clone();
+        drop(g);
         Some(cx.background_executor().spawn(async move {
             let res = op(&repo);
             (res, repo.conflicts().unwrap_or_default())
@@ -108,7 +113,7 @@ impl Workspace {
     /// Clears the busy guard and reports the outcome; true when it succeeded. A failure
     /// leaves the dialog (or the merge window) as it is.
     fn finish_resolve(&mut self, res: brisk_git::Result<String>, left: Vec<String>, err: &str, cx: &mut Context<Self>) -> bool {
-        if let Some(g) = self.git.as_mut() {
+        if let Some(mut g) = self.git_mut(cx) {
             g.busy = None;
         }
         match res {
@@ -126,14 +131,14 @@ impl Workspace {
 
     /// Merge…: the merge window for the selected file, in a tab.
     pub(super) fn conflicts_merge(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(rel) = self.selected_conflicts().pop() {
+        if let Some(rel) = self.selected_conflicts(cx).pop() {
             self.merge_file(rel, window, cx);
         }
     }
 
     /// The merge window for a conflicted file (also Show Diff on it in the Commit window).
     pub(super) fn merge_file(&mut self, rel: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        let Some(repo) = self.git(cx).map(|g| g.repo.clone()) else { return };
         // Base / yours / theirs (three `git show`s) and the merged branch's name off the UI thread.
         let r = rel.clone();
         let task = cx.background_executor().spawn(async move { (repo.conflict_versions(&r), repo.merge_source(), repo.abs(&r)) });
@@ -156,7 +161,7 @@ impl Workspace {
 
     /// The merge window's tab (one per file); its Apply / Cancel come back here.
     pub(super) fn open_merge(&mut self, view: Entity<MergeView>, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(g) = self.git.as_mut() {
+        if let Some(mut g) = self.git_mut(cx) {
             g.dialog = None;
         }
         cx.subscribe_in(&view, window, |this, view, ev: &MergeEvent, window, cx| {
@@ -205,9 +210,10 @@ impl Workspace {
     fn after_resolve(&mut self, files: Vec<String>, cx: &mut Context<Self>) {
         self.reload_editors(cx);
         self.refresh_git(cx);
-        let Some(g) = self.git.as_mut() else { return };
+        let Some(mut g) = self.git_mut(cx) else { return };
         if files.is_empty() {
             g.dialog = None;
+            drop(g);
             self.show_toast("All conflicts are resolved. Commit to finish the merge.".into(), false, cx);
         } else {
             let selected = match &g.dialog {
@@ -215,13 +221,15 @@ impl Workspace {
                 _ => 0,
             };
             g.dialog = Some(GitDialog::Conflicts(ConflictsDialog { files, selected }));
+            drop(g);
         }
         cx.notify();
     }
 
     fn close_git_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_mut() else { return };
+        let Some(mut g) = self.git_mut(cx) else { return };
         g.dialog = None;
+        drop(g);
         self.focus_editor(window, cx);
         cx.notify();
     }
@@ -235,22 +243,29 @@ impl Workspace {
             }
             return self.close_git_dialog(window, cx);
         }
-        match self.git_dialog() {
-            Some(GitDialog::Conflicts(d)) => match key {
-                "up" => d.selected = d.selected.saturating_sub(1),
-                "down" => d.selected = (d.selected + 1).min(d.files.len().saturating_sub(1)),
-                "enter" => self.conflicts_merge(window, cx),
-                _ => {}
-            },
-            _ => self.stash_dialog_key(e, window, cx),
+        if !matches!(self.git_dialog(cx).as_deref(), Some(GitDialog::Conflicts(_))) {
+            self.stash_dialog_key(e, window, cx);
+        } else if key == "enter" {
+            self.conflicts_merge(window, cx);
+        } else if let Some(mut dialog) = self.git_dialog(cx) {
+            if let GitDialog::Conflicts(d) = &mut *dialog {
+                match key {
+                    "up" => d.selected = d.selected.saturating_sub(1),
+                    "down" => d.selected = (d.selected + 1).min(d.files.len().saturating_sub(1)),
+                    _ => {}
+                }
+            }
         }
         cx.notify();
     }
 
     pub(super) fn render_git_dialog(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let dialog = self.git.as_ref()?.dialog.as_ref()?;
-        let body = match dialog {
-            GitDialog::Conflicts(d) => self.render_conflicts(d, cx),
+        let conflicts = match self.git(cx)?.dialog.as_ref()? {
+            GitDialog::Conflicts(d) => Some(d.clone()),
+            _ => None,
+        };
+        let body = match conflicts {
+            Some(d) => self.render_conflicts(&d, cx),
             _ => self.render_stash_dialog(cx)?,
         };
         Some(div().absolute().top_0().left_0().size_full().flex().justify_center().items_start().pt(px(50.)).occlude().child(body).into_any_element())
@@ -280,7 +295,7 @@ impl Workspace {
                 .on_mouse_down(
                     gpui::MouseButton::Left,
                     cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
-                        if let Some(GitDialog::Conflicts(d)) = this.git_dialog() {
+                        if let Some(GitDialog::Conflicts(d)) = this.git_dialog(cx).as_deref_mut() {
                             d.selected = i;
                         }
                         if e.click_count == 2 {

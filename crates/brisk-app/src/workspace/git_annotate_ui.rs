@@ -60,14 +60,14 @@ impl Workspace {
     /// The repository-relative path of an editor's file, if it is in the repository (for a
     /// file at a revision: its path there).
     fn annotate_target(&self, ed: &Entity<Editor>, cx: &gpui::App) -> Option<String> {
-        let g = self.git.as_ref()?;
+        let g = self.git(cx)?;
         let e = ed.read(cx);
         if let Some((rel, _)) = &e.revision {
             return Some(rel.clone());
         }
         let path = e.path.clone()?;
         let rel = g.repo.rel(&path)?;
-        (self.file_status(&path) != Some(FileStatus::Untracked)).then_some(rel)
+        (self.file_status(&path, cx) != Some(FileStatus::Untracked)).then_some(rel)
     }
 
     /// Annotate with Git Blame / Close Annotations.
@@ -76,7 +76,7 @@ impl Workspace {
             ed.update(cx, |e, cx| e.set_annotation(None, cx));
             return;
         }
-        if self.git.is_none() {
+        if self.git(cx).is_none() {
             return self.show_toast("Version control is not enabled for this project".into(), true, cx);
         }
         if self.annotate_target(&ed, cx).is_none() {
@@ -88,7 +88,7 @@ impl Workspace {
     /// (Re)compute the blame of an editor's text in the background.
     pub(super) fn annotate(&mut self, ed: Entity<Editor>, cx: &mut Context<Self>) {
         let Some(rel) = self.annotate_target(&ed, cx) else { return };
-        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        let Some(repo) = self.git(cx).map(|g| g.repo.clone()) else { return };
         let (text, version, rev) = {
             let e = ed.read(cx);
             (e.buffer.text(), e.buffer.version(), e.revision.as_ref().map(|r| r.1.clone()))
@@ -131,7 +131,7 @@ impl Workspace {
     /// A click on an annotation: that commit's diff of the file (PyCharm: Show Diff).
     pub(super) fn show_annotation_commit(&mut self, ed: Entity<Editor>, hash: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(rel) = self.annotate_target(&ed, cx) else { return };
-        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        let Some(repo) = self.git(cx).map(|g| g.repo.clone()) else { return };
         let from = ed.read(cx).revision.as_ref().map(|r| r.1.clone());
         // The file may have had another name in that commit (`git log --follow`): off the UI thread.
         let h = hash.clone();
@@ -154,7 +154,7 @@ impl Workspace {
     /// annotated, in a read-only tab.
     pub(super) fn annotate_previous(&mut self, ed: Entity<Editor>, hash: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(rel) = self.annotate_target(&ed, cx) else { return };
-        let Some(repo) = self.git.as_ref().map(|g| g.repo.clone()) else { return };
+        let Some(repo) = self.git(cx).map(|g| g.repo.clone()) else { return };
         let from = ed.read(cx).revision.as_ref().map(|r| r.1.clone());
         let task = cx.background_executor().spawn(async move {
             let (parent, path) = repo

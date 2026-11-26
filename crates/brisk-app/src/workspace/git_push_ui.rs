@@ -19,26 +19,35 @@ pub struct PushDialog {
 }
 
 impl Workspace {
-    fn push_dialog(&mut self) -> Option<&mut PushDialog> {
-        match self.git.as_mut()?.dialog.as_mut()? {
-            GitDialog::Push(d) => Some(d),
-            _ => None,
-        }
+    fn push_dialog<'a>(&self, cx: &'a mut gpui::App) -> Option<super::vcs_model::VcsMut<'a, PushDialog>> {
+        self.vcs_mut(
+            cx,
+            |m| match m.git.as_ref()?.dialog.as_ref()? {
+                GitDialog::Push(d) => Some(d),
+                _ => None,
+            },
+            |m| match m.git.as_mut()?.dialog.as_mut()? {
+                GitDialog::Push(d) => Some(d),
+                _ => None,
+            },
+        )
     }
 
     pub(super) fn open_push_dialog(&mut self, cx: &mut Context<Self>) {
-        let Some(g) = self.git.as_mut() else { return };
+        let Some(mut g) = self.git_mut(cx) else { return };
         g.dialog = Some(GitDialog::Push(PushDialog { outgoing: None, error: None, selected: 0, files: Vec::new() }));
         let repo = g.repo.clone();
+        drop(g);
         let task = cx.background_executor().spawn(async move { repo.outgoing() });
         cx.spawn(async move |this, cx| {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
-                let Some(d) = this.push_dialog() else { return };
+                let Some(mut d) = this.push_dialog(cx) else { return };
                 match res {
                     Ok(o) => d.outgoing = Some(o),
                     Err(e) => d.error = Some(e.to_string()),
                 }
+                drop(d);
                 this.push_select(0, cx);
             });
         })
@@ -47,52 +56,55 @@ impl Workspace {
     }
 
     pub(super) fn push_select(&mut self, i: usize, cx: &mut Context<Self>) {
-        let repo = self.git.as_ref().map(|g| g.repo.clone());
-        let Some(d) = self.push_dialog() else { return };
-        let Some(o) = &d.outgoing else { return cx.notify() };
-        if let Some(c) = o.commits.get(i.min(o.commits.len().saturating_sub(1))) {
-            let hash = c.hash.clone();
-            let sel = i.min(o.commits.len() - 1);
-            d.selected = sel;
-            // `git show --name-status` per row: off the UI thread; a stale answer is dropped.
-            if let Some(repo) = repo {
-                let task = cx.background_executor().spawn(async move { repo.commit_files(&hash).unwrap_or_default() });
-                cx.spawn(async move |this, cx| {
-                    let files = task.await;
-                    let _ = this.update(cx, |this, cx| {
-                        if let Some(d) = this.push_dialog().filter(|d| d.selected == sel) {
-                            d.files = files;
-                            cx.notify();
-                        }
-                    });
-                })
-                .detach();
-            }
+        let repo = self.git(cx).map(|g| g.repo.clone());
+        let Some(mut d) = self.push_dialog(cx) else { return };
+        let Some(o) = &d.outgoing else {
+            drop(d);
+            return cx.notify();
+        };
+        let picked = o.commits.get(i.min(o.commits.len().saturating_sub(1))).map(|c| (c.hash.clone(), i.min(o.commits.len() - 1)));
+        if let Some((_, sel)) = &picked {
+            d.selected = *sel;
+        }
+        drop(d);
+        // `git show --name-status` per row: off the UI thread; a stale answer is dropped.
+        if let (Some((hash, sel)), Some(repo)) = (picked, repo) {
+            let task = cx.background_executor().spawn(async move { repo.commit_files(&hash).unwrap_or_default() });
+            cx.spawn(async move |this, cx| {
+                let files = task.await;
+                let _ = this.update(cx, |this, cx| {
+                    let Some(mut d) = this.push_dialog(cx).filter(|d| d.selected == sel) else { return };
+                    d.files = files;
+                    drop(d);
+                    cx.notify();
+                });
+            })
+            .detach();
         }
         cx.notify();
     }
 
     pub(super) fn push_confirm(&mut self, cx: &mut Context<Self>) {
-        let Some(o) = self.push_dialog().and_then(|d| d.outgoing.clone()) else { return };
-        if let Some(g) = self.git.as_mut() {
+        let Some(o) = self.push_dialog(cx).and_then(|d| d.outgoing.clone()) else { return };
+        if let Some(mut g) = self.git_mut(cx) {
             g.dialog = None;
         }
         self.git_op("Push", move |r| r.push_outgoing(&o), |_, _| {}, cx);
     }
 
     fn push_file_diff(&mut self, fi: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(d) = self.push_dialog() else { return };
+        let Some(d) = self.push_dialog(cx) else { return };
         let (Some(o), Some(f)) = (&d.outgoing, d.files.get(fi).cloned()) else { return };
         let Some(hash) = o.commits.get(d.selected).map(|c| c.hash.clone()) else { return };
-        if let Some(g) = self.git.as_mut() {
+        drop(d);
+        if let Some(mut g) = self.git_mut(cx) {
             g.dialog = None;
         }
         self.show_commit_diff(&hash, &f, window, cx);
     }
 
     pub(super) fn push_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(d) = self.push_dialog() else { return };
-        let sel = d.selected;
+        let Some(sel) = self.push_dialog(cx).map(|d| d.selected) else { return };
         let k = &e.keystroke;
         match k.key.as_str() {
             "up" => self.push_select(sel.saturating_sub(1), cx),
@@ -104,7 +116,7 @@ impl Workspace {
     }
 
     pub(super) fn render_push_dialog(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let d = match self.git.as_ref()?.dialog.as_ref()? {
+        let d = match self.git(cx)?.dialog.as_ref()? {
             GitDialog::Push(d) => d,
             _ => return None,
         };
@@ -217,7 +229,7 @@ impl Workspace {
                                 .child("↑↓ commits · double click a file: diff · Enter Push · Esc cancel"),
                         )
                         .child(button("push-cancel", "Cancel", false).on_click(cx.listener(|this, _, w, cx| {
-                            if let Some(g) = this.git.as_mut() {
+                            if let Some(mut g) = this.git_mut(cx) {
                                 g.dialog = None;
                             }
                             this.focus_editor(w, cx);
