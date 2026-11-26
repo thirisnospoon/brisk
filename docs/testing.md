@@ -296,7 +296,7 @@ Checks Show in Services, the Stop and Rerun / Cancel question on a second run, t
 
 Folder: empty. Writes `picker/alpha/.git`, `picker/beta` and `picker/.hidden`.
 
-Checks the folder picker of Open… and New Project…: the listing (the hidden folder left out, `alpha` marked as a project), that typing `be` selects `beta` and Tab completes it, and that New Project creates the typed folder and asks This Window / New Window. With `BRISK_TOUR_SYNC=<dir>` it asks for screenshots the way the tour does.
+Checks the folder browser of Open… and New Project…: the listing (the hidden folder left out, `alpha` marked as a project), the places, that Down and Right step into `alpha` and Backspace comes back with it selected, that Ctrl+H shows `.hidden`, and that New Project creates the typed folder and asks This Window / New Window. With `BRISK_TOUR_SYNC=<dir>` it asks for screenshots the way the tour does.
 
 ### `BRISK_SMOKE_UPDATE=1`
 

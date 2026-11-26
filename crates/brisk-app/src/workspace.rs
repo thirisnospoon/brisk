@@ -164,7 +164,6 @@ enum PopupKind {
     /// Shift+F6: the new name.
     Rename,
     /// Brisk's folder picker (Open…, New Project…): a path and its subfolders.
-    PickFolder,
     /// The project widget: New Project…, Open…, recent projects.
     Projects,
     /// "Open Project": This Window / New Window.
@@ -319,7 +318,6 @@ enum Target {
     Rename(String),
     Project(project_ui::ProjectCmd),
     /// A row of the folder picker.
-    PickFolder(folder_picker_ui::Pick),
     /// A class or function from the symbol index: file, line, column.
     Symbol(PathBuf, usize, usize, brisk_syntax::OutlineKind),
     /// Run the pending file operation with this target.
@@ -386,7 +384,7 @@ pub struct Workspace {
     file_op: Option<files_ui::FileOp>,
     /// The folder waiting for the This Window / New Window choice.
     project_pending: Option<PathBuf>,
-    folder_picker: folder_picker_ui::FolderPicker,
+    folder_picker: Option<folder_picker_ui::FolderPicker>,
     tree: ProjectTree,
     tree_selected: Option<NodeId>,
     tree_scroll: UniformListScrollHandle,
@@ -636,7 +634,7 @@ impl Workspace {
             menu: None,
             file_op: None,
             project_pending: None,
-            folder_picker: Default::default(),
+            folder_picker: None,
             tree,
             tree_selected: Some(0),
             tree_scroll: UniformListScrollHandle::new(),
@@ -1133,6 +1131,11 @@ impl Workspace {
         }
         if self.debug.read(cx).bp_dialog.is_some() {
             self.bp_dialog_key(e, window, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if self.folder_picker.is_some() {
+            self.picker_key(e, window, cx);
             cx.stop_propagation();
             return;
         }
@@ -1757,7 +1760,6 @@ impl Workspace {
             PopupKind::SearchEverywhere(SeTab::Files) => self.file_items(&q, 50),
             PopupKind::Projects => self.project_items(&q),
             PopupKind::OpenWhere => self.open_where_items(&q),
-            PopupKind::PickFolder => self.picker_items(&q),
             PopupKind::FileName | PopupKind::FileDelete => self.file_op_items(&q),
             PopupKind::FileStructure | PopupKind::Bookmarks | PopupKind::LocalHistory => self.structure_items(&q),
             PopupKind::BookmarkMnemonic => self.mnemonic_items(&q),
@@ -1858,7 +1860,6 @@ impl Workspace {
                 self.folder_crumb_step(right);
                 cx.notify();
             }
-            "tab" if p.kind == PopupKind::PickFolder => self.picker_complete(cx),
             "tab" => {
                 if let PopupKind::SearchEverywhere(t) = p.kind {
                     self.set_se_tab(t.next());
@@ -1874,11 +1875,6 @@ impl Workspace {
                 }
                 if let Some(Target::Dir(_)) = target {
                     self.folder_crumb_step(true);
-                    cx.notify();
-                    return;
-                }
-                if let Some(Target::PickFolder(pick)) = target {
-                    self.picker_pick(pick, cx);
                     cx.notify();
                     return;
                 }
@@ -1993,7 +1989,7 @@ impl Workspace {
                         }
                         self.focus_editor(window, cx);
                     }
-                    Some(Target::Dir(_) | Target::Task | Target::PickFolder(_)) | None => self.focus_editor(window, cx),
+                    Some(Target::Dir(_) | Target::Task) | None => self.focus_editor(window, cx),
                 }
             }
             "backspace" => {
@@ -2035,8 +2031,6 @@ impl Workspace {
                 }
             }
         }
-        // The folder picker's path may name a folder that is not listed yet.
-        self.load_picker_folder(cx);
         cx.notify();
     }
 
@@ -2839,7 +2833,6 @@ impl Workspace {
             PopupKind::Rename => ("Rename", "New name"),
             PopupKind::Projects => ("Projects", "Type to filter"),
             PopupKind::OpenWhere => ("Open Project", "Type to filter"),
-            PopupKind::PickFolder => self.picker_title(),
             PopupKind::FileStructure => ("File Structure", "Type to filter"),
             PopupKind::BackgroundTasks => ("Background Tasks", "Type to filter"),
             PopupKind::StatusHistory => ("Recent Messages", "Type to filter"),
@@ -3010,9 +3003,7 @@ impl Workspace {
     fn popup_row(i: usize, it: &PopupItem, selected: usize, look: RowLook, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let (icon, color) = match &it.target {
             Target::File(_) => file_icon(&it.label, false),
-            Target::Dir(_) | Target::PickFolder(folder_picker_ui::Pick::Into(_)) => file_icon(&it.label, true),
-            Target::PickFolder(folder_picker_ui::Pick::Open(_)) => ("▰", gpui::rgb(0x8c8f96).into()),
-            Target::PickFolder(folder_picker_ui::Pick::Create(_)) => ("+", Theme::text_muted()),
+            Target::Dir(_) => file_icon(&it.label, true),
             Target::Action(_) => ("⚡", gpui::rgb(0xb3ae60).into()),
             Target::Line(_) | Target::LineCol(..) => ("↧", Theme::text_muted()),
             Target::Branch(b) if b.current => ("★", gpui::rgb(0xe0a85a).into()),
@@ -3376,6 +3367,7 @@ impl Render for Workspace {
             .children(self.render_ds_dialog(cx).map(|e| fade_in("ds-in", e, Enter::Dialog)))
             .children(self.render_settings(cx).map(|e| fade_in("settings-in", e, Enter::Dialog)))
             .children(self.render_update_dialog(cx).map(|e| fade_in("update-dialog-in", e, Enter::Dialog)))
+            .children(self.render_folder_picker(cx).map(|e| fade_in("folder-picker-in", e, Enter::Dialog)))
             .children(self.render_key_capture())
             .children(self.render_bp_dialog(cx).map(|e| fade_in("bp-dialog-in", e, Enter::Dialog)))
             .children(self.render_chooser(cx))

@@ -41,6 +41,7 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 ### Projects
 
 - Clicking the project name in the toolbar opens a menu with New Project…, Open… (pick a folder, then This Window or New Window) and recent projects (they open in a new window).
+- Open… and New Project… show a folder browser: places on the left (Home, Desktop, Documents, Downloads, the drives, recent projects), the folder's subfolders on the right (projects marked), an editable path above them. Arrows move, `→` or a double click steps into a folder, `←` / `Backspace` goes up, `Ctrl+H` shows hidden folders, `Enter` opens the selected folder (or the one shown). New Project adds a Name field and creates that folder in the selected one.
 - Started without an argument, Brisk opens the last project.
 
 ### Updates

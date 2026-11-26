@@ -1,14 +1,15 @@
-//! `BRISK_SMOKE_PICKER=1` (on an empty scratch folder): the folder picker of Open… and New
+//! `BRISK_SMOKE_PICKER=1` (on an empty scratch folder): the folder browser of Open… and New
 //! Project…. In `picker/` of the project it makes `alpha` (with `.git`), `beta` and `.hidden`,
-//! then checks: the listing (hidden folder left out, `alpha` marked as a project), typing a
-//! name selects the matching folder, Tab completes it, and New Project creates the typed
-//! folder and asks where to open it. With BRISK_TOUR_SYNC=<dir> it also asks for screenshots
-//! the way the tour does. Exits with code 1 on the first failed check.
+//! then checks: the listing (hidden folder left out, `alpha` marked as a project), the places
+//! (home and the drives), `↓` / `→` step into a folder and `Backspace` back up with it
+//! selected, Ctrl+H shows hidden folders, and New Project creates the typed folder and asks
+//! where to open it. With BRISK_TOUR_SYNC=<dir> it also asks for screenshots the way the tour
+//! does. Exits with code 1 on the first failed check.
 
 use crate::workspace::{PopupKind, Workspace};
 use brisk_keymap::Action;
 use gpui::{AsyncWindowContext, Context, KeyDownEvent, WeakEntity, Window};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 fn wait(cx: &AsyncWindowContext, ms: u64) -> gpui::Task<()> {
@@ -17,32 +18,32 @@ fn wait(cx: &AsyncWindowContext, ms: u64) -> gpui::Task<()> {
 
 fn key(this: &mut Workspace, k: &str, window: &mut Window, cx: &mut Context<Workspace>) {
     let ev = KeyDownEvent { keystroke: gpui::Keystroke::parse(k).unwrap(), is_held: false };
-    this.popup_key(&ev, window, cx);
+    this.picker_key(&ev, window, cx);
 }
 
-/// Types `text` into the open popup, one key at a time.
+/// Types `text` into the browser's focused field, one key at a time.
 fn type_text(this: &mut Workspace, text: &str, window: &mut Window, cx: &mut Context<Workspace>) {
     for c in text.chars() {
         let mut stroke = gpui::Keystroke::parse(&c.to_string()).unwrap();
         stroke.key_char = Some(c.to_string());
-        this.popup_key(&KeyDownEvent { keystroke: stroke, is_held: false }, window, cx);
+        this.picker_key(&KeyDownEvent { keystroke: stroke, is_held: false }, window, cx);
     }
 }
 
-/// The open picker's rows as `label[hint]`, once its folder is listed.
-async fn rows(this: &WeakEntity<Workspace>, cx: &mut AsyncWindowContext) -> Vec<String> {
-    let mut last = Vec::new();
+/// The folder shown and its rows as `name[project]`, once listed.
+async fn rows(this: &WeakEntity<Workspace>, cx: &mut AsyncWindowContext) -> (PathBuf, Vec<String>) {
+    let mut last = (PathBuf::new(), Vec::new());
     for _ in 0..100 {
-        last = this
+        let got = this
             .update(cx, |this, _| {
-                this.popup
-                    .as_ref()
-                    .filter(|p| p.kind == PopupKind::PickFolder)
-                    .map(|p| p.items.iter().map(|i| if i.hint.is_empty() { i.label.clone() } else { format!("{}[{}]", i.label, i.hint) }).collect())
-                    .unwrap_or_default()
+                let b = this.folder_picker.as_ref()?;
+                b.listing.as_ref()?;
+                Some((b.dir.clone(), b.visible().iter().map(|f| if f.project { format!("{}[project]", f.name) } else { f.name.clone() }).collect()))
             })
-            .unwrap_or_default();
-        if !last.is_empty() && last[0] != "Loading…" {
+            .ok()
+            .flatten();
+        if let Some(g) = got {
+            last = g;
             break;
         }
         wait(cx, 20).await;
@@ -83,50 +84,47 @@ impl Workspace {
     pub(in crate::workspace) fn picker_smoke(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root.clone();
         prepare(&root);
-        let base = brisk_project::folders::as_query(&root.join("picker"));
+        let base = root.join("picker");
         cx.spawn_in(window, async move |this, cx| {
             wait(cx, 1000).await;
-            // Open…: the folder's subfolders under the row that opens it.
-            let q = base.clone();
+            // Open…: the folder's subfolders, hidden ones left out.
+            let b = base.clone();
             let _ = this.update_in(cx, |this, window, cx| {
                 this.dispatch(Action::OpenProject, window, cx);
-                this.set_picker_query(q, cx);
+                this.picker_go(b, None, cx);
             });
-            let got = rows(&this, cx).await;
-            check(got == ["Open picker[Enter]", "alpha[project]", "beta"], "listing", &got);
+            let (_, got) = rows(&this, cx).await;
+            check(got == ["alpha[project]", "beta"], "listing", &got);
+            let places = this.update(cx, |this, _| this.folder_picker.as_ref().map_or(0, |b| b.place_count())).unwrap_or(0);
+            check(places >= 2, "places", places);
             shot("open", cx).await;
 
-            // Typing a name selects the folder it starts; Tab completes it.
-            let selected = this
-                .update_in(cx, |this, window, cx| {
-                    type_text(this, "be", window, cx);
-                    this.popup.as_ref().and_then(|p| p.items.get(p.selected)).map(|i| i.label.clone())
-                })
-                .ok()
-                .flatten();
-            check(selected.as_deref() == Some("beta"), "typing selects", &selected);
-            let query = this
-                .update_in(cx, |this, window, cx| {
-                    key(this, "tab", window, cx);
-                    this.popup.as_ref().map(|p| p.query.clone())
-                })
-                .ok()
-                .flatten();
-            check(query == Some(format!("{base}beta{}", std::path::MAIN_SEPARATOR)), "tab completes", &query);
-            let got = rows(&this, cx).await;
-            check(got == ["Open beta[Enter]"], "empty folder", &got);
+            // ↓ selects the first folder, → steps into it, Backspace comes back with it selected.
+            let _ = this.update_in(cx, |this, window, cx| {
+                key(this, "down", window, cx);
+                key(this, "right", window, cx);
+            });
+            let (dir, _) = rows(&this, cx).await;
+            check(dir == base.join("alpha"), "step in", &dir);
+            let _ = this.update_in(cx, |this, window, cx| key(this, "backspace", window, cx));
+            let (dir, _) = rows(&this, cx).await;
+            let target = this.update(cx, |this, _| this.folder_picker.as_ref().map(|b| b.target())).ok().flatten();
+            check(dir == base && target == Some(base.join("alpha")), "up selects where it came from", &target);
+
+            // Ctrl+H: hidden folders too.
+            let _ = this.update_in(cx, |this, window, cx| key(this, "ctrl-h", window, cx));
+            let (_, got) = rows(&this, cx).await;
+            check(got.iter().any(|r| r == ".hidden"), "show hidden", &got);
 
             // New Project…: the typed name becomes a new folder, then This Window / New Window.
-            let q = base.clone();
+            let b = base.clone();
             let _ = this.update_in(cx, |this, window, cx| {
                 key(this, "escape", window, cx);
                 this.dispatch(Action::NewProject, window, cx);
-                this.set_picker_query(q, cx);
+                this.picker_go(b, None, cx);
             });
             let _ = rows(&this, cx).await;
             let _ = this.update_in(cx, |this, window, cx| type_text(this, "fresh", window, cx));
-            let got = rows(&this, cx).await;
-            check(got.first().is_some_and(|r| r.starts_with("Create fresh")), "create row", &got);
             shot("new", cx).await;
             let kind = this
                 .update_in(cx, |this, window, cx| {
