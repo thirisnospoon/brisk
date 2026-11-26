@@ -175,7 +175,7 @@ impl Workspace {
                 if let Some(t) = tests {
                     this.take_test_results(&t.results, cx);
                 }
-                this.coverage_finished(name, cx);
+                this.coverage_finished(name, window, cx);
                 this.profile_finished(name, cx);
                 this.status = match (tests, code) {
                     (Some(t), _) => t.summary.clone(),

@@ -12,18 +12,56 @@ use brisk_run::{RunConfig, RunKind};
 use gpui::prelude::*;
 #[cfg(feature = "smoke")]
 use gpui::EntityInputHandler;
-use gpui::{div, px, Context, Entity, FocusHandle, Window};
+use gpui::{div, px, App, Context, Entity, EventEmitter, FocusHandle, Window};
 use std::path::PathBuf;
 
-/// The Coverage tool window.
-pub struct CoverageView {
-    pub report: Report,
-    /// The configuration that was measured.
-    pub name: String,
-    pub selected: usize,
+/// The Coverage tool window as `Workspace` holds it: its focus and its model, which is
+/// created when the first report comes in or the window first opens.
+pub struct Coverage {
     pub focus: FocusHandle,
+    model: Option<Entity<CoverageModel>>,
+}
+
+impl Coverage {
+    pub fn new(cx: &mut Context<Workspace>) -> Self {
+        Self { focus: cx.focus_handle(), model: None }
+    }
+
+    /// The report shown, if there is one.
+    pub fn report<'a>(&'a self, cx: &'a App) -> Option<&'a Report> {
+        self.model.as_ref().and_then(|m| m.read(cx).report.as_ref())
+    }
+
+    /// Drops the report.
+    fn clear(&self, cx: &mut App) {
+        if let Some(m) = &self.model {
+            m.update(cx, |m, cx| m.clear(cx));
+        }
+    }
+}
+
+/// What the Coverage model asks of the workspace.
+pub enum CoverageEvent {
+    /// Open a file, at its first missed line if it has one.
+    Open(PathBuf, Option<usize>),
+    /// Esc: back to the editor.
+    FocusEditor,
+    /// A header button that runs an action (Run with Coverage again).
+    Dispatch(Action),
+    /// ✕: hide the report and the gutter marks.
+    Clear,
+}
+
+/// The last coverage report, and the window that lists its files.
+pub struct CoverageModel {
+    root: PathBuf,
+    focus: FocusHandle,
+    report: Option<Report>,
+    /// The configuration that was measured.
+    name: String,
+    selected: usize,
     /// The list's scroll: Up / Down keep the selected row in view.
-    pub scroll: gpui::ScrollHandle,
+    scroll: gpui::ScrollHandle,
 }
 
 /// A coverage run in progress: its tab name, interpreter and working directory.
@@ -99,7 +137,7 @@ impl Workspace {
     }
 
     /// A Run tab finished: if it was the coverage run, read the report.
-    pub(super) fn coverage_finished(&mut self, name: &str, cx: &mut Context<Self>) {
+    pub(super) fn coverage_finished(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         if self.cov_pending.as_ref().is_none_or(|p| p.name != name) {
             return;
         }
@@ -119,14 +157,14 @@ impl Workspace {
             let text = std::fs::read_to_string(&out).map_err(|e| e.to_string())?;
             coverage::parse(&text, &root, &p.cwd)
         });
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let res = task.await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 match res {
                     Ok(report) => {
                         this.status = format!("Coverage of '{name}': {:.0}% of lines in {} files", report.percent, report.files.len());
-                        let focus = this.coverage.as_ref().map(|c| c.focus.clone()).unwrap_or_else(|| cx.focus_handle());
-                        this.coverage = Some(CoverageView { report, name, selected: 0, focus, scroll: gpui::ScrollHandle::new() });
+                        let m = this.coverage_model(window, cx);
+                        m.update(cx, |m, cx| m.set_report(report, name, cx));
                         this.bottom = Some(BottomTool::Coverage);
                         let eds: Vec<_> = this.editors().cloned().collect();
                         for ed in eds {
@@ -145,7 +183,7 @@ impl Workspace {
     pub(super) fn push_coverage(&self, ed: &Entity<Editor>, cx: &mut Context<Self>) {
         let Some(path) = ed.read(cx).path.clone() else { return };
         let key = norm(&path);
-        let file = self.coverage.as_ref().and_then(|c| c.report.files.iter().find(|f| norm(&f.path) == key)).cloned();
+        let file = self.coverage.report(cx).and_then(|r| r.files.iter().find(|f| norm(&f.path) == key)).cloned();
         ed.update(cx, |e, cx| {
             e.set_coverage(file.as_ref().map(|f| (f.covered.as_slice(), f.missed.as_slice())));
             cx.notify();
@@ -154,7 +192,7 @@ impl Workspace {
 
     /// Hide the marks and the report (the window's ✕).
     fn clear_coverage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.coverage = None;
+        self.coverage.clear(cx);
         let eds: Vec<_> = self.editors().cloned().collect();
         for ed in eds {
             self.push_coverage(&ed, cx);
@@ -166,169 +204,46 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(super) fn toggle_coverage_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_bottom(BottomTool::Coverage, window, cx);
-        if let (Some(BottomTool::Coverage), Some(c)) = (self.bottom, &self.coverage) {
-            window.focus(&c.focus.clone());
+    /// The Coverage model, created on first use.
+    fn coverage_model(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<CoverageModel> {
+        if let Some(m) = &self.coverage.model {
+            return m.clone();
         }
-        cx.notify();
+        let m = cx.new(|_| CoverageModel::new(self.root.clone(), self.coverage.focus.clone()));
+        cx.subscribe_in(&m, window, |this, _, ev, window, cx| this.on_coverage_event(ev, window, cx)).detach();
+        self.coverage.model = Some(m.clone());
+        m
     }
 
-    fn coverage_open(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.coverage.as_ref().and_then(|c| c.report.files.get(i)).map(|f| f.path.clone()) else { return };
-        // The first missed line, like a jump to what still needs a test.
-        let line = self.coverage.as_ref().and_then(|c| c.report.files.get(i)).and_then(|f| f.missed.iter().min().copied());
-        self.open_file(&path, window, cx);
-        if let (Some(l), Some(ed)) = (line, self.active_editor().cloned()) {
-            ed.update(cx, |e, cx| e.go_to_line(l, cx));
-        }
-    }
-
-    fn coverage_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(c) = self.coverage.as_mut() else { return };
-        let n = c.report.files.len();
-        match key {
-            "down" if c.selected + 1 < n => c.selected += 1,
-            "up" => c.selected = c.selected.saturating_sub(1),
-            "enter" => {
-                let i = c.selected;
-                self.coverage_open(i, window, cx);
-            }
-            "escape" => self.focus_editor(window, cx),
-            _ => return,
-        }
-        if let Some(c) = &self.coverage {
-            c.scroll.scroll_to_item(c.selected);
-        }
-        cx.notify();
-    }
-
-    pub(super) fn render_coverage(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let Some(c) = &self.coverage else {
-            return div().p(px(10.)).text_size(ui_px(13.)).text_color(Theme::text_dim()).child("No coverage data: Run › Run with Coverage").into_any_element();
-        };
-        let rel = |p: &std::path::Path| p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/");
-        let toolbar = div()
-            .flex()
-            .flex_shrink_0()
-            .items_center()
-            .gap(px(6.))
-            .pl(px(12.))
-            .pr(px(6.))
-            .h(px(crate::ui_kit::header_h()))
-            .border_b_1()
-            .border_color(Theme::divider())
-            .child(crate::ui_kit::tool_title("Coverage"))
-            .child(
-                div()
-                    .id("cov-rerun")
-                    .size(ui_px(24.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(5.))
-                    .cursor_pointer()
-                    .text_color(Theme::accent())
-                    .hover(|s| s.bg(Theme::hover_row()))
-                    .active(|s| s.bg(Theme::press()))
-                    .child("↻")
-                    .tooltip(|_, cx| cx.new(|_| super::Tip("Run with Coverage again".into())).into())
-                    .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::RunWithCoverage, w, cx))),
-            )
-            .child(
-                div()
-                    .id("cov-clear")
-                    .size(ui_px(24.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(5.))
-                    .cursor_pointer()
-                    .text_color(Theme::text_muted())
-                    .hover(|s| s.bg(Theme::hover_row()))
-                    .active(|s| s.bg(Theme::press()))
-                    .child("✕")
-                    .tooltip(|_, cx| cx.new(|_| super::Tip("Hide coverage (gutter marks and this report)".into())).into())
-                    .on_click(cx.listener(|this, _, w, cx| this.clear_coverage(w, cx))),
-            )
-            .child(div().text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(format!("'{}': {:.0}% of lines covered", c.name, c.report.percent)));
-        let header = div()
-            .flex()
-            .flex_shrink_0()
-            .h(ui_px(22.))
-            .items_center()
-            .px(px(8.))
-            .text_size(ui_px(12.))
-            .text_color(Theme::text_dim())
-            .border_b_1()
-            .border_color(Theme::divider())
-            .child(div().flex_1().child("File"))
-            .child(div().w(px(120.)).child("% Lines"))
-            .child(div().w(px(110.)).child("Covered / Total"));
-        let bar = |pct: f64| {
-            let w = 60.0f64;
-            div()
-                .w(px(w as f32))
-                .h(ui_px(6.))
-                .rounded(px(3.))
-                .bg(Theme::coverage_miss())
-                .child(div().h_full().rounded(px(3.)).w(px((w * pct / 100.0) as f32)).bg(Theme::coverage_hit()))
-        };
-        let list = div()
-            .id("cov-list")
-            .track_focus(&c.focus)
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&c.scroll)
-            .text_size(ui_px(13.))
-            .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, w, cx| {
-                let k = e.keystroke.key.clone();
-                if !e.keystroke.modifiers.modified() {
-                    this.coverage_key(&k, w, cx);
+    fn on_coverage_event(&mut self, ev: &CoverageEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match ev {
+            CoverageEvent::Open(path, line) => {
+                self.open_file(path, window, cx);
+                if let (Some(l), Some(ed)) = (line, self.active_editor().cloned()) {
+                    ed.update(cx, |e, cx| e.go_to_line(*l, cx));
                 }
-            }))
-            .when(c.report.files.is_empty(), |d| d.child(div().p(px(10.)).text_color(Theme::text_dim()).child("No project files were executed")))
-            .children(c.report.files.iter().enumerate().map(|(i, f)| {
-                let sel = i == c.selected;
-                div()
-                    .id(("cov-row", i))
-                    .w_full()
-                    .h(ui_px(22.))
-                    .px(px(8.))
-                    .flex()
-                    .items_center()
-                    .whitespace_nowrap()
-                    .overflow_hidden()
-                    .cursor_pointer()
-                    .when(sel, |d| d.bg(Theme::selection_row()))
-                    .when(!sel, |d| d.hover(|s| s.bg(Theme::hover_row())))
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(move |this, e: &gpui::MouseDownEvent, w, cx| {
-                            if let Some(c) = this.coverage.as_mut() {
-                                c.selected = i;
-                                w.focus(&c.focus.clone());
-                            }
-                            if e.click_count >= 2 {
-                                this.coverage_open(i, w, cx);
-                            }
-                            cx.notify();
-                        }),
-                    )
-                    .child(div().flex_1().overflow_hidden().text_ellipsis().text_color(Theme::text()).child(rel(&f.path)))
-                    .child(
-                        div()
-                            .w(px(120.))
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(bar(f.percent))
-                            .child(div().text_size(ui_px(12.)).child(format!("{:.0}%", f.percent))),
-                    )
-                    .child(div().w(px(110.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(format!("{} / {}", f.covered.len(), f.statements)))
-            }));
-        div().id("coverage-window").size_full().flex().flex_col().child(toolbar).child(header).child(list).into_any_element()
+            }
+            CoverageEvent::FocusEditor => self.focus_editor(window, cx),
+            CoverageEvent::Dispatch(action) => self.dispatch(*action, window, cx),
+            CoverageEvent::Clear => self.clear_coverage(window, cx),
+        }
+        cx.notify();
+    }
+
+    pub(super) fn toggle_coverage_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.coverage_model(window, cx);
+        self.toggle_bottom(BottomTool::Coverage, window, cx);
+        if self.bottom == Some(BottomTool::Coverage) && self.coverage.report(cx).is_some() {
+            window.focus(&self.coverage.focus);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn render_coverage(&self) -> gpui::AnyElement {
+        match &self.coverage.model {
+            Some(m) => m.clone().into_any_element(),
+            None => no_report().into_any_element(),
+        }
     }
 
     // --- Smoke --------------------------------------------------------------------------
@@ -385,14 +300,15 @@ impl Workspace {
                     (0..e.buffer.len_lines()).filter_map(|l| e.coverage_at(l).map(|h| format!("{}{}", l + 1, if h { "+" } else { "-" }))).collect::<Vec<_>>()
                 })
             };
-            let report = |this: &Workspace| {
-                this.coverage.as_ref().map(|c| {
+            let report = |this: &Workspace, cx: &gpui::App| {
+                this.coverage.report(cx).map(|r| {
                     (
-                        c.report.percent.round(),
-                        c.report
-                            .files
+                        r.percent.round(),
+                        r.files
                             .iter()
-                            .map(|f| format!("{} {:.0}% {}/{}", f.path.file_name().unwrap().to_string_lossy(), f.percent, f.covered.len(), f.statements))
+                            .map(|f| {
+                                format!("{} {:.0}% {}/{}", f.path.file_name().unwrap_or_default().to_string_lossy(), f.percent, f.covered.len(), f.statements)
+                            })
                             .collect::<Vec<_>>(),
                     )
                 })
@@ -401,19 +317,21 @@ impl Workspace {
                 let _ = this.update_in(cx, |this, window, cx| {
                     this.open_file(&this.root.join(file), window, cx);
                     this.runs.file.selected = None;
-                    this.coverage = None;
+                    this.coverage.clear(cx);
                     this.dispatch(Action::RunWithCoverage, window, cx);
                 });
                 for _ in 0..300 {
                     pause(100).await;
-                    if this.update(cx, |t, _| t.coverage.is_some()).unwrap_or(false) {
+                    if this.update(cx, |t, cx| t.coverage.report(cx).is_some()).unwrap_or(false) {
                         break;
                     }
                 }
                 let _ = this.update_in(cx, |this, window, cx| {
-                    eprintln!("smoke-coverage: {step}: window {:?}, report {:?}", this.bottom == Some(BottomTool::Coverage), report(this));
+                    eprintln!("smoke-coverage: {step}: window {:?}, report {:?}", this.bottom == Some(BottomTool::Coverage), report(this, cx));
                     this.open_file(&this.root.join("calc.py"), window, cx);
-                    this.push_coverage(&this.active_editor().cloned().unwrap(), cx);
+                    if let Some(ed) = this.active_editor().cloned() {
+                        this.push_coverage(&ed, cx);
+                    }
                     eprintln!("smoke-coverage: {step}: calc.py marks {:?}", marks(this, cx));
                 });
             }
@@ -423,23 +341,212 @@ impl Workspace {
                     return;
                 }
                 // Enter in the window opens the first file at its first missed line.
-                if let Some(c) = this.coverage.as_mut() {
-                    c.selected = 0;
+                if let Some(m) = this.coverage.model.clone() {
+                    if let Some(ev) = m.update(cx, |m, cx| {
+                        m.selected = 0;
+                        m.key("enter", cx)
+                    }) {
+                        this.on_coverage_event(&ev, window, cx);
+                    }
                 }
-                this.coverage_key("enter", window, cx);
                 let at = this.active_editor().map(|e| {
                     (e.read(cx).path.clone().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())), e.read(cx).caret_line_col().0 + 1)
                 });
                 eprintln!("smoke-coverage: enter -> {at:?}");
-                let ed = this.active_editor().cloned().unwrap();
-                ed.update(cx, |e, cx| e.replace_text_in_range(None, "x = 1  # edited", window, cx));
+                if let Some(ed) = this.active_editor().cloned() {
+                    ed.update(cx, |e, cx| e.replace_text_in_range(None, "x = 1  # edited", window, cx));
+                }
                 eprintln!("smoke-coverage: after an edit marks {:?}", marks(this, cx));
                 this.clear_coverage(window, cx);
-                eprintln!("smoke-coverage: cleared -> report {:?}, window {:?}", report(this), this.bottom);
+                eprintln!("smoke-coverage: cleared -> report {:?}, window {:?}", report(this, cx), this.bottom);
                 cx.quit();
             });
         })
         .detach();
+    }
+}
+
+impl EventEmitter<CoverageEvent> for CoverageModel {}
+
+impl CoverageModel {
+    /// No report yet, for the project at `root`; `focus` is the tool window's.
+    pub fn new(root: PathBuf, focus: FocusHandle) -> Self {
+        Self { root, focus, report: None, name: String::new(), selected: 0, scroll: gpui::ScrollHandle::new() }
+    }
+
+    /// The report of the configuration `name`.
+    pub fn set_report(&mut self, report: Report, name: String, cx: &mut Context<Self>) {
+        self.report = Some(report);
+        self.name = name;
+        self.selected = 0;
+        cx.notify();
+    }
+
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.report = None;
+        cx.notify();
+    }
+
+    /// Selects row `i`; the file and its first missed line, like a jump to what still needs
+    /// a test.
+    fn open(&self, i: usize) -> Option<CoverageEvent> {
+        let f = self.report.as_ref()?.files.get(i)?;
+        Some(CoverageEvent::Open(f.path.clone(), f.missed.iter().min().copied()))
+    }
+
+    /// A key pressed in the list with no modifier held; what the workspace has to do.
+    fn key(&mut self, key: &str, cx: &mut Context<Self>) -> Option<CoverageEvent> {
+        let n = self.report.as_ref().map_or(0, |r| r.files.len());
+        let ev = match key {
+            "down" if self.selected + 1 < n => {
+                self.selected += 1;
+                None
+            }
+            "up" => {
+                self.selected = self.selected.saturating_sub(1);
+                None
+            }
+            "enter" => self.open(self.selected),
+            "escape" => Some(CoverageEvent::FocusEditor),
+            _ => return None,
+        };
+        self.scroll.scroll_to_item(self.selected);
+        cx.notify();
+        ev
+    }
+}
+
+/// The window before the first report.
+fn no_report() -> gpui::Div {
+    div().p(px(10.)).text_size(ui_px(13.)).text_color(Theme::text_dim()).child("No coverage data: Run › Run with Coverage")
+}
+
+impl Render for CoverageModel {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(report) = &self.report else { return no_report().into_any_element() };
+        let rel = |p: &std::path::Path| p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/");
+        let toolbar = div()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap(px(6.))
+            .pl(px(12.))
+            .pr(px(6.))
+            .h(px(crate::ui_kit::header_h()))
+            .border_b_1()
+            .border_color(Theme::divider())
+            .child(crate::ui_kit::tool_title("Coverage"))
+            .child(
+                div()
+                    .id("cov-rerun")
+                    .size(ui_px(24.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(5.))
+                    .cursor_pointer()
+                    .text_color(Theme::accent())
+                    .hover(|s| s.bg(Theme::hover_row()))
+                    .active(|s| s.bg(Theme::press()))
+                    .child("↻")
+                    .tooltip(|_, cx| cx.new(|_| super::Tip("Run with Coverage again".into())).into())
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(CoverageEvent::Dispatch(Action::RunWithCoverage)))),
+            )
+            .child(
+                div()
+                    .id("cov-clear")
+                    .size(ui_px(24.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(5.))
+                    .cursor_pointer()
+                    .text_color(Theme::text_muted())
+                    .hover(|s| s.bg(Theme::hover_row()))
+                    .active(|s| s.bg(Theme::press()))
+                    .child("✕")
+                    .tooltip(|_, cx| cx.new(|_| super::Tip("Hide coverage (gutter marks and this report)".into())).into())
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(CoverageEvent::Clear))),
+            )
+            .child(div().text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(format!("'{}': {:.0}% of lines covered", self.name, report.percent)));
+        let header = div()
+            .flex()
+            .flex_shrink_0()
+            .h(ui_px(22.))
+            .items_center()
+            .px(px(8.))
+            .text_size(ui_px(12.))
+            .text_color(Theme::text_dim())
+            .border_b_1()
+            .border_color(Theme::divider())
+            .child(div().flex_1().child("File"))
+            .child(div().w(px(120.)).child("% Lines"))
+            .child(div().w(px(110.)).child("Covered / Total"));
+        let bar = |pct: f64| {
+            let w = 60.0f64;
+            div()
+                .w(px(w as f32))
+                .h(ui_px(6.))
+                .rounded(px(3.))
+                .bg(Theme::coverage_miss())
+                .child(div().h_full().rounded(px(3.)).w(px((w * pct / 100.0) as f32)).bg(Theme::coverage_hit()))
+        };
+        let list = div()
+            .id("cov-list")
+            .track_focus(&self.focus)
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .text_size(ui_px(13.))
+            .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, _, cx| {
+                if !e.keystroke.modifiers.modified() {
+                    if let Some(ev) = this.key(&e.keystroke.key, cx) {
+                        cx.emit(ev);
+                    }
+                }
+            }))
+            .when(report.files.is_empty(), |d| d.child(div().p(px(10.)).text_color(Theme::text_dim()).child("No project files were executed")))
+            .children(report.files.iter().enumerate().map(|(i, f)| {
+                let sel = i == self.selected;
+                div()
+                    .id(("cov-row", i))
+                    .w_full()
+                    .h(ui_px(22.))
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .cursor_pointer()
+                    .when(sel, |d| d.bg(Theme::selection_row()))
+                    .when(!sel, |d| d.hover(|s| s.bg(Theme::hover_row())))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, e: &gpui::MouseDownEvent, w, cx| {
+                            this.selected = i;
+                            w.focus(&this.focus);
+                            if e.click_count >= 2 {
+                                if let Some(ev) = this.open(i) {
+                                    cx.emit(ev);
+                                }
+                            }
+                            cx.notify();
+                        }),
+                    )
+                    .child(div().flex_1().overflow_hidden().text_ellipsis().text_color(Theme::text()).child(rel(&f.path)))
+                    .child(
+                        div()
+                            .w(px(120.))
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(bar(f.percent))
+                            .child(div().text_size(ui_px(12.)).child(format!("{:.0}%", f.percent))),
+                    )
+                    .child(div().w(px(110.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(format!("{} / {}", f.covered.len(), f.statements)))
+            }));
+        div().id("coverage-window").size_full().flex().flex_col().child(toolbar).child(header).child(list).into_any_element()
     }
 }
 

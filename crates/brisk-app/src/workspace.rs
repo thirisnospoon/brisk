@@ -421,7 +421,7 @@ pub struct Workspace {
     /// Run Anything history, newest first.
     ra_history: Vec<String>,
     /// The last coverage report (Run with Coverage).
-    coverage: Option<coverage_ui::CoverageView>,
+    coverage: coverage_ui::Coverage,
     /// A coverage run whose report comes when its tab finishes.
     cov_pending: Option<coverage_ui::Pending>,
     /// Offer to install a missing package (coverage.py, debugpy), then launch again.
@@ -627,7 +627,7 @@ impl Workspace {
             venv_offer: None,
             pyproject_fp: None,
             ra_history: Vec::new(),
-            coverage: None,
+            coverage: coverage_ui::Coverage::new(cx),
             cov_pending: None,
             install_offer: None,
             profile: None,
@@ -2185,7 +2185,7 @@ impl Workspace {
                     cx,
                 ))
             })
-            .when(self.coverage.is_some(), |d| {
+            .when(self.coverage.report(cx).is_some(), |d| {
                 d.child(self.stripe_button("st-coverage", "coverage", "Coverage", self.bottom == Some(BottomTool::Coverage), Action::ToggleCoverageWindow, cx))
             })
             .when(self.profile.is_some(), |d| {
@@ -3241,7 +3241,7 @@ impl Render for Workspace {
             (BottomTool::Packages, _) => self.render_python_packages(window, cx),
             (BottomTool::Todo, _) => self.render_todo(),
             (BottomTool::Endpoints, _) => self.render_endpoints(),
-            (BottomTool::Coverage, _) => self.render_coverage(cx),
+            (BottomTool::Coverage, _) => self.render_coverage(),
             (BottomTool::Profiler, _) => self.render_profiler(cx),
             _ => Self::render_placeholder(b.title(), b.stage()),
         });
