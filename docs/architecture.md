@@ -49,7 +49,7 @@ of `src/`.
 | `brisk-search` | 398 | 7 | | Find / Replace in Files. |
 | `brisk-lint` | 472 | 4 | proc, run | ruff: discovery, checks, fixes, noqa. |
 | `brisk-lsp` | 1,436 | 10 | proc, lint | JSON-RPC over stdio and a typed API for ty. |
-| `brisk-dap` | 562 | 5 | proc | The Debug Adapter Protocol client for debugpy. |
+| `brisk-dap` | 1,047 | 13 | proc | The Debug Adapter Protocol client for debugpy, and the debugger logic the Debug window shows: hover expressions, inline values, Smart Step Into targets, exception breakpoints, console completion, the Attach to Process list. |
 | `brisk-run` | 4,555 | 44 | project | Interpreter discovery, run configurations (`.brisk/run.json`, `.idea` and `.run/*.xml` import), command lines, pytest / unittest runners, traceback links, uv / Poetry detection, SSH interpreters. `env`: creating a venv and installing requirements, uv / Poetry sync and dependency changes, an interpreter's packages and the PyPI name list, the Terminal's activation of the project environment. |
 | `brisk-git` | 2,384 | 23 | proc | Git through the `git` CLI: status, log with its lane layout, diff, merge, stash, blame. |
 | `brisk-terminal` | 1,282 | 6 | proc | The PTY (ConPTY, openpty) and VT emulation through `alacritty_terminal`. |
@@ -692,6 +692,17 @@ profile smokes. Risk: low.
 
 The free functions of `debug_ui.rs` (lines 561–846) and their tests from the test
 module at line 4260. Verify: `cargo test -p brisk-dap`; DEBUG smoke. Risk: low.
+
+Done on branch `arch2`. The helpers went into five `brisk-dap` modules, with their tests:
+`source` (hover expressions, inline values, the statement and Smart Step Into targets),
+`values` (full values through hex, return value labels, tracebacks in Python order),
+`exceptions` (`ExcClass` and the setExceptionBreakpoints arguments), `console` (completion
+start, common prefix, order) and `attach` (the process list and its labels). `process_lines`
+now starts its command through `brisk_platform::process::command`, which removes one of the
+two `creation_flags` sites left after step P2. Left in `debug_ui.rs`: `launch_for`, which
+reads a `brisk_run::Command` (`brisk-dap` does not depend on `brisk-run`);
+`ConsoleCompletion`, the console's popup state; and the files of breakpoints, watches and
+console history, which are app settings.
 
 #### Step 9. Smaller moves
 

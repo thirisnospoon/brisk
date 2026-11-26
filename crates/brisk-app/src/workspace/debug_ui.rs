@@ -9,6 +9,12 @@ use crate::editor::breakpoints::Breakpoint;
 use crate::editor::Editor;
 use crate::theme::ui_px;
 use crate::theme::{mono_font, Theme};
+use brisk_dap::attach::{process_lines, process_target};
+use brisk_dap::console::{common_prefix, completion_start, order_completions};
+use brisk_dap::exceptions::exception_args;
+use brisk_dap::exceptions::ExcClass;
+use brisk_dap::source::{hover_expression, inline_values, statement_text, targets_on_statement};
+use brisk_dap::values::{decode_hex_repr, full_value_expression, python_order, return_label};
 use brisk_dap::{Client, Event, Frame, Launch, SourceBreakpoint, Variable};
 use brisk_keymap::Action;
 use brisk_run::RunConfig;
@@ -48,55 +54,6 @@ pub enum BpRow {
     /// An exception breakpoint for one class (index into `exc_classes`).
     Class(usize, ExcClass),
     Line(PathBuf, usize, Breakpoint),
-}
-
-/// A Python exception breakpoint for a class: `ValueError`, `mypkg.MyError`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ExcClass {
-    pub name: String,
-    /// Stop where it is raised, even if handled.
-    pub raised: bool,
-    /// Stop when nothing handles it.
-    pub uncaught: bool,
-    pub enabled: bool,
-}
-
-impl ExcClass {
-    fn new() -> Self {
-        Self { name: String::new(), raised: true, uncaught: true, enabled: true }
-    }
-}
-
-/// setExceptionBreakpoints arguments. With class breakpoints everything goes as
-/// exceptionOptions (debugpy then ignores `filters`); "Python Exceptions" alone means all.
-fn exception_args(muted: bool, raised: bool, uncaught: bool, classes: &[ExcClass]) -> Value {
-    if muted {
-        return json!({"filters": []});
-    }
-    let mut filters = Vec::new();
-    if raised {
-        filters.push("raised");
-    }
-    if uncaught {
-        filters.push("uncaught");
-    }
-    let classes: Vec<&ExcClass> = classes.iter().filter(|c| c.enabled && !c.name.trim().is_empty() && (c.raised || c.uncaught)).collect();
-    if classes.is_empty() {
-        return json!({"filters": filters});
-    }
-    let all = json!({"names": ["Python Exceptions"]});
-    let mut opts = Vec::new();
-    // Raised covers uncaught: the raise happens first.
-    if raised {
-        opts.push(json!({"path": [all], "breakMode": "always"}));
-    } else if uncaught {
-        opts.push(json!({"path": [all], "breakMode": "unhandled"}));
-    }
-    for c in classes {
-        let mode = if c.raised { "always" } else { "unhandled" };
-        opts.push(json!({"path": [all, {"names": [c.name.trim()]}], "breakMode": mode}));
-    }
-    json!({"filters": filters, "exceptionOptions": opts})
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -507,28 +464,6 @@ impl ConsoleCompletion {
     }
 }
 
-/// Where the name being typed at the end of the console input begins (byte index).
-fn completion_start(input: &str) -> usize {
-    input.char_indices().rev().take_while(|(_, c)| c.is_alphanumeric() || *c == '_').last().map(|(i, _)| i).unwrap_or(input.len())
-}
-
-/// The longest prefix every label shares (case-sensitive).
-fn common_prefix<'a>(labels: impl IntoIterator<Item = &'a str>) -> String {
-    let mut it = labels.into_iter();
-    let Some(first) = it.next() else { return String::new() };
-    let mut p: &str = first;
-    for l in it {
-        let n = p.chars().zip(l.chars()).take_while(|(a, b)| a == b).map(|(a, _)| a.len_utf8()).sum();
-        p = &p[..n];
-    }
-    p.to_string()
-}
-
-/// Public names first (dunder and _private last), keeping debugpy's order otherwise.
-fn order_completions(items: &mut [(String, String)]) {
-    items.sort_by_key(|(l, _)| (l.starts_with("__"), l.starts_with('_')));
-}
-
 fn history_path() -> PathBuf {
     brisk_db::config_dir().join("debug_console_history.json")
 }
@@ -566,274 +501,6 @@ fn save_watches(root: &Path, list: &[String]) {
     if let Ok(s) = serde_json::to_string_pretty(&Value::Object(all)) {
         let _ = std::fs::write(path, s);
     }
-}
-
-/// debugpy's exceptionInfo traceback lists the innermost frame first and ends with the
-/// exception line: Python's order (innermost last), without that line.
-fn python_order(stack: &str) -> String {
-    let mut lines: Vec<&str> = stack.trim_end().lines().collect();
-    while lines.last().is_some_and(|l| !l.starts_with(' ')) {
-        lines.pop();
-    }
-    if !lines.first().is_some_and(|l| l.trim_start().starts_with("File \"")) {
-        return lines.join("\n");
-    }
-    let mut frames: Vec<Vec<&str>> = Vec::new();
-    for l in lines {
-        if l.trim_start().starts_with("File \"") || frames.is_empty() {
-            frames.push(vec![l]);
-        } else if let Some(f) = frames.last_mut() {
-            f.push(l);
-        }
-    }
-    frames.reverse();
-    frames.concat().join("\n")
-}
-
-const KEYWORDS: &[&str] = &[
-    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for",
-    "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield",
-];
-
-/// The expression under the mouse for a value hover: the name at `col` with the dotted
-/// names before it (`obj.attr`), not inside a string or comment, not a keyword.
-fn hover_expression(line: &str, col: usize) -> Option<String> {
-    let c: Vec<char> = line.chars().collect();
-    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
-    if !c.get(col).copied().is_some_and(ident) {
-        return None;
-    }
-    // Inside a comment or a string: count quotes before the point.
-    let before: String = c[..col].iter().collect();
-    let (mut quote, mut i) = (None::<char>, 0);
-    let bc: Vec<char> = before.chars().collect();
-    while i < bc.len() {
-        match (quote, bc[i]) {
-            (None, '#') => return None,
-            (None, q @ ('"' | '\'')) => quote = Some(q),
-            (Some(_), '\\') => i += 1,
-            (Some(q), ch) if ch == q => quote = None,
-            _ => {}
-        }
-        i += 1;
-    }
-    if quote.is_some() {
-        return None;
-    }
-    let mut start = col;
-    while start > 0 && ident(c[start - 1]) {
-        start -= 1;
-    }
-    let mut end = col;
-    while end < c.len() && ident(c[end]) {
-        end += 1;
-    }
-    let word: String = c[start..end].iter().collect();
-    if KEYWORDS.contains(&word.as_str()) || word.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
-        return None;
-    }
-    while start >= 2 && c[start - 1] == '.' && ident(c[start - 2]) {
-        let mut s = start - 1;
-        while s > 0 && ident(c[s - 1]) {
-            s -= 1;
-        }
-        start = s;
-    }
-    Some(c[start..end].iter().collect())
-}
-
-/// Names used on a line of Python: identifiers outside strings and comments, not after a dot.
-fn line_names(line: &str) -> Vec<&str> {
-    let b = line.as_bytes();
-    let mut out: Vec<&str> = Vec::new();
-    let mut i = 0;
-    while i < b.len() {
-        let c = b[i];
-        if c == b'#' {
-            break;
-        }
-        if c == b'"' || c == b'\'' {
-            // Skip the string (prefixes like f"" leave their letter as a word: harmless).
-            let q = c;
-            i += 1;
-            while i < b.len() && b[i] != q {
-                i += if b[i] == b'\\' { 2 } else { 1 };
-            }
-            i += 1;
-            continue;
-        }
-        if c.is_ascii_alphabetic() || c == b'_' {
-            let s = i;
-            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
-                i += 1;
-            }
-            let after_dot = line[..s].trim_end().ends_with('.');
-            let w = &line[s..i];
-            if !after_dot && !out.contains(&w) {
-                out.push(w);
-            }
-            continue;
-        }
-        i += 1;
-    }
-    out
-}
-
-/// PyCharm's inline values: for the lines of the current function up to the stop line,
-/// `name: value` of the frame's variables used there. `lines` are the file's lines.
-fn inline_values(lines: &[String], stop: usize, vars: &[Variable]) -> std::collections::HashMap<usize, String> {
-    let mut out = std::collections::HashMap::new();
-    let Some(cur) = lines.get(stop) else { return out };
-    let indent = |l: &str| l.len() - l.trim_start().len();
-    let cur_indent = indent(cur);
-    // The function's `def` above the stop line (module level: up to 50 lines back).
-    let start = (0..=stop)
-        .rev()
-        .find(|&i| {
-            let t = lines[i].trim_start();
-            (t.starts_with("def ") || t.starts_with("async def ")) && indent(&lines[i]) < cur_indent.max(1)
-        })
-        .unwrap_or(stop.saturating_sub(50))
-        .max(stop.saturating_sub(300));
-    for (i, l) in lines.iter().enumerate().take(stop + 1).skip(start) {
-        let shown: Vec<String> = line_names(l)
-            .into_iter()
-            .filter_map(|n| vars.iter().find(|v| v.name == n))
-            .map(|v| {
-                // One line: a DataFrame's or a multi-line string's repr is flattened.
-                let flat = v.value.split_whitespace().collect::<Vec<_>>().join(" ");
-                let mut val: String = flat.chars().take(60).collect();
-                if flat.chars().count() > 60 {
-                    val.push('…');
-                }
-                format!("{}: {val}", v.name)
-            })
-            .collect();
-        if !shown.is_empty() {
-            out.insert(i, shown.join(", "));
-        }
-    }
-    out
-}
-
-/// An expression whose value is the hex of `expr`'s str() (a string) or repr() (anything else).
-fn full_value_expression(expr: &str) -> String {
-    format!("(lambda _v: (_v if isinstance(_v, str) else repr(_v)).encode('utf-8', 'replace').hex())(({expr}))")
-}
-
-/// debugpy's repr of a hex string ('6869') back to its text.
-fn decode_hex_repr(r: &str) -> Option<String> {
-    let h = r.trim().trim_matches(|c| c == '\'' || c == '"');
-    if h.len() % 2 != 0 {
-        return None;
-    }
-    let bytes: Option<Vec<u8>> = (0..h.len()).step_by(2).map(|i| u8::from_str_radix(h.get(i..i + 2)?, 16).ok()).collect();
-    Some(String::from_utf8_lossy(&bytes?).into_owned())
-}
-
-/// What a Python command line runs, short: `app.py` or `-m http.server` (the list's label).
-fn process_target(cmd: &str) -> String {
-    let rest = match cmd.strip_prefix('"') {
-        Some(q) => q.split_once('"').map_or("", |x| x.1),
-        None => cmd.split_once(char::is_whitespace).map_or("", |x| x.1),
-    };
-    let mut it = rest.split_whitespace();
-    while let Some(t) = it.next() {
-        if t == "-m" {
-            return format!("-m {}", it.next().unwrap_or(""));
-        }
-        if t == "-c" {
-            return "-c …".into();
-        }
-        if !t.starts_with('-') {
-            let t = t.trim_matches('"');
-            return t.rsplit(['/', '\\']).next().unwrap_or(t).to_string();
-        }
-    }
-    String::new()
-}
-
-/// The statement starting at `line`: following lines join while brackets are open or
-/// the line ends with a backslash (at most 30 lines).
-fn statement_text(lines: &[String], line: usize) -> String {
-    let mut out = String::new();
-    let mut depth = 0i32;
-    for l in lines.iter().skip(line).take(30) {
-        let code = l.split('#').next().unwrap_or("");
-        out.push_str(code);
-        out.push('\n');
-        depth += code
-            .chars()
-            .map(|c| match c {
-                '(' | '[' | '{' => 1,
-                ')' | ']' | '}' => -1,
-                _ => 0,
-            })
-            .sum::<i32>();
-        if depth <= 0 && !code.trim_end().ends_with('\\') {
-            break;
-        }
-    }
-    out
-}
-
-/// Smart Step Into targets of this statement: debugpy lists every call of the frame's code
-/// not run yet (later lines too), as `a(b(3))` or `f (call 2)`. A target stays when its
-/// callee is called in `stmt`; when none would, all stay.
-fn targets_on_statement(stmt: &str, targets: Vec<(i64, String)>) -> Vec<(i64, String)> {
-    let squeezed: String = stmt.chars().filter(|c| !c.is_whitespace()).collect();
-    let callee = |label: &str| -> String {
-        let l = label.split(" (call ").next().unwrap_or(label);
-        l.split('(').next().unwrap_or(l).chars().filter(|c| !c.is_whitespace()).collect()
-    };
-    let on = |label: &str| {
-        let c = callee(label);
-        if c.is_empty() {
-            return true;
-        }
-        let pat = format!("{c}(");
-        // The callee must not be the tail of a longer name (`xa(` is not `a(`).
-        squeezed.match_indices(&pat).any(|(i, _)| {
-            let before = squeezed[..i].chars().next_back();
-            !before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || (ch == '.' && !c.contains('.')))
-        })
-    };
-    let kept: Vec<(i64, String)> = targets.iter().filter(|t| on(&t.1)).cloned().collect();
-    if kept.is_empty() {
-        targets
-    } else {
-        kept
-    }
-}
-
-/// debugpy (showReturnValue) names the value a call just returned "(return) f".
-fn return_label(name: &str) -> Option<String> {
-    name.strip_prefix("(return) ").map(|f| format!("↩ {f}()"))
-}
-
-/// `pid<TAB>command line` for every process (Windows: CIM; elsewhere: `ps`).
-fn process_lines() -> String {
-    #[cfg(windows)]
-    let mut c = {
-        use std::os::windows::process::CommandExt;
-        let mut c = std::process::Command::new("powershell");
-        c.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }",
-        ]);
-        c.creation_flags(0x0800_0000);
-        c
-    };
-    #[cfg(not(windows))]
-    let mut c = {
-        let mut c = std::process::Command::new("ps");
-        c.args(["-eo", "pid=,args="]);
-        c
-    };
-    c.stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    c.output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
 }
 
 /// `python [opts] (-m module | script) args` → what debugpy launches.
@@ -1145,7 +812,7 @@ impl Workspace {
     /// "+ Exception": a new class row, its name field ready for typing.
     pub(super) fn bp_add_class(&mut self, cx: &mut Context<Self>) {
         self.bp_drop_empty_classes(cx);
-        self.debug.exc_classes.push(ExcClass::new());
+        self.debug.exc_classes.push(ExcClass::default());
         let i = self.debug.exc_classes.len() - 1;
         let sel = self.bp_rows(cx).iter().position(|r| matches!(r, BpRow::Class(j, _) if *j == i)).unwrap_or(0);
         if let Some(d) = self.debug.bp_dialog.as_mut() {
@@ -4484,98 +4151,11 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn inline_values_of_a_function() {
-        let lines: Vec<String> =
-            ["x = 1", "def main(n):", "    items = [n, 2]  # n", "    s = \"items\"", "    total = add(items[0], obj.items)"].map(String::from).to_vec();
-        let var = |n: &str, v: &str| Variable { name: n.into(), value: v.into(), type_name: String::new(), reference: 0, evaluate_name: String::new() };
-        let vars = [var("n", "5"), var("items", "[5, 2]"), var("x", "1")];
-        let v = inline_values(&lines, 4, &vars);
-        // From the def line on; not inside strings, comments, or after a dot.
-        assert_eq!(v.get(&1).map(String::as_str), Some("n: 5"));
-        assert_eq!(v.get(&2).map(String::as_str), Some("items: [5, 2], n: 5"));
-        assert_eq!(v.get(&3), None);
-        assert_eq!(v.get(&4).map(String::as_str), Some("items: [5, 2]"));
-        assert_eq!(v.get(&0), None);
-    }
-
-    #[test]
-    fn process_targets() {
-        assert_eq!(process_target(r#""C:\Py 3\python.exe" -u C:/x/app.py --port 1"#), "app.py");
-        assert_eq!(process_target("python -m http.server 8765"), "-m http.server");
-        assert_eq!(process_target("python"), "");
-    }
-
-    #[test]
-    fn smart_step_targets_of_the_line() {
-        let t = |v: &[&str]| v.iter().enumerate().map(|(i, s)| (i as i64, s.to_string())).collect::<Vec<_>>();
-        let names = |v: Vec<(i64, String)>| v.into_iter().map(|x| x.1).collect::<Vec<_>>();
-        let lines: Vec<String> = ["r = a(b(3))", "print(r)"].map(String::from).to_vec();
-        let st = statement_text(&lines, 0);
-        assert_eq!(names(targets_on_statement(&st, t(&["b(3)", "a(b(3))", "print(r)"]))), ["b(3)", "a(b(3))"]);
-        // A call spread over lines; `(call 2)`; a method; a longer name is not a match.
-        let lines: Vec<String> = ["x = f(", "    g(1),", "    f(2))  # h(3)", "h(4)"].map(String::from).to_vec();
-        let st = statement_text(&lines, 0);
-        assert_eq!(names(targets_on_statement(&st, t(&["g(1)", "f(2)", "f (call 2)", "h(4)"]))), ["g(1)", "f(2)", "f (call 2)"]);
-        let st = statement_text(&["y = obj.run(xa(1))".to_string()], 0);
-        assert_eq!(names(targets_on_statement(&st, t(&["obj.run(xa(1))", "a(2)", "xa(1)"]))), ["obj.run(xa(1))", "xa(1)"]);
-        // Nothing matches (labels debugpy shortened): keep all.
-        assert_eq!(targets_on_statement("z = 1\n", t(&["q()"])).len(), 1);
-    }
-
-    #[test]
-    fn exception_breakpoint_args() {
-        let c = |n: &str, raised: bool| ExcClass { name: n.into(), raised, uncaught: true, enabled: true };
-        assert_eq!(exception_args(false, false, true, &[]), json!({"filters": ["uncaught"]}));
-        assert_eq!(exception_args(true, true, true, &[c("ValueError", true)]), json!({"filters": []}));
-        let v = exception_args(false, false, true, &[c("ValueError", true), c("KeyError", false), c("", true)]);
-        let opts = v["exceptionOptions"].as_array().unwrap();
-        assert_eq!(opts.len(), 3);
-        assert_eq!(opts[0], json!({"path": [{"names": ["Python Exceptions"]}], "breakMode": "unhandled"}));
-        assert_eq!(opts[1], json!({"path": [{"names": ["Python Exceptions"]}, {"names": ["ValueError"]}], "breakMode": "always"}));
-        assert_eq!(opts[2]["breakMode"], "unhandled");
-        // Nothing for all exceptions: only the classes.
-        let v = exception_args(false, false, false, &[ExcClass { enabled: false, ..c("A", true) }, c("B", true)]);
-        assert_eq!(v["exceptionOptions"].as_array().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn console_completion() {
-        assert_eq!(completion_start("items.ap"), 6);
-        assert_eq!(completion_start("len(ite"), 4);
-        assert_eq!(completion_start("x + "), 4);
-        assert_eq!(common_prefix(["append", "apply"]), "app");
-        assert_eq!(common_prefix(["a"]), "a");
-        let mut v = vec![("__len__".to_string(), String::new()), ("_x".into(), String::new()), ("append".into(), String::new())];
-        order_completions(&mut v);
-        assert_eq!(v.iter().map(|i| i.0.as_str()).collect::<Vec<_>>(), ["append", "_x", "__len__"]);
+    fn console_completion_filter() {
+        let v = vec![("append".to_string(), String::new()), ("_x".into(), String::new()), ("__len__".into(), String::new())];
         let c = ConsoleCompletion { items: v, start: 6, sel: 0 };
         assert_eq!(c.shown("items.ap").len(), 1);
         assert_eq!(c.shown("items.").len(), 3);
-    }
-
-    #[test]
-    fn return_value_labels() {
-        assert_eq!(return_label("(return) add").as_deref(), Some("↩ add()"));
-        assert_eq!(return_label("total"), None);
-    }
-
-    #[test]
-    fn hover_expressions() {
-        let l = "    total = obj.items[0] + add(x)  # items here";
-        let at = |s: &str| l.find(s).unwrap();
-        assert_eq!(hover_expression(l, at("total") + 2).as_deref(), Some("total"));
-        assert_eq!(hover_expression(l, at("items") + 1).as_deref(), Some("obj.items"));
-        assert_eq!(hover_expression(l, at("add")).as_deref(), Some("add"));
-        assert_eq!(hover_expression(l, at("here")), None);
-        assert_eq!(hover_expression("s = \"x y\" if a else b", 5), None);
-        assert_eq!(hover_expression("s = \"x y\" if a else b", 10), None);
-        assert_eq!(hover_expression("s = \"x y\" if a else b", 13).as_deref(), Some("a"));
-    }
-
-    #[test]
-    fn traceback_in_python_order() {
-        let s = "  File \"a.py\", line 2, in f\n    return 1 / x\n  File \"a.py\", line 5, in <module>\n    f(0)\nZeroDivisionError: division by zero\n";
-        assert_eq!(python_order(s), "  File \"a.py\", line 5, in <module>\n    f(0)\n  File \"a.py\", line 2, in f\n    return 1 / x");
     }
 
     #[test]

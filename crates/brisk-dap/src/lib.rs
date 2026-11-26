@@ -3,6 +3,12 @@
 //! window shows (threads, stack, scopes, variables, evaluate). Lines are 1-based on the wire
 //! and 0-based here.
 
+pub mod attach;
+pub mod console;
+pub mod exceptions;
+pub mod source;
+pub mod values;
+
 use futures::channel::{mpsc, oneshot};
 use serde_json::{json, Value};
 use std::collections::HashMap;
