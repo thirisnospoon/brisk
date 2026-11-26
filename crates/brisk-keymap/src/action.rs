@@ -196,6 +196,8 @@ actions! {
     NextSplitter => "Go to Next Splitter", "Window";
     Settings => "Settings", "File";
     Keymap => "Keymap", "File";
+    CheckForUpdates => "Check for Updates", "Help";
+    WhatsNew => "What's New in Brisk", "Help";
     IncreaseFontSize => "Increase Font Size in All Editors", "View";
     DecreaseFontSize => "Decrease Font Size in All Editors", "View";
     ResetFontSize => "Reset Font Size", "View";

@@ -42,6 +42,21 @@ fn inline_style(s: &InlineStyle) -> HighlightStyle {
     }
 }
 
+/// One paragraph of inline Markdown (`code`, **bold**, *italic*, links that open in the
+/// browser) as text that wraps; `id` keeps its links apart from other paragraphs.
+pub(crate) fn inline_markdown(md: &str, id: ElementId) -> InteractiveText {
+    let d = brisk_lsp::parse_doc_text(md, true);
+    let (mut ranges, mut urls) = (Vec::new(), Vec::new());
+    for (r, s) in &d.styles {
+        if let InlineStyle::Link(url) = s {
+            ranges.push(r.clone());
+            urls.push(url.clone());
+        }
+    }
+    let hl = d.styles.iter().map(|(r, s)| (r.clone(), inline_style(s))).collect::<Vec<_>>();
+    InteractiveText::new(id, StyledText::new(SharedString::from(d.text)).with_highlights(hl)).on_click(ranges, move |i, _, cx| cx.open_url(&urls[i]))
+}
+
 /// Elements for documentation blocks. `key` keeps the clickable texts' ids apart between
 /// the popups; `compact` is the smaller type of the completion panel.
 pub(super) fn doc_elements(blocks: &[DocBlock], key: &'static str, compact: bool) -> Vec<AnyElement> {

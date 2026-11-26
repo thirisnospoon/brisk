@@ -249,6 +249,7 @@ processes live in one Windows Job Object, so nothing outlives the IDE.
 | `brisk-keymap` | Actions and the PyCharm keymap |
 | `brisk-platform` | The OS-specific parts: child processes without console windows, in one Job Object |
 | `brisk-vm` | Groundwork for running containers without Docker Desktop (experimental) |
+| `brisk-update` | Updates from GitHub Releases: check, download, swap in the new files |
 
 Design notes are in [docs/architecture.md](docs/architecture.md).
 
@@ -307,7 +308,8 @@ far less mature.
 - **New in 0.3.0:** uv and Poetry projects; Django, FastAPI and Flask navigation with an
   Endpoints window; SSH interpreters; Mark Directory as; a configurable keymap with
   PyCharm keymap import; animations and a round of interface polish.
-- **Next, the basics:** a new-version notice in the app.
+- **Next release:** updates from inside the app (Help › Check for Updates, a balloon when a
+  new version is out, its release notes, and Update and Restart).
 - **In progress:** remote debugging and tests over SSH; completion of template and URL
   names.
 - **Planned:** WSL and Docker interpreters; Compose services in the Services window and a

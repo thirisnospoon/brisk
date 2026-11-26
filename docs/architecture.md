@@ -42,7 +42,7 @@ of `src/`.
 | Crate | Lines | Tests | Depends on | Owns |
 |---|---|---|---|---|
 | `brisk-proc` | 178 | 2 | | The kill-on-close Job Object every long-lived child is adopted into. |
-| `brisk-keymap` | 1,512 | 13 | | The `Action` enum (236 actions, `action.rs`), the `KeyContext` enum of focus contexts (`context.rs`), the PyCharm default keymap (`pycharm.rs`), the user keymap and its import from PyCharm XML, and `KeyResolver` (chords, double Shift). |
+| `brisk-keymap` | 1,512 | 13 | | The `Action` enum (238 actions, `action.rs`), the `KeyContext` enum of focus contexts (`context.rs`), the PyCharm default keymap (`pycharm.rs`), the user keymap and its import from PyCharm XML, and `KeyResolver` (chords, double Shift). |
 | `brisk-text` | 2,459 | 40 | | The rope buffer, multi-caret selections, undo / redo, edit operations. |
 | `brisk-project` | 672 | 6 | | The lazy project tree, the flat file list for Go to File, and `.editorconfig` (`editorconfig`). |
 | `brisk-syntax` | 3,396 | 35 | | tree-sitter parsing, highlighting of the visible range, folding, outline, the symbol index. |
@@ -58,6 +58,7 @@ of `src/`.
 | `brisk-history` | 465 | 3 | platform, git | Local History: revisions of a file at every save and before risky edits (gzip, in the settings folder), folder history, labels, pruning. |
 | `brisk-web` | 1,087 | 7 | project | Django / FastAPI / Flask routes and template references. |
 | `brisk-vm` | 198 | 3 | | The Windows Hypervisor Platform check for the planned container VM (`docs/design/containers.md`). |
+| `brisk-update` | 634 | 8 | platform | Updates from GitHub Releases: the latest release and its notes, version order, the zip download, the file swap of a portable install and its rollback. HTTP through the system `curl`, unpacking through `tar`, so no HTTP or TLS code is added to the exe. |
 | `xtask` | | | platform | `cargo xtask package-portable` and `cargo xtask budget`, the release tasks (not part of Brisk). |
 
 The dependency graph is shallow and has no cycles. Only `brisk-app` depends on GPUI.

@@ -26,6 +26,7 @@ brisk-lsp.workspace = true
 brisk-dap.workspace = true
 brisk-vm.workspace = true
 brisk-web.workspace = true
+brisk-update.workspace = true
 gpui = "0.2.2"
 futures = "0.3"
 serde_json = "1"

@@ -298,6 +298,14 @@ Folder: empty. Writes `picker/alpha/.git`, `picker/beta` and `picker/.hidden`.
 
 Checks the folder picker of Open… and New Project…: the listing (the hidden folder left out, `alpha` marked as a project), that typing `be` selects `beta` and Tab completes it, and that New Project creates the typed folder and asks This Window / New Window. With `BRISK_TOUR_SYNC=<dir>` it asks for screenshots the way the tour does.
 
+### `BRISK_SMOKE_UPDATE=1`
+
+Folder: any. The exe must run from a copy of a portable install (a `portable` file next to it), and `BRISK_UPDATE_FEED` must point at a release JSON (`file:///…/feed.json`, GitHub's `/releases/latest` format) whose `.zip` asset is a `file://` URL. Without the feed the smoke never reaches the network: the check stays off under smokes.
+
+Checks the update flow end to end: the startup check shows the balloon for the newer version, the dialog parses the release notes, Update downloads the zip, swaps its files into the install folder and reaches Restart Now, and the running `brisk.exe` was renamed to `brisk.exe.brisk-old`. `=balloon`, `=dialog` and `=ready` stop at those points, for screenshots. Exits with code 1 on a failure.
+
+`cargo test -p brisk-update -- --ignored` asks the real GitHub for the latest release and the one of the running version.
+
 ### `BRISK_SMOKE_PIN=1`
 
 Folder: empty. Writes `a.py` and `big.py`.

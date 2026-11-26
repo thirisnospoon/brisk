@@ -42,6 +42,15 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 - Clicking the project name in the toolbar opens a menu with New Project…, Open… (pick a folder, then This Window or New Window) and recent projects (they open in a new window).
 - Started without an argument, Brisk opens the last project.
 
+### Updates
+
+- Once a day Brisk asks GitHub for the latest release. A newer one shows a balloon with What's New and Update; the dialog has the version, the release date, the download size and the release notes.
+- Update downloads the zip and swaps the new files into the portable install while Brisk runs, then offers Restart Now. The running files are renamed aside and removed at the next start; your `data` folder and other files next to `brisk.exe` stay. If a file cannot be replaced, the ones already replaced are put back.
+- Skip This Version hides the balloon until a later release. Settings › Updates turns the daily check off.
+- Help › Check for Updates asks at once; Help › What's New in Brisk shows the notes of the version you run.
+- A build from source (no `portable` file next to the exe) gets Download, which opens the release page.
+- No account and no data is sent: one request to `api.github.com`, through the `curl` that ships with Windows.
+
 ## Editor
 
 ### Display

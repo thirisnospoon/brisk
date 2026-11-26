@@ -54,6 +54,7 @@ mod status_ui;
 mod tabs_ui;
 mod templates_ui;
 mod terminal_env_ui;
+mod update_ui;
 mod vcs_model;
 mod venv_ui;
 
@@ -421,6 +422,8 @@ pub struct Workspace {
     cov_pending: Option<coverage_ui::Pending>,
     /// Offer to install a missing package (coverage.py, debugpy), then launch again.
     install_offer: Option<install_offer_ui::InstallOffer>,
+    /// Updates: the balloon, the dialog and a download in progress.
+    update: update_ui::Update,
     /// The last profile (Run › Profile).
     profile: profile_ui::Profiler,
     /// A profiled run whose stats come when its tab finishes.
@@ -582,6 +585,7 @@ impl Workspace {
         let debug = debug::create(&root, window, cx);
         budget_probe::mark("bookmarks_debug");
         cx.defer_in(window, |this: &mut Self, window, cx| this.start_disk_poll(window, cx));
+        cx.defer_in(window, |this: &mut Self, _, cx| this.update_on_start(cx));
         // Closing the window saves everything first (PyCharm never asks).
         let me = cx.entity().downgrade();
         window.on_window_should_close(cx, move |_, cx| me.update(cx, |this, cx| this.save_all_for_quit(cx)).unwrap_or(true));
@@ -626,6 +630,7 @@ impl Workspace {
             coverage: coverage_ui::Coverage::new(cx),
             cov_pending: None,
             install_offer: None,
+            update: Default::default(),
             profile: profile_ui::Profiler::new(cx),
             prof_pending: None,
             before: None,
@@ -1099,6 +1104,11 @@ impl Workspace {
             cx.stop_propagation();
             return;
         }
+        if self.update.dialog_open() {
+            self.update_dialog_key(e, window, cx);
+            cx.stop_propagation();
+            return;
+        }
         if self.settings_dialog.is_some() {
             self.settings_key(e, window, cx);
             cx.stop_propagation();
@@ -1308,6 +1318,8 @@ impl Workspace {
             A::NewProject => self.project_cmd(project_ui::ProjectCmd::New, cx),
             A::RecentProjects => self.open_popup(PopupKind::Projects),
             A::Keymap => self.open_popup(PopupKind::Keymap),
+            A::CheckForUpdates => self.check_for_updates(true, cx),
+            A::WhatsNew => self.whats_new(cx),
             A::FindAction => self.open_popup(PopupKind::FindAction),
             A::RecentFiles => self.open_popup(PopupKind::RecentFiles),
             A::GotoLine if self.active.is_some() => self.open_popup(PopupKind::GotoLine),
@@ -3320,10 +3332,12 @@ impl Render for Workspace {
             .children(self.render_toast().map(|e| fade_in("toast-in", e, Enter::Toast)))
             .children(self.render_venv_offer(cx).map(|e| fade_in("venv-offer-in", e, Enter::Toast)))
             .children(self.render_install_offer(cx).map(|e| fade_in("install-offer-in", e, Enter::Toast)))
+            .children(self.render_update_balloon(cx).map(|e| fade_in("update-balloon-in", e, Enter::Toast)))
             .children(self.render_popup(cx).map(|e| fade_in("popup-in", e, Enter::Popup)))
             .children(self.render_find_popup(cx).map(|e| fade_in("find-in", e, Enter::Popup)))
             .children(self.render_ds_dialog(cx).map(|e| fade_in("ds-in", e, Enter::Dialog)))
             .children(self.render_settings(cx).map(|e| fade_in("settings-in", e, Enter::Dialog)))
+            .children(self.render_update_dialog(cx).map(|e| fade_in("update-dialog-in", e, Enter::Dialog)))
             .children(self.render_key_capture())
             .children(self.render_bp_dialog(cx).map(|e| fade_in("bp-dialog-in", e, Enter::Dialog)))
             .children(self.render_chooser(cx))

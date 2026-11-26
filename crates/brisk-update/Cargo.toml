@@ -1,0 +1,10 @@
+[package]
+name = "brisk-update"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Brisk's updates from GitHub Releases: the latest release, its download and the file swap of a portable install"
+
+[dependencies]
+brisk-platform.workspace = true
+serde_json = "1"

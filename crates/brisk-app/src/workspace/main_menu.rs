@@ -1,5 +1,5 @@
 //! The main menu (☰ in the title bar, as in PyCharm's new UI): File, Edit, View, Navigate,
-//! Code, Refactor, Run, Git, Tools, Window. File is laid out by hand; the others list the
+//! Code, Refactor, Run, Git, Tools, Window, Help. File is laid out by hand; the others list the
 //! actions of their keymap groups, so every action is reachable with the mouse.
 
 use super::menu_ui::Entry;
@@ -83,6 +83,7 @@ impl Workspace {
             sub("Git", group(&["Git"], false)),
             sub("Tools", group(&["Tools", "Python Console", "Python Packages", "Python Environment", "Database"], false)),
             sub("Window", group(&["Window"], false)),
+            sub("Help", group(&["Help"], false)),
         ]
     }
 

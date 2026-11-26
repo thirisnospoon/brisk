@@ -28,7 +28,7 @@ pub use select::{clipboard_history, remember_clip};
 mod big;
 mod column;
 mod disk;
-mod doc_view;
+pub(crate) mod doc_view;
 mod extract;
 mod find;
 mod fold;

@@ -55,6 +55,8 @@ pub struct Settings {
     pub line_comment_space: bool,
     /// Appearance: popups, dialogs and tool windows ease in (off: they appear at once).
     pub animations: bool,
+    /// System: look for a new Brisk release once a day.
+    pub check_updates: bool,
 }
 
 /// PyCharm's default for "Soft-wrap these files".
@@ -86,6 +88,7 @@ impl Default for Settings {
             line_comment_space: true,
             show_whitespaces: false,
             animations: true,
+            check_updates: true,
         }
     }
 }
@@ -195,6 +198,7 @@ fn read(p: &Path) -> Settings {
             s.sticky_lines = flag("sticky_lines").unwrap_or(s.sticky_lines);
             s.show_whitespaces = flag("show_whitespaces").unwrap_or(s.show_whitespaces);
             s.animations = flag("animations").unwrap_or(s.animations);
+            s.check_updates = flag("check_updates").unwrap_or(s.check_updates);
             if let Some(t) = v.get("soft_wrap_files").and_then(|t| t.as_str()) {
                 s.soft_wrap_files = t.to_string();
             }
@@ -292,6 +296,7 @@ fn to_json(s: &Settings) -> serde_json::Value {
         "sticky_lines": s.sticky_lines,
         "show_whitespaces": s.show_whitespaces,
         "animations": s.animations,
+        "check_updates": s.check_updates,
         "soft_wrap_files": s.soft_wrap_files,
         "soft_wrap_indent": s.soft_wrap_indent,
         "soft_wrap_extra_indent": s.soft_wrap_extra_indent,
@@ -495,6 +500,7 @@ mod tests {
             line_comment_first_column: false,
             line_comment_space: false,
             animations: false,
+            check_updates: false,
         }
     }
 
@@ -536,6 +542,7 @@ mod tests {
             "sticky_lines": true,
             "show_whitespaces": false,
             "animations": true,
+            "check_updates": true,
             "soft_wrap_files": "*.md; *.txt; *.rst; *.adoc",
             "soft_wrap_indent": true,
             "soft_wrap_extra_indent": 0,
