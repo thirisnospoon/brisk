@@ -438,8 +438,6 @@ pub struct EnvView {
     pub ssh: Vec<SshInterpreter>,
     pub ssh_found: Option<(String, HostInfo)>,
     pub busy: bool,
-    /// [`PythonEnv::tasks`].
-    pub tasks: Vec<&'static str>,
 }
 
 impl PythonEnv {
@@ -453,7 +451,6 @@ impl PythonEnv {
             ssh: self.ssh.clone(),
             ssh_found: self.ssh_found.clone(),
             busy: self.busy,
-            tasks: self.tasks(),
         }
     }
 
