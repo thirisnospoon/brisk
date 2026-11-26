@@ -514,6 +514,54 @@ before step 3: it frees the most room, and clippy then runs on code without the 
 [testing.md](testing.md), run on a copy of `examples/demo_project`. "Budget" means
 `scripts\budget.ps1` within limits on a release build.
 
+### Status (paused on 2026-11-26)
+
+The migration is paused here. Each step below has a "Done" paragraph where it landed.
+
+Done: steps 1 to 10, 14 to 16, 18 and P1 to P6; step 21 for the TODO, Endpoints, Coverage
+and Profiler windows; part 1 of step 17 (the VCS state in its own entity).
+
+Left, in this order:
+
+1. Step 17, part 2: the Git methods into `VcsModel` with a `VcsEvent` enum, following "The
+   pattern" under step 15; the Commit and Git windows become its views.
+2. Step 21 for Packages and Python Console. They read `PythonEnv` (step 18) now.
+3. Step 19, `RunModel`. It comes after step 18, which took the interpreter out of `Runs`;
+   coverage and profile runs start from `Workspace` until then.
+4. Step 20, `LangModel` and `SearchModel`.
+5. Steps 12 and 13, the tool window and action registries. They touch the code every split
+   touches, so they go after the splits.
+6. Step 11, `brisk-app` as library plus binary, then step 22, what is left of `Workspace`.
+
+Items 1 and 2 of this list can run in parallel (different files); the rest go one at a time.
+
+Checks still owed, all needing a visible window:
+
+- Step 18, after switching the interpreter (venv A to B and back): ty re-diagnoses with B;
+  ruff relints with B's ruff; a new Terminal tab activates B; an open Python Packages lists
+  B; a running Python Console shows the "Rerun" line and runs B after Rerun; Run, Coverage,
+  Profile and Debug use B (a configuration with its own interpreter keeps it); `run.json`
+  has B and keeps the configurations and SSH interpreters, and B is selected after a
+  restart; re-picking an interpreter restarts a ty that exited; an edit of `run.json` on
+  disk is followed after a reload; an SSH pick keeps runs remote and code insight local;
+  Add Interpreter, uv sync and Install requirements end with the new environment selected;
+  at startup "Detecting interpreter…" turns into the interpreter and Problems rechecks.
+- Step P6: `scripts\budget.ps1` once before and once after the xtask port, comparing
+  `start_ms` and `idle_mb` (the background smokes cannot measure the first frame).
+- The DATAVIEW smoke needs network access to install pandas.
+- In the KEYMAP and PACKAGES smokes the foreground window changed in some runs and not in
+  others; find out whether Brisk takes the focus there.
+
+Smaller items left along the way: `[workspace.lints]` with `clippy::unwrap_used`; the smoke
+functions inside ordinary files (`smoke.rs` hooks are moved, the functions are not);
+adopting a child into the job on spawn needs a wrapper around `Command`; the `taskkill` in
+`brisk-terminal` keeps its own no-window flag; `brisk-app` lists `brisk-vm` without using it,
+and `brisk-vm` has dead code on Linux.
+
+CI is off: GitHub Actions is not used. The Linux check is
+`cargo check --workspace --all-targets` and `cargo test --workspace --exclude brisk-app` on a
+Linux machine; both pass as of this status.
+
 ### Phase 0: tooling
 
 #### Step 1. Format the code once
