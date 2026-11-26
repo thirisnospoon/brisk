@@ -4,7 +4,7 @@
 //! configuration runs it; anything else runs through the shell with the project venv
 //! activated. Typed commands are remembered per project.
 
-use brisk_run::{split_args, Command, RunConfig, RunKind};
+use crate::{split_args, Command, RunConfig, RunKind};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -89,7 +89,7 @@ pub fn parse(root: &Path, text: &str) -> Option<Parsed> {
 }
 
 /// The shell process for a command line, with `activation` (the project interpreter's venv
-/// or conda environment, see `terminal_env`) like the Terminal.
+/// or conda environment, see `env::terminal`) like the Terminal.
 pub fn shell_command(root: &Path, line: &str, activation: HashMap<String, String>) -> Command {
     let mut env = HashMap::new();
     env.insert("PYTHONUNBUFFERED".into(), "1".into());

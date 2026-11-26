@@ -4,7 +4,6 @@
 
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
-mod coverage;
 mod crash;
 mod data_view;
 mod diff_view;
@@ -15,9 +14,6 @@ mod icons;
 mod keymap_store;
 mod keys;
 mod merge_view;
-mod profile;
-mod py_console;
-mod run_anything;
 mod scrollbar;
 mod smoke;
 mod stall;

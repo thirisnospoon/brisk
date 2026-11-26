@@ -376,6 +376,20 @@ pub fn load(root: &Path) -> (RunFile, usize) {
     (f, n)
 }
 
+/// `.brisk/run.json` and the project files (`.run/*.xml`): the newest change and the total
+/// size, to tell whether they changed on disk since the last `load` or `save`.
+pub fn run_file_stamp(root: &Path) -> Option<(std::time::SystemTime, u64)> {
+    let m = std::fs::metadata(root.join(CONFIG_FILE)).ok()?;
+    let mut stamp = (m.modified().ok()?, m.len());
+    for e in std::fs::read_dir(root.join(crate::project_files::DIR)).into_iter().flatten().flatten() {
+        if let Ok(m) = e.metadata() {
+            stamp.0 = stamp.0.max(m.modified().unwrap_or(stamp.0));
+            stamp.1 += m.len() + 1;
+        }
+    }
+    Some(stamp)
+}
+
 /// Write `.brisk/run.json` and the project files of the shared configurations.
 pub fn save(root: &Path, f: &RunFile) -> std::io::Result<()> {
     let path = root.join(CONFIG_FILE);

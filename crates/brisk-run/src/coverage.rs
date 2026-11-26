@@ -1,7 +1,7 @@
 //! Run with Coverage, like PyCharm's (coverage.py): the run's command goes through
 //! `python -m coverage run`, then `coverage json` gives covered / missed lines per file.
 
-use brisk_run::{split_args, Command, RunConfig};
+use crate::{split_args, Command, RunConfig};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Default, PartialEq)]

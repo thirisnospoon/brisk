@@ -51,7 +51,7 @@ of `src/`.
 | `brisk-lsp` | 1,436 | 10 | proc, lint | JSON-RPC over stdio and a typed API for ty. |
 | `brisk-dap` | 1,047 | 13 | proc | The Debug Adapter Protocol client for debugpy, and the debugger logic the Debug window shows: hover expressions, inline values, Smart Step Into targets, exception breakpoints, console completion, the Attach to Process list. |
 | `brisk-settings` | 590 | 4 | platform | The `Settings` type, `settings.json` (load, merged save, `.bak` of a broken file) and the globals painting code reads. |
-| `brisk-run` | 4,555 | 44 | project | Interpreter discovery, run configurations (`.brisk/run.json`, `.idea` and `.run/*.xml` import), command lines, pytest / unittest runners, traceback links, uv / Poetry detection, SSH interpreters. `env`: creating a venv and installing requirements, uv / Poetry sync and dependency changes, an interpreter's packages and the PyPI name list, the Terminal's activation of the project environment. |
+| `brisk-run` | 4,555 | 44 | project | Interpreter discovery, run configurations (`.brisk/run.json`, `.idea` and `.run/*.xml` import), command lines, pytest / unittest runners, traceback links, uv / Poetry detection, SSH interpreters, Run with Coverage and Profile (`coverage`, `profile`), Run Anything's parsing and history (`run_anything`), the Python Console's process and protocol (`console`). `env`: creating a venv and installing requirements, uv / Poetry sync and dependency changes, an interpreter's packages and the PyPI name list, the Terminal's activation of the project environment. |
 | `brisk-git` | 2,384 | 23 | proc | Git through the `git` CLI: status, log with its lane layout, diff, merge, stash, blame. |
 | `brisk-terminal` | 1,282 | 6 | proc | The PTY (ConPTY, openpty) and VT emulation through `alacritty_terminal`. |
 | `brisk-db` | 1,777 | 14 | | PostgreSQL, MySQL / MariaDB and SQLite: connections, schema, queries. |
@@ -77,9 +77,8 @@ target and nothing outside it can link against its code.
   window and the Run console. It emits `RunEvent` (`terminal_view.rs:71`).
 - `diff_view.rs`, `merge_view.rs`, `grid_view.rs`, `data_view.rs`: the other kinds of editor
   tab (`Tab`, `workspace.rs:238`).
-- UI-free modules that live here anyway: `py_console.rs`, `todo_scan.rs`, `coverage.rs`,
-  `profile.rs`, `editorconfig.rs`, `run_anything.rs`, `keymap_store.rs`.
-  None of them imports `gpui`.
+- UI-free modules that live here anyway: `todo_scan.rs`, `editorconfig.rs`,
+  `keymap_store.rs`. None of them imports `gpui`.
 - `theme.rs`, `icons.rs`, `ui_kit.rs`, `scrollbar.rs`: drawing helpers. Colors and sizes are
   read from global state (`brisk-settings` keeps them in statics).
 - `crash.rs` (panic log) and `stall.rs` (main-thread watchdog and frame timing).
@@ -689,6 +688,13 @@ tests now also run in the Linux CI job.
 `coverage.rs`, `profile.rs`, `run_anything.rs`, the protocol half of `py_console.rs`,
 `run_file_stamp`. Verify: `cargo test -p brisk-run`; RUN, RUNANYTHING, PYCON, coverage and
 profile smokes. Risk: low.
+
+Done on branch `arch1`. None of the four files had UI code, so all of each moved with its
+tests: `brisk-run/src/coverage.rs`, `profile.rs`, `run_anything.rs`, and `console.rs` with
+`console_boot.py` (was `py_console.rs` and `py_console_boot.py`). The Python Console window
+stays in `workspace/console_ui.rs`. `run_file_stamp` is `brisk_run::run_file_stamp`, next to
+`load` and `save`, with a test of its own. `Console::start` returns an error instead of
+panicking when a pipe is missing.
 
 #### Step 8. DAP helpers to `brisk-dap`
 

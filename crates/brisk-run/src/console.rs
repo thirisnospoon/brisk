@@ -1,4 +1,4 @@
-//! The Python Console's process: the project interpreter running `py_console_boot.py`, with
+//! The Python Console's process: the project interpreter running `console_boot.py`, with
 //! JSON requests on stdin and output plus `\x1e<kind> <json>` events on stdout.
 
 use std::io::{Read, Write};
@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
-const BOOT: &str = include_str!("py_console_boot.py");
+const BOOT: &str = include_str!("console_boot.py");
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Var {
@@ -54,9 +54,10 @@ impl Console {
         brisk_platform::process::no_window(&mut cmd);
         let mut child = cmd.spawn()?;
         brisk_platform::process::adopt(&child);
-        let stdin = child.stdin.take().expect("piped stdin");
-        let stdout = child.stdout.take().expect("piped stdout");
-        let stderr = child.stderr.take().expect("piped stderr");
+        let (Some(stdin), Some(stdout), Some(stderr)) = (child.stdin.take(), child.stdout.take(), child.stderr.take()) else {
+            brisk_platform::process::kill_tree(&mut child);
+            return Err(std::io::Error::other("the console's pipes are missing"));
+        };
         let (tx, rx) = channel();
         let tx2 = tx.clone();
         std::thread::spawn(move || read_stdout(stdout, tx));

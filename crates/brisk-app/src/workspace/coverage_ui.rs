@@ -3,11 +3,11 @@
 
 use super::run_marks_ui::norm;
 use super::{BottomTool, Workspace};
-use crate::coverage::{self, Report};
 use crate::editor::Editor;
 use crate::theme::ui_px;
 use crate::theme::Theme;
 use brisk_keymap::Action;
+use brisk_run::coverage::{self, Report};
 use brisk_run::{RunConfig, RunKind};
 use gpui::prelude::*;
 #[cfg(feature = "smoke")]

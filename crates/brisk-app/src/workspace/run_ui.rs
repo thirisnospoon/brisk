@@ -28,19 +28,6 @@ pub(super) struct Runs {
     stamp: Option<(std::time::SystemTime, u64)>,
 }
 
-/// run.json and the project files (`.run/*.xml`): the newest change and the total size.
-fn run_file_stamp(root: &Path) -> Option<(std::time::SystemTime, u64)> {
-    let m = std::fs::metadata(root.join(brisk_run::CONFIG_FILE)).ok()?;
-    let mut stamp = (m.modified().ok()?, m.len());
-    for e in std::fs::read_dir(root.join(brisk_run::project_files::DIR)).into_iter().flatten().flatten() {
-        if let Ok(m) = e.metadata() {
-            stamp.0 = stamp.0.max(m.modified().unwrap_or(stamp.0));
-            stamp.1 += m.len() + 1;
-        }
-    }
-    Some(stamp)
-}
-
 impl Runs {
     /// Returns the state and how many configurations were imported from `.idea`.
     pub fn new(root: &Path) -> (Self, usize) {
@@ -49,7 +36,15 @@ impl Runs {
             let _ = brisk_run::save(root, &file);
         }
         (
-            Runs { file, venvs: brisk_run::project_venvs(root), all: None, panel: None, dialog: None, stop_confirmed: None, stamp: run_file_stamp(root) },
+            Runs {
+                file,
+                venvs: brisk_run::project_venvs(root),
+                all: None,
+                panel: None,
+                dialog: None,
+                stop_confirmed: None,
+                stamp: brisk_run::run_file_stamp(root),
+            },
             imported,
         )
     }
@@ -124,7 +119,7 @@ impl Workspace {
     }
 
     pub(super) fn reload_runs(&mut self) {
-        let stamp = run_file_stamp(&self.root);
+        let stamp = brisk_run::run_file_stamp(&self.root);
         if stamp.is_some() && stamp == self.runs.stamp {
             return;
         }
@@ -142,7 +137,7 @@ impl Workspace {
 
     pub(super) fn save_runs(&mut self) {
         match brisk_run::save(&self.root, &self.runs.file) {
-            Ok(()) => self.runs.stamp = run_file_stamp(&self.root),
+            Ok(()) => self.runs.stamp = brisk_run::run_file_stamp(&self.root),
             Err(e) => self.status = format!("Cannot save {}: {e}", brisk_run::CONFIG_FILE),
         }
     }

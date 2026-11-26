@@ -1,7 +1,7 @@
 //! Profile (cProfile), like PyCharm's: the run goes through `python -m cProfile -o F`, then
 //! a small pstats dump gives a row per function (calls, own time, total time).
 
-use brisk_run::{split_args, Command, RunConfig};
+use crate::{split_args, Command, RunConfig};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq)]

@@ -3,10 +3,10 @@
 //! a double click or Enter opens the function.
 
 use super::{BottomTool, Workspace};
-use crate::profile::{self, Row, SortBy};
 use crate::theme::ui_px;
 use crate::theme::Theme;
 use brisk_keymap::Action;
+use brisk_run::profile::{self, Row, SortBy};
 use brisk_run::RunKind;
 use gpui::prelude::*;
 use gpui::{div, px, Context, FocusHandle, Window};

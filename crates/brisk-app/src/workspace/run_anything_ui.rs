@@ -1,7 +1,7 @@
 //! Run Anything (double Ctrl): the popup and the run. Parsing lives in `run_anything`.
 
 use super::{PopupItem, PopupKind, Target, Workspace};
-use crate::run_anything::{self, Parsed};
+use brisk_run::run_anything::{self, Parsed};
 use brisk_run::RunConfig;
 use gpui::{Context, Window};
 

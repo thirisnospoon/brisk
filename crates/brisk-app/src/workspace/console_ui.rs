@@ -4,10 +4,10 @@
 
 use super::{BottomTool, Workspace};
 use crate::editor::Editor;
-use crate::py_console::{Console, Event, Var};
 use crate::theme::ui_px;
 use crate::theme::{mono_font, Theme};
 use brisk_keymap::Action;
+use brisk_run::console::{Console, Event, Var};
 use gpui::prelude::*;
 use gpui::{div, list, px, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ListAlignment, ListOffset, ListState, Window};
 use std::path::PathBuf;

@@ -975,3 +975,16 @@ fn test_history_orders_same_millisecond_runs() {
     assert_eq!(names, ["tenth", "ninth", "first", "older"]);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn run_file_stamp_covers_the_project_files() {
+    let root = tmp("stamp");
+    assert_eq!(run_file_stamp(&root), None);
+    save(&root, &RunFile::default()).unwrap();
+    let Some((_, size)) = run_file_stamp(&root) else { panic!("no stamp after save") };
+    std::fs::create_dir_all(root.join(project_files::DIR)).unwrap();
+    std::fs::write(root.join(project_files::DIR).join("x.run.xml"), "<component/>").unwrap();
+    let Some((_, with_xml)) = run_file_stamp(&root) else { panic!("no stamp") };
+    assert!(with_xml > size);
+    let _ = std::fs::remove_dir_all(&root);
+}
