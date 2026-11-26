@@ -549,7 +549,9 @@ impl Workspace {
                     break;
                 }
             }
-            let width = cx.update(|window, _| f32::from(window.viewport_size().width)).unwrap_or(1400.);
+            // The window's bounds, not its viewport: a background smoke's window is created
+            // hidden, and its viewport can keep the CW_USEDEFAULT size (about -1.7e9 px).
+            let width = cx.update(|window, _| f32::from(window.bounds().size.width)).unwrap_or(1400.);
             let _ = this.update(cx, |this, cx| {
                 eprintln!("smoke-ui: symbols indexed: {}", this.symbols.list.as_ref().map_or(0, |l| l.len()));
                 this.dispatch_smoke(brisk_keymap::Action::SearchEverywhere, cx);
