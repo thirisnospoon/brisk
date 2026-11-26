@@ -107,11 +107,8 @@ impl Workspace {
                     .map(|i| i.routes.iter().map(|r| format!("{} {} {}", r.path, r.name.clone().unwrap_or_default(), r.handler)).collect())
                     .unwrap_or_default();
                 eprintln!("smoke-web: endpoints -> {routes:?}");
-                if let Some(e) = this.endpoints.as_mut() {
-                    e.selected = 1;
-                    let f = e.focus.clone();
-                    window.focus(&f);
-                }
+                this.endpoints.select(1, cx);
+                window.focus(&this.endpoints.focus);
                 this.smoke_press("enter", window, cx);
                 eprintln!("smoke-web: Enter on the second endpoint -> {:?}", here(this, cx));
                 if std::env::var("BRISK_SMOKE_WEBNAV").as_deref() != Ok("hold") {

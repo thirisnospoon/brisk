@@ -445,7 +445,7 @@ pub struct Workspace {
     /// Routes and templates of a Django / FastAPI / Flask project (built on first use).
     web: web_ui::WebState,
     /// Created on first open of the Endpoints window.
-    endpoints: Option<web_ui::Endpoints>,
+    endpoints: web_ui::Endpoints,
     /// The breakpoint whose condition the popup edits.
     debug_edit: Option<(Entity<Editor>, usize)>,
     settings_dialog: Option<settings_ui::SettingsDialog>,
@@ -639,7 +639,7 @@ impl Workspace {
             packages: None,
             todo: todo_ui::Todo::new(cx),
             web: Default::default(),
-            endpoints: None,
+            endpoints: web_ui::Endpoints::new(cx),
             debug_edit: None,
             recent: Vec::new(),
             bookmarks: saved_bookmarks,
@@ -3240,7 +3240,7 @@ impl Render for Workspace {
             (BottomTool::PythonConsole, _) => self.render_python_console(window, cx),
             (BottomTool::Packages, _) => self.render_python_packages(window, cx),
             (BottomTool::Todo, _) => self.render_todo(),
-            (BottomTool::Endpoints, _) => self.render_endpoints(cx),
+            (BottomTool::Endpoints, _) => self.render_endpoints(),
             (BottomTool::Coverage, _) => self.render_coverage(cx),
             (BottomTool::Profiler, _) => self.render_profiler(cx),
             _ => Self::render_placeholder(b.title(), b.stage()),

@@ -15,7 +15,7 @@ use crate::editor::Editor;
 use crate::theme::{mono_font, ui_px, Theme};
 use brisk_web::{Index, Loc, Ref};
 use gpui::prelude::*;
-use gpui::{div, px, uniform_list, Context, Entity, FocusHandle, KeyDownEvent, ScrollStrategy, UniformListScrollHandle, Window};
+use gpui::{div, px, uniform_list, Context, Entity, EventEmitter, FocusHandle, KeyDownEvent, ScrollStrategy, UniformListScrollHandle, Window};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -31,12 +31,6 @@ pub struct WebState {
 
 /// A callback that runs with a current index.
 type WebCallback = Box<dyn FnOnce(&mut Workspace, &Index, &mut Window, &mut Context<Workspace>)>;
-
-pub struct Endpoints {
-    pub focus: FocusHandle,
-    pub selected: usize,
-    scroll: UniformListScrollHandle,
-}
 
 impl Workspace {
     /// Runs `f` with a current index: at once when there is one, otherwise after a
@@ -90,20 +84,18 @@ impl Workspace {
                 None => Index::scan(&root),
             }
         });
-        let finish = |this: &mut Self, idx: Index| -> Arc<Index> {
+        let finish = |this: &mut Self, idx: Index, cx: &mut Context<Self>| -> Arc<Index> {
             let idx = Arc::new(idx);
             this.web.index = Some(idx.clone());
             this.web.scanning = false;
-            if let Some(e) = this.endpoints.as_mut() {
-                e.selected = e.selected.min(idx.routes.len().saturating_sub(1));
-            }
+            this.endpoints.index_changed(&idx, cx);
             idx
         };
         if let Some(window) = window {
             cx.spawn_in(window, async move |this, cx| {
                 let idx = task.await;
                 let _ = this.update_in(cx, |this, window, cx| {
-                    let idx = finish(this, idx);
+                    let idx = finish(this, idx, cx);
                     for f in std::mem::take(&mut this.web.waiting) {
                         f(this, &idx, window, cx);
                     }
@@ -115,7 +107,7 @@ impl Workspace {
             cx.spawn(async move |this, cx| {
                 let idx = task.await;
                 let _ = this.update(cx, |this, cx| {
-                    finish(this, idx);
+                    finish(this, idx, cx);
                     cx.notify();
                 });
             })
@@ -211,66 +203,166 @@ impl Workspace {
             cx.notify();
         });
     }
+}
 
-    // --- Endpoints tool window ------------------------------------------------------------
+// --- Endpoints tool window ----------------------------------------------------------------
 
-    pub(super) fn toggle_endpoints_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.endpoints.is_none() {
-            self.endpoints = Some(Endpoints { focus: cx.focus_handle(), selected: 0, scroll: UniformListScrollHandle::new() });
+/// The Endpoints tool window as `Workspace` holds it: its focus and its model, which is
+/// created the first time the window opens.
+pub struct Endpoints {
+    pub focus: FocusHandle,
+    model: Option<Entity<EndpointsModel>>,
+}
+
+impl Endpoints {
+    pub fn new(cx: &mut Context<Workspace>) -> Self {
+        Self { focus: cx.focus_handle(), model: None }
+    }
+
+    /// A new index: the window lists its routes.
+    fn index_changed(&self, idx: &Arc<Index>, cx: &mut gpui::App) {
+        if let Some(m) = &self.model {
+            m.update(cx, |m, cx| m.set_index(idx.clone(), cx));
         }
-        self.toggle_bottom(BottomTool::Endpoints, window, cx);
-        if self.bottom == Some(BottomTool::Endpoints) {
-            if self.web.index.is_none() || self.web.stale {
-                self.scan_web(Some(window), cx);
-            }
-            if let Some(e) = &self.endpoints {
-                window.focus(&e.focus);
-            }
+    }
+
+    /// Selects the `i`th route.
+    #[cfg(feature = "smoke")]
+    pub fn select(&self, i: usize, cx: &mut gpui::App) {
+        if let Some(m) = &self.model {
+            m.update(cx, |m, _| m.selected = i);
         }
+    }
+}
+
+/// What the Endpoints model asks of the workspace.
+pub enum EndpointsEvent {
+    /// Go to a route's view.
+    Open(Loc),
+    /// Refresh: scan the project again.
+    Rescan,
+    /// Esc: back to the editor.
+    FocusEditor,
+}
+
+/// What a key in the Endpoints window did.
+pub enum EndpointsKey {
+    /// Not a key of the window.
+    NotMine,
+    Done,
+    /// Done, and the workspace has to do this now (in the same turn, so the caller sees it).
+    Then(EndpointsEvent),
+}
+
+/// The routes of the project's last web index, and the window that lists them.
+pub struct EndpointsModel {
+    root: PathBuf,
+    focus: FocusHandle,
+    /// `None` until the first scan ends.
+    index: Option<Arc<Index>>,
+    selected: usize,
+    scroll: UniformListScrollHandle,
+}
+
+impl EventEmitter<EndpointsEvent> for EndpointsModel {}
+
+impl EndpointsModel {
+    /// The window for the project at `root`, with the index scanned so far; `focus` is the
+    /// tool window's.
+    pub fn new(root: PathBuf, focus: FocusHandle, index: Option<Arc<Index>>) -> Self {
+        Self { root, focus, index, selected: 0, scroll: UniformListScrollHandle::new() }
+    }
+
+    pub fn set_index(&mut self, idx: Arc<Index>, cx: &mut Context<Self>) {
+        self.selected = self.selected.min(idx.routes.len().saturating_sub(1));
+        self.index = Some(idx);
         cx.notify();
     }
 
-    fn endpoint_open(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(r) = self.web.index.as_ref().and_then(|x| x.routes.get(i)).cloned() else { return };
-        if let Some(e) = self.endpoints.as_mut() {
-            e.selected = i;
-        }
-        let l = r.handler_at.unwrap_or(r.at);
-        self.navigate_to(NavPos { path: l.path, line: l.line, col: l.col }, window, cx);
-        cx.notify();
+    fn count(&self) -> usize {
+        self.index.as_ref().map(|x| x.routes.len()).unwrap_or(0)
     }
 
-    pub(super) fn endpoints_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(ep) = &self.endpoints else { return false };
-        if !ep.focus.is_focused(window) {
-            return false;
-        }
-        let m = &e.keystroke.modifiers;
-        if m.control || m.alt || m.platform {
-            return false;
-        }
-        let n = self.web.index.as_ref().map(|x| x.routes.len()).unwrap_or(0);
-        let sel = ep.selected;
-        match e.keystroke.key.as_str() {
+    /// Selects route `i` and returns where its view is.
+    fn activate(&mut self, i: usize, cx: &mut Context<Self>) -> Option<EndpointsEvent> {
+        let r = self.index.as_ref()?.routes.get(i)?;
+        let l = r.handler_at.clone().unwrap_or_else(|| r.at.clone());
+        self.selected = i;
+        cx.notify();
+        Some(EndpointsEvent::Open(l))
+    }
+
+    /// A key pressed with the window focused and no modifier held.
+    pub fn key(&mut self, key: &str, cx: &mut Context<Self>) -> EndpointsKey {
+        let n = self.count();
+        let sel = self.selected;
+        match key {
             "up" | "down" if n > 0 => {
-                let ep = self.endpoints.as_mut().unwrap();
-                ep.selected = if e.keystroke.key == "up" { sel.saturating_sub(1) } else { (sel + 1).min(n - 1) };
-                ep.scroll.scroll_to_item(ep.selected, ScrollStrategy::Top);
+                self.selected = if key == "up" { sel.saturating_sub(1) } else { (sel + 1).min(n - 1) };
+                self.scroll.scroll_to_item(self.selected, ScrollStrategy::Top);
             }
-            "enter" => self.endpoint_open(sel, window, cx),
-            "escape" => self.focus_editor(window, cx),
-            _ => return false,
+            "enter" => {
+                if let Some(ev) = self.activate(sel, cx) {
+                    return EndpointsKey::Then(ev);
+                }
+            }
+            "escape" => return EndpointsKey::Then(EndpointsEvent::FocusEditor),
+            _ => return EndpointsKey::NotMine,
         }
         cx.notify();
-        true
+        EndpointsKey::Done
     }
 
-    pub(super) fn render_endpoints(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let Some(ep) = &self.endpoints else { return div().into_any_element() };
-        let n = self.web.index.as_ref().map(|x| x.routes.len()).unwrap_or(0);
-        let summary = match (&self.web.index, self.web.scanning) {
-            (None, _) => "Scanning…".to_string(),
-            (Some(idx), _) => {
+    fn row(&self, i: usize, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let r = self.index.as_ref()?.routes.get(i)?;
+        let sel = self.selected == i;
+        let rel = |p: &Path| p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/");
+        let methods = if r.methods.is_empty() { "ANY".to_string() } else { r.methods.join(" ") };
+        let color = match r.methods.first().map(String::as_str) {
+            Some("GET") | None => Theme::syntax(brisk_syntax::Highlight::String),
+            Some("POST") => Theme::syntax(brisk_syntax::Highlight::Keyword),
+            Some("DELETE") => Theme::error(),
+            _ => Theme::syntax(brisk_syntax::Highlight::Number),
+        };
+        let place = r.handler_at.as_ref().unwrap_or(&r.at);
+        let detail = format!("{}  {}:{}", r.name.clone().unwrap_or_else(|| r.handler.clone()), rel(&place.path), place.line + 1);
+        Some(
+            div()
+                .id(("endpoint-row", i))
+                .w_full()
+                .h(ui_px(22.))
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .pl(px(12.))
+                .whitespace_nowrap()
+                .overflow_hidden()
+                .cursor_pointer()
+                .when(sel, |d| d.bg(Theme::selection_row()))
+                .when(!sel, |d| d.hover(|s| s.bg(Theme::hover_row())))
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(move |this, _, w, cx| {
+                        w.focus(&this.focus);
+                        if let Some(ev) = this.activate(i, cx) {
+                            cx.emit(ev);
+                        }
+                    }),
+                )
+                .child(div().w(px(84.)).flex_shrink_0().text_size(ui_px(11.5)).font_family(mono_font()).text_color(color).child(methods))
+                .child(div().font_family(mono_font()).text_color(Theme::text()).child(r.path.clone()))
+                .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).child(detail))
+                .into_any_element(),
+        )
+    }
+}
+
+impl Render for EndpointsModel {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let n = self.count();
+        let summary = match &self.index {
+            None => "Scanning…".to_string(),
+            Some(idx) => {
                 let mut fws: Vec<&str> = idx.routes.iter().map(|r| r.framework.name()).collect();
                 fws.dedup();
                 format!("{n} endpoint{}{}", if n == 1 { "" } else { "s" }, if fws.is_empty() { String::new() } else { format!(" · {}", fws.join(", ")) })
@@ -301,16 +393,13 @@ impl Workspace {
                     .active(|s| s.bg(Theme::press()))
                     .child("↻")
                     .tooltip(|_, cx| cx.new(|_| super::Tip("Rescan the project".into())).into())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.web.stale = true;
-                        this.scan_web(Some(window), cx);
-                    })),
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(EndpointsEvent::Rescan))),
             )
             .child(div().text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(summary));
-        let empty = n == 0 && self.web.index.is_some();
+        let empty = n == 0 && self.index.is_some();
         let list = div()
             .id("endpoints-list")
-            .track_focus(&ep.focus)
+            .track_focus(&self.focus)
             .flex_1()
             .min_h_0()
             .flex()
@@ -322,57 +411,76 @@ impl Workspace {
                     uniform_list(
                         "endpoint-rows",
                         n,
-                        cx.processor(|this, range: std::ops::Range<usize>, _window, cx| range.filter_map(|i| this.endpoint_row(i, cx)).collect()),
+                        cx.processor(|this, range: std::ops::Range<usize>, _window, cx| range.filter_map(|i| this.row(i, cx)).collect()),
                     )
                     .flex_1()
-                    .track_scroll(ep.scroll.clone()),
+                    .track_scroll(self.scroll.clone()),
                 )
             });
-        div().id("endpoints-window").size_full().flex().flex_col().child(toolbar).child(list).into_any_element()
+        div().id("endpoints-window").size_full().flex().flex_col().child(toolbar).child(list)
+    }
+}
+
+impl Workspace {
+    /// The Endpoints model, created on first use.
+    fn endpoints_model(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<EndpointsModel> {
+        if let Some(m) = &self.endpoints.model {
+            return m.clone();
+        }
+        let m = cx.new(|_| EndpointsModel::new(self.root.clone(), self.endpoints.focus.clone(), self.web.index.clone()));
+        cx.subscribe_in(&m, window, |this, _, ev, window, cx| this.on_endpoints_event(ev, window, cx)).detach();
+        self.endpoints.model = Some(m.clone());
+        m
     }
 
-    fn endpoint_row(&self, i: usize, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let r = self.web.index.as_ref()?.routes.get(i)?;
-        let sel = self.endpoints.as_ref().is_some_and(|e| e.selected == i);
-        let rel = |p: &Path| p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/");
-        let methods = if r.methods.is_empty() { "ANY".to_string() } else { r.methods.join(" ") };
-        let color = match r.methods.first().map(String::as_str) {
-            Some("GET") | None => Theme::syntax(brisk_syntax::Highlight::String),
-            Some("POST") => Theme::syntax(brisk_syntax::Highlight::Keyword),
-            Some("DELETE") => Theme::error(),
-            _ => Theme::syntax(brisk_syntax::Highlight::Number),
-        };
-        let place = r.handler_at.as_ref().unwrap_or(&r.at);
-        let detail = format!("{}  {}:{}", r.name.clone().unwrap_or_else(|| r.handler.clone()), rel(&place.path), place.line + 1);
-        Some(
-            div()
-                .id(("endpoint-row", i))
-                .w_full()
-                .h(ui_px(22.))
-                .flex()
-                .items_center()
-                .gap(px(10.))
-                .pl(px(12.))
-                .whitespace_nowrap()
-                .overflow_hidden()
-                .cursor_pointer()
-                .when(sel, |d| d.bg(Theme::selection_row()))
-                .when(!sel, |d| d.hover(|s| s.bg(Theme::hover_row())))
-                .on_mouse_down(
-                    gpui::MouseButton::Left,
-                    cx.listener(move |this, _, w, cx| {
-                        if let Some(e) = this.endpoints.as_mut() {
-                            e.selected = i;
-                            w.focus(&e.focus.clone());
-                        }
-                        this.endpoint_open(i, w, cx);
-                    }),
-                )
-                .child(div().w(px(84.)).flex_shrink_0().text_size(ui_px(11.5)).font_family(mono_font()).text_color(color).child(methods))
-                .child(div().font_family(mono_font()).text_color(Theme::text()).child(r.path.clone()))
-                .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).child(detail))
-                .into_any_element(),
-        )
+    fn on_endpoints_event(&mut self, ev: &EndpointsEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match ev {
+            EndpointsEvent::Open(l) => self.navigate_to(NavPos { path: l.path.clone(), line: l.line, col: l.col }, window, cx),
+            EndpointsEvent::Rescan => {
+                self.web.stale = true;
+                self.scan_web(Some(window), cx);
+            }
+            EndpointsEvent::FocusEditor => self.focus_editor(window, cx),
+        }
+        cx.notify();
+    }
+
+    pub(super) fn toggle_endpoints_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.endpoints_model(window, cx);
+        self.toggle_bottom(BottomTool::Endpoints, window, cx);
+        if self.bottom == Some(BottomTool::Endpoints) {
+            if self.web.index.is_none() || self.web.stale {
+                self.scan_web(Some(window), cx);
+            }
+            window.focus(&self.endpoints.focus);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn endpoints_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.endpoints.focus.is_focused(window) {
+            return false;
+        }
+        let Some(m) = self.endpoints.model.clone() else { return false };
+        let mods = &e.keystroke.modifiers;
+        if mods.control || mods.alt || mods.platform {
+            return false;
+        }
+        match m.update(cx, |m, cx| m.key(&e.keystroke.key, cx)) {
+            EndpointsKey::NotMine => false,
+            EndpointsKey::Done => true,
+            EndpointsKey::Then(ev) => {
+                self.on_endpoints_event(&ev, window, cx);
+                true
+            }
+        }
+    }
+
+    pub(super) fn render_endpoints(&self) -> gpui::AnyElement {
+        match &self.endpoints.model {
+            Some(m) => m.clone().into_any_element(),
+            None => div().into_any_element(),
+        }
     }
 }
 
