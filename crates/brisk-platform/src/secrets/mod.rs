@@ -79,20 +79,13 @@ fn forget_at(p: &Path, id: &str) {
     }
 }
 
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
-fn unhex(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn to_hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("brisk-secrets-{name}-{}", std::process::id()));
@@ -109,7 +102,7 @@ mod tests {
         if cfg!(windows) {
             let sealed = sealed.expect("DPAPI encrypts");
             assert!(sealed.starts_with("dpapi:"), "{sealed}");
-            assert!(!sealed.contains(&hex(password.as_bytes())), "stored encrypted");
+            assert!(!sealed.contains(&to_hex(password.as_bytes())), "stored encrypted");
             store_at(&p, "db", sealed).expect("store");
             assert_eq!(load_at(&p, "db").as_deref(), Some(password));
             forget_at(&p, "db");
@@ -118,18 +111,10 @@ mod tests {
             // No keyring: saving is refused, and even a value on disk is not read.
             let e = sealed.expect_err("saving is refused");
             assert_eq!(e.kind(), std::io::ErrorKind::Unsupported);
-            store_at(&p, "db", format!("plain:{}", hex(password.as_bytes()))).expect("store");
+            store_at(&p, "db", format!("plain:{}", to_hex(password.as_bytes()))).expect("store");
             assert_eq!(load_at(&p, "db"), None);
         }
         let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn hex_round_trip() {
-        assert_eq!(hex(&[0, 0x61, 0xff]), "0061ff");
-        assert_eq!(unhex("0061ff"), Some(vec![0, 0x61, 0xff]));
-        assert_eq!(unhex("061"), None);
-        assert_eq!(unhex("zz"), None);
     }
 
     #[test]

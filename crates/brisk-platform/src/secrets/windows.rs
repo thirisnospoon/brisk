@@ -1,4 +1,3 @@
-use super::{hex, unhex};
 use windows_sys::Win32::Foundation::LocalFree;
 use windows_sys::Win32::Security::Cryptography::{CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB};
 
@@ -53,4 +52,29 @@ fn unprotect(data: &[u8]) -> Option<Vec<u8>> {
     let ok =
         unsafe { CryptUnprotectData(&input, std::ptr::null_mut(), std::ptr::null(), std::ptr::null(), std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out) };
     (ok != 0).then(|| take(out))
+}
+
+// The stored form of the encrypted bytes. Only Windows stores passwords.
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn unhex(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{hex, unhex};
+
+    #[test]
+    fn hex_round_trip() {
+        assert_eq!(hex(&[0, 0x61, 0xff]), "0061ff");
+        assert_eq!(unhex("0061ff"), Some(vec![0, 0x61, 0xff]));
+        assert_eq!(unhex("061"), None);
+        assert_eq!(unhex("zz"), None);
+    }
 }
