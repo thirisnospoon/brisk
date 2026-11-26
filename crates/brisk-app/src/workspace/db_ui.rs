@@ -78,6 +78,7 @@ fn fields(d: Driver) -> &'static [Field] {
     }
 }
 
+#[derive(Clone)]
 pub struct Dialog {
     pub ds: DataSource,
     /// Index into `sources` when editing; None for a new data source.
@@ -110,7 +111,38 @@ struct Row {
     expandable: bool,
 }
 
+/// The Database tool window as `Workspace` holds it: where it is (open, focus) and its model,
+/// which is created, and the data sources read, the first time something uses it.
 pub struct Db {
+    pub open: bool,
+    pub focus: FocusHandle,
+    model: Option<Entity<DbModel>>,
+}
+
+impl Db {
+    pub fn new(cx: &mut Context<Workspace>) -> Self {
+        Self { open: false, focus: cx.focus_handle(), model: None }
+    }
+
+    /// Whether the Data Source dialog is open.
+    pub fn dialog_open(&self, cx: &App) -> bool {
+        self.model.as_ref().is_some_and(|m| m.read(cx).dialog.is_some())
+    }
+
+    /// The canceller of the statement running now (Ctrl+F2 / ■).
+    pub fn running(&self, cx: &App) -> Option<Canceller> {
+        self.model.as_ref().and_then(|m| m.read(cx).running.clone())
+    }
+
+    /// The grid with the output of console statements, shown in Services (Alt+8).
+    pub fn results(&self, cx: &App) -> Option<Entity<GridView>> {
+        self.model.as_ref().and_then(|m| m.read(cx).results.clone())
+    }
+}
+
+/// The data sources, their connections and the tree of the Database tool window, the Data
+/// Source dialog and the console's result grid.
+pub struct DbModel {
     pub sources: Vec<DataSource>,
     pub states: HashMap<String, ConnState>,
     session_passwords: HashMap<String, String>,
@@ -118,8 +150,6 @@ pub struct Db {
     rows: Vec<Row>,
     selected: usize,
     scroll: UniformListScrollHandle,
-    pub focus: FocusHandle,
-    pub open: bool,
     pub dialog: Option<Dialog>,
     /// Output of console statements, shown in Services (Alt+8).
     pub results: Option<Entity<GridView>>,
@@ -132,8 +162,10 @@ pub struct Db {
     connect_seq: u64,
 }
 
-impl Db {
-    pub fn new(root: &Path, cx: &mut Context<Workspace>) -> (Self, bool) {
+impl DbModel {
+    /// The model with the project's data sources, and whether they were just imported from
+    /// `.idea/dataSources.xml`.
+    pub fn new(root: &Path) -> (Self, bool) {
         let (sources, imported) = brisk_db::load_sources(root);
         let mut db = Self {
             sources,
@@ -143,8 +175,6 @@ impl Db {
             rows: Vec::new(),
             selected: 0,
             scroll: UniformListScrollHandle::new(),
-            focus: cx.focus_handle(),
-            open: false,
             dialog: None,
             results: None,
             running: None,
@@ -229,6 +259,68 @@ impl Db {
     fn save(&self, root: &Path) -> Result<(), String> {
         brisk_db::save_sources(root, &self.sources).map_err(|e| format!("Cannot save {}: {e}", brisk_db::CONFIG_FILE))
     }
+    /// What a tree row shows.
+    fn row_line(&self, ix: usize, row: &Row) -> RowLine {
+        let (icon, icon_color, label, detail, label_color): (String, gpui::Hsla, String, String, gpui::Hsla) = match &row.kind {
+            RowKind::Source(di) => {
+                let ds = &self.sources[*di];
+                let (b, c) = driver_badge(ds.driver);
+                let detail = match self.states.get(&ds.id) {
+                    Some(ConnState::Live(l)) => l.version.clone(),
+                    Some(ConnState::Connecting(_)) => "connecting…".into(),
+                    Some(ConnState::Failed(_)) => "failed".into(),
+                    None => match ds.driver {
+                        Driver::Sqlite => ds.file.clone(),
+                        _ => format!("{}:{}", ds.host, ds.port),
+                    },
+                };
+                let live = matches!(self.states.get(&ds.id), Some(ConnState::Live(_)));
+                (b.into(), c, ds.display_name(), detail, if live { Theme::text() } else { Theme::text_muted() })
+            }
+            // Schema, table and column rows exist only while their data source is live.
+            RowKind::Schema(di, si) => match self.live(*di).and_then(|l| l.schemas.get(*si)) {
+                Some(s) => ("◇".into(), Theme::text_muted(), s.name.clone(), format!("{}", s.tables.len()), Theme::text()),
+                None => (String::new(), Theme::text_muted(), String::new(), String::new(), Theme::text()),
+            },
+            RowKind::Table(di, si, ti) => match self.live(*di).and_then(|l| l.schemas.get(*si)?.tables.get(*ti)) {
+                Some(t) => {
+                    let (g, c) = if t.kind == TableKind::View { ("◫", 0x9876aa) } else { ("▦", 0x6c9be8) };
+                    (g.into(), gpui::rgb(c).into(), t.name.clone(), String::new(), Theme::text())
+                }
+                None => (String::new(), Theme::text_muted(), String::new(), String::new(), Theme::text()),
+            },
+            RowKind::Column(di, si, ti, ci) => match self.live(*di).and_then(|l| l.schemas.get(*si)?.tables.get(*ti)?.columns.get(*ci)) {
+                Some(c) => {
+                    let icon = if c.primary_key { "⚷" } else { "▪" };
+                    let color = if c.primary_key { gpui::rgb(0xe0a85a).into() } else { Theme::text_dim() };
+                    let null = if c.nullable { "" } else { " not null" };
+                    (icon.into(), color, c.name.clone(), format!("{}{null}", c.type_name), Theme::text())
+                }
+                None => (String::new(), Theme::text_muted(), String::new(), String::new(), Theme::text()),
+            },
+            RowKind::Message(_, m, err) => (
+                if *err { "!".into() } else { "…".into() },
+                Theme::text_muted(),
+                m.clone(),
+                String::new(),
+                if *err { Theme::error() } else { Theme::text_muted() },
+            ),
+        };
+        RowLine { ix, row: row.clone(), selected: ix == self.selected, open: self.expanded.contains(&row.key), icon, icon_color, label, detail, label_color }
+    }
+}
+
+/// A tree row as it is drawn.
+struct RowLine {
+    ix: usize,
+    row: Row,
+    selected: bool,
+    open: bool,
+    icon: String,
+    icon_color: gpui::Hsla,
+    label: String,
+    detail: String,
+    label_color: gpui::Hsla,
 }
 
 fn first_line(s: &str) -> String {
@@ -249,14 +341,29 @@ pub fn driver_badge(d: Driver) -> (&'static str, gpui::Hsla) {
 }
 
 impl Workspace {
+    /// The database model, created (and the project's data sources read) on first use.
+    pub(super) fn db_model(&mut self, cx: &mut Context<Self>) -> Entity<DbModel> {
+        if let Some(m) = &self.db.model {
+            return m.clone();
+        }
+        let (model, imported) = DbModel::new(&self.root);
+        let n = model.sources.len();
+        let m = cx.new(|_| model);
+        self.db.model = Some(m.clone());
+        if imported {
+            self.show_toast(format!("Imported {n} data source(s) from .idea/dataSources.xml"), false, cx);
+        }
+        m
+    }
+
     // --- Connections ------------------------------------------------------------------
 
-    fn password_for(&self, ds: &DataSource) -> Option<String> {
+    fn password_for(&self, ds: &DataSource, cx: &App) -> Option<String> {
         if ds.driver == Driver::Sqlite {
             return Some(String::new());
         }
-        if let Some(p) = self.db.session_passwords.get(&ds.id) {
-            return Some(p.clone());
+        if let Some(p) = self.db.model.as_ref().and_then(|m| m.read(cx).session_passwords.get(&ds.id).cloned()) {
+            return Some(p);
         }
         if ds.save_password {
             return Some(brisk_db::load_password(&ds.id).unwrap_or_default());
@@ -266,45 +373,58 @@ impl Workspace {
 
     /// Connect if needed, then do `after`.
     pub(super) fn db_connect(&mut self, di: usize, after: After, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ds) = self.db.sources.get(di).cloned() else { return };
-        match self.db.states.get(&ds.id) {
-            Some(ConnState::Live(_)) => return self.db_after(di, after, cx),
-            Some(ConnState::Connecting(_)) => {
-                self.db.pending.entry(ds.id.clone()).or_default().push(after);
+        let m = self.db_model(cx);
+        let Some(ds) = m.read(cx).sources.get(di).cloned() else { return };
+        let state = match m.read(cx).states.get(&ds.id) {
+            Some(ConnState::Live(_)) => Some(true),
+            Some(ConnState::Connecting(_)) => Some(false),
+            _ => None,
+        };
+        match state {
+            Some(true) => return self.db_after(di, after, cx),
+            Some(false) => {
+                m.update(cx, |db, _| db.pending.entry(ds.id.clone()).or_default().push(after));
                 return;
             }
-            _ => {}
+            None => {}
         }
-        let Some(password) = self.password_for(&ds) else {
+        let Some(password) = self.password_for(&ds, cx) else {
             // "Save: Never" and nothing entered this session: ask, like PyCharm's password prompt.
             self.open_ds_dialog(Some(di), Some("Enter the password to connect".into()), Some(after), window, cx);
             return;
         };
-        self.db.pending.entry(ds.id.clone()).or_default().push(after);
-        self.db.connect_seq += 1;
-        let token = self.db.connect_seq;
-        self.db.states.insert(ds.id.clone(), ConnState::Connecting(token));
-        self.db.expanded.insert(format!("ds:{}", ds.id));
-        self.db.rebuild();
+        let token = m.update(cx, |db, _| {
+            db.pending.entry(ds.id.clone()).or_default().push(after);
+            db.connect_seq += 1;
+            db.states.insert(ds.id.clone(), ConnState::Connecting(db.connect_seq));
+            db.expanded.insert(format!("ds:{}", ds.id));
+            db.rebuild();
+            db.connect_seq
+        });
         let root = self.root.clone();
+        let id = ds.id.clone();
         let task = cx.background_executor().spawn(async move {
             let mut c = brisk_db::connect(&ds, &password, &root)?;
             let version = c.server_version();
             let schemas = brisk_db::introspect(c.as_mut())?;
             Ok::<_, String>((c, version, schemas))
         });
-        let id = self.db.sources[di].id.clone();
         cx.spawn(async move |this, cx| {
             let res = task.await;
             let _ = this.update(cx, |this, cx| {
-                match this.db.states.get(&id) {
-                    Some(ConnState::Connecting(t)) if *t == token => {}
+                let m = this.db_model(cx);
+                let current = match m.read(cx).states.get(&id) {
+                    Some(ConnState::Connecting(t)) => Some(*t == token),
+                    _ => None,
+                };
+                match current {
+                    Some(true) => {}
                     // A newer attempt is under way: the waiting work is its.
-                    Some(ConnState::Connecting(_)) => return,
+                    Some(false) => return,
                     // Disconnected or deleted meanwhile: the connection (if any) is dropped
                     // here, which closes it, and the work that waited for it is told.
-                    _ => {
-                        for a in this.db.pending.remove(&id).unwrap_or_default() {
+                    None => {
+                        for a in m.update(cx, |db, _| db.pending.remove(&id)).unwrap_or_default() {
                             if let After::Run { grid, .. } = a {
                                 grid.update(cx, |g, cx| g.set_error("Disconnected before the connection was made".into(), cx));
                             }
@@ -312,26 +432,29 @@ impl Workspace {
                         return;
                     }
                 }
-                let afters = this.db.pending.remove(&id).unwrap_or_default();
+                let afters = m.update(cx, |db, _| db.pending.remove(&id)).unwrap_or_default();
                 match res {
                     Ok((c, version, schemas)) => {
                         let cancel = c.canceller();
-                        // Open the default schema: public / main / the database itself.
-                        let ds = this.db.sources.iter().find(|s| s.id == id).cloned();
-                        if let Some(ds) = &ds {
-                            let def = schemas
-                                .iter()
-                                .find(|s| s.name == "public" || s.name == "main" || s.name == ds.database)
-                                .or_else(|| (schemas.len() == 1).then(|| &schemas[0]));
-                            if let Some(s) = def {
-                                this.db.expanded.insert(format!("ds:{}/s:{}", ds.id, s.name));
-                            }
-                        }
                         let n: usize = schemas.iter().map(|s| s.tables.len()).sum();
                         this.status = format!("Connected: {version}, {n} tables");
-                        this.db.states.insert(id.clone(), ConnState::Live(Live { conn: Arc::new(Mutex::new(c)), cancel, schemas, version }));
-                        this.db.rebuild();
-                        if let Some(di) = this.db.sources.iter().position(|s| s.id == id) {
+                        let di = m.update(cx, |db, _| {
+                            // Open the default schema: public / main / the database itself.
+                            let ds = db.sources.iter().find(|s| s.id == id).cloned();
+                            if let Some(ds) = &ds {
+                                let def = schemas
+                                    .iter()
+                                    .find(|s| s.name == "public" || s.name == "main" || s.name == ds.database)
+                                    .or_else(|| (schemas.len() == 1).then(|| &schemas[0]));
+                                if let Some(s) = def {
+                                    db.expanded.insert(format!("ds:{}/s:{}", ds.id, s.name));
+                                }
+                            }
+                            db.states.insert(id.clone(), ConnState::Live(Live { conn: Arc::new(Mutex::new(c)), cancel, schemas, version }));
+                            db.rebuild();
+                            db.sources.iter().position(|s| s.id == id)
+                        });
+                        if let Some(di) = di {
                             for a in afters {
                                 this.db_after(di, a, cx);
                             }
@@ -344,8 +467,10 @@ impl Workspace {
                                 grid.update(cx, |g, cx| g.set_error(e.clone(), cx));
                             }
                         }
-                        this.db.states.insert(id.clone(), ConnState::Failed(e));
-                        this.db.rebuild();
+                        m.update(cx, |db, _| {
+                            db.states.insert(id.clone(), ConnState::Failed(e));
+                            db.rebuild();
+                        });
                     }
                 }
                 cx.notify();
@@ -364,11 +489,15 @@ impl Workspace {
 
     /// Run a script on a data source and show the output in `grid`.
     fn db_run(&mut self, di: usize, grid: Entity<GridView>, sql: String, cx: &mut Context<Self>) {
-        let Some(live) = self.db.live(di) else { return };
-        let conn = live.conn.clone();
-        self.db.running = Some(live.cancel.clone());
-        self.db.last_used = Some(self.db.sources[di].id.clone());
-        let id = self.db.sources[di].id.clone();
+        let m = self.db_model(cx);
+        let started = m.update(cx, |db, _| {
+            let (conn, cancel) = db.live(di).map(|l| (l.conn.clone(), l.cancel.clone()))?;
+            db.running = Some(cancel);
+            let id = db.sources[di].id.clone();
+            db.last_used = Some(id.clone());
+            Some((conn, id))
+        });
+        let Some((conn, id)) = started else { return };
         grid.update(cx, |g, cx| g.set_running(&sql, cx));
         let script = sql.clone();
         let task = cx.background_executor().spawn(async move {
@@ -381,13 +510,16 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let ((outs, err), schemas) = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.db.running = None;
-                if let Some(s) = schemas {
-                    if let Some(ConnState::Live(l)) = this.db.states.get_mut(&id) {
-                        l.schemas = s;
+                let m = this.db_model(cx);
+                m.update(cx, |db, _| {
+                    db.running = None;
+                    if let Some(s) = schemas {
+                        if let Some(ConnState::Live(l)) = db.states.get_mut(&id) {
+                            l.schemas = s;
+                        }
+                        db.rebuild();
                     }
-                    this.db.rebuild();
-                }
+                });
                 let n = outs.len();
                 // The last result set wins; a row-less script shows its last statement's summary.
                 let shown = match outs.iter().rposition(|o| o.has_rows()) {
@@ -409,23 +541,29 @@ impl Workspace {
     }
 
     pub(super) fn db_disconnect(&mut self, di: usize, cx: &mut Context<Self>) {
-        if let Some(ds) = self.db.sources.get(di) {
-            if self.db.states.remove(&ds.id).is_some() {
-                self.status = format!("Disconnected from {}", ds.display_name());
+        let m = self.db_model(cx);
+        let done = m.update(cx, |db, _| {
+            let ds = db.sources.get(di)?.clone();
+            let was_live = db.states.remove(&ds.id).is_some();
+            db.expanded.retain(|k| !k.starts_with(&format!("ds:{}", ds.id)));
+            db.rebuild();
+            Some(was_live.then(|| ds.display_name()))
+        });
+        if let Some(name) = done {
+            if let Some(name) = name {
+                self.status = format!("Disconnected from {name}");
             }
-            self.db.expanded.retain(|k| !k.starts_with(&format!("ds:{}", ds.id)));
-            self.db.rebuild();
             cx.notify();
         }
     }
 
     fn db_refresh(&mut self, di: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(live) = self.db.live(di) else {
-            self.db.states.remove(&self.db.sources[di].id);
+        let m = self.db_model(cx);
+        let id = m.read(cx).sources[di].id.clone();
+        let Some(conn) = m.read(cx).live(di).map(|l| l.conn.clone()) else {
+            m.update(cx, |db, _| db.states.remove(&id));
             return self.db_connect(di, After::Nothing, window, cx);
         };
-        let conn = live.conn.clone();
-        let id = self.db.sources[di].id.clone();
         let t0 = Instant::now();
         let task = cx.background_executor().spawn(async move {
             let mut c = conn.lock().unwrap_or_else(|p| p.into_inner());
@@ -434,16 +572,19 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let r = task.await;
             let _ = this.update(cx, |this, cx| {
+                let m = this.db_model(cx);
                 match r {
                     Ok(s) => {
-                        if let Some(ConnState::Live(l)) = this.db.states.get_mut(&id) {
-                            l.schemas = s;
-                        }
+                        m.update(cx, |db, _| {
+                            if let Some(ConnState::Live(l)) = db.states.get_mut(&id) {
+                                l.schemas = s;
+                            }
+                        });
                         this.status = format!("Database refreshed in {} ms", t0.elapsed().as_millis());
                     }
                     Err(e) => this.show_toast(format!("Refresh failed: {}", first_line(&e)), true, cx),
                 }
-                this.db.rebuild();
+                m.update(cx, |db, _| db.rebuild());
                 cx.notify();
             });
         })
@@ -454,6 +595,7 @@ impl Workspace {
 
     pub(super) fn db_action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         use Action as A;
+        let m = self.db_model(cx);
         match action {
             A::ToggleDatabaseWindow => {
                 if self.db.open && self.db.focus.is_focused(window) {
@@ -466,15 +608,17 @@ impl Workspace {
             }
             A::NewDataSource => self.open_ds_dialog(None, None, None, window, cx),
             A::DataSourceProperties => {
-                if let Some(di) = self.db.selected_source() {
+                if let Some(di) = m.read(cx).selected_source() {
                     self.open_ds_dialog(Some(di), None, None, window, cx);
                 }
             }
             A::OpenQueryConsole => {
                 let di = if self.db.focus.is_focused(window) {
-                    self.db.selected_source()
+                    m.read(cx).selected_source()
                 } else {
-                    self.active_editor().and_then(|e| e.read(cx).path.clone()).and_then(|p| self.db.source_for_file(&p)).or_else(|| self.db.selected_source())
+                    let path = self.active_editor().and_then(|e| e.read(cx).path.clone());
+                    let db = m.read(cx);
+                    path.and_then(|p| db.source_for_file(&p)).or_else(|| db.selected_source())
                 };
                 match di {
                     Some(di) => self.open_console(di, window, cx),
@@ -485,12 +629,12 @@ impl Workspace {
             A::RefreshDatabase => {
                 if let Some(g) = self.focused_grid(window, cx) {
                     self.grid_reload(g, window, cx);
-                } else if let Some(di) = self.db.selected_source() {
+                } else if let Some(di) = m.read(cx).selected_source() {
                     self.db_refresh(di, window, cx);
                 }
             }
             A::Disconnect => {
-                if let Some(di) = self.db.selected_source() {
+                if let Some(di) = m.read(cx).selected_source() {
                     self.db_disconnect(di, cx);
                 }
             }
@@ -506,12 +650,12 @@ impl Workspace {
                 return Some(g.clone());
             }
         }
-        self.db.results.clone().filter(|g| g.read(cx).focus_handle(cx).is_focused(window))
+        self.db.results(cx).filter(|g| g.read(cx).focus_handle(cx).is_focused(window))
     }
 
     fn grid_reload(&mut self, grid: Entity<GridView>, window: &mut Window, cx: &mut Context<Self>) {
         let Some((id, sql)) = grid.read(cx).source.clone() else { return };
-        if let Some(di) = self.db.sources.iter().position(|s| s.id == id) {
+        if let Some(di) = self.db_model(cx).read(cx).sources.iter().position(|s| s.id == id) {
             self.db_connect(di, After::Run { grid, sql }, window, cx);
         }
     }
@@ -520,16 +664,16 @@ impl Workspace {
         let g = cx.new(|cx| GridView::new(title, cx));
         cx.subscribe(&g, |this: &mut Self, g, ev: &GridEvent, cx| match ev {
             GridEvent::Cancel => {
-                if let Some(c) = &this.db.running {
+                if let Some(c) = this.db.running(cx) {
                     c.cancel();
                 }
             }
             GridEvent::Reload => {
                 let Some((id, sql)) = g.read(cx).source.clone() else { return };
-                if let Some(di) = this.db.sources.iter().position(|s| s.id == id) {
-                    if this.db.live(di).is_some() {
-                        this.db_run(di, g, sql, cx);
-                    }
+                let m = this.db_model(cx);
+                let db = m.read(cx);
+                if let Some(di) = db.sources.iter().position(|s| s.id == id).filter(|&di| db.live(di).is_some()) {
+                    this.db_run(di, g, sql, cx);
                 }
             }
         })
@@ -541,14 +685,15 @@ impl Workspace {
     fn execute_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ed) = self.focused_editor(window, cx) else { return };
         let path = ed.read(cx).path.clone();
-        let Some(di) = path.as_deref().and_then(|p| self.db.source_for_file(p)) else {
+        let m = self.db_model(cx);
+        let Some(di) = path.as_deref().and_then(|p| m.read(cx).source_for_file(p)) else {
             self.show_toast("No data source for this file. Add one in the Database tool window (Alt+Insert).".into(), true, cx);
             return;
         };
         let (sel, text, caret) = ed.update(cx, |e, _| e.sql_to_run());
         let sql = match sel {
             Some(s) => s,
-            None => match brisk_db::statement_at(&text, caret, self.db.sources[di].driver) {
+            None => match brisk_db::statement_at(&text, caret, m.read(cx).sources[di].driver) {
                 Some(r) => {
                     // Flash the statement as a selection, as PyCharm highlights what it runs.
                     text[r].to_string()
@@ -560,17 +705,20 @@ impl Workspace {
             },
         };
         let _ = ed.update(cx, |e, _| e.save());
-        let grid = match &self.db.results {
-            Some(g) => g.clone(),
+        let grid = match m.read(cx).results.clone() {
+            Some(g) => g,
             None => {
                 let g = self.new_grid("Output".into(), cx);
-                self.db.results = Some(g.clone());
+                m.update(cx, |db, _| db.results = Some(g.clone()));
                 g
             }
         };
-        let id = self.db.sources[di].id.clone();
+        let (id, title) = {
+            let ds = &m.read(cx).sources[di];
+            (ds.id.clone(), ds.display_name())
+        };
         grid.update(cx, |g, _| {
-            g.title = self.db.sources[di].display_name();
+            g.title = title;
             g.source = Some((id, sql.clone()));
         });
         self.bottom = Some(BottomTool::Services);
@@ -579,7 +727,8 @@ impl Workspace {
     }
 
     pub(super) fn open_console(&mut self, di: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let ds = self.db.sources[di].clone();
+        let m = self.db_model(cx);
+        let ds = m.read(cx).sources[di].clone();
         let path = console_path(&ds);
         if let Some(d) = path.parent() {
             let _ = std::fs::create_dir_all(d);
@@ -589,7 +738,7 @@ impl Workspace {
                 return self.show_toast(format!("Cannot create console: {e}"), true, cx);
             }
         }
-        self.db.last_used = Some(ds.id.clone());
+        m.update(cx, |db, _| db.last_used = Some(ds.id.clone()));
         self.open_file(&path, window, cx);
         // Connect in the background, like PyCharm does when a console opens.
         self.db_connect(di, After::Nothing, window, cx);
@@ -597,19 +746,24 @@ impl Workspace {
 
     /// F4 / double-click: tables and views open their data; data sources expand.
     fn db_open_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self.db.rows.get(self.db.selected).cloned() else { return };
+        let m = self.db_model(cx);
+        let selected = m.read(cx).selected;
+        let Some(row) = m.read(cx).rows.get(selected).cloned() else { return };
         let (di, si, ti) = match row.kind {
             RowKind::Table(d, s, t) | RowKind::Column(d, s, t, _) => (d, s, t),
             RowKind::Source(d) => return self.open_console(d, window, cx),
-            _ => return self.db_toggle(self.db.selected, window, cx),
+            _ => return self.db_toggle(selected, window, cx),
         };
-        let Some(live) = self.db.live(di) else { return };
-        let schema = &live.schemas[si];
-        let table = &schema.tables[ti];
-        let driver = self.db.sources[di].driver;
-        let sql = brisk_db::select_all(driver, &schema.name, &table.name);
-        let id = self.db.sources[di].id.clone();
-        let title = table.name.clone();
+        let table = {
+            let db = m.read(cx);
+            db.live(di).map(|live| {
+                let schema = &live.schemas[si];
+                let table = &schema.tables[ti];
+                let sql = brisk_db::select_all(db.sources[di].driver, &schema.name, &table.name);
+                (sql, db.sources[di].id.clone(), table.name.clone())
+            })
+        };
+        let Some((sql, id, title)) = table else { return };
         // Reuse an open tab for the same table.
         if let Some(i) = self.tabs.iter().position(|t| matches!(t, Tab::Grid(g) if g.read(cx).source.as_ref() == Some(&(id.clone(), sql.clone())))) {
             self.active = Some(i);
@@ -625,82 +779,96 @@ impl Workspace {
     }
 
     fn db_toggle(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self.db.rows.get(ix).cloned() else { return };
+        let m = self.db_model(cx);
+        let Some(row) = m.read(cx).rows.get(ix).cloned() else { return };
         if !row.expandable {
             return;
         }
-        if self.db.expanded.contains(&row.key) {
-            self.db.expanded.remove(&row.key);
-        } else {
-            self.db.expanded.insert(row.key.clone());
-            if let RowKind::Source(di) = row.kind {
-                if !matches!(self.db.states.get(&self.db.sources[di].id), Some(ConnState::Live(_) | ConnState::Connecting(_))) {
-                    self.db.states.remove(&self.db.sources[di].id);
-                    self.db_connect(di, After::Nothing, window, cx);
-                }
+        let connect = m.update(cx, |db, _| {
+            if db.expanded.contains(&row.key) {
+                db.expanded.remove(&row.key);
+                return None;
             }
+            db.expanded.insert(row.key.clone());
+            let RowKind::Source(di) = row.kind else { return None };
+            let id = db.sources[di].id.clone();
+            if matches!(db.states.get(&id), Some(ConnState::Live(_) | ConnState::Connecting(_))) {
+                return None;
+            }
+            db.states.remove(&id);
+            Some(di)
+        });
+        if let Some(di) = connect {
+            self.db_connect(di, After::Nothing, window, cx);
         }
-        self.db.rebuild();
+        m.update(cx, |db, _| db.rebuild());
         cx.notify();
     }
 
     /// Keys in the Database tree that the keymap doesn't bind.
     pub(super) fn db_tree_key(&mut self, k: &gpui::Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let n = self.db.rows.len();
+        let m = self.db_model(cx);
+        let (n, sel) = (m.read(cx).rows.len(), m.read(cx).selected);
         if k.key != "delete" {
-            self.db.delete_armed = None;
+            m.update(cx, |db, _| db.delete_armed = None);
         }
+        let select = |cx: &mut Context<Self>, ix: usize| m.update(cx, |db, _| db.selected = ix);
         match k.key.as_str() {
-            "up" => self.db.selected = self.db.selected.saturating_sub(1),
-            "down" => self.db.selected = (self.db.selected + 1).min(n.saturating_sub(1)),
-            "pageup" => self.db.selected = self.db.selected.saturating_sub(15),
-            "pagedown" => self.db.selected = (self.db.selected + 15).min(n.saturating_sub(1)),
-            "home" => self.db.selected = 0,
-            "end" => self.db.selected = n.saturating_sub(1),
+            "up" => select(cx, sel.saturating_sub(1)),
+            "down" => select(cx, (sel + 1).min(n.saturating_sub(1))),
+            "pageup" => select(cx, sel.saturating_sub(15)),
+            "pagedown" => select(cx, (sel + 15).min(n.saturating_sub(1))),
+            "home" => select(cx, 0),
+            "end" => select(cx, n.saturating_sub(1)),
             "right" => {
-                let Some(r) = self.db.rows.get(self.db.selected).cloned() else { return true };
-                if r.expandable && !self.db.expanded.contains(&r.key) {
-                    self.db_toggle(self.db.selected, window, cx);
-                } else if self.db.rows.get(self.db.selected + 1).is_some_and(|x| x.depth > r.depth) {
-                    self.db.selected += 1;
+                let db = m.read(cx);
+                let Some(r) = db.rows.get(sel).cloned() else { return true };
+                let (open, child) = (db.expanded.contains(&r.key), db.rows.get(sel + 1).is_some_and(|x| x.depth > r.depth));
+                if r.expandable && !open {
+                    self.db_toggle(sel, window, cx);
+                } else if child {
+                    select(cx, sel + 1);
                 }
             }
             "left" => {
-                let Some(r) = self.db.rows.get(self.db.selected).cloned() else { return true };
-                if r.expandable && self.db.expanded.contains(&r.key) {
-                    self.db_toggle(self.db.selected, window, cx);
-                } else if let Some(p) = (0..self.db.selected).rev().find(|&i| self.db.rows[i].depth < r.depth) {
-                    self.db.selected = p;
+                let db = m.read(cx);
+                let Some(r) = db.rows.get(sel).cloned() else { return true };
+                let (open, parent) = (db.expanded.contains(&r.key), (0..sel).rev().find(|&i| db.rows[i].depth < r.depth));
+                if r.expandable && open {
+                    self.db_toggle(sel, window, cx);
+                } else if let Some(p) = parent {
+                    select(cx, p);
                 }
             }
-            "enter" => match self.db.rows.get(self.db.selected).map(|r| r.kind.clone()) {
+            "enter" => match m.read(cx).rows.get(sel).map(|r| r.kind.clone()) {
                 Some(RowKind::Table(..) | RowKind::Column(..)) => self.db_open_selected(window, cx),
-                _ => self.db_toggle(self.db.selected, window, cx),
+                _ => self.db_toggle(sel, window, cx),
             },
             "delete" => {
-                let Some(di) = self.db.selected_source() else { return true };
-                if !matches!(self.db.rows.get(self.db.selected).map(|r| &r.kind), Some(RowKind::Source(_))) {
+                let Some(di) = m.read(cx).selected_source() else { return true };
+                if !matches!(m.read(cx).rows.get(sel).map(|r| &r.kind), Some(RowKind::Source(_))) {
                     return true;
                 }
-                let id = self.db.sources[di].id.clone();
-                if self.db.delete_armed.as_deref() == Some(id.as_str()) {
-                    self.db.delete_armed = None;
+                let id = m.read(cx).sources[di].id.clone();
+                if m.read(cx).delete_armed.as_deref() == Some(id.as_str()) {
+                    m.update(cx, |db, _| db.delete_armed = None);
                     self.db_disconnect(di, cx);
-                    let ds = self.db.sources.remove(di);
+                    let ds = m.update(cx, |db, _| db.sources.remove(di));
                     brisk_db::forget_password(&ds.id);
-                    if let Err(e) = self.db.save(&self.root) {
+                    if let Err(e) = m.read(cx).save(&self.root) {
                         self.show_toast(e, true, cx);
                     }
-                    self.db.rebuild();
+                    m.update(cx, |db, _| db.rebuild());
                     self.status = format!("Removed data source {}", ds.display_name());
                 } else {
-                    self.db.delete_armed = Some(id);
-                    self.show_toast(format!("Press Delete again to remove data source '{}'", self.db.sources[di].display_name()), false, cx);
+                    let name = m.read(cx).sources[di].display_name();
+                    m.update(cx, |db, _| db.delete_armed = Some(id));
+                    self.show_toast(format!("Press Delete again to remove data source '{name}'"), false, cx);
                 }
             }
             _ => return false,
         }
-        self.db.scroll.scroll_to_item(self.db.selected, gpui::ScrollStrategy::Top);
+        m.update(cx, |db, _| db.scroll.scroll_to_item(db.selected, gpui::ScrollStrategy::Top));
         cx.notify();
         true
     }
@@ -708,8 +876,9 @@ impl Workspace {
     // --- Data Source dialog --------------------------------------------------------------
 
     pub(super) fn open_ds_dialog(&mut self, editing: Option<usize>, note: Option<String>, after: Option<After>, window: &mut Window, cx: &mut Context<Self>) {
-        let ds = editing.and_then(|i| self.db.sources.get(i).cloned()).unwrap_or_else(|| DataSource::new(Driver::Postgres));
-        let password = if editing.is_some() { self.password_for(&ds).unwrap_or_default() } else { String::new() };
+        let m = self.db_model(cx);
+        let ds = editing.and_then(|i| m.read(cx).sources.get(i).cloned()).unwrap_or_else(|| DataSource::new(Driver::Postgres));
+        let password = if editing.is_some() { self.password_for(&ds, cx).unwrap_or_default() } else { String::new() };
         let field = if note.is_some() {
             Field::Password
         } else if editing.is_some() {
@@ -717,7 +886,7 @@ impl Workspace {
         } else {
             Field::Host
         };
-        self.db.dialog = Some(Dialog {
+        let dialog = Dialog {
             port: if ds.port == 0 { String::new() } else { ds.port.to_string() },
             ds,
             editing,
@@ -729,7 +898,8 @@ impl Workspace {
             test: None,
             note,
             after,
-        });
+        };
+        m.update(cx, |db, _| db.dialog = Some(dialog));
         window.focus(&self.focus);
         cx.notify();
     }
@@ -775,19 +945,26 @@ impl Workspace {
     }
 
     fn dialog_test(&mut self, cx: &mut Context<Self>) {
-        let Some(d) = self.db.dialog.as_mut() else { return };
-        Self::dialog_commit_fields(d);
-        d.testing = true;
-        d.test = None;
-        let (ds, pw, root) = (d.ds.clone(), d.password.clone(), self.root.clone());
+        let m = self.db_model(cx);
+        let started = m.update(cx, |db, _| {
+            let d = db.dialog.as_mut()?;
+            Self::dialog_commit_fields(d);
+            d.testing = true;
+            d.test = None;
+            Some((d.ds.clone(), d.password.clone()))
+        });
+        let Some((ds, pw)) = started else { return };
+        let root = self.root.clone();
         let task = cx.background_executor().spawn(async move { brisk_db::test_connection(&ds, &pw, &root) });
         cx.spawn(async move |this, cx| {
             let r = task.await;
             let _ = this.update(cx, |this, cx| {
-                if let Some(d) = this.db.dialog.as_mut() {
-                    d.testing = false;
-                    d.test = Some(r);
-                }
+                this.db_model(cx).update(cx, |db, _| {
+                    if let Some(d) = db.dialog.as_mut() {
+                        d.testing = false;
+                        d.test = Some(r);
+                    }
+                });
                 cx.notify();
             });
         })
@@ -796,15 +973,16 @@ impl Workspace {
     }
 
     fn dialog_ok(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(mut d) = self.db.dialog.take() else { return };
+        let m = self.db_model(cx);
+        let Some(mut d) = m.update(cx, |db, _| db.dialog.take()) else { return };
         Self::dialog_commit_fields(&mut d);
         let missing = match d.ds.driver {
             Driver::Sqlite => d.ds.file.is_empty().then_some("Specify the database file"),
             _ => d.ds.host.is_empty().then_some("Specify the host"),
         };
-        if let Some(m) = missing {
-            d.test = Some(Err(m.into()));
-            self.db.dialog = Some(d);
+        if let Some(missing) = missing {
+            d.test = Some(Err(missing.into()));
+            m.update(cx, |db, _| db.dialog = Some(d));
             cx.notify();
             return;
         }
@@ -823,30 +1001,32 @@ impl Workspace {
             } else {
                 brisk_db::forget_password(&id);
             }
-            self.db.session_passwords.insert(id.clone(), d.password.clone());
+            m.update(cx, |db, _| db.session_passwords.insert(id.clone(), d.password.clone()));
         }
-        let di = match d.editing {
-            Some(i) if i < self.db.sources.len() => {
-                if self.db.sources[i] != d.ds {
-                    self.db.states.remove(&id);
+        let di = m.update(cx, |db, _| match d.editing {
+            Some(i) if i < db.sources.len() => {
+                if db.sources[i] != d.ds {
+                    db.states.remove(&id);
                 }
-                self.db.sources[i] = d.ds.clone();
+                db.sources[i] = d.ds.clone();
                 i
             }
             _ => {
-                self.db.sources.push(d.ds.clone());
-                self.db.sources.len() - 1
+                db.sources.push(d.ds.clone());
+                db.sources.len() - 1
             }
-        };
-        if let Err(e) = self.db.save(&self.root) {
+        });
+        if let Err(e) = m.read(cx).save(&self.root) {
             self.show_toast(e, true, cx);
         }
-        if matches!(self.db.states.get(&id), Some(ConnState::Failed(_))) {
-            self.db.states.remove(&id);
-        }
+        m.update(cx, |db, _| {
+            if matches!(db.states.get(&id), Some(ConnState::Failed(_))) {
+                db.states.remove(&id);
+            }
+            db.rebuild();
+            db.selected = db.rows.iter().position(|r| r.kind == RowKind::Source(di)).unwrap_or(0);
+        });
         self.db.open = true;
-        self.db.rebuild();
-        self.db.selected = self.db.rows.iter().position(|r| r.kind == RowKind::Source(di)).unwrap_or(0);
         window.focus(&self.db.focus);
         self.db_connect(di, d.after.unwrap_or(After::Nothing), window, cx);
         cx.notify();
@@ -855,99 +1035,112 @@ impl Workspace {
     pub(super) fn db_dialog_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &e.keystroke;
         let m = k.modifiers;
-        let Some(d) = self.db.dialog.as_mut() else { return };
-        let order = fields(d.ds.driver);
-        let pos = order.iter().position(|f| *f == d.field).unwrap_or(0);
+        let model = self.db_model(cx);
+        if model.read(cx).dialog.is_none() {
+            return;
+        }
         match k.key.as_str() {
             "escape" => {
-                self.db.dialog = None;
+                model.update(cx, |db, _| db.dialog = None);
                 if self.db.open {
                     window.focus(&self.db.focus);
                 } else {
                     self.focus_editor(window, cx);
                 }
+                cx.notify();
+                return;
             }
             "enter" => return self.dialog_ok(window, cx),
             "t" if m.alt => return self.dialog_test(cx),
-            "tab" | "down" | "up" => {
-                let back = (k.key == "tab" && m.shift) || k.key == "up";
-                d.field = order[if back { (pos + order.len() - 1) % order.len() } else { (pos + 1) % order.len() }];
-                d.select_all = d.field.is_text();
-            }
-            "left" | "right" | "space" if !d.field.is_text() => Self::dialog_toggle(d, d.field, k.key == "left"),
-            "backspace" => {
-                let f = d.field;
-                let all = d.select_all || m.control;
-                d.select_all = false;
-                if let Some(t) = Self::dialog_text(d, f) {
-                    if all {
-                        t.clear();
-                    } else {
-                        t.pop();
-                    }
+            _ => {}
+        }
+        let pasted = (k.key == "v" && m.control).then(|| cx.read_from_clipboard().and_then(|c| c.text())).flatten();
+        model.update(cx, |db, _| {
+            let Some(d) = db.dialog.as_mut() else { return };
+            let order = fields(d.ds.driver);
+            let pos = order.iter().position(|f| *f == d.field).unwrap_or(0);
+            match k.key.as_str() {
+                "tab" | "down" | "up" => {
+                    let back = (k.key == "tab" && m.shift) || k.key == "up";
+                    d.field = order[if back { (pos + order.len() - 1) % order.len() } else { (pos + 1) % order.len() }];
+                    d.select_all = d.field.is_text();
                 }
-                d.test = None;
-            }
-            "a" if m.control => d.select_all = true,
-            "v" if m.control => {
-                if let Some(t) = cx.read_from_clipboard().and_then(|c| c.text()) {
-                    let t = t.trim().to_string();
-                    let looks_url = t.contains("://") || t.starts_with("jdbc:") || t.starts_with("sqlite:");
-                    if looks_url && matches!(d.field, Field::Host | Field::Name | Field::File) {
-                        if let Some(pw) = d.ds.apply_url(&t) {
-                            d.port = if d.ds.port == 0 { String::new() } else { d.ds.port.to_string() };
-                            if let Some(pw) = pw {
-                                d.password = pw;
-                                d.password_dirty = true;
-                            }
-                            d.note = Some("Filled from the pasted URL".into());
-                            if !fields(d.ds.driver).contains(&d.field) {
-                                d.field = Field::Name;
-                            }
-                        }
-                    } else {
-                        let f = d.field;
-                        let all = d.select_all;
-                        d.select_all = false;
-                        if let Some(s) = Self::dialog_text(d, f) {
-                            if all {
-                                s.clear();
-                            }
-                            s.push_str(t.lines().next().unwrap_or(""));
+                "left" | "right" | "space" if !d.field.is_text() => Self::dialog_toggle(d, d.field, k.key == "left"),
+                "backspace" => {
+                    let f = d.field;
+                    let all = d.select_all || m.control;
+                    d.select_all = false;
+                    if let Some(t) = Self::dialog_text(d, f) {
+                        if all {
+                            t.clear();
+                        } else {
+                            t.pop();
                         }
                     }
                     d.test = None;
                 }
-            }
-            _ => {
-                if !(m.control || m.alt || m.platform) {
-                    if let Some(ch) = crate::keys::typed_text(k) {
-                        if !ch.chars().any(|c| c.is_control()) {
+                "a" if m.control => d.select_all = true,
+                "v" if m.control => {
+                    if let Some(t) = pasted {
+                        let t = t.trim().to_string();
+                        let looks_url = t.contains("://") || t.starts_with("jdbc:") || t.starts_with("sqlite:");
+                        if looks_url && matches!(d.field, Field::Host | Field::Name | Field::File) {
+                            if let Some(pw) = d.ds.apply_url(&t) {
+                                d.port = if d.ds.port == 0 { String::new() } else { d.ds.port.to_string() };
+                                if let Some(pw) = pw {
+                                    d.password = pw;
+                                    d.password_dirty = true;
+                                }
+                                d.note = Some("Filled from the pasted URL".into());
+                                if !fields(d.ds.driver).contains(&d.field) {
+                                    d.field = Field::Name;
+                                }
+                            }
+                        } else {
                             let f = d.field;
                             let all = d.select_all;
                             d.select_all = false;
-                            if f == Field::Port && !ch.chars().all(|c| c.is_ascii_digit()) {
-                                return;
-                            }
                             if let Some(s) = Self::dialog_text(d, f) {
                                 if all {
                                     s.clear();
                                 }
-                                s.push_str(ch);
+                                s.push_str(t.lines().next().unwrap_or(""));
                             }
-                            d.test = None;
+                        }
+                        d.test = None;
+                    }
+                }
+                _ => {
+                    if !(m.control || m.alt || m.platform) {
+                        if let Some(ch) = crate::keys::typed_text(k) {
+                            if !ch.chars().any(|c| c.is_control()) {
+                                let f = d.field;
+                                let all = d.select_all;
+                                d.select_all = false;
+                                if f == Field::Port && !ch.chars().all(|c| c.is_ascii_digit()) {
+                                    return;
+                                }
+                                if let Some(s) = Self::dialog_text(d, f) {
+                                    if all {
+                                        s.clear();
+                                    }
+                                    s.push_str(ch);
+                                }
+                                d.test = None;
+                            }
                         }
                     }
                 }
             }
-        }
+        });
         cx.notify();
     }
 
     // --- Rendering ---------------------------------------------------------------------
 
     pub(super) fn render_database(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let n = self.db.rows.len();
+        let m = self.db_model(cx);
+        let n = m.read(cx).rows.len();
         let tool = |id: &'static str, glyph: &'static str, action: Action, cx: &mut Context<Self>| {
             crate::ui_kit::header_action(id)
                 .on_click(cx.listener(move |this, _, w, cx| {
@@ -990,11 +1183,14 @@ impl Workspace {
                 n,
                 cx.processor(|this, range: std::ops::Range<usize>, window, cx| {
                     let focused = this.db.focus.is_focused(window);
-                    range
-                        .map(|ix| {
-                            let row = this.db.rows[ix].clone();
-                            let selected = ix == this.db.selected;
-                            let open = this.db.expanded.contains(&row.key);
+                    let m = this.db_model(cx);
+                    let lines: Vec<RowLine> = {
+                        let db = m.read(cx);
+                        range.filter_map(|ix| db.rows.get(ix).map(|row| db.row_line(ix, row))).collect()
+                    };
+                    lines
+                        .into_iter()
+                        .map(|RowLine { ix, row, selected, open, icon, icon_color, label, detail, label_color }| {
                             // A click on the arrow folds the node; the row's own click only selects.
                             let chevron = div()
                                 .id(("db-fold", ix))
@@ -1004,50 +1200,10 @@ impl Workspace {
                                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                                     cx.stop_propagation();
                                     window.focus(&this.db.focus);
-                                    this.db.selected = ix;
+                                    this.db_model(cx).update(cx, |db, _| db.selected = ix);
                                     this.db_toggle(ix, window, cx);
                                     cx.notify();
                                 }));
-                            let (icon, icon_color, label, detail, label_color): (String, gpui::Hsla, String, String, gpui::Hsla) = match &row.kind {
-                                RowKind::Source(di) => {
-                                    let ds = &this.db.sources[*di];
-                                    let (b, c) = driver_badge(ds.driver);
-                                    let detail = match this.db.states.get(&ds.id) {
-                                        Some(ConnState::Live(l)) => l.version.clone(),
-                                        Some(ConnState::Connecting(_)) => "connecting…".into(),
-                                        Some(ConnState::Failed(_)) => "failed".into(),
-                                        None => match ds.driver {
-                                            Driver::Sqlite => ds.file.clone(),
-                                            _ => format!("{}:{}", ds.host, ds.port),
-                                        },
-                                    };
-                                    let live = matches!(this.db.states.get(&ds.id), Some(ConnState::Live(_)));
-                                    (b.into(), c, ds.display_name(), detail, if live { Theme::text() } else { Theme::text_muted() })
-                                }
-                                RowKind::Schema(di, si) => {
-                                    let s = &this.db.live(*di).unwrap().schemas[*si];
-                                    ("◇".into(), Theme::text_muted(), s.name.clone(), format!("{}", s.tables.len()), Theme::text())
-                                }
-                                RowKind::Table(di, si, ti) => {
-                                    let t = &this.db.live(*di).unwrap().schemas[*si].tables[*ti];
-                                    let (g, c) = if t.kind == TableKind::View { ("◫", 0x9876aa) } else { ("▦", 0x6c9be8) };
-                                    (g.into(), gpui::rgb(c).into(), t.name.clone(), String::new(), Theme::text())
-                                }
-                                RowKind::Column(di, si, ti, ci) => {
-                                    let c = &this.db.live(*di).unwrap().schemas[*si].tables[*ti].columns[*ci];
-                                    let icon = if c.primary_key { "⚷" } else { "▪" };
-                                    let color = if c.primary_key { gpui::rgb(0xe0a85a).into() } else { Theme::text_dim() };
-                                    let null = if c.nullable { "" } else { " not null" };
-                                    (icon.into(), color, c.name.clone(), format!("{}{null}", c.type_name), Theme::text())
-                                }
-                                RowKind::Message(_, m, err) => (
-                                    if *err { "!".into() } else { "…".into() },
-                                    Theme::text_muted(),
-                                    m.clone(),
-                                    String::new(),
-                                    if *err { Theme::error() } else { Theme::text_muted() },
-                                ),
-                            };
                             let is_source = matches!(row.kind, RowKind::Source(_));
                             div()
                                 .id(("db-row", ix))
@@ -1063,7 +1219,7 @@ impl Workspace {
                                 .when(!selected, |d| d.hover(|s| s.bg(Theme::hover_row())))
                                 .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                                     window.focus(&this.db.focus);
-                                    this.db.selected = ix;
+                                    this.db_model(cx).update(cx, |db, _| db.selected = ix);
                                     if e.click_count() >= 2 {
                                         this.db_open_selected(window, cx);
                                     }
@@ -1092,7 +1248,7 @@ impl Workspace {
                         .collect()
                 }),
             )
-            .track_scroll(self.db.scroll.clone())
+            .track_scroll(m.read(cx).scroll.clone())
             .flex_1()
             .into_any_element()
         };
@@ -1109,10 +1265,10 @@ impl Workspace {
     }
 
     /// The database console's results, on the right of Services.
-    pub(super) fn render_db_results(&mut self, _cx: &mut Context<Self>) -> gpui::AnyElement {
-        match &self.db.results {
+    pub(super) fn render_db_results(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        match self.db.results(cx) {
             Some(g) => {
-                let title = g.read(_cx).title.clone();
+                let title = g.read(cx).title.clone();
                 div()
                     .flex_1()
                     .min_w_0()
@@ -1120,7 +1276,7 @@ impl Workspace {
                     .flex_col()
                     .h_full()
                     .child(Self::panel_header(&format!("{title} · console")))
-                    .child(div().flex_1().min_h_0().child(g.clone()))
+                    .child(div().flex_1().min_h_0().child(g))
                     .into_any_element()
             }
             None => Self::render_placeholder(
@@ -1131,7 +1287,8 @@ impl Workspace {
     }
 
     pub(super) fn render_ds_dialog(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let d = self.db.dialog.as_ref()?;
+        let d = self.db.model.as_ref()?.read(cx).dialog.clone()?;
+        let d = &d;
         let title = if d.editing.is_some() { "Data Source Properties" } else { "New Data Source" };
         let field_row = |f: Field, value: gpui::AnyElement, active: bool, cx: &mut Context<Self>| {
             div()
@@ -1151,13 +1308,15 @@ impl Workspace {
                         .when(active, |d| d.child(crate::ui_kit::focus_ring(crate::ui_kit::RADIUS, 0.))),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(d) = this.db.dialog.as_mut() {
-                        if d.field == f && !f.is_text() {
-                            Self::dialog_toggle(d, f, false);
+                    this.db_model(cx).update(cx, |db, _| {
+                        if let Some(d) = db.dialog.as_mut() {
+                            if d.field == f && !f.is_text() {
+                                Self::dialog_toggle(d, f, false);
+                            }
+                            d.field = f;
+                            d.select_all = false;
                         }
-                        d.field = f;
-                        d.select_all = false;
-                    }
+                    });
                     cx.notify();
                 }))
         };
@@ -1181,10 +1340,12 @@ impl Workspace {
                 .child(label)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
-                    if let Some(d) = this.db.dialog.as_mut() {
-                        pick(d);
-                        d.test = None;
-                    }
+                    this.db_model(cx).update(cx, |db, _| {
+                        if let Some(d) = db.dialog.as_mut() {
+                            pick(d);
+                            d.test = None;
+                        }
+                    });
                     cx.notify();
                 }))
         }
@@ -1321,7 +1482,7 @@ impl Workspace {
                                 )
                                 .child(div().flex_1())
                                 .child(button("ds-cancel", "Cancel", false).on_click(cx.listener(|this, _, w, cx| {
-                                    this.db.dialog = None;
+                                    this.db_model(cx).update(cx, |db, _| db.dialog = None);
                                     this.focus_editor(w, cx);
                                     cx.notify();
                                 })))
@@ -1343,7 +1504,8 @@ impl Workspace {
     /// the first table's data.
     #[cfg(feature = "smoke")]
     pub(super) fn db_smoke(&mut self, sql: String, window: &mut Window, cx: &mut Context<Self>) {
-        if self.db.sources.is_empty() {
+        let m = self.db_model(cx);
+        if m.read(cx).sources.is_empty() {
             eprintln!("smoke-db: no data sources in {}", brisk_db::CONFIG_FILE);
             return;
         }
@@ -1359,22 +1521,24 @@ impl Workspace {
             for _ in 0..120 {
                 bg.timer(std::time::Duration::from_millis(250)).await;
                 let done =
-                    this.update(cx, |this, cx| this.db.results.as_ref().is_some_and(|g| !g.read(cx).is_running()) && this.db.running.is_none()).unwrap_or(true);
+                    this.update(cx, |this, cx| this.db.results(cx).is_some_and(|g| !g.read(cx).is_running()) && this.db.running(cx).is_none()).unwrap_or(true);
                 if done {
                     break;
                 }
             }
             let _ = this.update_in(cx, |this, window, cx| {
-                let msg = match this.db.results.as_ref().map(|g| &g.read(cx).state) {
+                let msg = match this.db.results(cx).as_ref().map(|g| &g.read(cx).state) {
                     Some(crate::grid_view::GridState::Done { message, out }) => format!("{message}; columns {:?}", out.columns),
                     Some(crate::grid_view::GridState::Failed(e)) => format!("error: {e}"),
                     _ => "no result".into(),
                 };
-                let tables: usize = this.db.live(0).map_or(0, |l| l.schemas.iter().map(|s| s.tables.len()).sum());
-                eprintln!("smoke-db: {msg} (since start {:.1?}, tables {tables}, tree rows {})", t0.elapsed(), this.db.rows.len());
+                let m = this.db_model(cx);
+                let db = m.read(cx);
+                let tables: usize = db.live(0).map_or(0, |l| l.schemas.iter().map(|s| s.tables.len()).sum());
+                eprintln!("smoke-db: {msg} (since start {:.1?}, tables {tables}, tree rows {})", t0.elapsed(), db.rows.len());
                 // Open the first table's data, as F4 would.
-                if let Some(ix) = this.db.rows.iter().position(|r| matches!(r.kind, RowKind::Table(..))) {
-                    this.db.selected = ix;
+                if let Some(ix) = db.rows.iter().position(|r| matches!(r.kind, RowKind::Table(..))) {
+                    m.update(cx, |db, _| db.selected = ix);
                     this.db_open_selected(window, cx);
                 }
                 cx.notify();
@@ -1382,17 +1546,19 @@ impl Workspace {
             // A real click on the data source's fold arrow folds it, a second one unfolds it.
             for step in ["fold", "unfold"] {
                 bg.timer(std::time::Duration::from_millis(400)).await;
-                let _ = this.update_in(cx, |this, window, _| match FOLD_BOUNDS.with(|c| c.get()) {
+                let _ = this.update_in(cx, |this, window, cx| match FOLD_BOUNDS.with(|c| c.get()) {
                     Some(b) => {
                         let s = window.scale_factor();
                         super::smoke::win_input::click(f32::from(b.center().x) * s, f32::from(b.center().y) * s);
                     }
-                    None => eprintln!("smoke-db: FAIL the fold arrow of {:?} was not painted", this.db.rows.first().map(|r| &r.key)),
+                    None => eprintln!("smoke-db: FAIL the fold arrow of {:?} was not painted", this.db_model(cx).read(cx).rows.first().map(|r| &r.key)),
                 });
                 bg.timer(std::time::Duration::from_millis(400)).await;
-                let _ = this.update(cx, |this, _| {
-                    let open = this.db.rows.first().is_some_and(|r| this.db.expanded.contains(&r.key));
-                    eprintln!("smoke-db: click the fold arrow ({step}) -> expanded {open}, tree rows {}", this.db.rows.len());
+                let _ = this.update(cx, |this, cx| {
+                    let m = this.db_model(cx);
+                    let db = m.read(cx);
+                    let open = db.rows.first().is_some_and(|r| db.expanded.contains(&r.key));
+                    eprintln!("smoke-db: click the fold arrow ({step}) -> expanded {open}, tree rows {}", db.rows.len());
                 });
             }
         })

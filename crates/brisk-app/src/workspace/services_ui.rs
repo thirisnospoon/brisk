@@ -66,14 +66,15 @@ impl Workspace {
         if self.bottom != Some(BottomTool::Services) {
             return;
         }
+        let has_results = self.db.results(cx).is_some();
         let valid = |s: &Option<Item>, runs: &[RunInfo]| match s {
             Some(Item::Run(id)) => runs.iter().any(|r| r.id == *id),
-            Some(Item::Database) => self.db.results.is_some(),
+            Some(Item::Database) => has_results,
             None => false,
         };
         let runs = self.runs_list(cx);
         if !valid(&self.services.selected, &runs) {
-            self.services.selected = runs.iter().find(|r| r.active).map(|r| Item::Run(r.id)).or(self.db.results.as_ref().map(|_| Item::Database));
+            self.services.selected = runs.iter().find(|r| r.active).map(|r| Item::Run(r.id)).or(self.db.results(cx).map(|_| Item::Database));
         }
         window.focus(&self.services.focus.clone());
         cx.notify();
@@ -115,7 +116,7 @@ impl Workspace {
             return false;
         }
         let mut items: Vec<Item> = self.runs_list(cx).iter().map(|r| Item::Run(r.id)).collect();
-        if self.db.results.is_some() {
+        if self.db.results(cx).is_some() {
             items.push(Item::Database);
         }
         let at = self.services.selected.and_then(|s| items.iter().position(|i| *i == s));
@@ -226,7 +227,7 @@ impl Workspace {
                     )),
             );
         }
-        if let Some(title) = self.db.results.as_ref().map(|g| g.read(cx).title.clone()) {
+        if let Some(title) = self.db.results(cx).map(|g| g.read(cx).title.clone()) {
             let on = sel == Some(Item::Database);
             tree = tree.child(group("Database")).child(
                 div()

@@ -569,12 +569,8 @@ impl Workspace {
             }
         })
         .detach();
-        let (db, imported) = db_ui::Db::new(&root, cx);
-        budget_probe::mark("db");
-        if imported {
-            let n = db.sources.len();
-            cx.defer_in(window, move |this: &mut Self, _, cx| this.show_toast(format!("Imported {n} data source(s) from .idea/dataSources.xml"), false, cx));
-        }
+        // The data sources are read when the database is first used (`db_model`).
+        let db = db_ui::Db::new(cx);
         // `.git` is looked for on disk; git confirms it in the background.
         let git = brisk_git::Repo::find(&root).map(|repo| git_ui::Git::new(repo, cx));
         budget_probe::mark("git");
@@ -1082,7 +1078,7 @@ impl Workspace {
             }
             self.menu = None;
         }
-        if self.db.dialog.is_some() {
+        if self.db.dialog_open(cx) {
             self.db_dialog_key(e, window, cx);
             cx.stop_propagation();
             return;
@@ -1393,8 +1389,8 @@ impl Workspace {
             | A::RefreshDatabase
             | A::Disconnect
             | A::ExecuteQuery => self.db_action(action, window, cx),
-            A::Stop if self.db.running.is_some() => {
-                if let Some(c) = &self.db.running {
+            A::Stop if self.db.running(cx).is_some() => {
+                if let Some(c) = self.db.running(cx) {
                     c.cancel();
                 }
                 self.status = "Cancelling the running statement…".into();
