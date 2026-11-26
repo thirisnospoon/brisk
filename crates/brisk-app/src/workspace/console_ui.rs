@@ -195,6 +195,16 @@ impl PyConsole {
 }
 
 impl Workspace {
+    /// The project interpreter changed: a running console keeps its process and its
+    /// variables, and says how to move to the new interpreter.
+    pub(super) fn console_interpreter_changed(&mut self, cx: &mut Context<Self>) {
+        let python = self.interpreter(cx).map(|i| i.path);
+        let label = self.interpreter_label(cx);
+        let Some(p) = self.pyc.as_mut().filter(|p| p.running() && p.python.is_some() && p.python != python) else { return };
+        p.info(format!("The project interpreter is now {label}. Rerun the console to use it."));
+        cx.notify();
+    }
+
     pub(super) fn toggle_python_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pyc.is_none() {
             self.pyc = Some(PyConsole::new(cx));

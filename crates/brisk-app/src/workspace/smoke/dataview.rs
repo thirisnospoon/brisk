@@ -133,7 +133,7 @@ impl Workspace {
                         t.env.update(cx, |e, _| {
                             let i = e.lookup(&python);
                             e.venvs.insert(0, i);
-                            e.selected.is_some()
+                            e.selected().is_some()
                         })
                     })
                     .unwrap_or(false);

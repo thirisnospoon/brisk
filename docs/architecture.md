@@ -884,6 +884,29 @@ ruff, packages and the console react. Verify: LSP, INTEL, packages, PYCON, venv 
 Risk: high: interpreter selection feeds ty, ruff, runs and debugging; each must be checked
 after switching the interpreter.
 
+Done on branch `arch4`, in two commits as in step 15. `PythonEnv` (`python_env.rs`) owns
+the interpreters found, the project interpreter and the SSH interpreters, and creating or
+syncing an environment (Add Interpreter, uv / Poetry, the "Install requirements?" balloon).
+`run.json` keeps its format: `Runs::new` takes the interpreter choice out of the loaded file
+and gives it to `PythonEnv`, `save_runs` writes it back, and `reload_runs` passes a changed
+file's choice on, so while the project is open the choice lives in one place. Where this
+differs from step 15:
+
+- The model exists from startup, not first use: the status bar shows the interpreter in the
+  first frame and discovery starts right after it. `Workspace::new_env` creates it,
+  subscribes and observes.
+- Code that read `runs` without a context now takes `cx` (`interpreter(cx)`,
+  `interpreter_label(cx)`, `ruff`, `ty_tool`, `terminal_activation`, `ssh_for`). Popup rows
+  are built where no context is at hand, so the popups that list interpreters or
+  background tasks open on an `EnvView` snapshot (`open_env_popup`).
+- `EnvEvent::InterpreterChanged` goes out when the local project interpreter is another
+  one, when a local one is picked again (that restarts a ty that exited), and after an
+  environment is created or synced. `Workspace::on_env_event` then restarts ty, lints the
+  open files again, gives new shells the new activation, refreshes Python Packages if it
+  was opened, and tells a running Python Console (which keeps its process) to rerun.
+  `ChoiceChanged` writes `run.json`. Runs, coverage, profiling and the debugger read the
+  interpreter when they start and need no event.
+
 #### Step 19. `RunModel`
 
 Run configurations, the Run console, Before launch, coverage and

@@ -513,8 +513,8 @@ impl Workspace {
         let branch = std::fs::read_to_string(root.join(".git/HEAD"))
             .ok()
             .map(|h| h.trim().strip_prefix("ref: refs/heads/").map(str::to_string).unwrap_or_else(|| h.trim().chars().take(8).collect()));
-        let (runs, (selected, ssh), imported_runs) = run_ui::Runs::new(&root);
-        let env = cx.new(|_| python_env::PythonEnv::new(root.clone(), selected, ssh));
+        let (runs, choice, imported_runs) = run_ui::Runs::new(&root);
+        let env = Self::new_env(&root, choice, window, cx);
         budget_probe::mark("runs");
         if imported_runs > 0 {
             cx.defer_in(window, move |this: &mut Self, _, cx| this.show_toast(format!("Imported {imported_runs} run configuration(s) from .idea"), false, cx));

@@ -38,7 +38,7 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.env.update(cx, |e, _| e.ssh_found = Some((host.clone(), info)));
                 this.ssh_pick_python(host.clone(), py, ver, window, cx);
-                eprintln!("smoke-ssh: interpreter {:?} / {:?}", this.interpreter_label(cx), this.env.read(cx).selected);
+                eprintln!("smoke-ssh: interpreter {:?} / {:?}", this.interpreter_label(cx), this.env.read(cx).selected());
             });
             for round in 0..2 {
                 if round == 1 {

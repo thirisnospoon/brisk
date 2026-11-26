@@ -47,23 +47,6 @@ fn take_choice(f: &mut RunFile) -> EnvChoice {
 }
 
 impl Workspace {
-    pub(super) fn start_interpreter_discovery(&mut self, cx: &mut Context<Self>) {
-        let root = self.root.clone();
-        let task = cx.background_executor().spawn(async move { brisk_run::discover_all(&root) });
-        cx.spawn(async move |this, cx| {
-            let all = task.await;
-            let _ = this.update(cx, |this, cx| {
-                this.env.update(cx, |e, _| e.all = Some(all));
-                this.relint_all(cx);
-                if this.bottom == Some(BottomTool::Problems) && this.problems.tab == super::problems_ui::ProblemsTab::Project {
-                    this.check_project(cx);
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
     pub(super) fn interpreter_label(&self, cx: &gpui::App) -> String {
         self.env.read(cx).label()
     }
@@ -88,11 +71,8 @@ impl Workspace {
             match serde_json::from_str::<RunFile>(&s) {
                 Ok(mut f) => {
                     brisk_run::project_files::merge(&self.root, &mut f);
-                    let (selected, ssh) = take_choice(&mut f);
-                    self.env.update(cx, |e, _| {
-                        e.selected = selected;
-                        e.ssh = ssh;
-                    });
+                    let choice = take_choice(&mut f);
+                    self.env.update(cx, |e, cx| e.set_choice(choice, cx));
                     self.runs.file = f;
                     self.runs.stamp = stamp;
                 }
@@ -104,7 +84,7 @@ impl Workspace {
     /// Writes `run.json`: the run configurations and `PythonEnv`'s interpreter choice.
     pub(super) fn save_runs(&mut self, cx: &gpui::App) {
         let env = self.env.read(cx);
-        let file = RunFile { interpreter: env.selected.clone(), ssh: env.ssh.clone(), ..self.runs.file.clone() };
+        let file = RunFile { interpreter: env.selected().map(str::to_string), ssh: env.ssh_interpreters().to_vec(), ..self.runs.file.clone() };
         match brisk_run::save(&self.root, &file) {
             Ok(()) => self.runs.stamp = brisk_run::run_file_stamp(&self.root),
             Err(e) => self.status = format!("Cannot save {}: {e}", brisk_run::CONFIG_FILE),
@@ -633,12 +613,10 @@ impl Workspace {
                 self.focus_editor(window, cx);
             }
             Target::Interpreter(path) => {
-                let selected = Some(brisk_run::relativize(&self.root, &path));
-                self.env.update(cx, |e, _| e.selected = selected);
-                self.save_runs(cx);
+                // run.json, ty, ruff, the terminal, Packages and the console follow through
+                // `EnvEvent`s.
+                self.env.update(cx, |e, cx| e.select_path(&path, cx));
                 self.status = format!("Interpreter: {}", self.interpreter_label(cx));
-                self.restart_ty(cx);
-                self.sync_terminal_env(cx);
                 self.focus_editor(window, cx);
             }
             _ => {}

@@ -184,15 +184,10 @@ impl Workspace {
         self.popup = None;
         let home = self.env.update(cx, |e, _| e.ssh_found.take()).map(|(_, i)| i.home).unwrap_or_default();
         self.reload_runs(cx);
-        let existing = self.env.read(cx).ssh.iter().find(|s| s.host == host).map(|s| s.remote_root.clone());
+        let existing = self.env.read(cx).ssh_interpreters().iter().find(|s| s.host == host).map(|s| s.remote_root.clone());
         let remote_root = existing.unwrap_or_else(|| ssh::default_remote_root(&home, &self.root));
         let s = SshInterpreter { host, python, version, remote_root };
-        self.env.update(cx, |e, _| {
-            e.ssh.retain(|x| x.uri() != s.uri());
-            e.ssh.push(s.clone());
-            e.selected = Some(s.uri());
-        });
-        self.save_runs(cx);
+        self.env.update(cx, |e, cx| e.add_ssh(s.clone(), cx));
         self.status = format!("Interpreter: {}", s.label());
         self.show_toast(format!("Runs use {} on {}. The project is uploaded to {} before each run.", s.label(), s.host, s.remote_root), false, cx);
         self.focus_editor(window, cx);
@@ -201,8 +196,7 @@ impl Workspace {
 
     pub(super) fn ssh_use(&mut self, uri: String, window: &mut Window, cx: &mut Context<Self>) {
         self.popup = None;
-        self.env.update(cx, |e, _| e.selected = Some(uri));
-        self.save_runs(cx);
+        self.env.update(cx, |e, cx| e.select(Some(uri), cx));
         self.status = format!("Interpreter: {}", self.interpreter_label(cx));
         self.focus_editor(window, cx);
         cx.notify();
