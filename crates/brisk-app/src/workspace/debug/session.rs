@@ -18,7 +18,7 @@ impl Workspace {
                 self.set_next_statement(ed, line, cx);
             }
             A::Debug => {
-                self.reload_runs();
+                self.reload_runs(cx);
                 let cfg = self.runs.file.selected_config().cloned().or_else(|| self.context_config(window, cx));
                 match cfg {
                     Some(cfg) => self.start_debug(cfg, window, cx),
@@ -141,7 +141,7 @@ impl Workspace {
         }
         let python = match &cfg.interpreter {
             Some(p) => Some(brisk_run::resolve(&self.root, p)),
-            None => self.runs.interpreter(&self.root).map(|i| i.path),
+            None => self.interpreter(cx).map(|i| i.path),
         };
         let Some(python) = python else {
             self.show_toast("No Python interpreter configured: create a .venv or install Python".into(), true, cx);
@@ -230,7 +230,7 @@ impl Workspace {
         if self.debug.read(cx).is_live() {
             self.debug.update(cx, |d, cx| d.stop(cx));
         }
-        let Some(python) = self.runs.interpreter(&self.root).map(|i| i.path) else {
+        let Some(python) = self.interpreter(cx).map(|i| i.path) else {
             self.show_toast("No Python interpreter configured: create a .venv or install Python".into(), true, cx);
             return;
         };
