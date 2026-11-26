@@ -19,7 +19,6 @@ mod smoke;
 mod stall;
 mod terminal_view;
 mod theme;
-mod todo_scan;
 mod ui_kit;
 mod workspace;
 

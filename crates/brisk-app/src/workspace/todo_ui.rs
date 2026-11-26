@@ -5,9 +5,9 @@
 use super::{BottomTool, Workspace};
 use crate::theme::ui_px;
 use crate::theme::{mono_font, Theme};
-use crate::todo_scan::{self, Item};
 #[cfg(feature = "smoke")]
 use brisk_keymap::Action;
+use brisk_search::todo::{self, Item};
 use gpui::prelude::*;
 use gpui::{div, px, uniform_list, Context, FocusHandle, KeyDownEvent, ScrollStrategy, UniformListScrollHandle, Window};
 use std::collections::HashSet;
@@ -90,7 +90,7 @@ impl Workspace {
         t.scanning = true;
         t.generation += 1;
         let gen = t.generation;
-        let task = cx.background_executor().spawn(async move { todo_scan::scan_project(&root) });
+        let task = cx.background_executor().spawn(async move { todo::scan_project(&root) });
         cx.spawn(async move |this, cx| {
             let groups = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -121,7 +121,7 @@ impl Workspace {
                 Some(l) if paths.iter().all(|p| listed(&l, p)) => l,
                 _ => std::sync::Arc::new(brisk_project::FileList::scan(&root)),
             };
-            paths.into_iter().filter(|p| listed(&list, p)).map(|p| (p.clone(), todo_scan::scan_file(&p))).collect::<Vec<_>>()
+            paths.into_iter().filter(|p| listed(&list, p)).map(|p| (p.clone(), todo::scan_file(&p))).collect::<Vec<_>>()
         });
         cx.spawn(async move |this, cx| {
             let fresh = task.await;

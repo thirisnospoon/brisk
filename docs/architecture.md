@@ -46,7 +46,7 @@ of `src/`.
 | `brisk-text` | 2,459 | 40 | | The rope buffer, multi-caret selections, undo / redo, edit operations. |
 | `brisk-project` | 672 | 6 | | The lazy project tree and the flat file list for Go to File. |
 | `brisk-syntax` | 3,396 | 35 | | tree-sitter parsing, highlighting of the visible range, folding, outline, the symbol index. |
-| `brisk-search` | 398 | 7 | | Find / Replace in Files. |
+| `brisk-search` | 398 | 7 | project | Find / Replace in Files, and the TODO / FIXME scan of the TODO tool window (`todo`). |
 | `brisk-lint` | 472 | 4 | proc, run | ruff: discovery, checks, fixes, noqa. |
 | `brisk-lsp` | 1,436 | 10 | proc, lint | JSON-RPC over stdio and a typed API for ty. |
 | `brisk-dap` | 1,047 | 13 | proc | The Debug Adapter Protocol client for debugpy, and the debugger logic the Debug window shows: hover expressions, inline values, Smart Step Into targets, exception breakpoints, console completion, the Attach to Process list. |
@@ -77,8 +77,8 @@ target and nothing outside it can link against its code.
   window and the Run console. It emits `RunEvent` (`terminal_view.rs:71`).
 - `diff_view.rs`, `merge_view.rs`, `grid_view.rs`, `data_view.rs`: the other kinds of editor
   tab (`Tab`, `workspace.rs:238`).
-- UI-free modules that live here anyway: `todo_scan.rs`, `editorconfig.rs`,
-  `keymap_store.rs`. None of them imports `gpui`.
+- UI-free modules that live here anyway: `editorconfig.rs`, `keymap_store.rs`. None of them
+  imports `gpui`.
 - `theme.rs`, `icons.rs`, `ui_kit.rs`, `scrollbar.rs`: drawing helpers. Colors and sizes are
   read from global state (`brisk-settings` keeps them in statics).
 - `crash.rs` (panic log) and `stall.rs` (main-thread watchdog and frame timing).
@@ -716,6 +716,9 @@ console history, which are app settings.
 
 `todo_scan.rs` to `brisk-search`, `editorconfig.rs` to `brisk-project`, the log filter
 matching to `brisk-git`. One pull request each. Risk: low.
+
+Done on branch `arch3`, one commit each. `todo_scan.rs` is `brisk_search::todo`, unchanged,
+with its tests; `brisk-search` now depends on `brisk-project` for the file list.
 
 #### Step 10. `brisk-history` and `brisk-settings`
 

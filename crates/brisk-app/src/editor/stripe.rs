@@ -167,7 +167,7 @@ impl Editor {
                 if !has_todo_keyword(line.as_bytes()) {
                     continue;
                 }
-                if let Some((at, text)) = crate::todo_scan::find_in_line(line, plain) {
+                if let Some((at, text)) = brisk_search::todo::find_in_line(line, plain) {
                     out.push((l, line[..at].chars().count(), text));
                 }
             }
@@ -379,7 +379,7 @@ mod todo_prefilter_tests {
         for (line, plain) in
             [("# TODO: x", false), ("x = 1  # fixme later", false), ("// ToDo", false), ("* FIXME", false), ("todo list", true), ("a ТODO", true)]
         {
-            if crate::todo_scan::find_in_line(line, plain).is_some() {
+            if brisk_search::todo::find_in_line(line, plain).is_some() {
                 assert!(super::has_todo_keyword(line.as_bytes()), "{line}");
             }
         }

@@ -3,6 +3,10 @@
 //! Searches the project's file list (already filtered by .gitignore and excluded folders) on all
 //! cores. No persistent index: a parallel scan of a typical Python project takes milliseconds and
 //! costs zero memory while idle. A trigram index can be layered on later for huge monorepos.
+//!
+//! [`todo`] finds the TODO / FIXME items of the TODO tool window.
+
+pub mod todo;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::{Regex, RegexBuilder};
