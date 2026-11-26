@@ -9,17 +9,59 @@ use crate::theme::{mono_font, Theme};
 use brisk_keymap::Action;
 use brisk_search::todo::{self, Item};
 use gpui::prelude::*;
-use gpui::{div, px, uniform_list, Context, FocusHandle, KeyDownEvent, ScrollStrategy, UniformListScrollHandle, Window};
+use gpui::{div, px, uniform_list, AnyElement, Context, Entity, EventEmitter, FocusHandle, KeyDownEvent, ScrollStrategy, UniformListScrollHandle, Window};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+/// The TODO tool window as `Workspace` holds it: its focus and its model, which is created,
+/// and the project scanned, the first time the window opens.
 pub struct Todo {
     pub focus: FocusHandle,
-    pub groups: Vec<(PathBuf, Vec<Item>)>,
-    pub collapsed: HashSet<PathBuf>,
+    model: Option<Entity<TodoModel>>,
+}
+
+impl Todo {
+    pub fn new(cx: &mut Context<Workspace>) -> Self {
+        Self { focus: cx.focus_handle(), model: None }
+    }
+
+    /// Whether the scan finished and found something (the scroll budget waits for it).
+    #[cfg(feature = "smoke")]
+    pub fn scanned(&self, cx: &gpui::App) -> bool {
+        self.model.as_ref().is_some_and(|m| {
+            let m = m.read(cx);
+            !m.scanning && !m.groups.is_empty()
+        })
+    }
+}
+
+/// What the TODO model asks of the workspace.
+pub enum TodoEvent {
+    /// Open the item's file and select its keyword.
+    Open(Item),
+    /// Esc: back to the editor.
+    FocusEditor,
+}
+
+/// What a key in the TODO window did.
+pub enum TodoKey {
+    /// Not a key of the window.
+    NotMine,
+    Done,
+    /// Done, and the workspace has to do this now (in the same turn, so the caller sees it).
+    Then(TodoEvent),
+}
+
+/// The TODO / FIXME comments of the project, grouped by file, and the window that lists them.
+pub struct TodoModel {
+    root: PathBuf,
+    focus: FocusHandle,
+    groups: Vec<(PathBuf, Vec<Item>)>,
+    collapsed: HashSet<PathBuf>,
     /// Row index in `rows()`.
-    pub selected: usize,
-    pub scanning: bool,
+    selected: usize,
+    scanning: bool,
     generation: u64,
     scroll: UniformListScrollHandle,
     /// `rows()`, built once per change of `groups` or `collapsed` (see `touch`).
@@ -27,14 +69,31 @@ pub struct Todo {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Row {
+enum Row {
     File(PathBuf, usize),
     Item(Item),
 }
 
-impl Todo {
+impl EventEmitter<TodoEvent> for TodoModel {}
+
+impl TodoModel {
+    /// An empty list for the project at `root`; `focus` is the tool window's.
+    pub fn new(root: PathBuf, focus: FocusHandle) -> Self {
+        Self {
+            root,
+            focus,
+            groups: Vec::new(),
+            collapsed: HashSet::new(),
+            selected: 0,
+            scanning: false,
+            generation: 0,
+            scroll: UniformListScrollHandle::new(),
+            rows_cache: Default::default(),
+        }
+    }
+
     /// The visible rows; cached, so a frame or a key costs no copy of the items.
-    pub fn rows(&self) -> std::rc::Rc<Vec<Row>> {
+    fn rows(&self) -> std::rc::Rc<Vec<Row>> {
         if let Some(r) = &*self.rows_cache.borrow() {
             return r.clone();
         }
@@ -51,50 +110,27 @@ impl Todo {
     }
 
     /// `groups` or `collapsed` changed: rebuild the rows on next use.
-    pub fn touch(&mut self) {
+    fn touch(&mut self) {
         self.rows_cache.get_mut().take();
     }
 
-    pub fn count(&self) -> usize {
+    fn count(&self) -> usize {
         self.groups.iter().map(|g| g.1.len()).sum()
     }
-}
 
-impl Workspace {
-    pub(super) fn toggle_todo_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.todo.is_none() {
-            self.todo = Some(Todo {
-                focus: cx.focus_handle(),
-                groups: Vec::new(),
-                collapsed: HashSet::new(),
-                selected: 0,
-                scanning: false,
-                generation: 0,
-                scroll: UniformListScrollHandle::new(),
-                rows_cache: Default::default(),
-            });
-        }
-        self.toggle_bottom(BottomTool::Todo, window, cx);
-        if self.bottom == Some(BottomTool::Todo) {
-            self.refresh_todo(cx);
-            if let Some(t) = &self.todo {
-                window.focus(&t.focus);
-            }
-        }
-        cx.notify();
-    }
-
-    pub(super) fn refresh_todo(&mut self, cx: &mut Context<Self>) {
+    /// Scans the whole project again, in the background.
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let root = self.root.clone();
-        let Some(t) = self.todo.as_mut() else { return };
-        t.scanning = true;
-        t.generation += 1;
-        let gen = t.generation;
+        self.scanning = true;
+        self.generation += 1;
+        let gen = self.generation;
         let task = cx.background_executor().spawn(async move { todo::scan_project(&root) });
         cx.spawn(async move |this, cx| {
             let groups = task.await;
-            let _ = this.update(cx, |this, cx| {
-                let Some(t) = this.todo.as_mut().filter(|t| t.generation == gen) else { return };
+            let _ = this.update(cx, |t, cx| {
+                if t.generation != gen {
+                    return;
+                }
                 t.groups = groups;
                 t.touch();
                 t.scanning = false;
@@ -105,13 +141,13 @@ impl Workspace {
         .detach();
     }
 
-    /// Saved files: rescan just them (the rest of the list stays).
-    pub(super) fn todo_files_saved(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
-        if self.todo.is_none() || paths.is_empty() {
+    /// Saved files: rescan just them (the rest of the list stays). `files` is the project's
+    /// file list, if it has been read.
+    pub fn files_saved(&mut self, paths: Vec<PathBuf>, files: Option<Arc<brisk_project::FileList>>, cx: &mut Context<Self>) {
+        if paths.is_empty() {
             return;
         }
         let root = self.root.clone();
-        let files = self.files.clone();
         let task = cx.background_executor().spawn(async move {
             // Ignored files stay out, as in the full scan: only files in the project's list
             // (sorted) count. A file not in it yet (just created) takes a fresh list.
@@ -119,14 +155,13 @@ impl Workspace {
                 |list: &brisk_project::FileList, p: &PathBuf| brisk_project::rel_path(&list.root, p).is_some_and(|rel| list.files.binary_search(&rel).is_ok());
             let list = match files {
                 Some(l) if paths.iter().all(|p| listed(&l, p)) => l,
-                _ => std::sync::Arc::new(brisk_project::FileList::scan(&root)),
+                _ => Arc::new(brisk_project::FileList::scan(&root)),
             };
             paths.into_iter().filter(|p| listed(&list, p)).map(|p| (p.clone(), todo::scan_file(&p))).collect::<Vec<_>>()
         });
         cx.spawn(async move |this, cx| {
             let fresh = task.await;
-            let _ = this.update(cx, |this, cx| {
-                let Some(t) = this.todo.as_mut() else { return };
+            let _ = this.update(cx, |t, cx| {
                 for (p, items) in fresh {
                     t.groups.retain(|g| g.0 != p);
                     if !items.is_empty() {
@@ -142,69 +177,115 @@ impl Workspace {
         .detach();
     }
 
-    fn todo_open(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(t) = self.todo.as_mut() else { return };
-        let Some(r) = t.rows().get(row).cloned() else { return };
-        t.selected = row;
+    /// Selects `row` and folds / unfolds it if it is a file; an item is returned for the
+    /// workspace to open.
+    fn activate(&mut self, row: usize, cx: &mut Context<Self>) -> Option<TodoEvent> {
+        let r = self.rows().get(row).cloned()?;
+        self.selected = row;
+        cx.notify();
         match r {
             Row::File(p, _) => {
-                if !t.collapsed.remove(&p) {
-                    t.collapsed.insert(p);
+                if !self.collapsed.remove(&p) {
+                    self.collapsed.insert(p);
                 }
-                t.touch();
+                self.touch();
+                None
             }
-            Row::Item(i) => {
-                self.open_file(&i.path, window, cx);
-                if let Some(ed) = self.active_editor().cloned() {
-                    let len = i.text.split([':', ' ', '(']).next().map(|w| w.chars().count()).unwrap_or(0);
-                    ed.update(cx, |e, cx| e.select_on_line(i.line, i.col..i.col + len, cx));
-                }
-            }
+            Row::Item(i) => Some(TodoEvent::Open(i)),
         }
-        cx.notify();
     }
 
-    pub(super) fn todo_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(t) = &self.todo else { return false };
-        if !t.focus.is_focused(window) {
-            return false;
-        }
-        let m = &e.keystroke.modifiers;
-        if m.control || m.alt || m.platform {
-            return false;
-        }
-        let n = t.rows().len();
-        let sel = t.selected;
-        match e.keystroke.key.as_str() {
+    /// A key pressed with the window focused and no modifier held.
+    pub fn key(&mut self, key: &str, cx: &mut Context<Self>) -> TodoKey {
+        let n = self.rows().len();
+        let sel = self.selected;
+        match key {
             "up" | "down" if n > 0 => {
-                let t = self.todo.as_mut().unwrap();
-                t.selected = if e.keystroke.key == "up" { sel.saturating_sub(1) } else { (sel + 1).min(n - 1) };
-                t.scroll.scroll_to_item(t.selected, ScrollStrategy::Top);
+                self.selected = if key == "up" { sel.saturating_sub(1) } else { (sel + 1).min(n - 1) };
+                self.scroll.scroll_to_item(self.selected, ScrollStrategy::Top);
             }
-            "enter" => self.todo_open(sel, window, cx),
-            "left" | "right" => {
-                let t = self.todo.as_mut().unwrap();
-                if let Some(Row::File(p, _)) = t.rows().get(sel) {
-                    if e.keystroke.key == "left" {
-                        t.collapsed.insert(p.clone());
-                    } else {
-                        t.collapsed.remove(p);
-                    }
-                    t.touch();
+            "enter" => {
+                if let Some(ev) = self.activate(sel, cx) {
+                    return TodoKey::Then(ev);
                 }
             }
-            "escape" => self.focus_editor(window, cx),
-            _ => return false,
+            "left" | "right" => {
+                if let Some(Row::File(p, _)) = self.rows().get(sel) {
+                    if key == "left" {
+                        self.collapsed.insert(p.clone());
+                    } else {
+                        self.collapsed.remove(p);
+                    }
+                    self.touch();
+                }
+            }
+            "escape" => return TodoKey::Then(TodoEvent::FocusEditor),
+            _ => return TodoKey::NotMine,
         }
         cx.notify();
-        true
+        TodoKey::Done
     }
 
-    pub(super) fn render_todo(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let Some(t) = &self.todo else { return div().into_any_element() };
-        let rows = t.rows();
-        let summary =
-            if t.scanning && t.groups.is_empty() { "Scanning…".to_string() } else { format!("Found {} TODO items in {} files", t.count(), t.groups.len()) };
+    /// One row of the TODO list (only the rows in view are built).
+    fn row(&self, i: usize, r: &Row, cx: &mut Context<Self>) -> AnyElement {
+        let rel = |p: &Path| p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/");
+        let sel = i == self.selected;
+        let row = div()
+            .id(("todo-row", i))
+            .w_full()
+            .h(ui_px(22.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .whitespace_nowrap()
+            .overflow_hidden()
+            .cursor_pointer()
+            .when(sel, |d| d.bg(Theme::selection_row()))
+            .when(!sel, |d| d.hover(|s| s.bg(Theme::hover_row())))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(move |this, _, w, cx| {
+                    w.focus(&this.focus);
+                    // A click opens an item, or folds / unfolds a file.
+                    if let Some(ev) = this.activate(i, cx) {
+                        cx.emit(ev);
+                    }
+                }),
+            );
+        let el = match r {
+            Row::File(p, n) => {
+                let open = !self.collapsed.contains(p);
+                let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let dir = rel(p.parent().unwrap_or(p));
+                row.pl(px(8.))
+                    .child(crate::icons::tree_arrow(true, open, Theme::text_dim()))
+                    .child(div().text_color(Theme::text()).child(name))
+                    .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).child(dir))
+                    .child(div().text_size(ui_px(12.)).text_color(Theme::text_muted()).child(format!("{n} item{}", if *n == 1 { "" } else { "s" })))
+            }
+            Row::Item(it) => {
+                let fixme = it.text.to_lowercase().starts_with("fixme");
+                row.pl(px(34.))
+                    .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).font_family(mono_font()).child(format!(
+                        "({}, {})",
+                        it.line + 1,
+                        it.col + 1
+                    )))
+                    .child(div().text_color(if fixme { Theme::warning() } else { Theme::syntax(brisk_syntax::Highlight::Comment) }).child(it.text.clone()))
+            }
+        };
+        el.into_any_element()
+    }
+}
+
+impl Render for TodoModel {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let rows = self.rows();
+        let summary = if self.scanning && self.groups.is_empty() {
+            "Scanning…".to_string()
+        } else {
+            format!("Found {} TODO items in {} files", self.count(), self.groups.len())
+        };
         let toolbar = div()
             .flex()
             .flex_shrink_0()
@@ -230,13 +311,13 @@ impl Workspace {
                     .active(|s| s.bg(Theme::press()))
                     .child("↻")
                     .tooltip(|_, cx| cx.new(|_| super::Tip("Rescan the project".into())).into())
-                    .on_click(cx.listener(|this, _, _, cx| this.refresh_todo(cx))),
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
             )
             .child(div().text_size(ui_px(12.5)).text_color(Theme::text_muted()).child(summary));
-        let empty = rows.is_empty() && !t.scanning;
+        let empty = rows.is_empty() && !self.scanning;
         let list = div()
             .id("todo-list")
-            .track_focus(&t.focus)
+            .track_focus(&self.focus)
             .flex_1()
             .min_h_0()
             .flex()
@@ -249,74 +330,84 @@ impl Workspace {
                         "todo-rows",
                         rows.len(),
                         cx.processor(|this, range: std::ops::Range<usize>, _window, cx| {
-                            let Some(t) = &this.todo else { return Vec::new() };
-                            let rows = t.rows();
-                            range.filter_map(|i| rows.get(i).map(|r| this.todo_row(i, r, cx))).collect()
+                            let rows = this.rows();
+                            range.filter_map(|i| rows.get(i).map(|r| this.row(i, r, cx))).collect()
                         }),
                     )
                     .flex_1()
-                    .track_scroll(t.scroll.clone()),
+                    .track_scroll(self.scroll.clone()),
                 )
             });
-        div().id("todo-window").size_full().flex().flex_col().child(toolbar).child(list).into_any_element()
+        div().id("todo-window").size_full().flex().flex_col().child(toolbar).child(list)
+    }
+}
+
+impl Workspace {
+    /// The TODO model, created on first use.
+    fn todo_model(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<TodoModel> {
+        if let Some(m) = &self.todo.model {
+            return m.clone();
+        }
+        let m = cx.new(|_| TodoModel::new(self.root.clone(), self.todo.focus.clone()));
+        cx.subscribe_in(&m, window, |this, _, ev, window, cx| this.on_todo_event(ev, window, cx)).detach();
+        self.todo.model = Some(m.clone());
+        m
     }
 
-    /// One row of the TODO list (only the rows in view are built).
-    fn todo_row(&self, i: usize, r: &Row, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let Some(t) = &self.todo else { return div().into_any_element() };
-        let rel = |p: &Path| p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/");
-        {
-            {
-                let sel = i == t.selected;
-                let row = div()
-                    .id(("todo-row", i))
-                    .w_full()
-                    .h(ui_px(22.))
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .whitespace_nowrap()
-                    .overflow_hidden()
-                    .cursor_pointer()
-                    .when(sel, |d| d.bg(Theme::selection_row()))
-                    .when(!sel, |d| d.hover(|s| s.bg(Theme::hover_row())))
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(move |this, _, w, cx| {
-                            if let Some(t) = this.todo.as_mut() {
-                                t.selected = i;
-                                w.focus(&t.focus.clone());
-                            }
-                            // A click opens an item, or folds / unfolds a file.
-                            this.todo_open(i, w, cx);
-                        }),
-                    );
-                let el = match r {
-                    Row::File(p, n) => {
-                        let open = !t.collapsed.contains(p);
-                        let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                        let dir = rel(p.parent().unwrap_or(p));
-                        row.pl(px(8.))
-                            .child(crate::icons::tree_arrow(true, open, Theme::text_dim()))
-                            .child(div().text_color(Theme::text()).child(name))
-                            .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).child(dir))
-                            .child(div().text_size(ui_px(12.)).text_color(Theme::text_muted()).child(format!("{n} item{}", if *n == 1 { "" } else { "s" })))
-                    }
-                    Row::Item(it) => {
-                        let fixme = it.text.to_lowercase().starts_with("fixme");
-                        row.pl(px(34.))
-                            .child(div().text_size(ui_px(12.)).text_color(Theme::text_dim()).font_family(mono_font()).child(format!(
-                                "({}, {})",
-                                it.line + 1,
-                                it.col + 1
-                            )))
-                            .child(
-                                div().text_color(if fixme { Theme::warning() } else { Theme::syntax(brisk_syntax::Highlight::Comment) }).child(it.text.clone()),
-                            )
-                    }
-                };
-                el.into_any_element()
+    fn on_todo_event(&mut self, ev: &TodoEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match ev {
+            TodoEvent::Open(i) => {
+                self.open_file(&i.path, window, cx);
+                if let Some(ed) = self.active_editor().cloned() {
+                    let len = i.text.split([':', ' ', '(']).next().map(|w| w.chars().count()).unwrap_or(0);
+                    ed.update(cx, |e, cx| e.select_on_line(i.line, i.col..i.col + len, cx));
+                }
             }
+            TodoEvent::FocusEditor => self.focus_editor(window, cx),
+        }
+        cx.notify();
+    }
+
+    pub(super) fn toggle_todo_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let m = self.todo_model(window, cx);
+        self.toggle_bottom(BottomTool::Todo, window, cx);
+        if self.bottom == Some(BottomTool::Todo) {
+            m.update(cx, |m, cx| m.refresh(cx));
+            window.focus(&self.todo.focus);
+        }
+        cx.notify();
+    }
+
+    /// Saved files: rescan just them, if the window was ever opened.
+    pub(super) fn todo_files_saved(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let Some(m) = self.todo.model.clone() else { return };
+        let files = self.files.clone();
+        m.update(cx, |m, cx| m.files_saved(paths, files, cx));
+    }
+
+    pub(super) fn todo_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.todo.focus.is_focused(window) {
+            return false;
+        }
+        let Some(m) = self.todo.model.clone() else { return false };
+        let mods = &e.keystroke.modifiers;
+        if mods.control || mods.alt || mods.platform {
+            return false;
+        }
+        match m.update(cx, |m, cx| m.key(&e.keystroke.key, cx)) {
+            TodoKey::NotMine => false,
+            TodoKey::Done => true,
+            TodoKey::Then(ev) => {
+                self.on_todo_event(&ev, window, cx);
+                true
+            }
+        }
+    }
+
+    pub(super) fn render_todo(&self) -> AnyElement {
+        match &self.todo.model {
+            Some(m) => m.clone().into_any_element(),
+            None => div().into_any_element(),
         }
     }
 
@@ -344,9 +435,10 @@ impl Workspace {
             pause(500).await;
             let _ = this.update_in(cx, |this, window, cx| this.dispatch(Action::ToggleTodoWindow, window, cx));
             pause(1200).await;
-            let dump = |this: &Workspace| {
-                let t = this.todo.as_ref().unwrap();
-                t.groups
+            let dump = |this: &Workspace, cx: &gpui::App| {
+                let Some(m) = &this.todo.model else { return vec!["no TODO model".to_string()] };
+                m.read(cx)
+                    .groups
                     .iter()
                     .map(|(p, items)| {
                         format!(
@@ -358,7 +450,7 @@ impl Workspace {
                     .collect::<Vec<_>>()
             };
             let _ = this.update_in(cx, |this, window, cx| {
-                eprintln!("smoke-todo: scan -> {:#?}", dump(this));
+                eprintln!("smoke-todo: scan -> {:#?}", dump(this, cx));
                 let util = this.root.join("pkg/util.py");
                 this.open_file(&util, window, cx);
                 if let Some(ed) = this.active_editor().cloned() {
@@ -370,22 +462,21 @@ impl Workspace {
             });
             pause(1200).await;
             let _ = this.update_in(cx, |this, window, cx| {
-                eprintln!("smoke-todo: after save -> {:#?}", dump(this));
+                eprintln!("smoke-todo: after save -> {:#?}", dump(this, cx));
+                let Some(m) = this.todo.model.clone() else { return cx.quit() };
                 // Select the FIXME of app.py and open it with Enter.
-                let t = this.todo.as_mut().unwrap();
-                let row = t.rows().iter().position(|r| matches!(r, Row::Item(i) if i.text.starts_with("FIXME handle"))).unwrap_or(0);
-                t.selected = row;
-                let f = t.focus.clone();
-                window.focus(&f);
+                m.update(cx, |t, _| {
+                    t.selected = t.rows().iter().position(|r| matches!(r, Row::Item(i) if i.text.starts_with("FIXME handle"))).unwrap_or(0);
+                });
+                window.focus(&this.todo.focus);
                 this.smoke_press("enter", window, cx);
                 let at = this.active_editor().map(|e| (e.read(cx).title(), e.read(cx).caret_line_col()));
                 eprintln!("smoke-todo: enter on FIXME -> {at:?}");
                 // Fold app.py.
-                let t = this.todo.as_mut().unwrap();
-                t.selected = 0;
-                window.focus(&t.focus.clone());
+                m.update(cx, |t, _| t.selected = 0);
+                window.focus(&this.todo.focus);
                 this.smoke_press("left", window, cx);
-                eprintln!("smoke-todo: rows after folding the first file -> {}", this.todo.as_ref().unwrap().rows().len());
+                eprintln!("smoke-todo: rows after folding the first file -> {}", m.read(cx).rows().len());
                 this.smoke_press("right", window, cx);
                 if std::env::var("BRISK_SMOKE_TODO").as_deref() != Ok("hold") {
                     cx.quit();

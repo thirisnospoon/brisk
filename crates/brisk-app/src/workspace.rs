@@ -441,7 +441,7 @@ pub struct Workspace {
     /// Created on first open of Python Packages.
     packages: Option<packages_ui::Packages>,
     /// Created on first open of the TODO window; then kept current on save.
-    todo: Option<todo_ui::Todo>,
+    todo: todo_ui::Todo,
     /// Routes and templates of a Django / FastAPI / Flask project (built on first use).
     web: web_ui::WebState,
     /// Created on first open of the Endpoints window.
@@ -637,7 +637,7 @@ impl Workspace {
             last_url: None,
             test_marks: Default::default(),
             packages: None,
-            todo: None,
+            todo: todo_ui::Todo::new(cx),
             web: Default::default(),
             endpoints: None,
             debug_edit: None,
@@ -3239,7 +3239,7 @@ impl Render for Workspace {
             (BottomTool::Services, _) => self.render_services(cx),
             (BottomTool::PythonConsole, _) => self.render_python_console(window, cx),
             (BottomTool::Packages, _) => self.render_python_packages(window, cx),
-            (BottomTool::Todo, _) => self.render_todo(cx),
+            (BottomTool::Todo, _) => self.render_todo(),
             (BottomTool::Endpoints, _) => self.render_endpoints(cx),
             (BottomTool::Coverage, _) => self.render_coverage(cx),
             (BottomTool::Profiler, _) => self.render_profiler(cx),

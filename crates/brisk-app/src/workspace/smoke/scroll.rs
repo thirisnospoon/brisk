@@ -227,7 +227,7 @@ impl Workspace {
                 });
                 for _ in 0..300 {
                     wait(cx, 100).await;
-                    if this.update(cx, |this, _| this.todo.as_ref().is_some_and(|t| !t.scanning && !t.groups.is_empty())).unwrap_or(true) {
+                    if this.update(cx, |this, cx| this.todo.scanned(cx)).unwrap_or(true) {
                         break;
                     }
                 }
