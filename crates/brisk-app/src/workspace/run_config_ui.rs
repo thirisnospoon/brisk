@@ -1305,7 +1305,7 @@ impl Workspace {
             cx.quit();
             return;
         };
-        let launch = super::debug_ui::launch_for(&brisk_run::build(&root, &cfg, std::path::Path::new("python")));
+        let launch = super::debug::launch_for(&brisk_run::build(&root, &cfg, std::path::Path::new("python")));
         let get = |k: &str| launch.env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
         eprintln!("smoke-envfile: debug launch env A={:?} B={:?} C={:?}", get("A"), get("B"), get("C"));
         cx.spawn_in(window, async move |this, cx| {

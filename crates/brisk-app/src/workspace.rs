@@ -5,7 +5,7 @@ mod bookmarks_ui;
 pub(crate) mod budget_probe;
 mod console_ui;
 mod db_ui;
-mod debug_ui;
+mod debug;
 mod disk_ui;
 mod files_ui;
 mod find_ui;
@@ -406,7 +406,7 @@ pub struct Workspace {
     find: find_ui::Find,
     db: db_ui::Db,
     services: services_ui::Services,
-    debug: debug_ui::Debug,
+    debug: debug::Debug,
     /// Created on first open of the Python Console.
     pyc: Option<console_ui::PyConsole>,
     /// The "press the keys" box of Keymap.
@@ -579,7 +579,7 @@ impl Workspace {
 
         window.focus(&tree_focus);
         let saved_bookmarks = bookmarks_ui::load(&root);
-        let debug = debug_ui::Debug::new(&root, cx);
+        let debug = debug::Debug::new(&root, cx);
         budget_probe::mark("bookmarks_debug");
         cx.defer_in(window, |this: &mut Self, window, cx| this.start_disk_poll(window, cx));
         // Closing the window saves everything first (PyCharm never asks).

@@ -23,7 +23,7 @@ const HELPERS: &[(&str, &str, usize, &str)] = &[
     ("merge_view.rs", "tool", 1, ""),
     ("vcs_popup.rs", "tool", 1, ""),
     ("merge_view.rs", "mini", 1, ""),
-    ("debug_ui.rs", "tool", 1, "tw-"),
+    ("window.rs", "tool", 1, "tw-"),
     ("terminal_view.rs", "button", 1, "tw-"),
     ("terminal_view.rs", "toggle", 1, "tw-"),
 ];

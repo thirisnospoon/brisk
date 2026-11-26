@@ -10,7 +10,7 @@
 //! and View Value, then steps and checks that the open tables evaluate again. Exits with 1 if
 //! any check fails. `BRISK_SMOKE_DATAVIEW_HOLD=1` keeps the window open on the `df` table.
 
-use crate::workspace::debug_ui::State;
+use crate::workspace::debug::State;
 use crate::workspace::{Tab, Workspace};
 use brisk_keymap::Action;
 use gpui::{Context, Window};

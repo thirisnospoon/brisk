@@ -281,15 +281,15 @@ impl Workspace {
                     d.console = (0..5000)
                         .map(|i| {
                             if i % 3 == 0 {
-                                (format!("  File \"{}\", line {}, in f\n", tb.display(), i % 40 + 1), crate::workspace::debug_ui::Line::Err)
+                                (format!("  File \"{}\", line {}, in f\n", tb.display(), i % 40 + 1), crate::workspace::debug::Line::Err)
                             } else {
-                                (format!("{i}: output line of the debugged program\n"), crate::workspace::debug_ui::Line::Out)
+                                (format!("{i}: output line of the debugged program\n"), crate::workspace::debug::Line::Out)
                             }
                         })
                         .collect();
                     d.console_changed(true);
                     d.vars = (0..10_000)
-                        .map(|i| crate::workspace::debug_ui::VarRow {
+                        .map(|i| crate::workspace::debug::VarRow {
                             depth: if i == 0 { 0 } else { 1 },
                             var: brisk_dap::Variable {
                                 name: format!("[{i}]"),
@@ -299,7 +299,7 @@ impl Workspace {
                                 evaluate_name: String::new(),
                             },
                             expanded: i == 0,
-                            kind: if i == 0 { crate::workspace::debug_ui::RowKind::Scope } else { crate::workspace::debug_ui::RowKind::Var },
+                            kind: if i == 0 { crate::workspace::debug::RowKind::Scope } else { crate::workspace::debug::RowKind::Var },
                             parent: 0,
                         })
                         .collect();
@@ -308,14 +308,14 @@ impl Workspace {
                 });
                 if want("debug-variables") {
                     let _ = this.update(cx, |this, cx| {
-                        this.debug.tab = crate::workspace::debug_ui::DebugTab::Debugger;
+                        this.debug.tab = crate::workspace::debug::DebugTab::Debugger;
                         cx.notify();
                     });
                     results.push(("debug-variables (10k)", best(&this, cx, At::Bottom(0.7)).await));
                 }
                 if want("debug-console") {
                     let _ = this.update(cx, |this, cx| {
-                        this.debug.tab = crate::workspace::debug_ui::DebugTab::Console;
+                        this.debug.tab = crate::workspace::debug::DebugTab::Console;
                         cx.notify();
                     });
                     results.push(("debug-console (5000 lines)", best(&this, cx, At::Bottom(0.5)).await));
