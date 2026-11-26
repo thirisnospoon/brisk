@@ -8,7 +8,6 @@ mod crash;
 mod data_view;
 mod diff_view;
 mod editor;
-mod editorconfig;
 mod grid_view;
 mod icons;
 mod keymap_store;

@@ -198,7 +198,7 @@ pub struct Editor {
     /// Ctrl+wheel distance not yet turned into a font size step.
     zoom_acc: f32,
     /// `.editorconfig` settings for this file.
-    pub editorconfig: crate::editorconfig::EditorConfig,
+    pub editorconfig: brisk_project::editorconfig::EditorConfig,
     /// The mouse is over the gutter: show the fold markers.
     gutter_hover: bool,
     /// The run icon under the mouse (its line): drawn on a hover background.
@@ -321,8 +321,8 @@ impl Editor {
             cx.background_executor().spawn(async move { brisk_history::record(&p, &t.replace("\r\n", "\n"), brisk_history::Label::Opened) }).detach();
         }
         // Indent and line endings: .editorconfig, else what the file already uses.
-        let editorconfig = crate::editorconfig::for_file(path);
-        buffer.indent_unit = editorconfig.indent_unit().or_else(|| crate::editorconfig::detect_indent(&text)).unwrap_or_else(|| "    ".into());
+        let editorconfig = brisk_project::editorconfig::for_file(path);
+        buffer.indent_unit = editorconfig.indent_unit().or_else(|| brisk_project::editorconfig::detect_indent(&text)).unwrap_or_else(|| "    ".into());
         if let Some(crlf) = editorconfig.crlf {
             buffer.line_ending = if crlf { brisk_text::LineEnding::CrLf } else { brisk_text::LineEnding::Lf };
         }

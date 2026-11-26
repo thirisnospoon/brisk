@@ -44,7 +44,7 @@ of `src/`.
 | `brisk-proc` | 178 | 2 | | The kill-on-close Job Object every long-lived child is adopted into. |
 | `brisk-keymap` | 1,512 | 13 | | The `Action` enum (236 actions, `action.rs`), the `KeyContext` enum of focus contexts (`context.rs`), the PyCharm default keymap (`pycharm.rs`), the user keymap and its import from PyCharm XML, and `KeyResolver` (chords, double Shift). |
 | `brisk-text` | 2,459 | 40 | | The rope buffer, multi-caret selections, undo / redo, edit operations. |
-| `brisk-project` | 672 | 6 | | The lazy project tree and the flat file list for Go to File. |
+| `brisk-project` | 672 | 6 | | The lazy project tree, the flat file list for Go to File, and `.editorconfig` (`editorconfig`). |
 | `brisk-syntax` | 3,396 | 35 | | tree-sitter parsing, highlighting of the visible range, folding, outline, the symbol index. |
 | `brisk-search` | 398 | 7 | project | Find / Replace in Files, and the TODO / FIXME scan of the TODO tool window (`todo`). |
 | `brisk-lint` | 472 | 4 | proc, run | ruff: discovery, checks, fixes, noqa. |
@@ -77,8 +77,7 @@ target and nothing outside it can link against its code.
   window and the Run console. It emits `RunEvent` (`terminal_view.rs:71`).
 - `diff_view.rs`, `merge_view.rs`, `grid_view.rs`, `data_view.rs`: the other kinds of editor
   tab (`Tab`, `workspace.rs:238`).
-- UI-free modules that live here anyway: `editorconfig.rs`, `keymap_store.rs`. None of them
-  imports `gpui`.
+- UI-free modules that live here anyway: `keymap_store.rs`. None of them imports `gpui`.
 - `theme.rs`, `icons.rs`, `ui_kit.rs`, `scrollbar.rs`: drawing helpers. Colors and sizes are
   read from global state (`brisk-settings` keeps them in statics).
 - `crash.rs` (panic log) and `stall.rs` (main-thread watchdog and frame timing).
@@ -718,7 +717,8 @@ console history, which are app settings.
 matching to `brisk-git`. One pull request each. Risk: low.
 
 Done on branch `arch3`, one commit each. `todo_scan.rs` is `brisk_search::todo`, unchanged,
-with its tests; `brisk-search` now depends on `brisk-project` for the file list. The log
+with its tests; `brisk-search` now depends on `brisk-project` for the file list.
+`editorconfig.rs` is `brisk_project::editorconfig`, unchanged, with its tests. The log
 filter's matching was already in `brisk-git` (`Repo::log_query` turns a `LogQuery` into `git log`
 arguments); what moved from `git_log_filter.rs` to `brisk_git::log_query` is the rest that has
 no UI: the Date choices and the two chip labels, the top-level folders and the entries of the
