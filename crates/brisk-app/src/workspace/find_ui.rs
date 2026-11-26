@@ -521,7 +521,7 @@ impl Workspace {
                         let (new, n) = q.replace(&text, &with);
                         if n > 0 {
                             // Closed files have no undo: Local History keeps the old text.
-                            crate::local_history::record(&path, &text, crate::local_history::Label::BeforeRefactor);
+                            brisk_history::record(&path, &text, brisk_history::Label::BeforeRefactor);
                         }
                         if n > 0 && crate::editor::write_atomic(&path, new.as_bytes()).is_err() {
                             failed.push(files.files[fi].clone());

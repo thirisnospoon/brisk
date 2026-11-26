@@ -54,6 +54,7 @@ of `src/`.
 | `brisk-git` | 2,384 | 23 | proc | Git through the `git` CLI: status, log with its lane layout, diff, merge, stash, blame. |
 | `brisk-terminal` | 1,282 | 6 | proc | The PTY (ConPTY, openpty) and VT emulation through `alacritty_terminal`. |
 | `brisk-db` | 1,777 | 14 | | PostgreSQL, MySQL / MariaDB and SQLite: connections, schema, queries. |
+| `brisk-history` | 465 | 3 | platform, git | Local History: revisions of a file at every save and before risky edits (gzip, in the settings folder), folder history, labels, pruning. |
 | `brisk-web` | 1,087 | 7 | project | Django / FastAPI / Flask routes and template references. |
 | `brisk-vm` | 198 | 3 | | The Windows Hypervisor Platform check for the planned container VM (`docs/design/containers.md`). |
 
@@ -75,9 +76,9 @@ target and nothing outside it can link against its code.
   window and the Run console. It emits `RunEvent` (`terminal_view.rs:71`).
 - `diff_view.rs`, `merge_view.rs`, `grid_view.rs`, `data_view.rs`: the other kinds of editor
   tab (`Tab`, `workspace.rs:238`).
-- UI-free modules that live here anyway: `local_history.rs`, `py_console.rs`,
-  `todo_scan.rs`, `coverage.rs`, `profile.rs`, `editorconfig.rs`, `run_anything.rs`,
-  `settings.rs`, `keymap_store.rs`. None of them imports `gpui`.
+- UI-free modules that live here anyway: `py_console.rs`, `todo_scan.rs`, `coverage.rs`,
+  `profile.rs`, `editorconfig.rs`, `run_anything.rs`, `settings.rs`, `keymap_store.rs`.
+  None of them imports `gpui`.
 - `theme.rs`, `icons.rs`, `ui_kit.rs`, `scrollbar.rs`: drawing helpers. Colors and sizes are
   read from global state (`settings.rs` keeps them in statics).
 - `crash.rs` (panic log) and `stall.rs` (main-thread watchdog and frame timing).

@@ -10,6 +10,7 @@ members = [
     "crates/brisk-git",
     "crates/brisk-search",
     "crates/brisk-db",
+    "crates/brisk-history",
     "crates/brisk-run",
     "crates/brisk-lint",
     "crates/brisk-lsp",
@@ -41,6 +42,7 @@ brisk-terminal = { path = "crates/brisk-terminal" }
 brisk-git = { path = "crates/brisk-git" }
 brisk-search = { path = "crates/brisk-search" }
 brisk-db = { path = "crates/brisk-db" }
+brisk-history = { path = "crates/brisk-history" }
 brisk-run = { path = "crates/brisk-run" }
 brisk-lint = { path = "crates/brisk-lint" }
 brisk-lsp = { path = "crates/brisk-lsp" }

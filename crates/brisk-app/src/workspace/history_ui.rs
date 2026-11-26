@@ -5,7 +5,7 @@
 
 use super::{PopupItem, PopupKind, Target, Workspace};
 use crate::diff_view::DiffView;
-use crate::local_history::{self, Label};
+use brisk_history::Label;
 use gpui::prelude::*;
 use gpui::{Context, Window};
 use std::path::{Path, PathBuf};
@@ -25,7 +25,7 @@ impl Workspace {
 
     /// A file's revisions, or a folder's changes (Project view → Local History → Show History).
     pub(super) fn show_path_history(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let labels = local_history::labels_for(&path);
+        let labels = brisk_history::labels_for(&path);
         let items = if path.is_dir() { self.folder_history_items(&path, &labels) } else { self.file_history_items(&path, &labels, cx) };
         if items.is_empty() {
             self.status = format!("Local History: no revisions of {} yet (they are kept on save)", self.rel(&path));
@@ -35,18 +35,18 @@ impl Workspace {
         self.open_popup(PopupKind::LocalHistory);
     }
 
-    fn file_history_items(&self, path: &Path, labels: &[local_history::UserLabel], cx: &Context<Self>) -> Vec<PopupItem> {
-        let revs = local_history::revisions(path);
+    fn file_history_items(&self, path: &Path, labels: &[brisk_history::UserLabel], cx: &Context<Self>) -> Vec<PopupItem> {
+        let revs = brisk_history::revisions(path);
         let current = self.current_text(path, cx);
         let mut items = Vec::new();
         let mut labels = labels.iter().peekable();
         for r in &revs {
             let text = r.text();
-            let summary = local_history::change_summary(&text, &current);
+            let summary = brisk_history::change_summary(&text, &current);
             // A label goes above the newest revision not after it: that is the text it marks.
             while let Some(l) = labels.next_if(|l| l.at >= r.at) {
                 items.push(PopupItem {
-                    label: format!("Label: {}  —  {}", l.name, local_history::age(l.at)),
+                    label: format!("Label: {}  —  {}", l.name, brisk_history::age(l.at)),
                     detail: summary.clone(),
                     hint: String::new(),
                     target: Target::History(path.to_path_buf(), r.at),
@@ -62,14 +62,14 @@ impl Workspace {
         items
     }
 
-    fn folder_history_items(&self, dir: &Path, labels: &[local_history::UserLabel]) -> Vec<PopupItem> {
-        let changes = local_history::history_under(dir, FOLDER_ROWS);
+    fn folder_history_items(&self, dir: &Path, labels: &[brisk_history::UserLabel]) -> Vec<PopupItem> {
+        let changes = brisk_history::history_under(dir, FOLDER_ROWS);
         let mut items = Vec::new();
         let mut labels = labels.iter().peekable();
         for c in &changes {
             while let Some(l) = labels.next_if(|l| l.at >= c.rev.at) {
                 items.push(PopupItem {
-                    label: format!("Label: {}  —  {}", l.name, local_history::age(l.at)),
+                    label: format!("Label: {}  —  {}", l.name, brisk_history::age(l.at)),
                     detail: String::new(),
                     hint: String::new(),
                     target: Target::History(c.path.clone(), c.rev.at),
@@ -105,8 +105,8 @@ impl Workspace {
         open.unwrap_or_else(|| std::fs::read_to_string(path).unwrap_or_default().replace("\r\n", "\n"))
     }
 
-    fn history_revision(path: &Path, at: u64) -> Option<local_history::Revision> {
-        local_history::revisions(path).into_iter().find(|r| r.at == at)
+    fn history_revision(path: &Path, at: u64) -> Option<brisk_history::Revision> {
+        brisk_history::revisions(path).into_iter().find(|r| r.at == at)
     }
 
     /// Enter: the revision against the current text.
@@ -144,7 +144,7 @@ impl Workspace {
         }
         let Some(ed) = open(self, cx) else { return };
         let current = ed.read(cx).buffer.text();
-        local_history::record(&path, &current, Label::BeforeRevert);
+        brisk_history::record(&path, &current, Label::BeforeRevert);
         ed.update(cx, |e, cx| e.replace_all_text(&text, cx));
         self.status = format!("Reverted to the revision from {} (Ctrl+Z undoes)", rev.age());
         self.focus_editor(window, cx);
@@ -175,10 +175,10 @@ impl Workspace {
         for ed in self.editors() {
             let e = ed.read(cx);
             if let Some(p) = e.path.as_deref().filter(|_| !e.buffer.is_dirty()) {
-                local_history::record(p, &e.buffer.text(), Label::Saved);
+                brisk_history::record(p, &e.buffer.text(), Label::Saved);
             }
         }
-        self.status = match local_history::put_label(&self.root, &name) {
+        self.status = match brisk_history::put_label(&self.root, &name) {
             Ok(()) => format!("Local History: label '{name}' put"),
             Err(e) => format!("Local History: could not put the label: {e}"),
         };

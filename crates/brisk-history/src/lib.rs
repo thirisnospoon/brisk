@@ -120,7 +120,7 @@ fn now_ms() -> u64 {
 }
 
 fn root() -> PathBuf {
-    brisk_db::config_dir().join("LocalHistory")
+    brisk_platform::dirs::config_dir().join("LocalHistory")
 }
 
 /// A path as a comparable key: forward slashes, lowercase (Windows paths).

@@ -647,10 +647,10 @@ impl Workspace {
             // UI thread may block here, the recording does not run on it).
             let wait_revisions = |want: usize| {
                 let t0 = std::time::Instant::now();
-                while crate::local_history::revisions(&file).len() < want && t0.elapsed() < std::time::Duration::from_secs(5) {
+                while brisk_history::revisions(&file).len() < want && t0.elapsed() < std::time::Duration::from_secs(5) {
                     std::thread::sleep(std::time::Duration::from_millis(20));
                 }
-                crate::local_history::revisions(&file).len()
+                brisk_history::revisions(&file).len()
             };
             let before = wait_revisions(2);
             for line in ["y = 3\n", "z = 4\n"] {
@@ -684,7 +684,7 @@ impl Workspace {
             self.smoke_press("ctrl-enter", window, cx);
             eprintln!("smoke-history: ctrl-enter on the oldest -> editor {:?} status {:?}", ed.read(cx).buffer.text(), self.status);
             self.dispatch(Action::Undo, window, cx);
-            eprintln!("smoke-history: undo -> {:?}, revisions now {}", ed.read(cx).buffer.text(), crate::local_history::revisions(&file).len());
+            eprintln!("smoke-history: undo -> {:?}, revisions now {}", ed.read(cx).buffer.text(), brisk_history::revisions(&file).len());
         }
         let back = settings::load();
         eprintln!("smoke-settings: reloaded from disk -> light={} size={}", back.light, back.font_size);

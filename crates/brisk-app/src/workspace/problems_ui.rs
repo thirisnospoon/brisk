@@ -1187,7 +1187,7 @@ impl Workspace {
                     if now != before {
                         continue;
                     }
-                    crate::local_history::record(&f, &before.replace("\r\n", "\n"), crate::local_history::Label::BeforeReformat);
+                    brisk_history::record(&f, &before.replace("\r\n", "\n"), brisk_history::Label::BeforeReformat);
                     match ed {
                         Some(e) => e.update(cx, |e, cx| e.replace_all_text(&out, cx)),
                         None if std::fs::write(&f, &out).is_ok() => on_disk.push(f),
@@ -1266,7 +1266,7 @@ impl Workspace {
             Ok(out) => {
                 let changed = out.replace("\r\n", "\n") != text.replace("\r\n", "\n");
                 if changed {
-                    crate::local_history::record(&path, &text.replace("\r\n", "\n"), crate::local_history::Label::BeforeReformat);
+                    brisk_history::record(&path, &text.replace("\r\n", "\n"), brisk_history::Label::BeforeReformat);
                     ed.update(cx, |e, cx| e.replace_all_text(&out, cx));
                 }
                 if cleanup {

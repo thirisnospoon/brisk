@@ -14,7 +14,6 @@ mod grid_view;
 mod icons;
 mod keymap_store;
 mod keys;
-mod local_history;
 mod merge_view;
 mod profile;
 mod py_console;
@@ -55,7 +54,7 @@ fn main() {
     std::thread::Builder::new()
         .name("local-history-cleanup".into())
         .spawn(|| {
-            local_history::cleanup();
+            brisk_history::cleanup();
         })
         .ok();
 

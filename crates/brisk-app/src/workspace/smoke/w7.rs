@@ -42,7 +42,7 @@ impl Workspace {
         self.dispatch(Action::ShowLocalHistory, window, cx);
         eprintln!("smoke-w7: file history {}", self.smoke_popup());
         self.smoke_press("escape", window, cx);
-        let gz = crate::local_history::revisions(&a).len();
+        let gz = brisk_history::revisions(&a).len();
         eprintln!("smoke-w7: revisions of a.py {gz}");
 
         // Delete sub/b.py through the Project view's Delete, then restore it from the folder's history.

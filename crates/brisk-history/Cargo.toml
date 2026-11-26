@@ -1,0 +1,11 @@
+[package]
+name = "brisk-history"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local History: a copy of a file at every save and before risky edits, kept in Brisk's settings folder."
+
+[dependencies]
+brisk-platform.workspace = true
+brisk-git.workspace = true
+flate2 = "1"

@@ -308,11 +308,11 @@ impl Workspace {
                 }
                 FileOp::Delete(p) => {
                     // Local History keeps what is deleted (unsaved editor text too).
-                    crate::local_history::record_path(p, crate::local_history::Label::Deleted);
+                    brisk_history::record_path(p, brisk_history::Label::Deleted);
                     for ed in self.editors() {
                         let e = ed.read(cx);
                         if let Some(f) = e.path.as_deref().filter(|f| f.starts_with(p.as_path()) && e.buffer.is_dirty()) {
-                            crate::local_history::record(f, &e.buffer.text(), crate::local_history::Label::Deleted);
+                            brisk_history::record(f, &e.buffer.text(), brisk_history::Label::Deleted);
                         }
                     }
                     to_trash(p)

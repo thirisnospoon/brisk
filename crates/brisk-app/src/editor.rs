@@ -318,9 +318,7 @@ impl Editor {
         if err.is_none() {
             // Off the UI thread: it reads the newest revision back and gzips the text.
             let (p, t) = (path.to_path_buf(), text.clone());
-            cx.background_executor()
-                .spawn(async move { crate::local_history::record(&p, &t.replace("\r\n", "\n"), crate::local_history::Label::Opened) })
-                .detach();
+            cx.background_executor().spawn(async move { brisk_history::record(&p, &t.replace("\r\n", "\n"), brisk_history::Label::Opened) }).detach();
         }
         // Indent and line endings: .editorconfig, else what the file already uses.
         let editorconfig = crate::editorconfig::for_file(path);

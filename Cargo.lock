@@ -694,6 +694,7 @@ dependencies = [
  "brisk-dap",
  "brisk-db",
  "brisk-git",
+ "brisk-history",
  "brisk-keymap",
  "brisk-lint",
  "brisk-lsp",
@@ -707,7 +708,6 @@ dependencies = [
  "brisk-vm",
  "brisk-web",
  "embed-resource",
- "flate2",
  "futures",
  "gpui",
  "serde_json",
@@ -743,6 +743,15 @@ version = "0.3.0"
 dependencies = [
  "brisk-platform",
  "similar",
+]
+
+[[package]]
+name = "brisk-history"
+version = "0.3.0"
+dependencies = [
+ "brisk-git",
+ "brisk-platform",
+ "flate2",
 ]
 
 [[package]]

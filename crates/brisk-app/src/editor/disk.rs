@@ -142,7 +142,7 @@ impl Editor {
             }
         };
         write_atomic(&p, &bytes)?;
-        crate::local_history::record_later(p.clone(), self.buffer.text(), crate::local_history::Label::Saved);
+        brisk_history::record_later(p.clone(), self.buffer.text(), brisk_history::Label::Saved);
         self.buffer.mark_saved();
         self.disk_stamp = stamp(&p);
         Ok(true)
@@ -159,7 +159,7 @@ impl Editor {
         self.disk_stamp = stamp(&p);
         self.disk_conflict = None;
         let text = text.replace("\r\n", "\n");
-        crate::local_history::record_later(p.clone(), text.clone(), crate::local_history::Label::External);
+        brisk_history::record_later(p.clone(), text.clone(), brisk_history::Label::External);
         if text == self.buffer.text() {
             self.buffer.mark_saved();
             return false;
