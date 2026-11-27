@@ -8,7 +8,7 @@ use super::Workspace;
 use crate::editor::Editor;
 use brisk_lsp::CompletionItem;
 use brisk_project::jsmod;
-use brisk_syntax::{Lang, OutlineItem, SyntaxTree};
+use brisk_syntax::{css, Lang, OutlineItem, SyntaxTree};
 use gpui::{Context, Entity, Window};
 use std::path::{Path, PathBuf};
 
@@ -191,6 +191,40 @@ impl Workspace {
             return false;
         }
         let start = ed.read(cx).buffer.rope().byte_to_char(name_start);
+        ed.update(cx, |e, cx| e.show_path_completion(items, start, cx))
+    }
+
+    /// Completion of CSS property names and their values in a stylesheet, from the built-in
+    /// table (brisk_syntax::css). False when the caret is not in a declaration.
+    pub(super) fn css_completion(&mut self, ed: &Entity<Editor>, cx: &mut Context<Self>) -> bool {
+        let (text, byte) = {
+            let e = ed.read(cx);
+            if !e.is_stylesheet() {
+                return false;
+            }
+            let rope = e.buffer.rope();
+            let pos = e.buffer.primary().head.min(rope.len_chars());
+            (e.text_string(), rope.char_to_byte(pos))
+        };
+        let item = |label: &str, insert: String, kind: u32| CompletionItem {
+            label: label.to_string(),
+            insert,
+            detail: String::new(),
+            kind,
+            sort: String::new(),
+            range: None,
+            extra: Vec::new(),
+            doc: String::new(),
+        };
+        let (items, start): (Vec<CompletionItem>, usize) = match css::spot(&text[..byte]) {
+            Some(css::Spot::Property { start }) => (css::properties().map(|p| item(p, format!("{p}: "), 10)).collect(), start),
+            Some(css::Spot::Value { property, start }) => (css::values(&property).into_iter().map(|v| item(v, v.to_string(), 12)).collect(), start),
+            None => return false,
+        };
+        if items.is_empty() {
+            return false;
+        }
+        let start = ed.read(cx).buffer.rope().byte_to_char(start);
         ed.update(cx, |e, cx| e.show_path_completion(items, start, cx))
     }
 }

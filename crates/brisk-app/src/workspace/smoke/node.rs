@@ -201,6 +201,39 @@ impl Workspace {
             check(got.1.starts_with("<sections class=\"a\"></sections>"), "paired tag renamed", &got.1);
             check(got.2.starts_with("<section class=\"a\"></section>"), "rename undone by Backspace", &got.2);
             check(got.3.contains("<ul>\n    <li class=\"item1\"></li>\n    <li class=\"item2\"></li>\n</ul>"), "Emmet on Tab", &got.3);
+
+            // CSS: swatches for colour lines, completion of properties and values.
+            let sheet = root.join("style.css");
+            let _ = std::fs::write(&sheet, "a {\n  color: #ff0000;\n  margin: 0;\n}\n");
+            let s = sheet.clone();
+            let got = this
+                .update_in(cx, |t, window, cx| {
+                    t.open_file(&s, window, cx);
+                    let ed = t.active_editor().cloned()?;
+                    Some(ed.update(cx, |e, cx| {
+                        let sw = (e.swatch(1).is_some_and(|c| c.r == 1. && c.g == 0.), e.swatch(2).is_none());
+                        e.select_on_line(2, 12..12, cx);
+                        e.type_for_smoke("\n  backgr", cx);
+                        sw
+                    }))
+                })
+                .ok()
+                .flatten();
+            check(got == Some((true, true)), "colour swatch", got);
+            wait(cx, 300).await;
+            let props = this.update(cx, |t, cx| t.active_editor().map(|e| e.read(cx).insight_summary())).ok().flatten().unwrap_or_default();
+            check(props.contains("background-color") && !props.contains("margin"), "CSS property completion", &props);
+            let _ = this.update(cx, |t, cx| {
+                if let Some(ed) = t.active_editor().cloned() {
+                    ed.update(cx, |e, cx| {
+                        e.close_completion_for_smoke();
+                        e.type_for_smoke("ound-color: rebecc", cx);
+                    });
+                }
+            });
+            wait(cx, 300).await;
+            let vals = this.update(cx, |t, cx| t.active_editor().map(|e| e.read(cx).insight_summary())).ok().flatten().unwrap_or_default();
+            check(vals.contains("rebeccapurple"), "CSS value completion", &vals);
             eprintln!("smoke-node: PASS");
             std::process::exit(0);
         })

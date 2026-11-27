@@ -295,6 +295,12 @@ impl Editor {
         cx.notify();
     }
 
+    /// Smoke tests: Esc on the completion list.
+    #[cfg(feature = "smoke")]
+    pub fn close_completion_for_smoke(&mut self) {
+        self.insight.completion = None;
+    }
+
     /// Smoke tests: what the code-insight popups show.
     #[cfg(feature = "smoke")]
     pub fn insight_summary(&self) -> String {

@@ -233,6 +233,8 @@ Brisk's own support, without a TypeScript server or Node: tree-sitter and the fi
 - In HTML, Vue, Svelte, JSX, TSX and XML files, typing `>` at the end of an opening tag adds its closing tag after the caret (not for void elements such as `<br>`, `<img>`, or for `<x />`; in JSX not for type arguments like `Array<string>`). Typing `</` completes the innermost open tag.
 - Editing a tag's name (typing or deleting in it) renames its paired tag as you go.
 - `Tab` after an Emmet abbreviation expands it: tags, `.class`, `#id`, `[attr=value]`, `{text}`, `*3` with `$` numbering, `>` for children, `+` for siblings, `^` to climb. A tag-less `.card` is a `div`; `a`, `img`, `input`, `link` and a few others get their usual attributes. The caret goes to the first empty attribute or element. In JSX and TSX `class` becomes `className`, and only abbreviations with an operator expand (a bare `div` stays code).
+- In CSS, SCSS and Less files the gutter shows a swatch of the first colour on each line: `#rgb` / `#rrggbb` (with alpha too), `rgb()` / `rgba()`, `hsl()` / `hsla()` and named colours. Variables (`var(--x)`, `$x`) are not resolved.
+- Inside a rule, typing a property name lists the common properties (accepting one adds `: `), and after the colon the property's keyword values; colour properties also list the named colours. `Ctrl+Space` opens the same list. The table is built in, about 140 properties, so newer or rare ones are not offered.
 
 ## Refactoring
 

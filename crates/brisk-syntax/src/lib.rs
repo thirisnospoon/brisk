@@ -2,6 +2,7 @@
 //!
 //! Highlighting is computed only for the visible byte range, so cost does not grow with file size.
 
+pub mod css;
 mod generate;
 pub mod html;
 mod intentions;

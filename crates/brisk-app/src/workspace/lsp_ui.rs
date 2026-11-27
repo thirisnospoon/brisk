@@ -344,7 +344,7 @@ impl Workspace {
         }
         if matches!(action, A::CodeCompletion | A::SmartCompletion) {
             if let Some(ed) = self.focused_editor(window, cx) {
-                if self.js_path_completion(&ed, cx) {
+                if self.js_path_completion(&ed, cx) || self.css_completion(&ed, cx) {
                     return true;
                 }
             }
@@ -378,6 +378,18 @@ impl Workspace {
                     let web = ed.read(cx).path.as_deref().is_some_and(super::js_ui::is_web_file);
                     if web && matches!(c, '/' | '"' | '\'' | '`' | '(') && !ed.read(cx).completion_open() {
                         self.js_path_completion(&ed, cx);
+                    }
+                    // CSS properties and values as you type.
+                    if (c.is_ascii_alphabetic() || matches!(c, '-' | ':' | ' ')) && !ed.read(cx).completion_open() && ed.read(cx).is_stylesheet() {
+                        let after_colon = {
+                            let e = ed.read(cx);
+                            let (line, col) = e.caret_line_col();
+                            let before: String = e.buffer.line(line).chars().take(col).collect();
+                            before.trim_end().ends_with(':')
+                        };
+                        if c.is_ascii_alphabetic() || c == '-' || after_colon {
+                            self.css_completion(&ed, cx);
+                        }
                     }
                     return;
                 }

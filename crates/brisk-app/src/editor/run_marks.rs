@@ -103,11 +103,25 @@ pub fn scope_key(scope: &[String]) -> String {
 
 impl Editor {
     pub fn run_slot(&self) -> Pixels {
-        if self.show_gutter && !self.is_field && self.path.is_some() && (self.is_python() || self.is_package_json()) {
+        if self.show_gutter && !self.is_field && self.path.is_some() && (self.is_python() || self.is_package_json() || self.is_stylesheet()) {
             px(SLOT)
         } else {
             px(0.)
         }
+    }
+
+    /// CSS, SCSS, Less: the slot shows colour swatches.
+    pub fn is_stylesheet(&self) -> bool {
+        self.path
+            .as_deref()
+            .and_then(|p| p.extension())
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "css" | "scss" | "sass" | "less"))
+    }
+
+    /// The colour of each line that has one (the first on the line), for the gutter.
+    pub fn swatch(&self, line: usize) -> Option<brisk_syntax::css::Color> {
+        self.is_stylesheet().then(|| brisk_syntax::css::first_color(&self.buffer.line(line))).flatten()
     }
 
     fn is_package_json(&self) -> bool {

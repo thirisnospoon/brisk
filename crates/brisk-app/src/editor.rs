@@ -1746,6 +1746,8 @@ struct Prepaint {
     /// the width of their column.
     run_icons: Vec<(usize, Option<bool>, bool)>,
     run_slot: Pixels,
+    /// Colour swatches of a stylesheet, in the run icons' column: (row index, colour).
+    swatches: Vec<(usize, gpui::Hsla)>,
     /// Blame annotations on screen: (row index, label, age).
     annotations: Vec<(usize, ShapedLine, f32)>,
     /// Debugger values after line ends: (row index, "name: value, …").
@@ -1990,6 +1992,14 @@ impl Element for EditorElement {
                 run_icons.push((i, status, ed.run_hover == Some(m.line)));
             }
         }
+        let mut swatches = Vec::new();
+        if ed.show_gutter && ed.is_stylesheet() {
+            for (i, &l) in rows.iter().enumerate() {
+                if let Some(c) = ed.swatch(l) {
+                    swatches.push((i, gpui::Hsla::from(gpui::Rgba { r: c.r, g: c.g, b: c.b, a: c.a })));
+                }
+            }
+        }
         let mut annotations = Vec::new();
         if let Some(a) = ed.annotation.as_ref().filter(|_| ed.show_gutter) {
             for (i, &l) in rows.iter().enumerate() {
@@ -2024,6 +2034,7 @@ impl Element for EditorElement {
             breakpoint_preview,
             run_icons,
             run_slot,
+            swatches,
             annotations,
             inline_vals,
             chips,
@@ -2603,6 +2614,15 @@ impl Element for EditorElement {
                         window.paint_quad(fill(Bounds::new(point(x + px(3.), y + px(4.)), size(px(7.), lh - px(8.))), Theme::bookmark()).corner_radii(px(1.)));
                     }
                 }
+            }
+            for &(i, color) in &pp.swatches {
+                // A rounded square with a thin frame, like PyCharm's colour preview.
+                let c = point(text_left - px(31.) - pp.run_slot / 2., line_ys[i] + lh / 2.);
+                let b = crate::icons::snapped_square(c, 12., window.scale_factor());
+                window.paint_quad(fill(b, Theme::text_dim()).corner_radii(px(3.)));
+                let inner = Bounds::new(point(b.origin.x + px(1.), b.origin.y + px(1.)), size(b.size.width - px(2.), b.size.height - px(2.)));
+                window.paint_quad(fill(inner, Theme::editor_bg()).corner_radii(px(2.)));
+                window.paint_quad(fill(inner, color).corner_radii(px(2.)));
             }
             for &(i, status, hover) in &pp.run_icons {
                 // Centered in the column between the line numbers and the fold markers: a play
