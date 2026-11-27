@@ -3,7 +3,10 @@
 //! Update downloads the zip, swaps the files of the portable install (`brisk_update`) and
 //! offers to restart. Help › Check for Updates asks at once, Help › What's New in Brisk shows
 //! the notes of the running version. An install that is not the portable zip (a build from
-//! source) gets the release page instead of Update.
+//! source) gets the release page instead of Update. While a newer release is known, the
+//! title bar shows its version; the last check's answer is kept in `update.json`, so later
+//! starts show it without asking GitHub again. The check itself runs on a background
+//! thread, once a day, also in a window that stays open for days.
 
 use super::Workspace;
 use crate::theme::{ui_px, Theme};
@@ -37,13 +40,24 @@ pub struct Update {
     pub dialog: bool,
     /// The dialog shows the notes of the running version, without Update.
     pub whats_new: bool,
+    /// A newer release than this one, not skipped: the title bar shows it.
+    pub available: Option<Release>,
     got: Arc<AtomicU64>,
     cancel: Arc<AtomicBool>,
 }
 
 impl Default for Update {
     fn default() -> Self {
-        Update { phase: Phase::Idle, release: None, balloon: false, dialog: false, whats_new: false, got: Arc::default(), cancel: Arc::default() }
+        Update {
+            phase: Phase::Idle,
+            release: None,
+            balloon: false,
+            dialog: false,
+            whats_new: false,
+            available: None,
+            got: Arc::default(),
+            cancel: Arc::default(),
+        }
     }
 }
 
@@ -157,6 +171,12 @@ impl Workspace {
     /// allows it, ask for a newer release. Release builds only, and never under a smoke
     /// unless it brings its own feed.
     pub(super) fn update_on_start(&mut self, cx: &mut Context<Self>) {
+        // What the last check found, without the network.
+        let state = brisk_update::State::load(&state_path());
+        if brisk_settings::current().check_updates {
+            self.update.available =
+                state.available.filter(|r| brisk_update::is_newer(&r.version, CURRENT) && state.skipped.as_deref() != Some(r.version.as_str()));
+        }
         if AUTO_CHECKED.swap(true, Ordering::Relaxed) {
             return;
         }
@@ -167,17 +187,22 @@ impl Workspace {
         if (crate::smoke::active() || cfg!(debug_assertions)) && !feed {
             return;
         }
-        if !brisk_settings::current().check_updates {
-            return;
-        }
-        if !feed && !brisk_update::State::load(&state_path()).due(brisk_update::now()) {
-            return;
-        }
-        // A moment after the window is up, so the check never competes with startup.
-        let delay = cx.background_executor().timer(Duration::from_secs(if feed { 0 } else { 5 }));
+        // A moment after the window is up, so the check never competes with startup; then a
+        // look once an hour whether a day has passed. One small request on a background
+        // thread, nothing waits for it.
+        let bg = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
-            delay.await;
-            let _ = this.update(cx, |this, cx| this.check_for_updates(false, cx));
+            bg.timer(Duration::from_secs(if feed { 0 } else { 5 })).await;
+            loop {
+                let due = feed || brisk_update::State::load(&state_path()).due(brisk_update::now());
+                if due && brisk_settings::current().check_updates && this.update(cx, |this, cx| this.check_for_updates(false, cx)).is_err() {
+                    return;
+                }
+                if feed {
+                    return;
+                }
+                bg.timer(Duration::from_secs(60 * 60)).await;
+            }
         })
         .detach();
     }
@@ -215,10 +240,17 @@ impl Workspace {
                         state.last_check = brisk_update::now();
                         let _ = state.save(&state_path());
                         let newer = brisk_update::is_newer(&r.version, CURRENT);
+                        let seen = state.available.as_ref().map(|a| a.version.clone());
+                        state.available = newer.then(|| r.clone());
+                        let _ = state.save(&state_path());
                         if manual {
                             this.status.clear();
                         }
-                        if newer && (manual || state.skipped.as_deref() != Some(r.version.as_str())) {
+                        let skipped = state.skipped.as_deref() == Some(r.version.as_str());
+                        this.update.available = (newer && (manual || !skipped)).then(|| r.clone());
+                        // The balloon comes once per version; after that the title bar keeps it.
+                        let fresh = seen.as_deref() != Some(r.version.as_str());
+                        if newer && (manual || (!skipped && fresh)) && !this.update.busy() {
                             this.update.release = Some(r);
                             this.update.whats_new = false;
                             this.update.dialog = manual;
@@ -341,6 +373,7 @@ impl Workspace {
             state.skipped = Some(r.version.clone());
             let _ = state.save(&state_path());
         }
+        self.update.available = None;
         self.update_close(cx);
     }
 
@@ -479,6 +512,57 @@ impl Workspace {
                 (parts.join(" · "), false)
             }
         })
+    }
+
+    /// The title bar's sign of a newer version: its number, the download's progress, or
+    /// Restart once it is installed. A click opens the update dialog.
+    pub(super) fn render_update_pill(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let pending = self.update.busy() || self.update.phase == Phase::Ready;
+        let r = match pending && !self.update.whats_new {
+            true => self.update.release.as_ref(),
+            false => self.update.available.as_ref(),
+        }?;
+        let (icon, text, tip) = match self.update.phase {
+            Phase::Ready if pending => ("rotate-cw", "Restart".to_string(), format!("Brisk {} is installed. Restart to use it.", r.version)),
+            Phase::Downloading if pending => {
+                let pct = (self.update_progress_text().0 * 100.).clamp(0., 99.) as u32;
+                ("arrow-down-to-line", format!("{pct}%"), format!("Downloading Brisk {}", r.version))
+            }
+            Phase::Installing if pending => ("arrow-down-to-line", "Installing".into(), format!("Installing Brisk {}", r.version)),
+            _ => ("arrow-down-to-line", r.version.clone(), format!("Brisk {} is available. You have {CURRENT}.", r.version)),
+        };
+        let tip: gpui::SharedString = tip.into();
+        let bg = Theme::accent().opacity(0.16);
+        Some(
+            div()
+                .id("tb-update")
+                .h(ui_px(24.))
+                .px(px(8.))
+                .flex()
+                .flex_shrink_0()
+                .items_center()
+                .gap(px(5.))
+                .rounded(ui_px(12.))
+                .bg(bg)
+                .cursor_pointer()
+                .hover(|s| s.bg(Theme::accent().opacity(0.26)))
+                .active(|s| s.bg(Theme::accent().opacity(0.34)))
+                .tooltip(move |_, cx| cx.new(|_| super::Tip(tip.clone())).into())
+                .child(crate::icons::ui_icon(icon, 13., Theme::accent()))
+                .child(div().text_size(ui_px(12.)).font_weight(gpui::FontWeight::MEDIUM).text_color(Theme::text()).child(text))
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    if !(this.update.busy() || this.update.phase == Phase::Ready) {
+                        this.update.release = this.update.available.clone();
+                        this.update.whats_new = false;
+                        this.update.phase = Phase::Idle;
+                    }
+                    this.update.dialog = true;
+                    this.update.balloon = false;
+                    cx.notify();
+                }))
+                .into_any_element(),
+        )
     }
 
     pub(super) fn render_update_balloon(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {

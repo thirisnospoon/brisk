@@ -430,19 +430,47 @@ pub struct State {
     pub last_check: u64,
     /// A version the user chose to skip.
     pub skipped: Option<String>,
+    /// The newer release the last check found: the title bar shows it on later starts
+    /// without asking GitHub again.
+    pub available: Option<Release>,
+}
+
+fn release_json(r: &Release) -> serde_json::Value {
+    let mut v = serde_json::json!({ "version": r.version, "title": r.title, "notes": r.notes, "date": r.date, "page": r.page });
+    if let Some(a) = &r.asset {
+        v["asset"] = serde_json::json!({ "name": a.name, "url": a.url, "size": a.size });
+    }
+    v
+}
+
+fn release_from(v: &serde_json::Value) -> Option<Release> {
+    let s = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let version = s(v, "version");
+    if version.is_empty() {
+        return None;
+    }
+    let asset = v.get("asset").map(|a| Asset { name: s(a, "name"), url: s(a, "url"), size: a.get("size").and_then(|x| x.as_u64()).unwrap_or(0) });
+    Some(Release { version, title: s(v, "title"), notes: s(v, "notes"), date: s(v, "date"), page: s(v, "page"), asset })
 }
 
 impl State {
     pub fn load(path: &Path) -> State {
         let Ok(text) = std::fs::read_to_string(path) else { return State::default() };
         let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return State::default() };
-        State { last_check: v.get("last_check").and_then(|x| x.as_u64()).unwrap_or(0), skipped: v.get("skipped").and_then(|x| x.as_str()).map(str::to_string) }
+        State {
+            last_check: v.get("last_check").and_then(|x| x.as_u64()).unwrap_or(0),
+            skipped: v.get("skipped").and_then(|x| x.as_str()).map(str::to_string),
+            available: v.get("available").and_then(release_from),
+        }
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         let mut v = serde_json::json!({ "last_check": self.last_check });
         if let Some(s) = &self.skipped {
             v["skipped"] = s.clone().into();
+        }
+        if let Some(r) = &self.available {
+            v["available"] = release_json(r);
         }
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
@@ -546,7 +574,16 @@ mod tests {
         let d = temp("state");
         let p = d.join("update.json");
         assert_eq!(State::load(&p), State::default());
-        let s = State { last_check: 1000, skipped: Some("0.5.0".into()) };
+        let asset = Some(Asset { name: "brisk-0.5.0-windows-x64.zip".into(), url: "https://x/y.zip".into(), size: 42 });
+        let available = Some(Release {
+            version: "0.5.1".into(),
+            title: "Brisk 0.5.1".into(),
+            notes: "- One\n- Two".into(),
+            date: "2026-11-27".into(),
+            page: "https://x".into(),
+            asset,
+        });
+        let s = State { last_check: 1000, skipped: Some("0.5.0".into()), available };
         s.save(&p).unwrap();
         assert_eq!(State::load(&p), s);
         assert!(!s.due(1000 + 3600));

@@ -46,7 +46,8 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 
 ### Updates
 
-- Once a day Brisk asks GitHub for the latest release. A newer one shows a balloon with What's New and Update; the dialog has the version, the release date, the download size and the release notes.
+- Once a day Brisk asks GitHub for the latest release, in the background (one small request; a window left open for days checks too). A newer one shows a balloon with What's New and Update, once per version; the dialog has the version, the release date, the download size and the release notes.
+- While a newer version is out, the title bar shows its number next to Search Everywhere; a click opens the dialog. During an update it shows the download progress, then Restart. Brisk remembers the last answer, so the sign is there from the start, without asking GitHub again.
 - Update downloads the zip and swaps the new files into the portable install while Brisk runs, then offers Restart Now. The running files are renamed aside and removed at the next start; your `data` folder and other files next to `brisk.exe` stay. If a file cannot be replaced, the ones already replaced are put back.
 - Skip This Version hides the balloon until a later release. Settings › Updates turns the daily check off.
 - Help › Check for Updates asks at once; Help › What's New in Brisk shows the notes of the version you run.

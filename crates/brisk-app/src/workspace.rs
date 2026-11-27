@@ -2197,6 +2197,7 @@ impl Workspace {
                 title_button("tb-search", "search", Theme::text_muted(), "Search Everywhere  Double Shift")
                     .on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::SearchEverywhere, w, cx))),
             )
+            .children(self.render_update_pill(cx).map(|p| div().pl(px(6.)).child(p)))
             .when(caption, |d| d.child(drag().w(px(10.))).child(caption_buttons(maximized)))
     }
 
