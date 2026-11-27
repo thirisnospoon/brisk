@@ -167,6 +167,12 @@ pub struct Editor {
     pub lint_sent: u64,
     /// Problem under the mouse and where the mouse is.
     hover: Option<(usize, Point<Pixels>)>,
+    /// The mouse is over the problem tooltip: it stays open, and its action line is clickable.
+    tip_hovered: bool,
+    /// Counts the times the mouse left a problem; a late hide checks that it is still the last.
+    hover_lost: u64,
+    /// Where the problem tooltip was last painted, for telling when the mouse leaves it.
+    tip_bounds: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<Pixels>>>>,
     /// Problem whose tooltip shows at the caret (after F2 / Shift+F2).
     caret_tip: Option<usize>,
     /// Completion, Quick Documentation, Parameter Info.
@@ -231,6 +237,8 @@ pub enum DiagSource {
 pub enum EditorEvent {
     /// The inspection widget (✗ 1 ⚠ 3) was clicked.
     ShowProblems,
+    /// The action line of a problem tooltip was clicked: show Alt+Enter at the caret.
+    ShowContextActions,
     /// One character was typed (completion and parameter info triggers).
     Typed(char),
     /// The mouse rested on the word at this char position: show its documentation.
@@ -377,6 +385,9 @@ impl Editor {
             diag_version: u64::MAX,
             lint_sent: u64::MAX,
             hover: None,
+            tip_hovered: false,
+            hover_lost: 0,
+            tip_bounds: Default::default(),
             caret_tip: None,
             insight: lsp::Insight::default(),
             tpl: None,
@@ -474,6 +485,9 @@ impl Editor {
             diag_version: u64::MAX,
             lint_sent: u64::MAX,
             hover: None,
+            tip_hovered: false,
+            hover_lost: 0,
+            tip_bounds: Default::default(),
             caret_tip: None,
             insight: lsp::Insight::default(),
             tpl: None,
@@ -699,6 +713,7 @@ impl Editor {
         self.diagnostics = all;
         self.diag_version = version;
         self.hover = None;
+        self.tip_hovered = false;
         self.caret_tip = None;
         true
     }
@@ -1230,6 +1245,7 @@ impl Editor {
         window.focus(&self.focus);
         self.caret_tip = None;
         self.hover = None;
+        self.tip_hovered = false;
         self.insight.completion = None;
         self.insight.doc = None;
         self.insight.signature = None;
@@ -1330,6 +1346,12 @@ impl Editor {
         if self.hover_inlay(e.position) {
             cx.notify();
         }
+        // On the problem tooltip itself: it stays, whatever text is under it.
+        if self.hover.is_some() && self.tip_bounds.get().is_some_and(|b| b.dilate(px(4.)).contains(&e.position)) {
+            self.tip_hovered = true;
+            return;
+        }
+        self.tip_hovered = false;
         // Problem tooltip on hover, only over the text itself.
         let hit = self.pos_for_point(e.position).filter(|_| !self.diagnostics.is_empty()).and_then(|pos| {
             let l = self.layout.as_ref()?;
@@ -1341,14 +1363,17 @@ impl Editor {
             let in_line = self.buffer.pos_to_line_col(r.start).0 == line || self.buffer.pos_to_line_col(r.end).0 == line;
             (in_line && x >= 0.0 && x <= end_col as f32 + 0.5).then_some(i)
         });
-        let changed = match (hit, self.hover) {
-            (Some(i), Some((j, _))) => i != j,
-            (None, None) => false,
-            _ => true,
-        };
-        if changed {
-            self.hover = hit.map(|i| (i, e.position));
-            cx.notify();
+        match (hit, self.hover) {
+            (Some(i), Some((j, _))) if i == j => self.hover_lost += 1,
+            (Some(i), _) => {
+                self.hover_lost += 1;
+                self.hover = Some((i, e.position));
+                cx.notify();
+            }
+            (None, None) => {}
+            // Leaving the problem: the tooltip stays a moment, so the mouse can travel to it
+            // (PyCharm does the same) and click its action.
+            (None, Some(_)) => self.hide_tooltip_later(cx),
         }
         if hit.is_some() {
             self.mouse_left_text(cx);
@@ -1491,7 +1516,67 @@ impl Editor {
             )
     }
 
-    fn render_tooltip(&self) -> Option<gpui::AnyElement> {
+    /// Hides the problem tooltip after a short grace time, unless the mouse has reached it or
+    /// come back to a problem by then.
+    fn hide_tooltip_later(&mut self, cx: &mut Context<Self>) {
+        self.hover_lost += 1;
+        let ticket = self.hover_lost;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(600)).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.hover_lost == ticket && !this.tip_hovered && this.hover.is_some() {
+                    this.hover = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The mouse is on the problem tooltip: keep it open, and watch the mouse until it leaves
+    /// (wherever it goes: back to the text, another panel or out of the window).
+    fn watch_tooltip(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tip_hovered {
+            return;
+        }
+        self.tip_hovered = true;
+        cx.spawn_in(window, async move |this, cx| loop {
+            cx.background_executor().timer(std::time::Duration::from_millis(120)).await;
+            let going = this
+                .update_in(cx, |this, window, cx| {
+                    if !this.tip_hovered || this.hover.is_none() {
+                        return false;
+                    }
+                    let at = window.mouse_position();
+                    let inside = this.tip_bounds.get().is_some_and(|b| b.dilate(px(4.)).contains(&at));
+                    if !inside {
+                        this.tip_hovered = false;
+                        this.hide_tooltip_later(cx);
+                    }
+                    inside
+                })
+                .unwrap_or(false);
+            if !going {
+                break;
+            }
+        })
+        .detach();
+    }
+
+    /// The tooltip's action line: the fix when there is one, else Alt+Enter's menu, both at
+    /// the problem.
+    fn tooltip_action(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus);
+        let Some(d) = self.diagnostics.get(i).cloned() else { return };
+        self.hover = None;
+        self.tip_hovered = false;
+        self.caret_tip = None;
+        self.select_on_line(d.start.line, d.start.col..d.start.col, cx);
+        cx.emit(EditorEvent::ShowContextActions);
+        cx.notify();
+    }
+
+    fn render_tooltip(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let l = self.layout.as_ref()?;
         let (i, at) = match (self.hover, self.caret_tip) {
             (Some((i, p)), _) => (i, p + point(px(0.), px(line_height()))),
@@ -1503,6 +1588,16 @@ impl Editor {
         let fix = d.fix.as_ref().map(|f| f.message.clone());
         Some(
             gpui::div()
+                .id("problem-tip")
+                // The text under it gets no mouse moves while the mouse is on the tooltip; the
+                // editor's next move (back on the text) or leaving the editor hides it.
+                .occlude()
+                .on_mouse_move(cx.listener(|this, _: &gpui::MouseMoveEvent, window, cx| this.watch_tooltip(window, cx)))
+                .child({
+                    let cell = self.tip_bounds.clone();
+                    gpui::canvas(move |b, _, _| cell.set(Some(b)), |_, _, _, _| {}).absolute().top_0().left_0().size_full()
+                })
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .absolute()
                 .left(rel.x.max(px(4.)))
                 .top(rel.y)
@@ -1531,10 +1626,22 @@ impl Editor {
                         ))
                         .child(gpui::div().text_color(Theme::text()).child(d.title())),
                 )
-                .child(gpui::div().pt(px(4.)).text_color(Theme::text_muted()).child(match fix {
-                    Some(f) => format!("{f}   Alt+Enter"),
-                    None => "More actions…   Alt+Enter".into(),
-                }))
+                .child(
+                    gpui::div()
+                        .pt(px(4.))
+                        .flex()
+                        .gap(px(14.))
+                        .child(
+                            gpui::div()
+                                .id("problem-tip-action")
+                                .text_color(Theme::accent())
+                                .cursor_pointer()
+                                .hover(|s| s.underline())
+                                .child(fix.unwrap_or_else(|| "More actions…".into()))
+                                .on_click(cx.listener(move |this, _, window, cx| this.tooltip_action(i, window, cx))),
+                        )
+                        .child(gpui::div().text_color(Theme::text_muted()).child("Alt+Enter")),
+                )
                 .into_any_element(),
         )
     }
@@ -1589,7 +1696,7 @@ impl Render for Editor {
                 diff_blocks: std::mem::take(&mut self.diff_blocks),
             })
             .when(self.is_python() && self.diag_version != u64::MAX, |d| d.child(self.render_widget(cx)))
-            .when_some(self.render_tooltip(), |d, t| d.child(t))
+            .when_some(self.render_tooltip(cx), |d, t| d.child(t))
             .when_some(self.render_stripe_tip(), |d, t| d.child(t))
             .when_some(self.render_breakpoint_tip(), |d, t| d.child(t))
             .when_some(self.render_inlay_tip(), |d, t| d.child(t))

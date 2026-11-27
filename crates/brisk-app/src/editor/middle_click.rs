@@ -10,6 +10,7 @@ impl Editor {
         window.focus(&self.focus);
         self.caret_tip = None;
         self.hover = None;
+        self.tip_hovered = false;
         self.insight.completion = None;
         self.insight.doc = None;
         self.insight.signature = None;

@@ -273,6 +273,7 @@ impl Workspace {
                 window.focus(&this.problems.focus.clone());
                 cx.notify();
             }
+            EditorEvent::ShowContextActions => this.show_intentions(window, cx),
             EditorEvent::ContextMenu(at) => this.open_editor_menu(ed.clone(), *at, cx),
             EditorEvent::BreakpointsChanged => this.breakpoints_changed(ed.clone(), cx),
             EditorEvent::EditBreakpoint(line) => this.edit_breakpoint(ed.clone(), *line, cx),

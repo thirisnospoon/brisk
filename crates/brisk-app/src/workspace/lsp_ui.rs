@@ -466,6 +466,7 @@ impl Workspace {
             E::OpenLocation(ref path, line) => self.open_symbol(path.clone(), line, 0, window, cx),
             E::ResolveCompletion(ref raw) => self.resolve_completion(ed, raw.clone(), cx),
             E::ShowProblems
+            | E::ShowContextActions
             | E::ContextMenu(_)
             | E::BreakpointsChanged
             | E::EditBreakpoint(_)
