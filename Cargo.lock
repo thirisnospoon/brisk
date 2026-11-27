@@ -692,7 +692,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-app"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-dap",
  "brisk-db",
@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-dap"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-platform",
  "futures",
@@ -730,7 +730,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-db"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-platform",
  "mysql",
@@ -744,11 +744,11 @@ dependencies = [
 
 [[package]]
 name = "brisk-format"
-version = "0.4.2"
+version = "0.4.3"
 
 [[package]]
 name = "brisk-git"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-platform",
  "similar",
@@ -756,7 +756,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-history"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-git",
  "brisk-platform",
@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-keymap"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-platform",
  "roxmltree",
@@ -775,7 +775,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-lint"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-platform",
  "brisk-run",
@@ -785,7 +785,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-lsp"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-lint",
  "brisk-platform",
@@ -795,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-platform"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "serde_json",
  "windows-sys 0.59.0",
@@ -803,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-project"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "ignore",
  "nucleo-matcher",
@@ -813,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-run"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-platform",
  "brisk-project",
@@ -825,7 +825,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-search"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-project",
  "globset",
@@ -835,7 +835,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-settings"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-platform",
  "serde_json",
@@ -843,7 +843,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-setup"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-platform",
  "brisk-update",
@@ -853,7 +853,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-syntax"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "memchr",
  "streaming-iterator",
@@ -872,7 +872,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-terminal"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "alacritty_terminal",
  "brisk-platform",
@@ -881,7 +881,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-text"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "encoding_rs",
  "ropey",
@@ -890,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "brisk-update"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-platform",
  "serde_json",
@@ -898,14 +898,14 @@ dependencies = [
 
 [[package]]
 name = "brisk-vm"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "brisk-web"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "aho-corasick",
  "brisk-project",
@@ -7815,7 +7815,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "brisk-platform",
  "serde_json",
