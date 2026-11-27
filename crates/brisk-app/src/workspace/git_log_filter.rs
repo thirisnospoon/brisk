@@ -256,12 +256,17 @@ impl Workspace {
         let field = crate::ui_kit::input_frame(false, false, h)
             .id("log-filter-text")
             .w(px(220.))
+            // On a narrow window the field gives way first, so the chips and the
+            // header's commit count and refresh stay on screen.
+            .flex_shrink()
+            .min_w(px(110.))
             .pl(px(6.))
             .child(crate::icons::ui_icon("search", 14., Theme::text_dim()))
             .child(crate::ui_kit::editor_slot(&g.filter.field, "Text or hash", focused_hint, h - 2.));
         let chip = |id: &'static str, label: String, active: bool| {
             div()
                 .id(id)
+                .flex_none()
                 .h(ui_px(22.))
                 .px(px(8.))
                 .flex()
@@ -299,6 +304,9 @@ impl Workspace {
             .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| this.path_filter_menu(e.position, cx)));
         div()
             .flex()
+            .flex_shrink()
+            .min_w_0()
+            .overflow_hidden()
             .items_center()
             .gap(px(6.))
             .child(field)

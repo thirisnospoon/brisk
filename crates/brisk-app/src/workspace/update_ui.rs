@@ -591,6 +591,8 @@ impl Workspace {
                     div()
                         .id("update-dialog")
                         .w(ui_px(640.))
+                        .max_w(gpui::relative(0.95))
+                        .max_h(gpui::relative(0.92))
                         .flex()
                         .flex_col()
                         .bg(Theme::panel())

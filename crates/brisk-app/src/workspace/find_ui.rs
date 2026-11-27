@@ -924,6 +924,8 @@ impl Workspace {
                         .on_mouse_down_out(cx.listener(|this, _, window, cx| this.close_find(window, cx)))
                         .w(px(860.))
                         .h(ui_px(620.))
+                        .max_w(gpui::relative(0.95))
+                        .max_h(gpui::relative(0.92))
                         .flex()
                         .flex_col()
                         .bg(Theme::panel())

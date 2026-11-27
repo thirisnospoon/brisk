@@ -444,6 +444,7 @@ impl Workspace {
                     div()
                         .id("settings-dialog")
                         .w(px(620.))
+                        .max_w(gpui::relative(0.95))
                         .max_h(gpui::relative(0.86))
                         .flex()
                         .flex_col()

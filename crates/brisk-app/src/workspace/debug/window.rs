@@ -202,7 +202,9 @@ impl DebugModel {
         let threads = self.render_threads(cx);
         let frames = div()
             .id("dbg-frames")
-            .w(px(300.))
+            .w(gpui::relative(0.38))
+            .max_w(px(300.))
+            .min_w(px(160.))
             .h_full()
             .flex_shrink_0()
             .overflow_y_scroll()
@@ -587,7 +589,18 @@ impl Render for DebugModel {
                     .tooltip(|_, cx| cx.new(|_| crate::workspace::Tip("Mute Breakpoints".into())).into())
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(DebugEvent::Dispatch(Action::MuteBreakpoints)))),
             )
-            .child(div().pl(px(10.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(title));
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .pl(px(10.))
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .text_size(ui_px(12.))
+                    .text_color(Theme::text_muted())
+                    .child(title),
+            );
         let tab = |id: &'static str, label: &'static str, t: DebugTab, cur: DebugTab, cx: &mut Context<Self>| {
             div()
                 .id(id)

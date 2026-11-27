@@ -1271,6 +1271,8 @@ impl DbModel {
                     div()
                         .id("ds-dialog")
                         .w(px(560.))
+                        .max_w(gpui::relative(0.95))
+                        .max_h(gpui::relative(0.92))
                         .flex()
                         .flex_col()
                         .gap(px(4.))

@@ -206,6 +206,10 @@ pub struct RunDialog {
     other: (Vec<Draft>, usize),
     /// Default test runner (None: Autodetect), changed in the templates view.
     pub(super) test_runner: Option<brisk_run::TestRunner>,
+    /// The form's scroll (it scrolls on a short window) and the field last scrolled into view,
+    /// so Tab brings the next field into view without fighting the mouse wheel.
+    form_scroll: gpui::ScrollHandle,
+    form_shown: std::cell::Cell<Option<Field>>,
 }
 
 pub fn env_to_text(env: &BTreeMap<String, String>) -> String {
@@ -671,6 +675,8 @@ impl Workspace {
             templates: false,
             other: (templates, 0),
             test_runner: f.test_runner,
+            form_scroll: gpui::ScrollHandle::new(),
+            form_shown: std::cell::Cell::new(None),
         };
         d.apps = [RunKind::FastApi, RunKind::Flask].into_iter().filter_map(|k| brisk_run::web::find_app(&self.root, Some(k)).map(|(k, _, t)| (k, t))).collect();
         if let Some((m, settings)) = brisk_run::django::find_manage(&self.root) {
@@ -1016,6 +1022,9 @@ impl Workspace {
         if let Some(dr) = d.drafts.get(d.current) {
             for f in if d.templates { template_fields(kind) } else { fields(kind, dr.cfg.temporary) } {
                 let active = d.field == f;
+                if active && d.form_shown.replace(Some(f)) != Some(f) {
+                    d.form_scroll.scroll_to_item(rows.len());
+                }
                 let value: gpui::AnyElement = match f {
                     // Eleven kinds do not fit one line: they wrap, and the row grows.
                     Field::Kind => div()
@@ -1202,6 +1211,7 @@ impl Workspace {
                 rows.push(
                     div()
                         .id(("rc-field", f as usize))
+                        .flex_none()
                         .when(f != Field::Kind, |d| d.h(ui_px(32.)))
                         .when(f == Field::Kind, |d| d.min_h(ui_px(32.)).py(px(3.)))
                         .flex()
@@ -1242,14 +1252,21 @@ impl Workspace {
             }
         }
         let preview = d.drafts.get(d.current).filter(|_| !d.templates).map(|dr| command_preview(&self.root, &dr.commit(), &project_interp)).unwrap_or_default();
+        // On a short window the form scrolls under the pinned buttons; rows keep their height.
         let right = div()
+            .id("rc-form")
+            .track_scroll(&d.form_scroll)
             .flex_1()
             .min_w_0()
+            .min_h_0()
+            .overflow_y_scroll()
             .flex()
             .flex_col()
             .pl(px(12.))
             .children(rows)
-            .when(!preview.is_empty(), |x| x.child(div().pt(px(8.)).text_size(ui_px(11.)).text_color(Theme::text_dim()).overflow_hidden().child(preview)));
+            .when(!preview.is_empty(), |x| {
+                x.child(div().flex_none().pt(px(8.)).text_size(ui_px(11.)).text_color(Theme::text_dim()).overflow_hidden().child(preview))
+            });
 
         Some(
             div()
@@ -1268,6 +1285,8 @@ impl Workspace {
                         .id("run-config-dialog")
                         .w(px(980.))
                         .h(ui_px(600.))
+                        .max_w(gpui::relative(0.95))
+                        .max_h(gpui::relative(0.92))
                         .flex()
                         .flex_col()
                         .p(px(16.))
@@ -1290,6 +1309,10 @@ impl Workspace {
                                 .child(
                                     div()
                                         .flex_1()
+                                        .min_w_0()
+                                        .whitespace_nowrap()
+                                        .overflow_hidden()
+                                        .text_ellipsis()
                                         .text_size(ui_px(11.))
                                         .text_color(Theme::text_dim())
                                         .child("Tab / ↑↓ fields · Alt+↑↓ configurations · Enter OK · Esc Cancel"),
@@ -1679,6 +1702,8 @@ mod tests {
             templates: false,
             other: (Vec::new(), 0),
             test_runner: None,
+            form_scroll: gpui::ScrollHandle::new(),
+            form_shown: std::cell::Cell::new(None),
         };
         d.add(Kind::Script);
         assert_eq!(d.drafts[0].cfg.name, "Unnamed");

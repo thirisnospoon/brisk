@@ -107,12 +107,7 @@ async fn scroll(this: &WeakEntity<Workspace>, cx: &mut AsyncWindowContext, at: A
     let Ok((x, y)) = this.update_in(cx, |this, window, _| {
         let v = window.viewport_size();
         let (w, h) = (f32::from(v.width), f32::from(v.height));
-        let bottom_h = match this.bottom {
-            Some(BottomTool::Git) => 320.,
-            Some(BottomTool::Services) => 280.,
-            Some(BottomTool::Debug) | Some(BottomTool::PythonConsole) => 300.,
-            _ => 240.,
-        };
+        let bottom_h = this.bottom.map_or(240., |b| this.bottom_height(b));
         let (x, y) = match &at {
             At::Left => (190., h / 2.),
             At::Bottom(fx) => (w * fx, h - 30. - bottom_h / 2.),

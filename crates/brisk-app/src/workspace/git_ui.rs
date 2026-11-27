@@ -1602,11 +1602,15 @@ impl Workspace {
                     14.,
                     if b.current { gpui::rgb(0xe0a85a).into() } else { Theme::text_muted() },
                 ))
-                .child(div().whitespace_nowrap().child(b.name.clone()))
+                .child(div().min_w_0().whitespace_nowrap().overflow_hidden().text_ellipsis().child(b.name.clone()))
         };
         let mut branches = div()
             .id("git-branches")
-            .w(px(200.))
+            // A share of the panel up to the full size, so a laptop screen keeps room for
+            // the commit list between the two side panes.
+            .w(gpui::relative(0.2))
+            .max_w(px(200.))
+            .min_w(px(120.))
             .flex_shrink_0()
             .h_full()
             .flex()
@@ -1622,7 +1626,7 @@ impl Workspace {
             .pl(px(10.))
             .text_size(ui_px(13.))
             .text_color(Theme::text())
-            .child(format!("HEAD ({})", self.branch_label(cx)));
+            .child(div().min_w_0().whitespace_nowrap().overflow_hidden().text_ellipsis().child(format!("HEAD ({})", self.branch_label(cx))));
         branches = branches.child(head);
         let local: Vec<Branch> = g.branches.iter().filter(|b| !b.remote).cloned().collect();
         let remote: Vec<Branch> = g.branches.iter().filter(|b| b.remote).cloned().collect();
@@ -1808,7 +1812,9 @@ impl Workspace {
         // Details pane.
         let mut details = div()
             .id("git-details")
-            .w(px(340.))
+            .w(gpui::relative(0.32))
+            .max_w(px(340.))
+            .min_w(px(200.))
             .flex_shrink_0()
             .h_full()
             .flex()
@@ -1887,13 +1893,14 @@ impl Workspace {
                     .border_b_1()
                     .border_color(Theme::divider())
                     .child(crate::ui_kit::tool_title("Git").pr(px(0.)))
-                    .child(div().text_color(Theme::text()).child("Log"))
+                    .child(div().flex_none().text_color(Theme::text()).child("Log"))
                     .child(self.render_log_filters(cx))
                     .child(div().flex_1())
-                    .child(div().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(format!("{n} commits")))
+                    .child(div().flex_none().whitespace_nowrap().text_color(Theme::text_dim()).text_size(ui_px(12.)).child(format!("{n} commits")))
                     .child(
                         div()
                             .id("log-refresh")
+                            .flex_none()
                             .px(px(5.))
                             .rounded(px(4.))
                             .cursor_pointer()

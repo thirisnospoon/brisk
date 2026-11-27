@@ -321,35 +321,41 @@ impl Workspace {
                 .h(ui_px(620.))
                 .child(div().pb(px(8.)).text_color(Theme::text_muted()).child(info))
                 .child(
-                    div().flex_1().min_h_0().flex().gap(px(10.)).child(div().id("hist-list").w(px(430.)).overflow_y_scroll().children(rows)).child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .children(selected.map(|c| {
-                                div().pb(px(6.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(format!(
-                                    "{} · {} <{}> · {}",
-                                    c.short(),
-                                    c.author,
-                                    c.email,
-                                    fmt_time(c.time)
-                                ))
-                            }))
-                            .child(
-                                div()
-                                    .id("hist-patch")
-                                    .flex_1()
-                                    .min_h_0()
-                                    .overflow_scroll()
-                                    .border_1()
-                                    .border_color(Theme::divider())
-                                    .bg(Theme::editor_bg())
-                                    .font_family(brisk_settings::editor_font())
-                                    .text_size(ui_px(12.5))
-                                    .children(patch_lines),
-                            ),
-                    ),
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .gap(px(10.))
+                        .child(div().id("hist-list").w(gpui::relative(0.4)).max_w(px(430.)).flex_none().overflow_y_scroll().children(rows))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .children(selected.map(|c| {
+                                    div().pb(px(6.)).text_size(ui_px(12.)).text_color(Theme::text_muted()).child(format!(
+                                        "{} · {} <{}> · {}",
+                                        c.short(),
+                                        c.author,
+                                        c.email,
+                                        fmt_time(c.time)
+                                    ))
+                                }))
+                                .child(
+                                    div()
+                                        .id("hist-patch")
+                                        .flex_1()
+                                        .min_h_0()
+                                        .overflow_scroll()
+                                        .border_1()
+                                        .border_color(Theme::divider())
+                                        .bg(Theme::editor_bg())
+                                        .font_family(brisk_settings::editor_font())
+                                        .text_size(ui_px(12.5))
+                                        .children(patch_lines),
+                                ),
+                        ),
                 )
                 .child(
                     div()

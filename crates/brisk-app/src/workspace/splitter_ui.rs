@@ -24,6 +24,8 @@ pub(super) struct Splits {
     bottom: HashMap<String, f32>,
     /// A drag in progress: the side, where it started, the size then.
     drag: Option<(ToolSide, gpui::Point<gpui::Pixels>, f32)>,
+    /// The window's size at the last render (width, height), which bounds the sizes shown.
+    pub(super) view: (f32, f32),
 }
 
 /// What a splitter drag carries; nothing follows the pointer.
@@ -77,28 +79,51 @@ impl Workspace {
         }
     }
 
-    /// The left tool window's width (300 until dragged).
+    /// The left tool window's width (300 until dragged), within the window.
     pub(super) fn left_width(&mut self) -> f32 {
         self.load_splits();
-        self.splits.left.unwrap_or(300.)
+        self.fit_side(self.splits.left.unwrap_or(300.))
     }
 
-    /// The right tool window's width (320 until dragged).
+    /// The right tool window's width (320 until dragged), within the window.
     pub(super) fn right_width(&mut self) -> f32 {
         self.load_splits();
-        self.splits.right.unwrap_or(320.)
+        self.fit_side(self.splits.right.unwrap_or(320.))
     }
 
-    /// The height of bottom tool window `b` (its own default until dragged).
+    /// The height of bottom tool window `b`: its own default until dragged, at most 40% of
+    /// a short window (as PyCharm's third of the frame), and never more than leaves the
+    /// editor its share, so a size dragged on a big monitor does not bury the editor on a
+    /// laptop. The saved size is kept for when the window is large again.
     pub(super) fn bottom_height(&mut self, b: BottomTool) -> f32 {
         self.load_splits();
-        let default = match b {
+        let vh = self.splits.view.1;
+        let default: f32 = match b {
             BottomTool::Git => 320.,
             BottomTool::Services => 280.,
             BottomTool::Debug | BottomTool::PythonConsole => 300.,
             _ => 240.,
         };
-        self.splits.bottom.get(b.title()).copied().unwrap_or(default)
+        let h = match self.splits.bottom.get(b.title()) {
+            Some(&h) => h,
+            None if vh > 0. => default.min((vh * 0.4).round()),
+            None => default,
+        };
+        if vh > 0. {
+            h.min(vh - KEEP_H).max(MIN_BOTTOM)
+        } else {
+            h
+        }
+    }
+
+    /// A side tool window's width, leaving the editor its share of the window.
+    fn fit_side(&self, w: f32) -> f32 {
+        let vw = self.splits.view.0;
+        if vw > 0. {
+            w.min(vw - KEEP_W).max(MIN_SIDE)
+        } else {
+            w
+        }
     }
 
     fn split_size(&mut self, side: ToolSide) -> f32 {

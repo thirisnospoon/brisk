@@ -351,6 +351,8 @@ pub(super) fn dialog_frame(id: &'static str, w: f32, title: &str) -> gpui::State
         .id(id)
         .w(px(w))
         .max_w(gpui::relative(0.95))
+        // A short screen (a 13" laptop at 125-150%) gets the whole height, not more.
+        .max_h(gpui::relative(0.92))
         .flex()
         .flex_col()
         .p(px(16.))

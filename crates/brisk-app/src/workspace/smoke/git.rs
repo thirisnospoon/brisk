@@ -510,8 +510,8 @@ impl Workspace {
             let h: f32 = m.entries.iter().map(rows).sum::<f32>() + 10.0;
             let vp = window.viewport_size();
             let (mut x, mut y) = (f32::from(m.pos.x), f32::from(m.pos.y));
-            if x + 280.0 > f32::from(vp.width) {
-                x = (x - 280.0).max(0.0);
+            if x + 300.0 > f32::from(vp.width) {
+                x = (x - 300.0).max(0.0);
             }
             if y + h > f32::from(vp.height) {
                 y = (y - h).max(0.0);

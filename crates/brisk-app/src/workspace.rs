@@ -2125,6 +2125,14 @@ impl Workspace {
         // `occlude` for the same reason as the caption buttons: dragging and double-click to
         // maximize are Windows' own handling of the press.
         let drag = || div().h_full().when(caption, |d| d.occlude().window_control_area(gpui::WindowControlArea::Drag));
+        // Long project, branch and configuration names are cut with "…", so on a laptop
+        // screen they never push Run, Debug and the window buttons off the title bar.
+        let size = 13. * crate::theme::ui_scale();
+        let (project, branch, config) = (
+            fit_text(cx, &self.project_name(), size, 180.),
+            fit_text(cx, &self.branch_label(cx), size, 180.),
+            fit_text(cx, &self.run_widget_label(), size, 200.),
+        );
         div()
             .h(ui_px(40.))
             .flex()
@@ -2172,13 +2180,13 @@ impl Workspace {
                     .font_weight(gpui::FontWeight::BOLD)
                     .child(self.project_name().chars().take(2).collect::<String>().to_uppercase()),
             )
-            .child(chip("tb-project", None, self.project_name()).on_click(cx.listener(|this, _, _, cx| {
+            .child(chip("tb-project", None, project).on_click(cx.listener(|this, _, _, cx| {
                 this.open_popup(PopupKind::Projects);
                 cx.notify();
             })))
-            .child(chip("tb-branch", Some("git-branch"), self.branch_label(cx)).on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Branches, w, cx))))
+            .child(chip("tb-branch", Some("git-branch"), branch).on_click(cx.listener(|this, _, w, cx| this.dispatch(Action::Branches, w, cx))))
             .child(drag().flex_1())
-            .child(chip("tb-config", None, self.run_widget_label()).on_click(cx.listener(|this, _, _, cx| {
+            .child(chip("tb-config", None, config).on_click(cx.listener(|this, _, _, cx| {
                 this.reload_runs(cx);
                 this.open_popup(PopupKind::RunConfigs(false));
                 cx.notify();
@@ -2895,6 +2903,8 @@ impl Workspace {
                         }))
                         .w(px(680.))
                         .max_h(ui_px(520.))
+                        .max_w(gpui::relative(0.95))
+                        .max_h(gpui::relative(0.85))
                         .flex()
                         .flex_col()
                         .bg(Theme::panel())
@@ -3274,6 +3284,7 @@ impl Render for Workspace {
             Some(LeftTool::Bookmarks) => Some(self.render_bookmarks(cx)),
             None => None,
         };
+        self.splits.view = (f32::from(viewport.width), f32::from(viewport.height));
         let bottom_h = self.bottom.map(|b| self.bottom_height(b)).unwrap_or(240.);
         let (left_w, right_w) = (self.left_width(), self.right_width());
         let (split_l, split_b, split_r) = (self.splitter(ToolSide::Left, cx), self.splitter(ToolSide::Bottom, cx), self.splitter(ToolSide::Right, cx));

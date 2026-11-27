@@ -658,6 +658,8 @@ impl Workspace {
                     div()
                         .id("bp-dialog")
                         .w(px(760.))
+                        .max_w(gpui::relative(0.95))
+                        .max_h(gpui::relative(0.92))
                         .flex()
                         .flex_col()
                         .p(px(16.))

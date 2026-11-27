@@ -116,7 +116,9 @@ impl ContextMenu {
 }
 
 const ITEM_H: f32 = 26.0;
-const MENU_W: f32 = 280.0;
+/// Wide enough for the longest Run entries with their shortcuts ("Debug Context
+/// Configuration  Ctrl+Shift+F9").
+const MENU_W: f32 = 300.0;
 
 impl Workspace {
     /// A menu entry that runs a keymap action (its shortcut shown on the right). `editor`:
@@ -382,9 +384,10 @@ impl Workspace {
                         }))
                     })
                     .on_click(cx.listener(move |this, _, window, cx| this.run_menu_entry(depth, i, window, cx)))
-                    .child(label)
-                    .child(div().flex_1())
-                    .child(div().text_size(px(if sub { 14. } else { 12. })).text_color(Theme::text_muted()).child(right))
+                    // A long label gives way to its shortcut (cut with an ellipsis), so the
+                    // shortcut never runs past the menu's edge.
+                    .child(div().flex_1().min_w_0().whitespace_nowrap().overflow_hidden().text_ellipsis().child(label))
+                    .child(div().flex_none().whitespace_nowrap().text_size(px(if sub { 14. } else { 12. })).text_color(Theme::text_muted()).child(right))
                     .into_any_element()
             }
         });
