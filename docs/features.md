@@ -222,6 +222,15 @@ Brisk stays usable while ty is missing or still starting (its first answers can 
 - `Ctrl+B`, `Ctrl+Click` and middle click find a `def`, `class` or the first assignment in the same file. Quick Definition also uses the same file.
 - Find Usages searches the same file using the syntax tree and scopes: a local `x` in one function is not mixed with `x` in another, and `obj.x` and `f(x=…)` are not counted. The window is marked "file only, without ty".
 
+## JavaScript, TypeScript, HTML and CSS
+
+Brisk's own support, without a TypeScript server or Node: tree-sitter and the file system.
+
+- Structure, breadcrumbs, sticky lines, Go to Class and Go to Symbol cover JS and TS (see Navigation).
+- `Ctrl+B` / `Ctrl+Click` on a path in `import`, `export … from`, `require()`, `import()`, an HTML `src` / `href` or a CSS `@import` / `url()` opens the file. Paths resolve as Node and bundlers do: the usual extensions (`./util.js` finds `util.ts`), `index` files, `compilerOptions.paths` and `baseUrl` of `tsconfig.json` / `jsconfig.json` (comments allowed), `@/` for `src/`, packages in `node_modules` by their `package.json` (`types`, `module`, `main`, `exports`). `/x` looks in the project root, `public` and `static`.
+- `Ctrl+B` on an imported name opens its module at the export (`export default` for a default import). On any other name it goes to its declaration in the file (`function`, `class`, `const` / `let` / `var` above the caret), else to the project's symbols of that name.
+- Typing a path in those places (after a quote or `/`), or `Ctrl+Space` there, lists the folder's entries: folders first, JS / TS modules without their extension in imports. A bare name in an import lists the packages in `node_modules`.
+
 ## Refactoring
 
 - `Shift+F6` Rename. A local variable or parameter is renamed in place, with or without ty: all its occurrences in the function are selected and change together as you type (`Esc` to finish). Other names need ty and open a popup with the new name: `Enter` renames in all files, Preview... shows the changes in the Find tool window (Import statements, Usages in code, Usages in comments and strings) with Do Refactor and Cancel. The Search in comments and strings check box (remembered) adds whole-word matches in comments and string literals. Open files change in the editor, closed files on disk. `Ctrl+Z` in any of the changed files, while none of them has been edited since, undoes the rename in all of them.

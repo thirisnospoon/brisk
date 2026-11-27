@@ -119,6 +119,57 @@ impl Workspace {
                 .unwrap_or_default();
             let ok = found.0.first().is_some_and(|l| l.contains("UserRepo")) && found.1.first().is_some_and(|l| l.contains("makeRepo")) && !found.2.is_empty();
             check(ok, "TS symbols indexed", &found);
+
+            // Ctrl+B on an import path and on an imported name; path completion in an import.
+            let main = root.join("main.ts");
+            let _ = std::fs::write(&main, "import { makeRepo } from './repo';\nmakeRepo();\n");
+            let at_file = |t: &Workspace, cx: &gpui::App| {
+                t.active_editor().and_then(|e| {
+                    let e = e.read(cx);
+                    e.path.as_ref().map(|p| (p.file_name().unwrap_or_default().to_string_lossy().into_owned(), e.caret_line_col().0))
+                })
+            };
+            let m = main.clone();
+            let got = this
+                .update_in(cx, |t, window, cx| {
+                    t.open_file(&m, window, cx);
+                    let ed = t.active_editor().cloned()?;
+                    ed.update(cx, |e, cx| e.select_on_line(0, 29..29, cx));
+                    t.js_goto(&ed, None, window, cx);
+                    at_file(t, cx)
+                })
+                .ok()
+                .flatten();
+            check(got.as_ref().is_some_and(|g| g.0 == "repo.ts"), "Ctrl+B on './repo'", &got);
+            let m = main.clone();
+            let got = this
+                .update_in(cx, |t, window, cx| {
+                    t.open_file(&m, window, cx);
+                    let ed = t.active_editor().cloned()?;
+                    ed.update(cx, |e, cx| e.select_on_line(1, 2..2, cx));
+                    t.js_goto(&ed, None, window, cx);
+                    at_file(t, cx)
+                })
+                .ok()
+                .flatten();
+            check(got == Some(("repo.ts".into(), 4)), "Ctrl+B on an imported name", &got);
+            let m = main.clone();
+            let _ = this
+                .update_in(cx, |t, window, cx| {
+                    t.open_file(&m, window, cx);
+                    let ed = t.active_editor().cloned()?;
+                    ed.update(cx, |e, cx| {
+                        e.select_on_line(2, 0..0, cx);
+                        e.type_for_smoke("import z from './", cx);
+                    });
+                    Some(())
+                })
+                .ok()
+                .flatten();
+            // The Typed events reach the workspace after this update.
+            wait(cx, 300).await;
+            let list = this.update(cx, |t, cx| t.active_editor().map(|e| e.read(cx).insight_summary())).ok().flatten().unwrap_or_default();
+            check(list.contains("repo") && list.contains("greet") && !list.contains("repo.ts"), "path completion", &list);
             eprintln!("smoke-node: PASS");
             std::process::exit(0);
         })

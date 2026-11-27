@@ -337,7 +337,14 @@ impl Workspace {
         // Templates, URL names and static files of a web project, also in templates.
         if action == A::GotoDeclaration {
             if let Some(ed) = self.focused_editor(window, cx).or_else(|| self.active_editor().cloned()) {
-                if self.web_goto(&ed, None, window, cx) {
+                if self.js_goto(&ed, None, window, cx) || self.web_goto(&ed, None, window, cx) {
+                    return true;
+                }
+            }
+        }
+        if matches!(action, A::CodeCompletion | A::SmartCompletion) {
+            if let Some(ed) = self.focused_editor(window, cx) {
+                if self.js_path_completion(&ed, cx) {
                     return true;
                 }
             }
@@ -367,6 +374,11 @@ impl Workspace {
         match *ev {
             E::Typed(c) => {
                 if !ed.read(cx).is_python() {
+                    // A path in an import, src, href or url(): its folder's entries.
+                    let web = ed.read(cx).path.as_deref().is_some_and(super::js_ui::is_web_file);
+                    if web && matches!(c, '/' | '"' | '\'' | '`' | '(') && !ed.read(cx).completion_open() {
+                        self.js_path_completion(&ed, cx);
+                    }
                     return;
                 }
                 let ready = self.lsp.state == TyState::Ready;
@@ -398,7 +410,7 @@ impl Workspace {
             // While the debugger is paused the hover shows the value (falls back to the docs).
             E::HoverDoc(pos, at) if self.debug_hover(&ed, pos, at, cx) => {}
             E::HoverDoc(pos, at) => self.quick_doc(ed, Some((pos, at)), cx),
-            E::CtrlClick(pos) if self.web_goto(&ed, Some(pos), window, cx) => {}
+            E::CtrlClick(pos) if self.js_goto(&ed, Some(pos), window, cx) || self.web_goto(&ed, Some(pos), window, cx) => {}
             E::CtrlClick(pos) => self.goto_declaration(ed, Some(pos), false, window, cx),
             E::OpenLocation(ref path, line) => self.open_symbol(path.clone(), line, 0, window, cx),
             E::ShowProblems

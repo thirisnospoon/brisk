@@ -20,6 +20,7 @@ mod git_merge_ui;
 mod git_push_ui;
 mod git_stash_ui;
 mod git_ui;
+mod js_ui;
 mod keymap_ui;
 mod packages_ui;
 mod services_ui;

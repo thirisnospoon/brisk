@@ -24,6 +24,8 @@ pub struct Completion {
     pub start: usize,
     /// The server sent only part of the matches: ask again as the prefix grows.
     pub incomplete: bool,
+    /// File and folder names: the typed prefix may hold `.`, `-`, `@`.
+    pub paths: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -131,20 +133,29 @@ impl Editor {
         s
     }
 
-    fn typed_prefix(&self, start: usize) -> Option<String> {
+    fn typed_prefix(&self, start: usize, paths: bool) -> Option<String> {
         let caret = self.buffer.primary().head;
         if caret < start || self.buffer.selections.len() > 1 {
             return None;
         }
         let p: String = self.buffer.rope().slice(start..caret).to_string();
-        p.chars().all(is_ident).then_some(p)
+        p.chars().all(|c| is_ident(c) || paths && matches!(c, '.' | '-' | '@' | '+' | '~')).then_some(p)
+    }
+
+    /// File and folder names of a path being typed in a string (`./components/Bu`).
+    pub fn show_path_completion(&mut self, items: Vec<CompletionItem>, start: usize, cx: &mut Context<Self>) -> bool {
+        self.insight.requery = None;
+        self.insight.completion = Some(Completion { items, shown: Vec::new(), selected: 0, top: 0, start, incomplete: false, paths: true });
+        self.refilter_completion();
+        cx.notify();
+        self.completion_open()
     }
 
     /// Completion results for the word starting at `start`.
     pub fn show_completion_list(&mut self, mut items: Vec<CompletionItem>, start: usize, incomplete: bool, cx: &mut Context<Self>) {
         items.extend(self.postfix_items(start));
         self.insight.requery = None;
-        self.insight.completion = Some(Completion { items, shown: Vec::new(), selected: 0, top: 0, start, incomplete });
+        self.insight.completion = Some(Completion { items, shown: Vec::new(), selected: 0, top: 0, start, incomplete, paths: false });
         self.refilter_completion();
         cx.notify();
     }
@@ -164,7 +175,7 @@ impl Editor {
     /// Re-match the list against what is typed now; closes it when nothing matches.
     pub(super) fn refilter_completion(&mut self) {
         let Some(c) = &self.insight.completion else { return };
-        let Some(prefix) = self.typed_prefix(c.start) else {
+        let Some(prefix) = self.typed_prefix(c.start, c.paths) else {
             self.insight.completion = None;
             return;
         };

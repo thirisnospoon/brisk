@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 pub mod editorconfig;
 pub mod folders;
+pub mod jsmod;
 mod structure;
 pub use structure::{rel_path, Mark, Structure};
 
