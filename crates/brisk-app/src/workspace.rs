@@ -497,8 +497,11 @@ pub struct Workspace {
 /// and the like), so Snap Layouts show on hovering maximize.
 fn caption_buttons(maximized: bool) -> impl IntoElement {
     let glyph = |c: gpui::Hsla| div().size(px(10.)).flex().items_center().justify_center().text_color(c);
-    let button =
-        |id: &'static str, area: gpui::WindowControlArea| div().id(id).w(px(46.)).h_full().flex().items_center().justify_center().window_control_area(area);
+    // `occlude`: the click must not reach the window's root, whose focus handling would mark
+    // it handled, and GPUI then never passes it on to Windows as a caption button press.
+    let button = |id: &'static str, area: gpui::WindowControlArea| {
+        div().id(id).occlude().w(px(46.)).h_full().flex().items_center().justify_center().window_control_area(area)
+    };
     let fg = Theme::text_muted();
     let square = |size: f32| div().size(px(size)).border_1().border_color(fg);
     div()
@@ -543,6 +546,8 @@ fn title_button(id: &'static str, icon: &'static str, color: gpui::Hsla, tip: &'
 impl Workspace {
     pub fn new(root: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         budget_probe::mark("workspace_new");
+        // The size and state of the window for the next start (see window_state.rs).
+        cx.observe_window_bounds(window, |_, window, _| crate::window_state::remember(window)).detach();
         let branch = std::fs::read_to_string(root.join(".git/HEAD"))
             .ok()
             .map(|h| h.trim().strip_prefix("ref: refs/heads/").map(str::to_string).unwrap_or_else(|| h.trim().chars().take(8).collect()));
@@ -2117,7 +2122,9 @@ impl Workspace {
                 .child(text)
                 .child(crate::icons::ui_icon("chevron-down", 12., Theme::text_muted()))
         };
-        let drag = || div().h_full().when(caption, |d| d.window_control_area(gpui::WindowControlArea::Drag));
+        // `occlude` for the same reason as the caption buttons: dragging and double-click to
+        // maximize are Windows' own handling of the press.
+        let drag = || div().h_full().when(caption, |d| d.occlude().window_control_area(gpui::WindowControlArea::Drag));
         div()
             .h(ui_px(40.))
             .flex()

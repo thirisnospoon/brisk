@@ -19,9 +19,10 @@ mod stall;
 mod terminal_view;
 mod theme;
 mod ui_kit;
+mod window_state;
 mod workspace;
 
-use gpui::{px, size, App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
+use gpui::{App, AppContext, Application, TitlebarOptions, WindowOptions};
 use std::path::PathBuf;
 use workspace::Workspace;
 
@@ -70,10 +71,10 @@ fn main() {
             }
         }
         workspace::budget_probe::mark("fonts");
-        let bounds = Bounds::centered(None, size(px(1400.), px(900.)), cx);
+        let window_bounds = window_state::initial(cx);
         let title = format!("{} – Brisk", root.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
         let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_bounds: Some(window_bounds),
             // On Windows the toolbar is the title bar, as in PyCharm's new UI: it drags the window
             // and carries the minimize, maximize and close buttons (`Workspace::render_toolbar`).
             titlebar: Some(TitlebarOptions { title: Some(title.into()), appears_transparent: cfg!(windows), ..Default::default() }),

@@ -9,5 +9,6 @@ pub mod fonts;
 pub mod fs;
 pub mod process;
 pub mod python;
+pub mod screen;
 pub mod secrets;
 pub mod shell;
