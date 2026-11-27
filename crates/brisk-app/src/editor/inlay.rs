@@ -105,15 +105,24 @@ impl Editor {
             _ => &[],
         };
         // The typed-colon ghost joins them, in its place.
-        match self.live_type_ghost().filter(|g| g.line == line && g.text == text) {
-            Some(g) => {
-                let mut all = hints.to_vec();
-                let at = all.iter().position(|h| h.byte > g.byte).unwrap_or(all.len());
-                all.insert(at, Hint { byte: g.byte, shown: g.insert.clone(), full: None, ghost: true });
-                std::borrow::Cow::Owned(all)
-            }
-            None => std::borrow::Cow::Borrowed(hints),
+        let ghost = self.live_type_ghost().filter(|g| g.line == line && g.text == text);
+        let tabs = text.contains('\t');
+        if ghost.is_none() && !tabs {
+            return std::borrow::Cow::Borrowed(hints);
         }
+        let mut all = hints.to_vec();
+        let mut add = |h: Hint| {
+            let at = all.iter().position(|x| x.byte > h.byte).unwrap_or(all.len());
+            all.insert(at, h);
+        };
+        if let Some(g) = ghost {
+            add(Hint { byte: g.byte, shown: g.insert.clone(), full: None, ghost: true });
+        }
+        // The text system draws a tab with no width: spaces after it reach the next tab stop.
+        for (byte, width) in tab_pads(text) {
+            add(Hint { byte, shown: " ".repeat(width), full: None, ghost: true });
+        }
+        std::borrow::Cow::Owned(all)
     }
 
     /// The line as drawn: hints spliced in before their positions, each in a run made by
@@ -323,6 +332,26 @@ fn hint_at(hints: &[Hint], shown: usize) -> Option<&Hint> {
 }
 
 /// Hints before `byte` shift it; a hint right at it is drawn after the caret.
+/// Columns between tab stops.
+pub(super) const TAB_SIZE: usize = 4;
+
+/// For each tab of a line: its byte and the spaces that take it to the next tab stop (drawn
+/// before the tab, which has no width, so a caret before the tab stays before the spaces).
+fn tab_pads(text: &str) -> Vec<(usize, usize)> {
+    let mut col = 0;
+    let mut out = Vec::new();
+    for (i, c) in text.char_indices() {
+        if c == '\t' {
+            let w = TAB_SIZE - col % TAB_SIZE;
+            out.push((i, w));
+            col += w;
+        } else {
+            col += 1;
+        }
+    }
+    out
+}
+
 fn display_byte(hints: &[Hint], byte: usize) -> usize {
     byte + hints.iter().filter(|h| h.byte < byte).map(|h| h.shown.len()).sum::<usize>()
 }
@@ -344,7 +373,7 @@ fn text_byte(hints: &[Hint], len: usize, shown: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_byte, shorten, text_byte, useful_type, Hint};
+    use super::{display_byte, shorten, tab_pads, text_byte, useful_type, Hint};
 
     #[test]
     fn offsets() {
@@ -353,6 +382,15 @@ mod tests {
         assert_eq!([0, 1, 2, 6, 7, 8].map(|b| display_byte(&h, b)), [0, 1, 9, 13, 18, 19]);
         // Clicks: before the hint, inside it, after it, inside "a=", on "1", at the end.
         assert_eq!([1, 4, 8, 14, 17, 19].map(|d| text_byte(&h, 8, d)), [1, 1, 1, 6, 6, 8]);
+    }
+
+    #[test]
+    fn tabs_reach_the_next_stop() {
+        assert_eq!(tab_pads("\tfoo"), vec![(0, 4)]);
+        assert_eq!(tab_pads("\t\tx"), vec![(0, 4), (1, 4)]);
+        assert_eq!(tab_pads("ab\tc"), vec![(2, 2)]);
+        assert_eq!(tab_pads("abcd\t"), vec![(4, 4)]);
+        assert!(tab_pads("    x").is_empty());
     }
 
     #[test]
