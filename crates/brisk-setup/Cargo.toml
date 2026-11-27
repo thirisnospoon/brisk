@@ -1,0 +1,18 @@
+[package]
+name = "brisk-setup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Brisk's installer and uninstaller for Windows: one exe that carries the release zip"
+
+[[bin]]
+name = "brisk-setup"
+path = "src/main.rs"
+
+[dependencies]
+brisk-platform.workspace = true
+brisk-update.workspace = true
+gpui = "0.2.2"
+
+[build-dependencies]
+embed-resource = "3"

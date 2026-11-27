@@ -7,6 +7,8 @@
 pub mod dirs;
 pub mod fonts;
 pub mod fs;
+pub mod install;
+pub mod instance;
 pub mod process;
 pub mod python;
 pub mod screen;

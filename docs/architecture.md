@@ -59,7 +59,8 @@ of `src/`.
 | `brisk-web` | 1,087 | 7 | project | Django / FastAPI / Flask routes and template references. |
 | `brisk-vm` | 198 | 3 | | The Windows Hypervisor Platform check for the planned container VM (`docs/design/containers.md`). |
 | `brisk-update` | 634 | 8 | platform | Updates from GitHub Releases: the latest release and its notes, version order, the zip download, the file swap of a portable install and its rollback. HTTP through the system `curl`, unpacking through `tar`, so no HTTP or TLS code is added to the exe. |
-| `xtask` | | | platform | `cargo xtask package-portable` and `cargo xtask budget`, the release tasks (not part of Brisk). |
+| `brisk-setup` | | | platform, update | The Windows installer and uninstaller (`Brisk-<version>-setup.exe`), a small GPUI app. The registry, shortcut and payload code it uses is in `brisk-platform::install`. |
+| `xtask` | | | platform | `cargo xtask package-portable`, `package-setup` and `cargo xtask budget`, the release tasks (not part of Brisk). |
 
 The dependency graph is shallow and has no cycles. Only `brisk-app` depends on GPUI.
 

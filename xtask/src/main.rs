@@ -4,11 +4,14 @@
 //! - `package-portable [--no-build]`: `dist/Brisk-<version>-windows-x64.zip` (see `package.rs`).
 //! - `budget [options]`: size, startup and memory of the release build against its limits
 //!   (see `budget.rs`, or `cargo xtask budget --help`).
+//! - `package-setup [--no-build]`: `dist/Brisk-<version>-setup.exe`, the installer with the
+//!   zip inside (see `setup.rs`).
 //!
 //! `scripts\package-portable.ps1` and `scripts\budget.ps1` are wrappers that call these.
 
 mod budget;
 mod package;
+mod setup;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -17,12 +20,14 @@ const USAGE: &str = "usage: cargo xtask <task>
 
 tasks:
   package-portable [--no-build]   build dist/Brisk-<version>-windows-x64.zip
+  package-setup [--no-build]      build dist/Brisk-<version>-setup.exe (the zip too)
   budget [options]                check size, startup and memory (--help for the options)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("package-portable") => package::run(&args[1..]),
+        Some("package-setup") => setup::run(&args[1..]),
         Some("budget") => budget::run(&args[1..]),
         Some("-h" | "--help" | "help") => {
             println!("{USAGE}");
@@ -49,6 +54,23 @@ fn cargo(args: &[&str]) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("cargo {} failed", args.join(" ")))
+    }
+}
+
+/// Signs `file` with the command in `BRISK_SIGN`, where `{file}` stands for the path; with
+/// no `BRISK_SIGN` the release stays unsigned. For example, with signtool and a certificate
+/// in the store: `signtool sign /fd sha256 /tr http://time.certum.pl /td sha256 /a {file}`.
+fn sign(file: &Path) -> Result<(), String> {
+    let Ok(template) = std::env::var("BRISK_SIGN") else {
+        return Ok(());
+    };
+    let line = template.replace("{file}", &format!("\"{}\"", file.display()));
+    let status = brisk_platform::process::command("cmd").arg("/C").arg(&line).status().map_err(|e| format!("cannot run the signing command: {e}"))?;
+    if status.success() {
+        println!("Signed {}", file.display());
+        Ok(())
+    } else {
+        Err(format!("signing {} failed", file.display()))
     }
 }
 

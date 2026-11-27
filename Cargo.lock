@@ -842,6 +842,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "brisk-setup"
+version = "0.4.2"
+dependencies = [
+ "brisk-platform",
+ "brisk-update",
+ "embed-resource",
+ "gpui",
+]
+
+[[package]]
 name = "brisk-syntax"
 version = "0.4.2"
 dependencies = [

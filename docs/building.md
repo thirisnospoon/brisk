@@ -63,6 +63,35 @@ While the `portable` file sits next to the exe, settings, database consoles and 
 
 Saved database passwords are encrypted with DPAPI for the current Windows user. On another computer they have to be entered again.
 
+## Windows installer
+
+```powershell
+cargo xtask package-setup   # --no-build uses the exes already in target\release
+```
+
+This builds the portable zip as above, then `crates\brisk-setup` (the installer, a small GPUI app), and writes `dist\Brisk-<version>-setup.exe` (about 43 MB). The zip rides at the end of the setup exe. The setup's manifest is swapped for `crates\brisk-setup\setup.manifest`, which asks for no elevation: without it Windows guesses from the name "setup" that it needs administrator rights.
+
+The setup installs for the current user only, with no administrator rights:
+
+- Files go to `%LOCALAPPDATA%\Programs\Brisk` (Customize can pick another folder), without the `portable` marker, so settings live in `%APPDATA%\Brisk`.
+- Everything is registered under `HKCU`: Apps & features (with Modify and Uninstall), App Paths, "Open with" for the chosen file types, "Edit with Brisk" and "Open Folder in Brisk" in Explorer, PATH, and Start menu and Desktop shortcuts.
+- `uninstall.exe` in the install folder is the same setup without the zip. It runs from a temporary copy so that it can delete the folder. `--modify` changes the options. `--silent` works for both (`--delete-settings` also removes `%APPDATA%\Brisk`). The setup takes `--silent --dir <folder>`.
+
+The in-app updater updates an installed copy in place from the same zip and keeps the version in Apps & features current.
+
+A file or folder opened from Explorer goes to a running Brisk window when one has its project open. A file goes to the deepest such project. Anything else starts a new window.
+
+### Signing
+
+Set `BRISK_SIGN` to a signing command, with `{file}` where the path goes. The xtasks then sign `brisk.exe` before it is zipped, and the setup after the zip is appended. For example, with a certificate in the store:
+
+```powershell
+$env:BRISK_SIGN = 'signtool sign /fd sha256 /tr http://time.certum.pl /td sha256 /a {file}'
+cargo xtask package-setup
+```
+
+The setup finds its zip in front of the signature, so signing does not break it. `uninstall.exe` is cut from the setup before the signature, so it is unsigned. Without `BRISK_SIGN`, nothing is signed.
+
 ## Size, startup and memory budget
 
 ```powershell

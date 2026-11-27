@@ -1,0 +1,31 @@
+// The setup's icon and version info; build.rs fills in the placeholders. GPUI embeds its own
+// manifest, so `cargo xtask package-setup` swaps in setup.manifest afterwards (it adds "no
+// elevation": Windows would otherwise guess from the file name that the setup needs
+// administrator rights, and it installs per user).
+1 ICON "@ICON@"
+
+1 VERSIONINFO
+FILEVERSION @VERSION_COMMAS@
+PRODUCTVERSION @VERSION_COMMAS@
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "Brisk"
+      VALUE "FileDescription", "Brisk Setup"
+      VALUE "FileVersion", "@VERSION@"
+      VALUE "InternalName", "brisk-setup"
+      VALUE "LegalCopyright", "MIT or Apache-2.0"
+      VALUE "OriginalFilename", "brisk-setup.exe"
+      VALUE "ProductName", "Brisk"
+      VALUE "ProductVersion", "@VERSION@"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

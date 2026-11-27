@@ -1,6 +1,7 @@
 //! Brisk — a lightweight IDE with PyCharm's layout, keymap and behavior.
 //!
-//! Usage: `brisk [project-dir]` (defaults to the current directory).
+//! Usage: `brisk [project-dir | file]`: a file opens in the window of its project when one
+//! runs, else in a new window of its project folder; nothing reopens the last project.
 
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
@@ -29,15 +30,24 @@ use workspace::Workspace;
 fn main() {
     workspace::budget_probe::mark("main");
     crash::install();
-    // Without an argument, reopen the last project like PyCharm; the current directory otherwise.
-    let root = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .or_else(|| workspace::project_ui::recent_projects().into_iter().next())
-        .unwrap_or_else(|| std::env::current_dir().expect("no current dir"));
-    let root = std::fs::canonicalize(&root).unwrap_or(root);
     // Strip the Windows verbatim prefix so paths display normally.
-    let root = PathBuf::from(root.to_string_lossy().trim_start_matches(r"\\?\").to_string());
+    let clean = |p: PathBuf| {
+        let p = std::fs::canonicalize(&p).unwrap_or(p);
+        PathBuf::from(p.to_string_lossy().trim_start_matches(r"\\?\").to_string())
+    };
+    let arg = std::env::args().nth(1).map(PathBuf::from).map(clean);
+    // "Edit with Brisk" and `brisk file.py`: a window that already has the project takes it.
+    if let Some(a) = arg.as_ref().filter(|_| !smoke::active()) {
+        if brisk_platform::instance::hand_over(a) {
+            return;
+        }
+    }
+    let (root, initial_file) = match arg {
+        Some(f) if f.is_file() => (brisk_platform::instance::project_root_of(&f), Some(f)),
+        Some(d) => (d, None),
+        // Without an argument, reopen the last project like PyCharm; the current directory otherwise.
+        None => (clean(workspace::project_ui::recent_projects().into_iter().next().unwrap_or_else(|| std::env::current_dir().expect("no current dir"))), None),
+    };
 
     workspace::project_ui::remember_project(&root);
     // Smokes never reach the network: pip gets no index of its own, PyPI names only from a file.
@@ -82,7 +92,31 @@ fn main() {
         };
         #[cfg(feature = "smoke")]
         let options = smoke::window_options(options);
-        cx.open_window(options, |window, cx| cx.new(|cx| Workspace::new(root.clone(), window, cx))).expect("failed to open window");
+        let handle = cx.open_window(options, |window, cx| cx.new(|cx| Workspace::new(root.clone(), window, cx))).expect("failed to open window");
+        if let Some(f) = initial_file.clone() {
+            let _ = handle.update(cx, |ws, window, cx| ws.open_file(&f, window, cx));
+        }
+        // Files and folders handed over by later launches (see brisk_platform::instance).
+        if !smoke::active() {
+            let (tx, mut rx) = futures::channel::mpsc::unbounded();
+            brisk_platform::instance::serve(&root, move |r| {
+                let _ = tx.unbounded_send(r);
+            });
+            cx.spawn(async move |cx| {
+                use futures::StreamExt;
+                while let Some(r) = rx.next().await {
+                    let _ = handle.update(cx, |ws, window, cx| {
+                        if let brisk_platform::instance::Request::Open(p) = &r {
+                            if p.is_file() {
+                                ws.open_file(p, window, cx);
+                            }
+                        }
+                        window.activate_window();
+                    });
+                }
+            })
+            .detach();
+        }
         #[cfg(feature = "smoke")]
         smoke::window_opened();
         workspace::budget_probe::mark("window_opened");

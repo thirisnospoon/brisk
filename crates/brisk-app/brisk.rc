@@ -1,9 +1,10 @@
 // Windows resources: the icon (GPUI loads resource ID 1 as the window icon) and version info.
-1 ICON "../../assets/brisk.ico"
+// build.rs fills in the placeholders from Cargo.toml.
+1 ICON "@ICON@"
 
 1 VERSIONINFO
-FILEVERSION 0,2,7,0
-PRODUCTVERSION 0,2,7,0
+FILEVERSION @VERSION_COMMAS@
+PRODUCTVERSION @VERSION_COMMAS@
 FILEOS 0x40004
 FILETYPE 0x1
 BEGIN
@@ -13,11 +14,12 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Brisk"
       VALUE "FileDescription", "Brisk IDE"
-      VALUE "FileVersion", "0.2.7"
+      VALUE "FileVersion", "@VERSION@"
       VALUE "InternalName", "brisk"
+      VALUE "LegalCopyright", "MIT or Apache-2.0"
       VALUE "OriginalFilename", "brisk.exe"
       VALUE "ProductName", "Brisk"
-      VALUE "ProductVersion", "0.2.7"
+      VALUE "ProductVersion", "@VERSION@"
     END
   END
   BLOCK "VarFileInfo"

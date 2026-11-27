@@ -241,12 +241,13 @@ pub fn download(asset: &Asset, dest: &Path, got: &AtomicU64, cancel: &AtomicBool
     Ok(())
 }
 
-/// The folder of a portable install that can be updated in place: the running exe's folder
-/// when it has the `portable` marker of the release zip.
+/// The folder that can be updated in place: the running exe's folder when it has the
+/// `portable` marker of the release zip, or when it is the installed Brisk (per user, so
+/// writable without administrator rights).
 pub fn install_dir() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    dir.join("portable").is_file().then(|| dir.to_path_buf())
+    (dir.join("portable").is_file() || brisk_platform::install::is_installed_exe()).then(|| dir.to_path_buf())
 }
 
 /// Unpacks the release zip into `dir` and swaps its files in. Returns how many files were
@@ -267,7 +268,20 @@ pub fn install(zip: &Path, dir: &Path) -> Result<usize, String> {
         let _ = std::fs::remove_dir_all(&staging);
         return Err(format!("cannot unpack the update: {}", String::from_utf8_lossy(&out.stderr).trim()));
     }
-    let res = package_root(&staging).and_then(|root| swap(&root, dir));
+    // An installed Brisk stays installed: the zip's `portable` marker is not copied in.
+    let installed = !dir.join("portable").exists();
+    let res = package_root(&staging).and_then(|root| {
+        if installed {
+            let _ = std::fs::remove_file(root.join("portable"));
+        }
+        let version = root.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_prefix("Brisk-")).and_then(|n| n.split('-').next()).map(str::to_string);
+        let n = swap(&root, dir)?;
+        // Apps & features shows the new version.
+        if let (true, Some(v)) = (installed && brisk_platform::install::is_installed_exe(), version) {
+            let _ = brisk_platform::install::set_version(&v);
+        }
+        Ok(n)
+    });
     let _ = std::fs::remove_dir_all(&staging);
     res
 }

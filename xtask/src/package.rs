@@ -60,6 +60,7 @@ pub fn package(root: &Path, no_build: bool) -> Result<PathBuf, String> {
 
     let exe = root.join("target").join("release").join("brisk.exe");
     copy(&exe, &dir)?;
+    crate::sign(&dir.join("brisk.exe"))?;
     for f in ["README.md", "LICENSE-MIT", "LICENSE-APACHE"] {
         copy(&root.join(f), &dir)?;
     }
