@@ -3,6 +3,7 @@
 //! Highlighting is computed only for the visible byte range, so cost does not grow with file size.
 
 mod generate;
+pub mod html;
 mod intentions;
 mod refactor;
 mod scope;

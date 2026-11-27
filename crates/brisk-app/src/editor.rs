@@ -33,6 +33,7 @@ mod extract;
 mod find;
 mod fold;
 mod guides;
+mod html_edit;
 mod inlay;
 mod local_sig;
 mod lsp;
@@ -974,6 +975,7 @@ impl Editor {
                 self.end_template();
             }
             A::EditorTab if !self.is_field && !self.completion_open() && self.expand_live_template(cx) => return true,
+            A::EditorTab if !self.completion_open() && self.html_like() && self.expand_emmet(cx) => return true,
             A::CommentBlock if !self.is_field => {
                 self.toggle_block_comment(cx);
                 return true;
@@ -998,6 +1000,12 @@ impl Editor {
         }
         let page = self.layout.as_ref().map(|l| (f32::from(l.bounds.size.height) / line_height()) as usize).unwrap_or(30).max(1);
         let mut keep_scroll = false;
+        // Deleting in a tag name renames its pair (editor/html_edit.rs).
+        let tag_pair = if matches!(action, A::EditorBackspace | A::EditorDelete | A::EditorDeleteWordBack | A::EditorDeleteWordForward) {
+            self.tag_pair_before_edit()
+        } else {
+            None
+        };
         // Soft-wrapped lines: Up / Down go by rows on screen, Home / End to the row's ends first.
         if matches!(
             action,
@@ -1183,6 +1191,7 @@ impl Editor {
         } else {
             self.sync_folds();
         }
+        self.mirror_tag_pair(tag_pair);
         if action == A::EditorBackspace {
             self.refilter_completion();
         }
@@ -1647,7 +1656,10 @@ impl EntityInputHandler for Editor {
         self.insight.doc = None;
         match (chars.next(), chars.next()) {
             (Some(c), None) => {
+                let tag_pair = self.tag_pair_before_edit();
                 self.buffer.type_char(c);
+                self.mirror_tag_pair(tag_pair);
+                self.after_tag_char(c);
                 self.refilter_completion();
                 if c == ')' {
                     self.insight.signature = None;

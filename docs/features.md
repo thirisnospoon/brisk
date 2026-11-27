@@ -230,6 +230,9 @@ Brisk's own support, without a TypeScript server or Node: tree-sitter and the fi
 - `Ctrl+B` / `Ctrl+Click` on a path in `import`, `export … from`, `require()`, `import()`, an HTML `src` / `href` or a CSS `@import` / `url()` opens the file. Paths resolve as Node and bundlers do: the usual extensions (`./util.js` finds `util.ts`), `index` files, `compilerOptions.paths` and `baseUrl` of `tsconfig.json` / `jsconfig.json` (comments allowed), `@/` for `src/`, packages in `node_modules` by their `package.json` (`types`, `module`, `main`, `exports`). `/x` looks in the project root, `public` and `static`.
 - `Ctrl+B` on an imported name opens its module at the export (`export default` for a default import). On any other name it goes to its declaration in the file (`function`, `class`, `const` / `let` / `var` above the caret), else to the project's symbols of that name.
 - Typing a path in those places (after a quote or `/`), or `Ctrl+Space` there, lists the folder's entries: folders first, JS / TS modules without their extension in imports. A bare name in an import lists the packages in `node_modules`.
+- In HTML, Vue, Svelte, JSX, TSX and XML files, typing `>` at the end of an opening tag adds its closing tag after the caret (not for void elements such as `<br>`, `<img>`, or for `<x />`; in JSX not for type arguments like `Array<string>`). Typing `</` completes the innermost open tag.
+- Editing a tag's name (typing or deleting in it) renames its paired tag as you go.
+- `Tab` after an Emmet abbreviation expands it: tags, `.class`, `#id`, `[attr=value]`, `{text}`, `*3` with `$` numbering, `>` for children, `+` for siblings, `^` to climb. A tag-less `.card` is a `div`; `a`, `img`, `input`, `link` and a few others get their usual attributes. The caret goes to the first empty attribute or element. In JSX and TSX `class` becomes `className`, and only abbreviations with an operator expand (a bare `div` stays code).
 
 ## Refactoring
 

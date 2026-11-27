@@ -170,6 +170,37 @@ impl Workspace {
             wait(cx, 300).await;
             let list = this.update(cx, |t, cx| t.active_editor().map(|e| e.read(cx).insight_summary())).ok().flatten().unwrap_or_default();
             check(list.contains("repo") && list.contains("greet") && !list.contains("repo.ts"), "path completion", &list);
+
+            // HTML: `>` closes the tag, the pair follows a rename, Tab expands Emmet.
+            let page = root.join("index.html");
+            let _ = std::fs::write(&page, "\n");
+            let got = this
+                .update_in(cx, |t, window, cx| {
+                    t.open_file(&page, window, cx);
+                    let ed = t.active_editor().cloned()?;
+                    Some(ed.update(cx, |e, cx| {
+                        e.select_on_line(0, 0..0, cx);
+                        e.type_for_smoke("<section class=\"a\">", cx);
+                        let closed = e.text_string();
+                        // Rename: the caret at the end of `section` in the opening tag.
+                        e.select_on_line(0, 8..8, cx);
+                        e.type_for_smoke("s", cx);
+                        let renamed = e.text_string();
+                        e.perform(brisk_keymap::Action::EditorBackspace, window, cx);
+                        let back = e.text_string();
+                        e.select_on_line(1, 0..0, cx);
+                        e.type_for_smoke("ul>li.item$*2", cx);
+                        e.perform(brisk_keymap::Action::EditorTab, window, cx);
+                        (closed, renamed, back, e.text_string())
+                    }))
+                })
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            check(got.0.starts_with("<section class=\"a\"></section>"), "tag closed on >", &got.0);
+            check(got.1.starts_with("<sections class=\"a\"></sections>"), "paired tag renamed", &got.1);
+            check(got.2.starts_with("<section class=\"a\"></section>"), "rename undone by Backspace", &got.2);
+            check(got.3.contains("<ul>\n    <li class=\"item1\"></li>\n    <li class=\"item2\"></li>\n</ul>"), "Emmet on Tab", &got.3);
             eprintln!("smoke-node: PASS");
             std::process::exit(0);
         })

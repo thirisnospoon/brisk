@@ -296,7 +296,7 @@ Checks Show in Services, the Stop and Rerun / Cancel question on a second run, t
 
 Folder: empty. Needs Node.js and npm on PATH. Writes `package.json` with the scripts `hello` and `greet`, `hello.js` and `greet.ts`.
 
-Checks the ▶ marks on the script lines, that a script runs through npm with the configuration's variable, that `greet.ts` runs with node, that both configurations are saved, that Debug on an npm configuration shows that it is not available, that Go to Class and Go to Symbol find `UserRepo`, `makeRepo` and `UserRepo.save` from `repo.ts`, that `Ctrl+B` in `main.ts` goes from `'./repo'` to `repo.ts` and from the imported `makeRepo` to its declaration, and that typing `import z from './` lists `repo` and `greet` without extensions.
+Checks the ▶ marks on the script lines, that a script runs through npm with the configuration's variable, that `greet.ts` runs with node, that both configurations are saved, that Debug on an npm configuration shows that it is not available, that Go to Class and Go to Symbol find `UserRepo`, `makeRepo` and `UserRepo.save` from `repo.ts`, that `Ctrl+B` in `main.ts` goes from `'./repo'` to `repo.ts` and from the imported `makeRepo` to its declaration, and that typing `import z from './` lists `repo` and `greet` without extensions. In `index.html` it types `<section class="a">` and checks the closing tag, that typing in the opening tag's name renames the closing one and Backspace renames it back, and that `ul>li.item$*2` and `Tab` expand to a list.
 
 ### `BRISK_SMOKE_PICKER=1`
 

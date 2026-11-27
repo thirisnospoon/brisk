@@ -284,7 +284,10 @@ impl Editor {
                 self.buffer.newline();
                 self.insight.completion = None;
             } else {
+                let tag_pair = self.tag_pair_before_edit();
                 self.buffer.type_char(c);
+                self.mirror_tag_pair(tag_pair);
+                self.after_tag_char(c);
                 self.refilter_completion();
                 cx.emit(EditorEvent::Typed(c));
             }
