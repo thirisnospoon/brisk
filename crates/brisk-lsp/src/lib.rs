@@ -1,6 +1,6 @@
 //! Language server client, UI-free: JSON-RPC over the server's stdio, plus a typed API for
 //! any server (diagnostics, definition, hover, completion, signature help, references,
-//! rename) with adapters for ty (Python) and TypeScript 7 (JS / TS). Positions are UTF-32
+//! rename) with adapters for ty (Python), TypeScript 7 (JS / TS) and Biome (lint). Positions are UTF-32
 //! (characters), the editor's own unit; UTF-16 servers are converted (see `encoding`).
 
 use brisk_lint::{Diagnostic, Edit, Pos, Severity};
@@ -17,6 +17,15 @@ use std::sync::{Arc, Mutex};
 type Reply = Result<Value, String>;
 type Pending = Arc<Mutex<HashMap<i64, oneshot::Sender<Reply>>>>;
 
+/// Diagnostics a server pushes (`textDocument/publishDiagnostics`, Biome) rather than
+/// answering a pull: the last ones per document, and who waits for a newer version.
+#[derive(Default)]
+struct Pushed {
+    /// uri -> (version, params)
+    last: HashMap<String, (Option<i64>, Value)>,
+    waiters: Vec<(String, i64, oneshot::Sender<Value>)>,
+}
+
 /// A running language server.
 pub struct Client {
     stdin: Mutex<ChildStdin>,
@@ -26,6 +35,7 @@ pub struct Client {
     alive: Arc<AtomicBool>,
     /// The answer to `workspace/configuration` for the server's own section.
     config: Arc<Mutex<Value>>,
+    pushed: Arc<Mutex<Pushed>>,
 }
 
 fn write_msg(w: &mut impl Write, v: &Value) -> std::io::Result<()> {
@@ -81,9 +91,10 @@ impl Client {
             child: Mutex::new(child),
             alive: Arc::new(AtomicBool::new(true)),
             config: Arc::new(Mutex::new(Value::Null)),
+            pushed: Arc::default(),
         });
         let weak = Arc::downgrade(&client);
-        let (pending, alive, config) = (client.pending.clone(), client.alive.clone(), client.config.clone());
+        let (pending, alive, config, pushed) = (client.pending.clone(), client.alive.clone(), client.config.clone(), client.pushed.clone());
         std::thread::spawn(move || {
             let mut r = BufReader::new(stdout);
             while let Some(msg) = read_msg(&mut r) {
@@ -128,7 +139,24 @@ impl Client {
                             c.send(json!({"jsonrpc": "2.0", "id": id, "result": result}));
                         }
                     }
-                    // Notifications (progress, logs, pushed diagnostics): diagnostics are pulled.
+                    // Diagnostics a server pushes (Biome): kept for `Client::pushed`.
+                    (Some("textDocument/publishDiagnostics"), None) => {
+                        let params = msg.get("params").cloned().unwrap_or(Value::Null);
+                        let Some(uri) = params.get("uri").and_then(Value::as_str).map(str::to_string) else { continue };
+                        let version = params.get("version").and_then(Value::as_i64);
+                        let mut p = pushed.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut waiting = Vec::new();
+                        for (u, want, tx) in p.waiters.drain(..) {
+                            if u == uri && version.is_none_or(|v| v >= want) {
+                                let _ = tx.send(params.clone());
+                            } else {
+                                waiting.push((u, want, tx));
+                            }
+                        }
+                        p.waiters = waiting;
+                        p.last.insert(uri, (version, params));
+                    }
+                    // Other notifications (progress, logs): nothing to do.
                     _ => {}
                 }
             }
@@ -161,6 +189,28 @@ impl Client {
         self.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(id, tx);
         self.send(json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
         rx
+    }
+
+    /// The diagnostics the server pushes for `uri` once it has checked `version` (or a later
+    /// one). A newer wait for the same document cancels this one.
+    pub fn pushed(&self, uri: &str, version: i64) -> oneshot::Receiver<Value> {
+        let (tx, rx) = oneshot::channel();
+        let mut p = self.pushed.lock().unwrap_or_else(|e| e.into_inner());
+        match p.last.get(uri) {
+            Some((v, params)) if v.is_none_or(|v| v >= version) => {
+                let _ = tx.send(params.clone());
+            }
+            _ => {
+                p.waiters.retain(|(u, _, _)| u != uri);
+                p.waiters.push((uri.to_string(), version, tx));
+            }
+        }
+        rx
+    }
+
+    /// The document changed: what was pushed for it is out of date.
+    fn forget_pushed(&self, uri: &str) {
+        self.pushed.lock().unwrap_or_else(|e| e.into_inner()).last.remove(uri);
     }
 
     pub fn notify(&self, method: &str, params: Value) {
@@ -256,6 +306,8 @@ pub struct CompletionItem {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeAction {
     pub title: String,
+    /// `quickfix`, `quickfix.suppressRule.inline.biome`, `source.fixAll.biome`, …
+    pub kind: String,
     pub preferred: bool,
     pub edits: Vec<FileEdits>,
 }
@@ -509,6 +561,7 @@ pub fn parse_code_actions(v: &Value) -> Vec<CodeAction> {
             let edits = parse_workspace_edit(a.get("edit")?);
             (!edits.is_empty()).then(|| CodeAction {
                 title: a["title"].as_str().unwrap_or("").to_string(),
+                kind: a["kind"].as_str().unwrap_or("").to_string(),
                 preferred: a["isPreferred"].as_bool().unwrap_or(false),
                 edits,
             })
@@ -591,6 +644,10 @@ pub fn language_id(path: &Path) -> &'static str {
         Some("tsx") => "typescriptreact",
         Some("js" | "mjs" | "cjs") => "javascript",
         Some("jsx") => "javascriptreact",
+        Some("json") => "json",
+        Some("jsonc") => "jsonc",
+        Some("css") => "css",
+        Some("graphql" | "gql") => "graphql",
         _ => "plaintext",
     }
 }
@@ -672,6 +729,12 @@ impl Server {
         let prefs = json!({ "useAliasesForRenames": false });
         let settings = json!({ "preferences": prefs, "typescript": { "preferences": prefs }, "javascript": { "preferences": prefs } });
         Self::launch("TypeScript", tsc, &["--lsp", "--stdio"], root, &[], settings)
+    }
+
+    /// Biome's server for lint problems and quick fixes. `lsp-proxy` starts Biome's daemon
+    /// (or joins a running one); the daemon stops when its last client goes.
+    pub fn start_biome(biome: &Path, root: &Path) -> Result<Server, String> {
+        Self::launch("Biome", biome, &["lsp-proxy"], root, &[], Value::Null)
     }
 
     /// Start a server and initialize it (blocks for the handshake: call it off the UI thread).
@@ -761,12 +824,14 @@ impl Server {
             "textDocument/didOpen",
             json!({"textDocument": {"uri": path_to_uri(path), "languageId": language_id(path), "version": version, "text": text}}),
         );
+        self.client.forget_pushed(&path_to_uri(path));
         self.keep_text(path, Some(text));
     }
 
     pub fn did_change(&self, path: &Path, version: u64, text: &str) {
         self.client
             .notify("textDocument/didChange", json!({"textDocument": {"uri": path_to_uri(path), "version": version}, "contentChanges": [{"text": text}]}));
+        self.client.forget_pushed(&path_to_uri(path));
         self.keep_text(path, Some(text));
     }
 
@@ -804,6 +869,28 @@ impl Server {
     pub fn diagnostics(&self, path: &Path) -> impl Future<Output = Result<Vec<Diagnostic>, String>> + Send + 'static {
         let p = path.to_path_buf();
         self.call("textDocument/diagnostic", json!({"textDocument": text_doc(path)}), move |v| parse_diagnostics(&p, v))
+    }
+
+    /// The problems a pushing server (Biome) reports for `version` of the document. Fails
+    /// when a newer wait for the same document replaced this one.
+    pub fn pushed_diagnostics(&self, path: &Path, version: u64) -> impl Future<Output = Result<Vec<Diagnostic>, String>> + Send + 'static {
+        let uri = path_to_uri(path);
+        let rx = self.client.pushed(&uri, version as i64);
+        let conv = (self.enc == Encoding::Utf16).then(|| self.docs.clone());
+        let p = path.to_path_buf();
+        async move {
+            let mut v = rx.await.map_err(|_| "superseded".to_string())?;
+            if let Some(d) = conv {
+                encoding::convert(&mut v, &uri, false, &d);
+            }
+            Ok(parse_diagnostics(&p, &json!({ "items": v["diagnostics"] })))
+        }
+    }
+
+    /// The source actions of one kind for the whole document (`source.fixAll.biome`).
+    pub fn source_actions(&self, path: &Path, end: Pos, kind: &str) -> impl Future<Output = Result<Vec<CodeAction>, String>> + Send + 'static {
+        let params = json!({"textDocument": text_doc(path), "range": {"start": lsp_pos(Pos::default()), "end": lsp_pos(end)}, "context": {"diagnostics": [], "only": [kind], "triggerKind": 1}});
+        self.call("textDocument/codeAction", params, parse_code_actions)
     }
 
     pub fn definition(&self, path: &Path, p: Pos) -> impl Future<Output = Result<Vec<Location>, String>> + Send + 'static {
@@ -896,6 +983,7 @@ impl Server {
 #[cfg(test)]
 mod tests;
 
+pub mod biome;
 mod encoding;
 mod markdown;
 pub mod typescript;

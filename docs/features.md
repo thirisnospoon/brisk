@@ -64,6 +64,7 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 - Indent guides follow blocks: continuation lines inside brackets get no guides of their own, guides do not break on empty lines, and the guide of the block with the caret is brighter.
 - The selection is drawn as one shape with rounded (3 px) outer corners. Search matches, occurrences of the name under the caret and matching brackets are small rounded boxes inset 1 px from the line edges. All edges are aligned to screen pixels.
 - The caret is 2 px wide, pixel-aligned, and blinks with a fade.
+- A tab character is drawn up to the next tab stop (every 4 columns), so tab-indented code lines up.
 - Show Whitespaces (View → Active Editor; default in Settings → Editor → Appearance → Show whitespaces): a dot in the middle of each space and an arrow across each tab, pixel-aligned. It applies to the active editor.
 - Sticky lines (Settings → Editor → General → Show sticky lines): up to three enclosing `class` / `def` headers stay pinned above the text and get pushed up when their block ends. Clicking a header jumps to it.
 - Soft wraps: View → Active Editor → Soft-Wrap. On by default for `*.md; *.txt; *.rst; *.adoc` (Settings → Editor → General → Soft Wraps). `End` / `Home` go to the edge of the visual row first, then of the logical line. Arrow keys move by visual rows.
@@ -174,7 +175,7 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 ### Formatting
 
 - `Ctrl+Alt+L` Reformat Code (`ruff format`; with a selection, only the selected lines).
-- `Ctrl+Alt+L` on other files formats the whole file, as PyCharm does: with the project's own Prettier (from `node_modules`, with its config) for JS, TS, JSON, CSS, HTML, Vue, YAML and Markdown; without it, TypeScript's language server for JS and TS, and Brisk's built-in formatters for JSON / JSONC, CSS / SCSS / Less, HTML, XML / SVG, SQL and TOML. A file that does not parse is left as it is and the status bar says why. Reformat on Save covers these files too (except JS and TS without Prettier).
+- `Ctrl+Alt+L` on other files formats the whole file, as PyCharm does. The order: Biome when the project uses it (`biome.json` or Biome in `node_modules`) for JS, TS, JSON, CSS and GraphQL; the project's own Prettier (from `node_modules`, with its config) for JS, TS, JSON, CSS, HTML, Vue, YAML and Markdown; Biome everywhere when Settings turns it on; TypeScript's language server for JS and TS; Brisk's built-in formatters for JSON / JSONC, CSS / SCSS / Less, HTML, XML / SVG, SQL and TOML. A file that does not parse is left as it is and the status bar says why. Reformat on Save covers these files too (except JS and TS with neither Biome nor Prettier).
 - `Ctrl+Alt+O` Optimize Imports (ruff `F401` and `I001`): removes unused imports and sorts them with the isort profile PyCharm uses. `from __future__` comes first, then standard library, third-party, project and relative imports as separate groups; `from x import a` and `from x import b` are merged. Lines with `# noqa` and imports inside `try` are left alone. Reports what it did, e.g. "Removed 2 unused imports; imports sorted" or "Imports are already optimized".
 - With focus in the Project tree, `Ctrl+Alt+O` and `Ctrl+Alt+L` work on the selected file or folder (recursively). Open files change in their editors, closed ones on disk; ruff runs in the background and the status bar reports e.g. "Optimized imports in 2 of 2 file(s)".
 - Code → Code Cleanup applies all safe ruff fixes in the file.
@@ -235,7 +236,15 @@ Two layers. Brisk's own support works in every project, without Node or a TypeSc
 - What it gives, the same way ty does for Python: type errors as you type (in the editor and the Problems tool window), completion by type after `.` and as you type a name, `Ctrl+B` / `Ctrl+Click` to the declaration (also into `node_modules` and `.d.ts` files), `Ctrl+Shift+B` to the type, `Ctrl+Q` and hover documentation, parameter info, Find Usages and `Shift+F6` Rename across files.
 - While it runs, `Ctrl+B` in JS and TS uses it; the text-based navigation below stays for HTML and CSS and for when it is not running. Path completion in imports stays Brisk's own.
 - Memory: about 60 MB for a small project; it grows with the project and its type definitions.
-- Not yet: Vue, Svelte and Angular files (their language tools need the older Node-based `tsserver`), ESLint and Prettier.
+- Not yet: Vue, Svelte and Angular files (their language tools need the older Node-based `tsserver`) and ESLint.
+
+### Biome
+
+- Biome lints JS, TS, JSX, JSON, CSS and GraphQL files in projects that use it: a `biome.json` / `biome.jsonc` in the project root, or `@biomejs/biome` in `node_modules`. Settings → Languages & Frameworks → JavaScript → Biome → "Use Biome without biome.json" turns it on in every project, with Biome's recommended rules. Off by default. Minified files and `package-lock.json` are skipped.
+- Biome is looked up in the project's `node_modules`, then on `PATH`, then in Brisk's settings folder (`tools/biome`). Without one, a balloon offers to download it for this platform from the npm registry (about 38 MB).
+- The server (`biome lsp-proxy`) starts with the first such file, not with the project, and takes about 20 MB. Its problems are shown with the others: underlines, the widget, `F2`, Problems → File.
+- `Alt+Enter` offers Biome's quick fixes for the problem, "Biome: fix all safe problems in file" and its suppressions (for the line, for the file). Each is one undo step.
+- Code → Code Cleanup applies all safe fixes; `Ctrl+Alt+O` sorts the imports (Biome's organize imports). Reformat uses Biome as listed under Formatting.
 
 ### Brisk's own support
 

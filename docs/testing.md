@@ -14,6 +14,9 @@ Tests against live servers are skipped by default:
 # ty: without BRISK_TEST_TY the test takes ty from PATH, or is skipped
 BRISK_TEST_TY=/path/to/ty cargo test -p brisk-lsp
 
+# Biome: the real_biome test runs only with BRISK_BIOME set
+BRISK_BIOME=/path/to/biome cargo test -p brisk-lsp real_biome
+
 # PostgreSQL and MySQL: ignored tests, run them explicitly
 BRISK_TEST_PG_URL=postgresql://postgres:pw@127.0.0.1:5432/postgres \
 BRISK_TEST_MYSQL_URL=mysql://root:pw@127.0.0.1:3306/shop \

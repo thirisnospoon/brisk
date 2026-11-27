@@ -19,7 +19,7 @@ The focus is Python first, followed by modern frontend work (TS / JS, React / Vu
 
 ## Principles
 
-1. Rust everywhere: core, UI and index. External tools are native where possible (ruff, ty, and planned tsgo and biome).
+1. Rust everywhere: core, UI and index. External tools are native where possible (ruff, ty, tsgo and biome).
 2. Laziness. Nothing starts or gets indexed until it is needed. Dependencies should be indexed in the background.
 3. Processes are the main source of bloat. Each external server should start lazily, one per project, and stop when idle. Today ty starts in the background once interpreters are found; idle shutdown is planned.
 4. Virtualize everything. Trees, lists, tables and the log draw only what is visible.
@@ -44,10 +44,10 @@ Planned:
 | Python types, completion, navigation | `ty` (fallbacks: `pyrefly`, `basedpyright`) | Rust | ty in use, fallbacks planned |
 | Python lint and format | `ruff` | Rust | in use |
 | Python debugging | `debugpy` | Python | in use |
-| TypeScript | `tsgo` | Go | planned |
-| JS / TS / CSS / JSON lint and format | `biome` / `oxc` | Rust | planned |
+| TypeScript | `tsgo` | Go | in use |
+| JS / TS / CSS / JSON lint and format | `biome` (`oxc` later) | Rust | biome in use |
 | CSS / HTML / Tailwind | Brisk's own, on tree-sitter and the index | Rust | planned |
-| ESLint, Prettier, Volar | only when the project needs them, started lazily | Node | planned |
+| ESLint, Prettier, Volar | only when the project needs them, started lazily | Node | Prettier in use, the rest planned |
 
 ## Components Brisk writes itself
 

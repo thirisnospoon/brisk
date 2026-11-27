@@ -57,6 +57,8 @@ pub struct Settings {
     pub animations: bool,
     /// System: look for a new Brisk release once a day.
     pub check_updates: bool,
+    /// JavaScript: lint and format with Biome also in projects without `biome.json`.
+    pub biome_everywhere: bool,
 }
 
 /// PyCharm's default for "Soft-wrap these files".
@@ -89,12 +91,14 @@ impl Default for Settings {
             show_whitespaces: false,
             animations: true,
             check_updates: true,
+            biome_everywhere: false,
         }
     }
 }
 
 static LIGHT: AtomicBool = AtomicBool::new(false);
 static INLAY_HINTS: AtomicBool = AtomicBool::new(true);
+static BIOME_EVERYWHERE: AtomicBool = AtomicBool::new(false);
 static ISLANDS: AtomicBool = AtomicBool::new(false);
 static TAB_LIMIT: AtomicU32 = AtomicU32::new(DEFAULT_TAB_LIMIT);
 static TAB_ROWS: AtomicBool = AtomicBool::new(false);
@@ -199,6 +203,7 @@ fn read(p: &Path) -> Settings {
             s.show_whitespaces = flag("show_whitespaces").unwrap_or(s.show_whitespaces);
             s.animations = flag("animations").unwrap_or(s.animations);
             s.check_updates = flag("check_updates").unwrap_or(s.check_updates);
+            s.biome_everywhere = flag("biome_everywhere").unwrap_or(s.biome_everywhere);
             if let Some(t) = v.get("soft_wrap_files").and_then(|t| t.as_str()) {
                 s.soft_wrap_files = t.to_string();
             }
@@ -223,6 +228,7 @@ fn read(p: &Path) -> Settings {
 pub fn apply(s: &Settings) {
     LIGHT.store(s.light, Ordering::Relaxed);
     INLAY_HINTS.store(s.inlay_hints, Ordering::Relaxed);
+    BIOME_EVERYWHERE.store(s.biome_everywhere, Ordering::Relaxed);
     ISLANDS.store(s.islands, Ordering::Relaxed);
     TAB_LIMIT.store(s.tab_limit.clamp(1, 100), Ordering::Relaxed);
     TAB_ROWS.store(s.tab_rows, Ordering::Relaxed);
@@ -297,6 +303,7 @@ fn to_json(s: &Settings) -> serde_json::Value {
         "show_whitespaces": s.show_whitespaces,
         "animations": s.animations,
         "check_updates": s.check_updates,
+        "biome_everywhere": s.biome_everywhere,
         "soft_wrap_files": s.soft_wrap_files,
         "soft_wrap_indent": s.soft_wrap_indent,
         "soft_wrap_extra_indent": s.soft_wrap_extra_indent,
@@ -402,6 +409,11 @@ pub fn sticky_lines() -> bool {
     STICKY_LINES.load(Ordering::Relaxed)
 }
 
+/// Lint and format with Biome also in projects without `biome.json`.
+pub fn biome_everywhere() -> bool {
+    BIOME_EVERYWHERE.load(Ordering::Relaxed)
+}
+
 pub fn inlay_hints() -> bool {
     INLAY_HINTS.load(Ordering::Relaxed)
 }
@@ -501,6 +513,7 @@ mod tests {
             line_comment_space: false,
             animations: false,
             check_updates: false,
+            biome_everywhere: true,
         }
     }
 
@@ -543,6 +556,7 @@ mod tests {
             "show_whitespaces": false,
             "animations": true,
             "check_updates": true,
+            "biome_everywhere": false,
             "soft_wrap_files": "*.md; *.txt; *.rst; *.adoc",
             "soft_wrap_indent": true,
             "soft_wrap_extra_indent": 0,

@@ -52,6 +52,8 @@ pub(super) enum Intent {
     ExtractVariable(bool),
     /// A language server quick fix (ty: import a name, qualify it): title and edits.
     Lsp(String, Vec<brisk_lsp::FileEdits>),
+    /// Biome's safe fixes for the whole file.
+    BiomeFixAll,
 }
 
 /// ty's action titles the way PyCharm words them: "import collections.defaultdict" ->
@@ -258,7 +260,7 @@ impl Workspace {
         self.push_coverage(ed, cx);
         cx.observe(ed, |this: &mut Self, ed, cx| {
             let v = ed.read(cx).buffer.version();
-            let checked = ed.read(cx).is_python() || ed.read(cx).path.as_deref().is_some_and(super::ts_ui::is_ts_path);
+            let checked = ed.read(cx).is_python() || ed.read(cx).path.as_deref().is_some_and(|p| super::ts_ui::is_ts_path(p) || this.biome_wanted(p));
             if ed.read(cx).lint_sent != v && checked {
                 this.schedule_lint(ed.clone(), LINT_DELAY, cx);
             }
@@ -313,7 +315,15 @@ impl Workspace {
                 }
                 let path = ed.read(cx).path.clone()?;
                 let (v, t) = ed.update(cx, |e, _| e.take_lint_request())?;
-                this.ty_check(ed.clone(), path.clone(), v, &t, cx);
+                if ed.read(cx).is_python() || super::ts_ui::is_ts_path(&path) {
+                    this.ty_check(ed.clone(), path.clone(), v, &t, cx);
+                }
+                if this.biome_wanted(&path) {
+                    this.biome_check(ed.clone(), path.clone(), v, &t, cx);
+                } else {
+                    // Biome turned off in Settings: its old problems go.
+                    ed.update(cx, |e, _| e.set_diagnostics(DiagSource::Biome, v, Vec::new()));
+                }
                 // ruff is for Python only.
                 if !ed.read(cx).is_python() {
                     return None;
@@ -664,6 +674,9 @@ impl Workspace {
     // --- Alt+Enter, F2 ------------------------------------------------------------
 
     pub(super) fn show_intentions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ed) = self.focused_editor(window, cx).filter(|e| e.read(cx).path.as_deref().is_some_and(|p| self.biome_wanted(p))) {
+            return self.show_biome_intentions(ed, window, cx);
+        }
         let Some(ed) = self.focused_editor(window, cx).filter(|e| e.read(cx).is_python()) else {
             self.status = "No context actions available here".into();
             return;
@@ -964,6 +977,7 @@ impl Workspace {
                     self.show_toast(format!("Could not write: {}", failed.join("; ")), true, cx);
                 }
             }
+            Intent::BiomeFixAll => self.biome_fix_all(ed, false, cx),
             Intent::FixAll | Intent::FixAllOfCode(_) => {
                 let only = match &intent {
                     Intent::FixAllOfCode(c) => Some(c.clone()),
@@ -1256,6 +1270,11 @@ impl Workspace {
             self.reformat_other(ed, path.clone(), cx);
             return;
         }
+        // Optimize Imports and Code Cleanup in a Biome file: Biome's import sorting, its safe fixes.
+        if path.as_deref().is_some_and(|p| !python && self.biome_wanted(p)) {
+            self.biome_fix_all(ed, action == brisk_keymap::Action::OptimizeImports, cx);
+            return;
+        }
         let Some(path) = path.filter(|_| python) else {
             self.status = "Optimize Imports and Code Cleanup work on Python files (ruff)".into();
             cx.notify();
@@ -1319,18 +1338,32 @@ impl Workspace {
     }
 }
 
-/// How a file other than Python is reformatted, in PyCharm's order: Prettier when the project
-/// has it, then TypeScript's server for JS / TS, then Brisk's own formatter for the type.
+/// How a file other than Python is reformatted, in PyCharm's order: Biome when the project
+/// uses it, Prettier when the project has it, Biome when Settings turns it on everywhere,
+/// then TypeScript's server for JS / TS, then Brisk's own formatter for the type.
 enum Reformatter {
+    Biome(PathBuf),
     Prettier(PathBuf, PathBuf),
     TypeScript,
     Builtin(brisk_format::Kind),
 }
 
 fn reformatter(path: &Path, root: &Path) -> Option<Reformatter> {
+    use brisk_lsp::biome;
+    let with_biome = || biome::supports(path).then(|| biome::find(root)).flatten().map(Reformatter::Biome);
+    if biome::in_use(root) {
+        if let Some(b) = with_biome() {
+            return Some(b);
+        }
+    }
     if brisk_lint::prettier::supports(path) {
         if let (Some(script), Some(node)) = (brisk_lint::prettier::find(path, root), brisk_run::node::on_path("node")) {
             return Some(Reformatter::Prettier(node, script));
+        }
+    }
+    if brisk_settings::biome_everywhere() {
+        if let Some(b) = with_biome() {
+            return Some(b);
         }
     }
     if super::ts_ui::is_ts_path(path) {
@@ -1342,6 +1375,7 @@ fn reformatter(path: &Path, root: &Path) -> Option<Reformatter> {
 /// The text reformatted off the UI thread, without the TypeScript server (Actions on Save).
 fn reformat_offline(how: &Reformatter, root: &Path, path: &Path, text: &str, unit: &str) -> Option<Result<String, String>> {
     Some(match how {
+        Reformatter::Biome(exe) => brisk_lsp::biome::format(exe, root, path, text),
         Reformatter::Prettier(node, script) => brisk_lint::prettier::format(node, script, root, path, text),
         Reformatter::Builtin(kind) => brisk_format::format(
             *kind,
@@ -1371,6 +1405,7 @@ impl Workspace {
             (e.text_string(), e.buffer.version(), e.buffer.indent_unit.clone())
         };
         let by = match &how {
+            Reformatter::Biome(_) => "Biome",
             Reformatter::Prettier(..) => "Prettier",
             Reformatter::TypeScript => "TypeScript",
             Reformatter::Builtin(_) => "",

@@ -33,11 +33,13 @@ pub(super) struct Lsp {
     pub moved: Option<Vec<brisk_lsp::FileEdits>>,
     /// TypeScript's server for JS and TS files (workspace/ts_ui.rs).
     pub ts: super::ts_ui::TsLsp,
+    /// Biome's server for its problems in JS, TS, CSS and JSON (workspace/biome_ui.rs).
+    pub biome: super::biome_ui::BiomeLsp,
 }
 
 impl Lsp {
     pub fn new() -> Self {
-        Lsp { ty: None, state: TyState::Unknown, synced: HashMap::new(), epoch: 0, moved: None, ts: Default::default() }
+        Lsp { ty: None, state: TyState::Unknown, synced: HashMap::new(), epoch: 0, moved: None, ts: Default::default(), biome: Default::default() }
     }
 }
 
@@ -224,6 +226,7 @@ impl Workspace {
 
     /// A tab closed: ty can drop the unsaved text and fall back to the file on disk.
     pub(super) fn ty_close(&mut self, path: &Path) {
+        self.biome_close(path);
         let synced = if is_ts_path(path) { &mut self.lsp.ts.synced } else { &mut self.lsp.synced };
         if synced.remove(path).is_some() {
             if let Some(ty) = self.server_for(path) {

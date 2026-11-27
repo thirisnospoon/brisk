@@ -162,7 +162,7 @@ pub struct Editor {
     /// ruff and ty problems merged, sorted by position, for buffer version `diag_version`.
     pub diagnostics: Vec<Diagnostic>,
     /// Each checker's latest results (ruff, ty).
-    by_source: [Vec<Diagnostic>; 2],
+    by_source: [Vec<Diagnostic>; 3],
     pub diag_version: u64,
     /// The buffer version last handed to ruff (the workspace schedules checks).
     pub lint_sent: u64,
@@ -234,6 +234,7 @@ pub struct Editor {
 pub enum DiagSource {
     Ruff = 0,
     Ty = 1,
+    Biome = 2,
 }
 
 /// Events for the workspace.
@@ -384,7 +385,7 @@ impl Editor {
             vcs_version: u64::MAX,
             show_gutter: true,
             diagnostics: Vec::new(),
-            by_source: [Vec::new(), Vec::new()],
+            by_source: [Vec::new(), Vec::new(), Vec::new()],
             diag_version: u64::MAX,
             lint_sent: u64::MAX,
             hover: None,
@@ -485,7 +486,7 @@ impl Editor {
             vcs_version: u64::MAX,
             show_gutter: false,
             diagnostics: Vec::new(),
-            by_source: [Vec::new(), Vec::new()],
+            by_source: [Vec::new(), Vec::new(), Vec::new()],
             diag_version: u64::MAX,
             lint_sent: u64::MAX,
             hover: None,
@@ -714,6 +715,7 @@ impl Editor {
         let ruff = &self.by_source[0];
         let mut all = ruff.clone();
         all.extend(self.by_source[1].iter().filter(|t| !ruff.iter().any(|r| r.start == t.start && r.end == t.end && r.severity <= t.severity)).cloned());
+        all.extend(self.by_source[2].iter().cloned());
         all.sort_by_key(|d| (d.start, d.severity));
         self.diagnostics = all;
         self.diag_version = version;

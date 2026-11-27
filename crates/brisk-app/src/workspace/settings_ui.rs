@@ -50,6 +50,7 @@ pub(super) enum SetCtl {
     WrapExtra(i8),
     CommentCol,
     CommentSpace,
+    Biome,
     Reformat,
     Imports,
     Cancel,
@@ -64,7 +65,7 @@ impl SettingsDialog {
         v.extend((0..self.fonts.len()).map(Font));
         v.extend([Size(-1), Size(1), Spacing(-1), Spacing(1), Inlay, Whitespace, TabRows(false), TabRows(true), TabLimit(-1), TabLimit(1)]);
         v.extend([WrapFiles, WrapIndent, WrapExtra(-1), WrapExtra(1), CommentCol, CommentSpace]);
-        v.extend([Reformat, Imports, Cancel, Ok]);
+        v.extend([Biome, Reformat, Imports, Cancel, Ok]);
         v
     }
 
@@ -223,6 +224,7 @@ impl Workspace {
             SetCtl::Inlay => self.settings_edit(|s| s.inlay_hints = !s.inlay_hints, window),
             SetCtl::Animations => self.settings_edit(|s| s.animations = !s.animations, window),
             SetCtl::Updates => self.settings_edit(|s| s.check_updates = !s.check_updates, window),
+            SetCtl::Biome => self.settings_edit(|s| s.biome_everywhere = !s.biome_everywhere, window),
             SetCtl::Reformat => self.settings_edit(|s| s.reformat_on_save = !s.reformat_on_save, window),
             SetCtl::Imports => self.settings_edit(|s| s.optimize_imports_on_save = !s.optimize_imports_on_save, window),
             SetCtl::TabRows(rows) => self.settings_edit(|s| s.tab_rows = rows, window),
@@ -360,7 +362,10 @@ impl Workspace {
                 .into_any_element()
         };
         let inlay = checkbox("set-inlay", s.inlay_hints, "Show inlay hints", "(inferred types, parameter names)", SetCtl::Inlay, cx);
-        let reformat = checkbox("set-reformat", s.reformat_on_save, "Reformat code", "(ruff for Python, Prettier or Brisk for the rest)", SetCtl::Reformat, cx);
+        let biome =
+            checkbox("set-biome", s.biome_everywhere, "Use Biome without biome.json", "(its recommended rules for JS, TS, CSS, JSON)", SetCtl::Biome, cx);
+        let reformat =
+            checkbox("set-reformat", s.reformat_on_save, "Reformat code", "(ruff for Python; Biome, Prettier or Brisk for the rest)", SetCtl::Reformat, cx);
         let imports = checkbox("set-imports", s.optimize_imports_on_save, "Optimize imports", "(ruff: unused, sorted)", SetCtl::Imports, cx);
         let animations = checkbox("set-anim", s.animations, "Animate popups, dialogs and tool windows", "(off: they appear at once)", SetCtl::Animations, cx);
         let updates = checkbox("set-updates", s.check_updates, "Check for updates automatically", "(once a day, on GitHub)", SetCtl::Updates, cx);
@@ -500,6 +505,15 @@ impl Workspace {
                                 )
                                 .child(row("Comment code", comment_col))
                                 .child(row("", comment_space))
+                                .child(
+                                    div()
+                                        .text_size(ui_px(11.))
+                                        .text_color(Theme::text_dim())
+                                        .pt(px(8.))
+                                        .pb(px(2.))
+                                        .child("LANGUAGES & FRAMEWORKS › JAVASCRIPT › BIOME"),
+                                )
+                                .child(row("", biome))
                                 .child(div().text_size(ui_px(11.)).text_color(Theme::text_dim()).pt(px(8.)).pb(px(2.)).child("TOOLS › ACTIONS ON SAVE"))
                                 .child(row("", reformat))
                                 .child(row("", imports)),

@@ -64,7 +64,7 @@ pub fn find(root: &Path) -> Option<PathBuf> {
     in_project(root).or_else(downloaded)
 }
 
-fn system_tool(name: &str) -> PathBuf {
+pub(crate) fn system_tool(name: &str) -> PathBuf {
     if cfg!(windows) {
         if let Some(root) = std::env::var_os("SystemRoot") {
             let p = PathBuf::from(root).join("System32").join(format!("{name}.exe"));
@@ -76,7 +76,7 @@ fn system_tool(name: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-fn run(c: &mut std::process::Command, what: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn run_tool(c: &mut std::process::Command, what: &str) -> Result<Vec<u8>, String> {
     let out = c.stdin(Stdio::null()).output().map_err(|e| format!("cannot start {what}: {e}"))?;
     if !out.status.success() {
         let e = String::from_utf8_lossy(&out.stderr);
@@ -85,7 +85,7 @@ fn run(c: &mut std::process::Command, what: &str) -> Result<Vec<u8>, String> {
     Ok(out.stdout)
 }
 
-fn curl(url: &str) -> std::process::Command {
+pub(crate) fn curl(url: &str) -> std::process::Command {
     let mut c = brisk_platform::process::command(system_tool("curl"));
     c.args(["--silent", "--show-error", "--fail", "--location", "--connect-timeout", "10", "--max-time", "600"]).arg(url);
     c
@@ -95,7 +95,7 @@ fn curl(url: &str) -> std::process::Command {
 /// off the UI thread); the path of its `tsc`.
 pub fn download() -> Result<PathBuf, String> {
     let pkg = platform_package().ok_or("TypeScript has no native build for this platform")?;
-    let meta = run(curl(&format!("https://registry.npmjs.org/{pkg}/latest")).args(["-H", "Accept: application/json"]), "npm registry")?;
+    let meta = run_tool(curl(&format!("https://registry.npmjs.org/{pkg}/latest")).args(["-H", "Accept: application/json"]), "npm registry")?;
     let meta: serde_json::Value = serde_json::from_slice(&meta).map_err(|e| format!("npm registry: {e}"))?;
     let version = meta["version"].as_str().ok_or("npm registry: no version")?.to_string();
     let tarball = meta.pointer("/dist/tarball").and_then(|v| v.as_str()).ok_or("npm registry: no tarball")?;
@@ -111,9 +111,9 @@ pub fn download() -> Result<PathBuf, String> {
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
     let archive = tmp.join("package.tgz");
-    run(curl(tarball).arg("--output").arg(&archive), "download")?;
+    run_tool(curl(tarball).arg("--output").arg(&archive), "download")?;
     // npm tarballs hold everything under `package/`.
-    run(brisk_platform::process::command(system_tool("tar")).arg("-xzf").arg(&archive).arg("-C").arg(&tmp).args(["--strip-components", "1"]), "tar")?;
+    run_tool(brisk_platform::process::command(system_tool("tar")).arg("-xzf").arg(&archive).arg("-C").arg(&tmp).args(["--strip-components", "1"]), "tar")?;
     let _ = std::fs::remove_file(&archive);
     if !tmp.join("lib").join(exe()).is_file() {
         let _ = std::fs::remove_dir_all(&tmp);

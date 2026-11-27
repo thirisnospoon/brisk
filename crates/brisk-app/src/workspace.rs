@@ -29,6 +29,7 @@ mod todo_ui;
 mod web_ui;
 pub(crate) use git_ui::fmt_time;
 mod before_launch_ui;
+mod biome_ui;
 mod coverage_ui;
 mod generate_ui;
 mod history_ui;
@@ -3383,6 +3384,7 @@ impl Render for Workspace {
             .children(self.render_venv_offer(cx).map(|e| fade_in("venv-offer-in", e, Enter::Toast)))
             .children(self.render_install_offer(cx).map(|e| fade_in("install-offer-in", e, Enter::Toast)))
             .children(self.render_ts_offer(cx).map(|e| fade_in("ts-offer-in", e, Enter::Toast)))
+            .children(self.render_biome_offer(cx).map(|e| fade_in("biome-offer-in", e, Enter::Toast)))
             .children(self.render_update_balloon(cx).map(|e| fade_in("update-balloon-in", e, Enter::Toast)))
             .children(self.render_popup(cx).map(|e| fade_in("popup-in", e, Enter::Popup)))
             .children(self.render_find_popup(cx).map(|e| fade_in("find-in", e, Enter::Popup)))
