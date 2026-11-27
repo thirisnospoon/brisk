@@ -1,6 +1,7 @@
 //! ty language server: type diagnostics next to ruff's, go to declaration, documentation,
 //! completion, parameter info, find usages and rename.
 
+use super::ts_ui::is_ts_path;
 use super::Workspace;
 use crate::editor::{DiagSource, Editor};
 use brisk_lint::Pos;
@@ -30,11 +31,13 @@ pub(super) struct Lsp {
     epoch: u64,
     /// Import updates ty gave for the file move in progress.
     pub moved: Option<Vec<brisk_lsp::FileEdits>>,
+    /// TypeScript's server for JS and TS files (workspace/ts_ui.rs).
+    pub ts: super::ts_ui::TsLsp,
 }
 
 impl Lsp {
     pub fn new() -> Self {
-        Lsp { ty: None, state: TyState::Unknown, synced: HashMap::new(), epoch: 0, moved: None }
+        Lsp { ty: None, state: TyState::Unknown, synced: HashMap::new(), epoch: 0, moved: None, ts: Default::default() }
     }
 }
 
@@ -126,26 +129,47 @@ impl Workspace {
         self.ensure_ty(cx);
     }
 
-    /// Tell ty about the file's current text when it changed since it last saw it.
+    /// Tell the file's server (ty, or TypeScript for JS / TS) about its current text when it
+    /// changed since it last saw it.
     fn ty_sync(&mut self, path: &Path, version: u64, text: &str) -> Option<Arc<Ty>> {
-        let ty = self.lsp.ty.clone()?;
-        match self.lsp.synced.get(path) {
+        let (ty, synced) = if is_ts_path(path) { (self.lsp.ts.server.clone()?, &mut self.lsp.ts.synced) } else { (self.lsp.ty.clone()?, &mut self.lsp.synced) };
+        match synced.get(path) {
             Some(&v) if v == version => {}
             Some(_) => ty.did_change(path, version, text),
             None => ty.did_open(path, version, text),
         }
-        self.lsp.synced.insert(path.to_path_buf(), version);
+        synced.insert(path.to_path_buf(), version);
         Some(ty)
+    }
+
+    /// Start the server a file needs.
+    fn ensure_server(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if is_ts_path(path) {
+            self.ensure_ts(cx);
+        } else {
+            self.ensure_ty(cx);
+        }
+    }
+
+    /// The running server for a file.
+    pub(super) fn server_for(&self, path: &Path) -> Option<Arc<Ty>> {
+        if is_ts_path(path) {
+            self.lsp.ts.server.clone()
+        } else {
+            self.lsp.ty.clone()
+        }
     }
 
     /// ty for a request at the editor's caret, with the text synced first.
     pub(super) fn ty_at_caret(&mut self, ed: &Entity<Editor>, cx: &mut Context<Self>) -> Option<(Arc<Ty>, PathBuf, Pos)> {
-        self.ensure_ty(cx);
-        let e = ed.read(cx);
-        if !e.is_python() {
+        let path = ed.read(cx).path.clone()?;
+        let ts = is_ts_path(&path);
+        self.lsp.ts.last = ts;
+        if !ts && !ed.read(cx).is_python() {
             return None;
         }
-        let path = e.path.clone()?;
+        self.ensure_server(&path, cx);
+        let e = ed.read(cx);
         let version = e.buffer.version();
         let text = e.text_string();
         let (line, col) = e.caret_line_col();
@@ -155,7 +179,7 @@ impl Workspace {
 
     /// Part of the as-you-type check: sync the text and pull ty's diagnostics.
     pub(super) fn ty_check(&mut self, ed: Entity<Editor>, path: PathBuf, version: u64, text: &str, cx: &mut Context<Self>) {
-        self.ensure_ty(cx);
+        self.ensure_server(&path, cx);
         let Some(ty) = self.ty_sync(&path, version, text) else { return };
         let fut = ty.diagnostics(&path);
         // Inlay hints for the whole file, with the same text; off in large files.
@@ -183,7 +207,7 @@ impl Workspace {
                 match res {
                     Ok(mut diags) => {
                         for d in &mut diags {
-                            d.noqa_line = Some(d.start.line);
+                            d.noqa_line = (!is_ts_path(&path)).then_some(d.start.line);
                         }
                         ed.update(cx, |e, cx| {
                             if e.set_diagnostics(DiagSource::Ty, version, diags) {
@@ -191,7 +215,7 @@ impl Workspace {
                             }
                         });
                     }
-                    Err(_) => this.ensure_ty(cx),
+                    Err(_) => this.ensure_server(&path, cx),
                 }
             });
         })
@@ -200,8 +224,9 @@ impl Workspace {
 
     /// A tab closed: ty can drop the unsaved text and fall back to the file on disk.
     pub(super) fn ty_close(&mut self, path: &Path) {
-        if self.lsp.synced.remove(path).is_some() {
-            if let Some(ty) = &self.lsp.ty {
+        let synced = if is_ts_path(path) { &mut self.lsp.ts.synced } else { &mut self.lsp.synced };
+        if synced.remove(path).is_some() {
+            if let Some(ty) = self.server_for(path) {
                 ty.did_close(path);
             }
         }
@@ -248,6 +273,15 @@ fn is_ident(c: char) -> bool {
 
 impl Workspace {
     pub(super) fn no_ty(&mut self, what: &str) {
+        let ts = self.lsp.ts.last;
+        if ts {
+            self.status = match &self.lsp.ts.state {
+                TyState::Missing => format!("{what} needs TypeScript 7: add it to the project or download it when Brisk offers"),
+                TyState::Failed(e) => format!("{what}: {e}"),
+                _ => format!("{what}: TypeScript is starting…"),
+            };
+            return;
+        }
         self.status = match &self.lsp.state {
             TyState::Missing => format!("{what} needs ty: install it in the project interpreter (pip install ty)"),
             TyState::Failed(e) => format!("{what}: {e}"),
@@ -302,7 +336,9 @@ impl Workspace {
     }
 
     fn editor_for_lsp(&self, window: &Window, cx: &gpui::App) -> Option<Entity<Editor>> {
-        self.focused_editor(window, cx).or_else(|| self.active_editor().cloned()).filter(|e| e.read(cx).is_python())
+        self.focused_editor(window, cx)
+            .or_else(|| self.active_editor().cloned())
+            .filter(|e| e.read(cx).is_python() || e.read(cx).path.as_deref().is_some_and(is_ts_path))
     }
 
     /// Code-insight actions; false when the action is not one of them.
@@ -391,16 +427,19 @@ impl Workspace {
                             self.css_completion(&ed, cx);
                         }
                     }
-                    return;
+                    if !ed.read(cx).path.as_deref().is_some_and(is_ts_path) || ed.read(cx).completion_open() {
+                        return;
+                    }
                 }
-                let ready = self.lsp.state == TyState::Ready;
+                let ts = ed.read(cx).path.as_deref().is_some_and(is_ts_path);
+                let ready = if ts { self.lsp.ts.state == TyState::Ready } else { self.lsp.state == TyState::Ready };
                 let (open, sig_open, word, requery) = {
                     let e = ed.read(cx);
                     let (line, col) = e.caret_line_col();
                     let prefix: String = e.buffer.line(line).chars().take(col).collect();
                     let start = e.word_start_before_caret();
                     let word: String = e.buffer.rope().slice(start..e.buffer.primary().head).to_string();
-                    let in_comment = prefix.contains('#');
+                    let in_comment = if ts { prefix.contains("//") } else { prefix.contains('#') };
                     (e.completion_open() || in_comment, e.signature_open(), word, e.completion_needs_requery() && !in_comment)
                 };
                 if c == '(' || (c == ',' && sig_open) {
@@ -956,7 +995,7 @@ impl Workspace {
             self.file_op = Some(super::files_ui::FileOp::Rename(m));
             return self.run_file_op(target, window, cx);
         }
-        let Some(ty) = self.lsp.ty.clone() else { return self.no_ty("Rename") };
+        let Some(ty) = self.server_for(&path) else { return self.no_ty("Rename") };
         let fut = ty.rename(&path, p, &new_name);
         let text = self.nav.rename_text;
         cx.spawn_in(window, async move |this, cx| {

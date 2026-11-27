@@ -55,6 +55,7 @@ mod status_ui;
 mod tabs_ui;
 mod templates_ui;
 mod terminal_env_ui;
+mod ts_ui;
 mod update_ui;
 mod vcs_model;
 mod venv_ui;
@@ -3362,6 +3363,7 @@ impl Render for Workspace {
             .children(self.render_toast().map(|e| fade_in("toast-in", e, Enter::Toast)))
             .children(self.render_venv_offer(cx).map(|e| fade_in("venv-offer-in", e, Enter::Toast)))
             .children(self.render_install_offer(cx).map(|e| fade_in("install-offer-in", e, Enter::Toast)))
+            .children(self.render_ts_offer(cx).map(|e| fade_in("ts-offer-in", e, Enter::Toast)))
             .children(self.render_update_balloon(cx).map(|e| fade_in("update-balloon-in", e, Enter::Toast)))
             .children(self.render_popup(cx).map(|e| fade_in("popup-in", e, Enter::Popup)))
             .children(self.render_find_popup(cx).map(|e| fade_in("find-in", e, Enter::Popup)))

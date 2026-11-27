@@ -303,6 +303,10 @@ impl Workspace {
                 let path = ed.read(cx).path.clone()?;
                 let (v, t) = ed.update(cx, |e, _| e.take_lint_request())?;
                 this.ty_check(ed.clone(), path.clone(), v, &t, cx);
+                // ruff is for Python only.
+                if !ed.read(cx).is_python() {
+                    return None;
+                }
                 Some((v, t, path))
             }) else {
                 return;

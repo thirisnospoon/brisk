@@ -668,7 +668,14 @@ impl Editor {
     /// Text and version for a ruff check, when it changed since the last one.
     pub fn take_lint_request(&mut self) -> Option<(u64, String)> {
         let v = self.buffer.version();
-        if !self.is_python() || self.lint_sent == v {
+        // Python for ruff and ty; JS / TS for TypeScript's server.
+        let ts = self
+            .path
+            .as_deref()
+            .and_then(|p| p.extension())
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs"));
+        if !(self.is_python() || ts) || self.lint_sent == v {
             return None;
         }
         self.lint_sent = v;

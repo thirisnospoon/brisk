@@ -64,6 +64,10 @@ impl Workspace {
         let (path, text, byte, word, line) = {
             let e = ed.read(cx);
             let Some(path) = e.path.clone().filter(|p| is_web_file(p)) else { return false };
+            // TypeScript's server knows better when it runs.
+            if super::ts_ui::is_ts_path(&path) && self.lsp.ts.state == super::lsp_ui::TyState::Ready {
+                return false;
+            }
             let rope = e.buffer.rope();
             let pos = at.unwrap_or_else(|| e.buffer.primary().head).min(rope.len_chars());
             let r = e.buffer.word_range_at(pos);

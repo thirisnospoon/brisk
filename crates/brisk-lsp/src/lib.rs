@@ -1,6 +1,7 @@
 //! Language server client, UI-free: JSON-RPC over the server's stdio, plus a typed API for
-//! ty (Astral's Python type checker): diagnostics, definition, hover, completion, signature
-//! help, references and rename. Positions are UTF-32 (characters), the editor's own unit.
+//! any server (diagnostics, definition, hover, completion, signature help, references,
+//! rename) with adapters for ty (Python) and TypeScript 7 (JS / TS). Positions are UTF-32
+//! (characters), the editor's own unit; UTF-16 servers are converted (see `encoding`).
 
 use brisk_lint::{Diagnostic, Edit, Pos, Severity};
 use futures::channel::oneshot;
@@ -562,11 +563,31 @@ pub fn doc_blocks(md: &str) -> Vec<DocBlock> {
     out
 }
 
-// --- ty ------------------------------------------------------------------------------
+// --- Servers -------------------------------------------------------------------------
 
-/// A ty language server for one project.
-pub struct Ty {
+/// A language server for one project.
+pub struct Server {
     client: Arc<Client>,
+    /// For messages: "ty", "TypeScript".
+    pub name: &'static str,
+    enc: Encoding,
+    /// Open documents' texts, for UTF-16 conversion.
+    docs: encoding::Docs,
+}
+
+/// The Python server; the name the app grew up with.
+pub type Ty = Server;
+
+/// The LSP language id of a file.
+pub fn language_id(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+        Some("py" | "pyi" | "pyw") => "python",
+        Some("ts" | "mts" | "cts") => "typescript",
+        Some("tsx") => "typescriptreact",
+        Some("js" | "mjs" | "cjs") => "javascript",
+        Some("jsx") => "javascriptreact",
+        _ => "plaintext",
+    }
 }
 
 /// ty's settings for the folders marked in the project: extra import roots (source and test
@@ -612,21 +633,12 @@ fn at(path: &Path, p: Pos) -> Value {
     json!({"textDocument": text_doc(path), "position": lsp_pos(p)})
 }
 
-/// Await a reply and parse it.
-async fn call<T>(rx: oneshot::Receiver<Reply>, parse: impl FnOnce(&Value) -> T + Send + 'static) -> Result<T, String>
-where
-    T: Send + 'static,
-{
-    let v = rx.await.map_err(|_| "the language server exited".to_string())??;
-    Ok(parse(&v))
-}
-
 fn rename_params(renames: &[(PathBuf, PathBuf)]) -> Value {
     let files: Vec<Value> = renames.iter().map(|(a, b)| json!({"oldUri": path_to_uri(a), "newUri": path_to_uri(b)})).collect();
     json!({"files": files})
 }
 
-impl Ty {
+impl Server {
     /// Start `ty server` for the project and initialize it (blocks for the handshake, about
     /// 0.1 s: call it off the UI thread). `python` selects the environment ty resolves
     /// imports from.
@@ -642,10 +654,24 @@ impl Ty {
                 }
             }
         }
-        let client = Client::start(ty, &["server"], root, &env).map_err(|e| format!("cannot start ty: {e}"))?;
+        let s = Self::launch("ty", ty, &["server"], root, &env, settings)?;
+        if s.enc != Encoding::Utf32 {
+            return Err("ty uses UTF-16 positions; Brisk needs utf-32 (update ty)".into());
+        }
+        Ok(s)
+    }
+
+    /// TypeScript 7's native server (`tsc --lsp --stdio`) for JS and TS.
+    pub fn start_typescript(tsc: &Path, root: &Path) -> Result<Server, String> {
+        Self::launch("TypeScript", tsc, &["--lsp", "--stdio"], root, &[], Value::Null)
+    }
+
+    /// Start a server and initialize it (blocks for the handshake: call it off the UI thread).
+    pub fn launch(name: &'static str, program: &Path, args: &[&str], root: &Path, env: &[(String, String)], settings: Value) -> Result<Server, String> {
+        let client = Client::start(program, args, root, env).map_err(|e| format!("cannot start {name}: {e}"))?;
         client.set_config(settings);
         let caps = json!({
-            "general": {"positionEncodings": ["utf-32"]},
+            "general": {"positionEncodings": ["utf-32", "utf-16"]},
             "textDocument": {
                 "synchronization": {"didSave": false},
                 "diagnostic": {"dynamicRegistration": false},
@@ -664,13 +690,47 @@ impl Ty {
             "initialize",
             json!({"processId": std::process::id(), "rootUri": path_to_uri(root), "workspaceFolders": [{"uri": path_to_uri(root), "name": "project"}], "capabilities": caps}),
         );
-        let init = futures::executor::block_on(rx).map_err(|_| "ty exited during startup".to_string())??;
-        let enc = init.pointer("/capabilities/positionEncoding").and_then(Value::as_str).unwrap_or("utf-16");
-        if enc != "utf-32" {
-            return Err(format!("ty uses {enc} positions; Brisk needs utf-32 (update ty)"));
-        }
+        let init = futures::executor::block_on(rx).map_err(|_| format!("{name} exited during startup"))??;
+        let enc = match init.pointer("/capabilities/positionEncoding").and_then(Value::as_str).unwrap_or("utf-16") {
+            "utf-32" => Encoding::Utf32,
+            "utf-16" => Encoding::Utf16,
+            other => return Err(format!("{name} uses {other} positions, which Brisk does not support")),
+        };
         client.notify("initialized", json!({}));
-        Ok(Ty { client })
+        Ok(Server { client, name, enc, docs: Arc::default() })
+    }
+
+    /// Send a request (positions converted for a UTF-16 server) and parse the reply.
+    fn call<T: Send + 'static>(
+        &self,
+        method: &str,
+        mut params: Value,
+        parse: impl FnOnce(&Value) -> T + Send + 'static,
+    ) -> impl Future<Output = Result<T, String>> + Send + 'static {
+        let conv = (self.enc == Encoding::Utf16).then(|| self.docs.clone());
+        let uri = params.pointer("/textDocument/uri").and_then(Value::as_str).unwrap_or_default().to_string();
+        if let Some(d) = &conv {
+            encoding::convert(&mut params, &uri, true, d);
+        }
+        let rx = self.client.request(method, params);
+        async move {
+            let mut v = rx.await.map_err(|_| "the language server exited".to_string())??;
+            if let Some(d) = conv {
+                encoding::convert(&mut v, &uri, false, &d);
+            }
+            Ok(parse(&v))
+        }
+    }
+
+    /// Remembers an open document's text (UTF-16 servers: what its positions count in).
+    fn keep_text(&self, path: &Path, text: Option<&str>) {
+        if self.enc == Encoding::Utf16 {
+            let mut d = self.docs.lock().unwrap_or_else(|e| e.into_inner());
+            match text {
+                Some(t) => d.insert(path.to_path_buf(), t.to_string()),
+                None => d.remove(path),
+            };
+        }
     }
 
     pub fn is_alive(&self) -> bool {
@@ -678,13 +738,17 @@ impl Ty {
     }
 
     pub fn did_open(&self, path: &Path, version: u64, text: &str) {
-        self.client
-            .notify("textDocument/didOpen", json!({"textDocument": {"uri": path_to_uri(path), "languageId": "python", "version": version, "text": text}}));
+        self.client.notify(
+            "textDocument/didOpen",
+            json!({"textDocument": {"uri": path_to_uri(path), "languageId": language_id(path), "version": version, "text": text}}),
+        );
+        self.keep_text(path, Some(text));
     }
 
     pub fn did_change(&self, path: &Path, version: u64, text: &str) {
         self.client
             .notify("textDocument/didChange", json!({"textDocument": {"uri": path_to_uri(path), "version": version}, "contentChanges": [{"text": text}]}));
+        self.keep_text(path, Some(text));
     }
 
     /// Files changed on disk behind ty's back (a rename edited closed files).
@@ -709,57 +773,58 @@ impl Ty {
 
     pub fn did_close(&self, path: &Path) {
         self.client.notify("textDocument/didClose", json!({"textDocument": text_doc(path)}));
+        self.keep_text(path, None);
     }
 
     /// Inlay hints for lines `lines` of the document.
     pub fn inlay_hints(&self, path: &Path, lines: std::ops::Range<usize>) -> impl Future<Output = Result<Vec<InlayHint>, String>> + Send + 'static {
         let range = json!({"start": {"line": lines.start, "character": 0}, "end": {"line": lines.end, "character": 0}});
-        call(self.client.request("textDocument/inlayHint", json!({"textDocument": text_doc(path), "range": range})), parse_inlay_hints)
+        self.call("textDocument/inlayHint", json!({"textDocument": text_doc(path), "range": range}), parse_inlay_hints)
     }
 
     pub fn diagnostics(&self, path: &Path) -> impl Future<Output = Result<Vec<Diagnostic>, String>> + Send + 'static {
         let p = path.to_path_buf();
-        call(self.client.request("textDocument/diagnostic", json!({"textDocument": text_doc(path)})), move |v| parse_diagnostics(&p, v))
+        self.call("textDocument/diagnostic", json!({"textDocument": text_doc(path)}), move |v| parse_diagnostics(&p, v))
     }
 
     pub fn definition(&self, path: &Path, p: Pos) -> impl Future<Output = Result<Vec<Location>, String>> + Send + 'static {
-        call(self.client.request("textDocument/definition", at(path, p)), parse_locations)
+        self.call("textDocument/definition", at(path, p), parse_locations)
     }
 
     pub fn type_definition(&self, path: &Path, p: Pos) -> impl Future<Output = Result<Vec<Location>, String>> + Send + 'static {
-        call(self.client.request("textDocument/typeDefinition", at(path, p)), parse_locations)
+        self.call("textDocument/typeDefinition", at(path, p), parse_locations)
     }
 
     pub fn hover(&self, path: &Path, p: Pos) -> impl Future<Output = Result<Option<String>, String>> + Send + 'static {
-        call(self.client.request("textDocument/hover", at(path, p)), |v| {
+        self.call("textDocument/hover", at(path, p), |v| {
             let t = doc_text(&v["contents"]);
             (!t.trim().is_empty()).then_some(t)
         })
     }
 
     pub fn completion(&self, path: &Path, p: Pos) -> impl Future<Output = Result<Vec<CompletionItem>, String>> + Send + 'static {
-        call(self.client.request("textDocument/completion", at(path, p)), parse_completion)
+        self.call("textDocument/completion", at(path, p), parse_completion)
     }
 
     /// Completion and whether the list is incomplete (ty caps it at 1000 items): then the
     /// client asks again as the prefix grows.
     pub fn completion_list(&self, path: &Path, p: Pos) -> impl Future<Output = Result<(Vec<CompletionItem>, bool), String>> + Send + 'static {
-        call(self.client.request("textDocument/completion", at(path, p)), |v| (parse_completion(v), v["isIncomplete"].as_bool().unwrap_or(false)))
+        self.call("textDocument/completion", at(path, p), |v| (parse_completion(v), v["isIncomplete"].as_bool().unwrap_or(false)))
     }
 
     pub fn signature_help(&self, path: &Path, p: Pos) -> impl Future<Output = Result<Option<Signature>, String>> + Send + 'static {
-        call(self.client.request("textDocument/signatureHelp", at(path, p)), parse_signature)
+        self.call("textDocument/signatureHelp", at(path, p), parse_signature)
     }
 
     pub fn references(&self, path: &Path, p: Pos) -> impl Future<Output = Result<Vec<Location>, String>> + Send + 'static {
         let mut params = at(path, p);
         params["context"] = json!({"includeDeclaration": true});
-        call(self.client.request("textDocument/references", params), parse_locations)
+        self.call("textDocument/references", params, parse_locations)
     }
 
     /// The range of the symbol to rename, or `None` when it can't be renamed.
     pub fn prepare_rename(&self, path: &Path, p: Pos) -> impl Future<Output = Result<Option<(Pos, Pos)>, String>> + Send + 'static {
-        call(self.client.request("textDocument/prepareRename", at(path, p)), |v| {
+        self.call("textDocument/prepareRename", at(path, p), |v| {
             let r = v.get("range").unwrap_or(v);
             r.get("start").map(|s| (pos(s), pos(&r["end"])))
         })
@@ -776,12 +841,12 @@ impl Ty {
         let ctx: Vec<Value> = diags.iter().map(lsp_diagnostic).collect();
         let params =
             json!({"textDocument": text_doc(path), "range": {"start": lsp_pos(start), "end": lsp_pos(end)}, "context": {"diagnostics": ctx, "triggerKind": 1}});
-        call(self.client.request("textDocument/codeAction", params), parse_code_actions)
+        self.call("textDocument/codeAction", params, parse_code_actions)
     }
 
     /// Import updates for files or folders about to be renamed or moved (old, new).
     pub fn will_rename_files(&self, renames: &[(PathBuf, PathBuf)]) -> impl Future<Output = Result<Vec<FileEdits>, String>> + Send + 'static {
-        call(self.client.request("workspace/willRenameFiles", rename_params(renames)), parse_workspace_edit)
+        self.call("workspace/willRenameFiles", rename_params(renames), parse_workspace_edit)
     }
 
     /// Files were renamed (after `will_rename_files` and the move on disk).
@@ -792,14 +857,17 @@ impl Ty {
     pub fn rename(&self, path: &Path, p: Pos, new_name: &str) -> impl Future<Output = Result<Vec<FileEdits>, String>> + Send + 'static {
         let mut params = at(path, p);
         params["newName"] = json!(new_name);
-        call(self.client.request("textDocument/rename", params), parse_workspace_edit)
+        self.call("textDocument/rename", params, parse_workspace_edit)
     }
 }
 
 #[cfg(test)]
 mod tests;
 
+mod encoding;
 mod markdown;
+pub mod typescript;
+pub use encoding::Encoding;
 mod module_rename;
 pub use markdown::{parse_doc_text, unescape_md, DocText, InlineStyle};
 pub use module_rename::{module_name, rename_module_refs};

@@ -192,3 +192,34 @@ fn real_ty_source_root() {
     assert_eq!(check(ty_settings(&[root.join("backend")], &["data".into()])), ["invalid-assignment"]);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// TypeScript 7 (`BRISK_TEST_TSC` = its `tsc`): type errors, completion after a dot and a
+/// definition, with a non-ASCII line so the UTF-16 conversion is exercised.
+#[test]
+fn real_typescript() {
+    let Some(tsc) = std::env::var_os("BRISK_TEST_TSC").map(PathBuf::from) else {
+        eprintln!("BRISK_TEST_TSC not set, skipping");
+        return;
+    };
+    let root = std::env::temp_dir().join(format!("brisk-lsp-ts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("tsconfig.json"), r#"{"compilerOptions": {"strict": true}}"#).unwrap();
+    let main = root.join("main.ts");
+    let text = "class User { greet(n: number) { return n; } }\nconst s = '😀'; const u = new User();\nu.greet('x');\nu.\n";
+    std::fs::write(&main, text).unwrap();
+    let t = Server::start_typescript(&tsc, &root).unwrap();
+    t.did_open(&main, 1, text);
+    let diags = futures::executor::block_on(t.diagnostics(&main)).unwrap();
+    let arg = diags.iter().find(|d| d.message.contains("not assignable")).expect("type error");
+    assert_eq!((arg.start.line, arg.start.col), (2, 8));
+    let items = futures::executor::block_on(t.completion(&main, Pos { line: 3, col: 2 })).unwrap();
+    assert!(items.iter().any(|i| i.label == "greet"), "{:?}", items.iter().map(|i| &i.label).collect::<Vec<_>>());
+    // `User` after the emoji: column 31 in characters, 32 in UTF-16 units.
+    let defs = futures::executor::block_on(t.definition(&main, Pos { line: 1, col: 31 })).unwrap();
+    assert_eq!(defs.first().map(|d| (d.start.line, d.start.col)), Some((0, 6)));
+    let hover = futures::executor::block_on(t.hover(&main, Pos { line: 1, col: 22 })).unwrap().unwrap_or_default();
+    assert!(hover.contains("User"), "{hover}");
+    drop(t);
+    let _ = std::fs::remove_dir_all(&root);
+}
