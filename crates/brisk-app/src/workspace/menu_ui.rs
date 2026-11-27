@@ -116,6 +116,8 @@ impl ContextMenu {
 }
 
 const ITEM_H: f32 = 26.0;
+/// How long the mouse rests on another row before it replaces the open submenu.
+const SUBMENU_DELAY_MS: u64 = 150;
 /// Wide enough for the longest Run entries with their shortcuts ("Debug Context
 /// Configuration  Ctrl+Shift+F9").
 const MENU_W: f32 = 300.0;
@@ -339,16 +341,22 @@ impl Workspace {
                     .gap(px(16.))
                     .rounded(px(4.))
                     .text_color(if enabled { Theme::text() } else { Theme::text_dim() })
-                    .when(selected == Some(i) || open == Some(i), |d| d.bg(Theme::selection_row()))
+                    .when(selected == Some(i) || (open == Some(i) && selected.is_none()), |d| d.bg(Theme::selection_row()))
                     // The mouse moves the selection, so hover and keyboard never show two rows;
                     // it also opens the row's submenu, or closes another one.
                     .when(enabled, |d| {
                         d.cursor_pointer().on_mouse_move(cx.listener(move |this, _, _, cx| {
                             let Some(root) = this.menu.as_mut() else { return };
-                            // Moving inside a submenu cancels a pending switch of its parent.
+                            // Moving inside a submenu cancels a pending switch of its parent,
+                            // whose highlight goes back to the row that opened it.
                             if depth > 0 {
                                 if let Some(parent) = root.level_mut(depth - 1) {
                                     parent.pending = None;
+                                    let back = parent.child.as_ref().map(|(j, _)| *j);
+                                    if back.is_some() && parent.selected != back {
+                                        parent.selected = back;
+                                        cx.notify();
+                                    }
                                 }
                             }
                             let Some(m) = root.level_mut(depth) else { return };
@@ -357,14 +365,19 @@ impl Workspace {
                                 m.pending = None;
                                 return;
                             }
-                            // With a submenu open, another row takes over only after a pause, so a
-                            // diagonal move toward the submenu does not switch it on the way.
+                            // With a submenu open, the highlight follows the mouse at once, but the
+                            // submenu switches only after a short pause, so a diagonal move toward
+                            // it does not switch it on the way.
                             if open.is_some_and(|j| j != i) {
+                                if m.selected != Some(i) {
+                                    m.selected = Some(i);
+                                    cx.notify();
+                                }
                                 if m.pending == Some(i) {
                                     return;
                                 }
                                 m.pending = Some(i);
-                                let timer = cx.background_executor().timer(std::time::Duration::from_millis(250));
+                                let timer = cx.background_executor().timer(std::time::Duration::from_millis(SUBMENU_DELAY_MS));
                                 cx.spawn(async move |this, cx| {
                                     timer.await;
                                     let _ = this.update(cx, |this, cx| {

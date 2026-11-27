@@ -4,6 +4,7 @@
 //! frame times (p50 / p95 / max, from `stall::frame_*`) and the worst main-thread stall. Exits
 //! with code 1 when a list goes over p95 16 ms or max 50 ms in 3 runs (debug build). `=hold` leaves the
 //! window open; `=<name>` (e.g. `=todo`) runs only the lists whose name contains it.
+//! `main-menu` runs the mouse over the main menu's rows instead, with the large file open.
 
 use crate::stall;
 use crate::workspace::{BottomTool, LeftTool, Workspace};
@@ -136,6 +137,26 @@ async fn scroll(this: &WeakEntity<Workspace>, cx: &mut AsyncWindowContext, at: A
 /// [`scroll`], measured again (up to 3 runs in all) while a run is over the limits: on a loaded
 /// machine a single preempted frame can push the max up. Every run is printed; a real slowdown
 /// fails all three.
+/// The mouse runs up and down the main menu's rows (File … Help), a row per frame, as a
+/// quick hand does: every row change selects it and opens or closes a submenu.
+async fn menu_sweep(this: &WeakEntity<Workspace>, cx: &mut AsyncWindowContext) -> Stats {
+    wait(cx, 600).await;
+    let Ok((s, ui)) = this.update_in(cx, |_, window, _| (window.scale_factor(), crate::theme::ui_scale())) else {
+        return stats(Vec::new());
+    };
+    let row = |i: usize| (108. * s, (46. + 26. * ui * (i as f32 + 0.5)) * s);
+    stall::take_frames();
+    stall::reset();
+    for step in 0..120 {
+        let i = if (step / 9) % 2 == 0 { step % 9 } else { 9 - step % 9 };
+        let (x, y) = row(i);
+        crate::workspace::smoke::win_input::post(crate::workspace::smoke::win_input::Mouse::Move, x, y, false);
+        wait(cx, 16).await;
+    }
+    wait(cx, 100).await;
+    stats(stall::take_frames())
+}
+
 async fn best(this: &WeakEntity<Workspace>, cx: &mut AsyncWindowContext, at: At) -> Stats {
     let mut s = scroll(this, cx, at.clone()).await;
     let mut runs = 1;
@@ -389,6 +410,21 @@ impl Workspace {
                     }
                 }
                 results.push(("test-tree (1000 tests)", best(&this, cx, At::Bottom(0.15)).await));
+            }
+
+            if want("main-menu") {
+                let f = root.join("outline.py");
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.bottom = None;
+                    this.left = Some(LeftTool::Project);
+                    this.open_file(&f, window, cx);
+                    this.dispatch(brisk_keymap::Action::MainMenu, window, cx);
+                });
+                results.push(("main-menu (hover over rows)", menu_sweep(&this, cx).await));
+                let _ = this.update(cx, |this, cx| {
+                    this.menu = None;
+                    cx.notify();
+                });
             }
 
             let mut ok = true;
