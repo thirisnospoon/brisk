@@ -9,7 +9,7 @@ use brisk_lint::{Diagnostic, Severity};
 use gpui::prelude::*;
 use gpui::{div, px, uniform_list, ClickEvent, Context, Entity, EntityId, FocusHandle, Focusable, UniformListScrollHandle, Window};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Pause after the last keystroke before re-checking, like PyCharm's daemon delay.
@@ -1069,42 +1069,56 @@ impl Workspace {
         if !s.reformat_on_save && !s.optimize_imports_on_save {
             return;
         }
+        let root = self.root.clone();
         let eds: Vec<_> = self
             .editors()
             .filter(|e| {
                 let e = e.read(cx);
-                e.buffer.is_dirty() && e.is_python() && e.path.is_some() && e.read_error.is_none() && e.disk_conflict.is_none()
+                let other =
+                    || s.reformat_on_save && e.path.as_deref().and_then(|p| reformatter(p, &root)).is_some_and(|r| !matches!(r, Reformatter::TypeScript));
+                e.buffer.is_dirty() && (e.is_python() || other()) && e.path.is_some() && e.read_error.is_none() && e.disk_conflict.is_none()
             })
             .cloned()
             .collect();
         if eds.is_empty() {
             return;
         }
-        let Some(ruff) = self.ruff(cx) else {
+        let ruff = self.ruff(cx);
+        if ruff.is_none() && eds.iter().any(|e| e.read(cx).is_python()) {
             // Before interpreter discovery ends, ruff may still turn up next to a Python.
             if self.env.read(cx).all.is_some() && !self.problems.save_actions_warned {
                 self.problems.save_actions_warned = true;
                 self.show_toast("Actions on Save (Reformat code, Optimize imports) need ruff, which was not found. Install it into the project interpreter: pip install ruff".into(), true, cx);
             }
-            return;
-        };
+        }
         for ed in eds {
-            let (Some(path), text, version) = ({
+            let (Some(path), text, version, python, unit) = ({
                 let e = ed.read(cx);
-                (e.path.clone(), e.text_string(), e.buffer.version())
+                (e.path.clone(), e.text_string(), e.buffer.version(), e.is_python(), e.buffer.indent_unit.clone())
             }) else {
                 continue;
             };
-            let (ruff, root) = (ruff.clone(), self.root.clone());
+            let root = self.root.clone();
             let (imports, reformat) = (s.optimize_imports_on_save, s.reformat_on_save);
+            // Python goes to ruff; other files to Prettier or Brisk's formatter.
+            let how = if python { None } else { reformatter(&path, &root) };
+            let ruff = match (python, &ruff) {
+                (true, Some(r)) => Some(r.clone()),
+                (true, None) => continue,
+                _ => None,
+            };
             let task = cx.background_executor().spawn(async move {
                 let keep = |r: Result<String, String>, cur: &str| r.ok().filter(|t| !t.is_empty() || cur.is_empty());
                 let mut out = text.clone();
-                if imports {
-                    out = keep(brisk_lint::optimize_imports(&ruff, &root, &path, &out), &out).unwrap_or(out);
-                }
-                if reformat {
-                    out = keep(brisk_lint::format_text(&ruff, &root, &path, &out, None), &out).unwrap_or(out);
+                if let Some(ruff) = &ruff {
+                    if imports {
+                        out = keep(brisk_lint::optimize_imports(ruff, &root, &path, &out), &out).unwrap_or(out);
+                    }
+                    if reformat {
+                        out = keep(brisk_lint::format_text(ruff, &root, &path, &out, None), &out).unwrap_or(out);
+                    }
+                } else if let Some(r) = how.as_ref().and_then(|h| reformat_offline(h, &root, &path, &out, &unit)) {
+                    out = keep(r, &out).unwrap_or(out);
                 }
                 (out.replace("\r\n", "\n") != text.replace("\r\n", "\n")).then_some(out)
             });
@@ -1227,8 +1241,12 @@ impl Workspace {
             let e = ed.read(cx);
             (e.path.clone(), e.is_python())
         };
+        if let (Some(path), false, brisk_keymap::Action::ReformatCode) = (&path, python, action) {
+            self.reformat_other(ed, path.clone(), cx);
+            return;
+        }
         let Some(path) = path.filter(|_| python) else {
-            self.status = "Reformat Code, Optimize Imports and Code Cleanup work on Python files (ruff)".into();
+            self.status = "Optimize Imports and Code Cleanup work on Python files (ruff)".into();
             cx.notify();
             return;
         };
@@ -1287,5 +1305,124 @@ impl Workspace {
             Err(e) => self.show_toast(format!("ruff: {e}"), true, cx),
         }
         cx.notify();
+    }
+}
+
+/// How a file other than Python is reformatted, in PyCharm's order: Prettier when the project
+/// has it, then TypeScript's server for JS / TS, then Brisk's own formatter for the type.
+enum Reformatter {
+    Prettier(PathBuf, PathBuf),
+    TypeScript,
+    Builtin(brisk_format::Kind),
+}
+
+fn reformatter(path: &Path, root: &Path) -> Option<Reformatter> {
+    if brisk_lint::prettier::supports(path) {
+        if let (Some(script), Some(node)) = (brisk_lint::prettier::find(path, root), brisk_run::node::on_path("node")) {
+            return Some(Reformatter::Prettier(node, script));
+        }
+    }
+    if super::ts_ui::is_ts_path(path) {
+        return Some(Reformatter::TypeScript);
+    }
+    brisk_format::Kind::of(path).map(Reformatter::Builtin)
+}
+
+/// The text reformatted off the UI thread, without the TypeScript server (Actions on Save).
+fn reformat_offline(how: &Reformatter, root: &Path, path: &Path, text: &str, unit: &str) -> Option<Result<String, String>> {
+    Some(match how {
+        Reformatter::Prettier(node, script) => brisk_lint::prettier::format(node, script, root, path, text),
+        Reformatter::Builtin(kind) => brisk_format::format(
+            *kind,
+            &text.replace(
+                "
+
+", "\r\n",
+            ),
+            unit,
+        ),
+        Reformatter::TypeScript => return None,
+    })
+}
+
+impl Workspace {
+    /// Ctrl+Alt+L on a file that is not Python: the whole file, by `reformatter`. A text the
+    /// formatter cannot parse stays as it is, with the reason in the status bar.
+    fn reformat_other(&mut self, ed: Entity<Editor>, path: PathBuf, cx: &mut Context<Self>) {
+        let Some(how) = reformatter(&path, &self.root) else {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("these");
+            self.status = format!("Reformat Code: no formatter for .{ext} files");
+            cx.notify();
+            return;
+        };
+        let (text, version, unit) = {
+            let e = ed.read(cx);
+            (e.text_string(), e.buffer.version(), e.buffer.indent_unit.clone())
+        };
+        let by = match &how {
+            Reformatter::Prettier(..) => "Prettier",
+            Reformatter::TypeScript => "TypeScript",
+            Reformatter::Builtin(_) => "",
+        };
+        let task: gpui::Task<Result<String, String>> = match how {
+            Reformatter::TypeScript => {
+                self.ensure_ts(cx);
+                let ready = self.lsp.ts.state == super::lsp_ui::TyState::Ready;
+                let Some(server) = ready.then(|| self.ty_sync(&path, version, &text)).flatten() else {
+                    self.status =
+                        "Reformat Code for JavaScript and TypeScript needs Prettier in the project or TypeScript's language server, which is not running yet"
+                            .into();
+                    cx.notify();
+                    return;
+                };
+                let tab = unit.chars().count().max(1);
+                let request = server.formatting(&path, if unit == "\t" { 4 } else { tab }, unit != "\t");
+                let before = text.replace(
+                    "
+
+", "\r\n",
+                );
+                cx.background_executor().spawn(async move { request.await.map(|edits| brisk_lint::apply_edits(&before, &edits)) })
+            }
+            how => {
+                let (root, p, t) = (self.root.clone(), path.clone(), text.clone());
+                cx.background_executor().spawn(async move { reformat_offline(&how, &root, &p, &t, &unit).unwrap_or(Ok(t)) })
+            }
+        };
+        self.status = "Reformatting…".into();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                let by = if by.is_empty() { String::new() } else { format!(" ({by})") };
+                this.status = match result {
+                    // Typed into meanwhile: the result is for an older text.
+                    _ if ed.read(cx).buffer.version() != version => "Reformat Code: the file changed meanwhile; run it again".into(),
+                    Ok(out) if out.is_empty() && !text.trim().is_empty() => format!("Reformat Code{by}: nothing came back; the file was not changed"),
+                    Ok(out) => {
+                        let before = text.replace(
+                            "
+
+", "\r\n",
+                        );
+                        if out.replace(
+                            "
+
+", "\r\n",
+                        ) == before
+                        {
+                            "No changes: the code is already formatted".into()
+                        } else {
+                            brisk_history::record(&path, &before, brisk_history::Label::BeforeReformat);
+                            ed.update(cx, |e, cx| e.replace_all_text(&out, cx));
+                            format!("Reformatted the file{by}")
+                        }
+                    }
+                    Err(e) => format!("Reformat Code{by}: {e}; the file was not changed"),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }

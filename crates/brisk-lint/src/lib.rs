@@ -180,7 +180,8 @@ fn command(ruff: &Path, root: &Path) -> Command {
 }
 
 fn run(mut c: Command, stdin: Option<&str>) -> Result<String, String> {
-    let mut child = c.spawn().map_err(|e| format!("cannot start ruff: {e}"))?;
+    let tool = Path::new(c.get_program()).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut child = c.spawn().map_err(|e| format!("cannot start {tool}: {e}"))?;
     brisk_platform::process::adopt(&child);
     if let Some(text) = stdin {
         let mut i = child.stdin.take().ok_or("no stdin")?;
@@ -197,7 +198,7 @@ fn run(mut c: Command, stdin: Option<&str>) -> Result<String, String> {
     // Exit code 1 means "problems found"; 2 is a real failure (bad config, crash).
     if out.status.code() == Some(2) || (stdout.trim().is_empty() && !out.status.success()) {
         let err = String::from_utf8_lossy(&out.stderr);
-        return Err(err.lines().find(|l| !l.trim().is_empty()).unwrap_or("ruff failed").trim().to_string());
+        return Err(err.lines().find(|l| !l.trim().is_empty()).unwrap_or("it failed").trim().to_string());
     }
     Ok(stdout)
 }
@@ -362,6 +363,8 @@ pub fn ty_ignore_line(line: &str, rule: &str) -> String {
     }
     format!("{}  # ty: ignore[{rule}]", line.trim_end())
 }
+
+pub mod prettier;
 
 #[cfg(test)]
 mod tests;

@@ -131,7 +131,7 @@ impl Workspace {
 
     /// Tell the file's server (ty, or TypeScript for JS / TS) about its current text when it
     /// changed since it last saw it.
-    fn ty_sync(&mut self, path: &Path, version: u64, text: &str) -> Option<Arc<Ty>> {
+    pub(super) fn ty_sync(&mut self, path: &Path, version: u64, text: &str) -> Option<Arc<Ty>> {
         let (ty, synced) = if is_ts_path(path) { (self.lsp.ts.server.clone()?, &mut self.lsp.ts.synced) } else { (self.lsp.ty.clone()?, &mut self.lsp.synced) };
         match synced.get(path) {
             Some(&v) if v == version => {}

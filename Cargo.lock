@@ -696,6 +696,7 @@ version = "0.4.1"
 dependencies = [
  "brisk-dap",
  "brisk-db",
+ "brisk-format",
  "brisk-git",
  "brisk-history",
  "brisk-keymap",
@@ -740,6 +741,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "brisk-format"
+version = "0.4.1"
 
 [[package]]
 name = "brisk-git"

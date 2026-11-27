@@ -298,6 +298,18 @@ Folder: empty. Needs Node.js and npm on PATH. Writes `package.json` with the scr
 
 Checks the ▶ marks on the script lines, that a script runs through npm with the configuration's variable, that `greet.ts` runs with node, that both configurations are saved, that Debug on an npm configuration shows that it is not available, that Go to Class and Go to Symbol find `UserRepo`, `makeRepo` and `UserRepo.save` from `repo.ts`, that `Ctrl+B` in `main.ts` goes from `'./repo'` to `repo.ts` and from the imported `makeRepo` to its declaration, and that typing `import z from './` lists `repo` and `greet` without extensions. In `index.html` it types `<section class="a">` and checks the closing tag, that typing in the opening tag's name renames the closing one and Backspace renames it back, and that `ul>li.item$*2` and `Tab` expand to a list. In `style.css` it checks the swatch on the `color: #ff0000` line, and that typing `backgr` lists `background-color` and `background-color: rebecc` lists `rebeccapurple`.
 
+### `BRISK_SMOKE_TS=1`
+
+Folder: empty. Needs `BRISK_TSC` set to TypeScript 7's native `tsc` (the `lib/tsc.exe` of the `@typescript/typescript-<platform>` npm package). Writes `tsconfig.json`, `user.ts` and `main.ts`.
+
+Checks that the TypeScript server starts, that the type error in `u.greet('x')` shows in the editor, that typing `u.` lists `greet`, that `Ctrl+B` on `User` goes to `user.ts`, and that Quick Documentation on `greet` shows its signature.
+
+The `brisk-lsp` test `real_typescript` runs against the same server when `BRISK_TEST_TSC` is set, with a line holding an emoji to check the UTF-16 position conversion.
+
+### `BRISK_SMOKE_REFORMAT=1`
+
+Folder: empty. Writes minified JSON, CSS, HTML, SQL and TOML plus a broken JSON file, runs Reformat Code on each and checks the result, that a second run changes nothing, and that the broken file stays as it is. With `BRISK_TSC` set, also formats `m.ts` through TypeScript's server.
+
 ### `BRISK_SMOKE_PICKER=1`
 
 Folder: empty. Writes `picker/alpha/.git`, `picker/beta` and `picker/.hidden`.

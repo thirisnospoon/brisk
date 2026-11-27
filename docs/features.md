@@ -173,6 +173,7 @@ This page lists what works today. Brisk follows PyCharm's layout, keymap and beh
 ### Formatting
 
 - `Ctrl+Alt+L` Reformat Code (`ruff format`; with a selection, only the selected lines).
+- `Ctrl+Alt+L` on other files formats the whole file, as PyCharm does: with the project's own Prettier (from `node_modules`, with its config) for JS, TS, JSON, CSS, HTML, Vue, YAML and Markdown; without it, TypeScript's language server for JS and TS, and Brisk's built-in formatters for JSON / JSONC, CSS / SCSS / Less, HTML, XML / SVG, SQL and TOML. A file that does not parse is left as it is and the status bar says why. Reformat on Save covers these files too (except JS and TS without Prettier).
 - `Ctrl+Alt+O` Optimize Imports (ruff `F401` and `I001`): removes unused imports and sorts them with the isort profile PyCharm uses. `from __future__` comes first, then standard library, third-party, project and relative imports as separate groups; `from x import a` and `from x import b` are merged. Lines with `# noqa` and imports inside `try` are left alone. Reports what it did, e.g. "Removed 2 unused imports; imports sorted" or "Imports are already optimized".
 - With focus in the Project tree, `Ctrl+Alt+O` and `Ctrl+Alt+L` work on the selected file or folder (recursively). Open files change in their editors, closed ones on disk; ruff runs in the background and the status bar reports e.g. "Optimized imports in 2 of 2 file(s)".
 - Code → Code Cleanup applies all safe ruff fixes in the file.
@@ -224,7 +225,18 @@ Brisk stays usable while ty is missing or still starting (its first answers can 
 
 ## JavaScript, TypeScript, HTML and CSS
 
-Brisk's own support, without a TypeScript server or Node: tree-sitter and the file system.
+Two layers. Brisk's own support works in every project, without Node or a TypeScript server: tree-sitter and the file system. On top of it, TypeScript 7's native language server adds type-aware code insight to `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.mts` and `.cts` files.
+
+### TypeScript language server
+
+- Brisk starts it with the first JS or TS file you open, not with the project. It uses the project's own TypeScript 7 (the native `@typescript/typescript-<platform>` package in `node_modules`). Without one, a balloon offers to download TypeScript 7 for this platform from the npm registry (about 10 MB, kept in Brisk's settings folder under `tools/typescript`). Not Now keeps Brisk's own support and does not ask again in this window. Node.js is not needed.
+- What it gives, the same way ty does for Python: type errors as you type (in the editor and the Problems tool window), completion by type after `.` and as you type a name, `Ctrl+B` / `Ctrl+Click` to the declaration (also into `node_modules` and `.d.ts` files), `Ctrl+Shift+B` to the type, `Ctrl+Q` and hover documentation, parameter info, Find Usages and `Shift+F6` Rename across files.
+- While it runs, `Ctrl+B` in JS and TS uses it; the text-based navigation below stays for HTML and CSS and for when it is not running. Path completion in imports stays Brisk's own.
+- Memory: about 60 MB for a small project; it grows with the project and its type definitions.
+- Not yet: Vue, Svelte and Angular files (their language tools need the older Node-based `tsserver`), ESLint and Prettier.
+
+### Brisk's own support
+
 
 - Structure, breadcrumbs, sticky lines, Go to Class and Go to Symbol cover JS and TS (see Navigation).
 - `Ctrl+B` / `Ctrl+Click` on a path in `import`, `export … from`, `require()`, `import()`, an HTML `src` / `href` or a CSS `@import` / `url()` opens the file. Paths resolve as Node and bundlers do: the usual extensions (`./util.js` finds `util.ts`), `index` files, `compilerOptions.paths` and `baseUrl` of `tsconfig.json` / `jsconfig.json` (comments allowed), `@/` for `src/`, packages in `node_modules` by their `package.json` (`types`, `module`, `main`, `exports`). `/x` looks in the project root, `public` and `static`.

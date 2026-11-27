@@ -854,6 +854,12 @@ impl Server {
         self.client.notify("workspace/didRenameFiles", rename_params(renames));
     }
 
+    /// Reformat Code: the server's edits for the whole file.
+    pub fn formatting(&self, path: &Path, tab_size: usize, insert_spaces: bool) -> impl Future<Output = Result<Vec<Edit>, String>> + Send + 'static {
+        let params = json!({ "textDocument": { "uri": path_to_uri(path) }, "options": { "tabSize": tab_size, "insertSpaces": insert_spaces } });
+        self.call("textDocument/formatting", params, edits)
+    }
+
     pub fn rename(&self, path: &Path, p: Pos, new_name: &str) -> impl Future<Output = Result<Vec<FileEdits>, String>> + Send + 'static {
         let mut params = at(path, p);
         params["newName"] = json!(new_name);

@@ -1,0 +1,8 @@
+[package]
+name = "brisk-format"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Brisk's own Reformat Code for files without a formatter of their own: JSON, CSS, HTML and XML, SQL, TOML"
+
+[dependencies]

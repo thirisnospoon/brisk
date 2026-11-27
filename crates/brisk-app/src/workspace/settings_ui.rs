@@ -360,7 +360,7 @@ impl Workspace {
                 .into_any_element()
         };
         let inlay = checkbox("set-inlay", s.inlay_hints, "Show inlay hints", "(inferred types, parameter names)", SetCtl::Inlay, cx);
-        let reformat = checkbox("set-reformat", s.reformat_on_save, "Reformat code", "(ruff format)", SetCtl::Reformat, cx);
+        let reformat = checkbox("set-reformat", s.reformat_on_save, "Reformat code", "(ruff for Python, Prettier or Brisk for the rest)", SetCtl::Reformat, cx);
         let imports = checkbox("set-imports", s.optimize_imports_on_save, "Optimize imports", "(ruff: unused, sorted)", SetCtl::Imports, cx);
         let animations = checkbox("set-anim", s.animations, "Animate popups, dialogs and tool windows", "(off: they appear at once)", SetCtl::Animations, cx);
         let updates = checkbox("set-updates", s.check_updates, "Check for updates automatically", "(once a day, on GitHub)", SetCtl::Updates, cx);

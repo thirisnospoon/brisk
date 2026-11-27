@@ -14,6 +14,7 @@ members = [
     "crates/brisk-run",
     "crates/brisk-settings",
     "crates/brisk-lint",
+    "crates/brisk-format",
     "crates/brisk-lsp",
     "crates/brisk-dap",
     "crates/brisk-vm",
@@ -49,6 +50,7 @@ brisk-history = { path = "crates/brisk-history" }
 brisk-run = { path = "crates/brisk-run" }
 brisk-settings = { path = "crates/brisk-settings" }
 brisk-lint = { path = "crates/brisk-lint" }
+brisk-format = { path = "crates/brisk-format" }
 brisk-lsp = { path = "crates/brisk-lsp" }
 brisk-dap = { path = "crates/brisk-dap" }
 brisk-vm = { path = "crates/brisk-vm" }

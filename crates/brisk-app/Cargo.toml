@@ -22,6 +22,7 @@ brisk-history.workspace = true
 brisk-run.workspace = true
 brisk-settings.workspace = true
 brisk-lint.workspace = true
+brisk-format.workspace = true
 brisk-lsp.workspace = true
 brisk-dap.workspace = true
 brisk-vm.workspace = true
