@@ -237,12 +237,12 @@ Two layers. Brisk's own support works in every project, without Node or a TypeSc
 
 ### Brisk's own support
 
-
 - Structure, breadcrumbs, sticky lines, Go to Class and Go to Symbol cover JS and TS (see Navigation).
 - `Ctrl+B` / `Ctrl+Click` on a path in `import`, `export … from`, `require()`, `import()`, an HTML `src` / `href` or a CSS `@import` / `url()` opens the file. Paths resolve as Node and bundlers do: the usual extensions (`./util.js` finds `util.ts`), `index` files, `compilerOptions.paths` and `baseUrl` of `tsconfig.json` / `jsconfig.json` (comments allowed), `@/` for `src/`, packages in `node_modules` by their `package.json` (`types`, `module`, `main`, `exports`). `/x` looks in the project root, `public` and `static`.
 - `Ctrl+B` on an imported name opens its module at the export (`export default` for a default import). On any other name it goes to its declaration in the file (`function`, `class`, `const` / `let` / `var` above the caret), else to the project's symbols of that name.
+- Without the TypeScript server, `Alt+F7` lists a name's usages in the file and `Shift+F6` on a local variable or parameter selects all its uses in the function (multiple carets), from the file's scopes: `let` / `const` / `var`, parameters, `catch`, `for`, imports, with shadowing in nested functions respected.
 - Typing a path in those places (after a quote or `/`), or `Ctrl+Space` there, lists the folder's entries: folders first, JS / TS modules without their extension in imports. A bare name in an import lists the packages in `node_modules`.
-- In HTML, Vue, Svelte, JSX, TSX and XML files, typing `>` at the end of an opening tag adds its closing tag after the caret (not for void elements such as `<br>`, `<img>`, or for `<x />`; in JSX not for type arguments like `Array<string>`). Typing `</` completes the innermost open tag.
+- In HTML, Vue, Svelte, JSX, TSX and XML files, typing `>` at the end of an opening tag adds its closing tag after the caret (not for void elements such as `<br>`, `<img>`, or for `<x />`; in JSX not for type arguments like `Array<string>` or a generic arrow `<T,>(…)`; a fragment `<>` gets `</>`). Typing `</` completes the innermost open tag.
 - Editing a tag's name (typing or deleting in it) renames its paired tag as you go.
 - `Tab` after an Emmet abbreviation expands it: tags, `.class`, `#id`, `[attr=value]`, `{text}`, `*3` with `$` numbering, `>` for children, `+` for siblings, `^` to climb. A tag-less `.card` is a `div`; `a`, `img`, `input`, `link` and a few others get their usual attributes. The caret goes to the first empty attribute or element. In JSX and TSX `class` becomes `className`, and only abbreviations with an operator expand (a bare `div` stays code).
 - In CSS, SCSS and Less files the gutter shows a swatch of the first colour on each line: `#rgb` / `#rrggbb` (with alpha too), `rgb()` / `rgba()`, `hsl()` / `hsla()` and named colours. Variables (`var(--x)`, `$x`) are not resolved.

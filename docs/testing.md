@@ -306,6 +306,10 @@ Checks that the TypeScript server starts, that the type error in `u.greet('x')` 
 
 The `brisk-lsp` test `real_typescript` runs against the same server when `BRISK_TEST_TSC` is set, with a line holding an emoji to check the UTF-16 position conversion.
 
+### `BRISK_SMOKE_PROBE=ts` / `BRISK_SMOKE_PROBE=stage1`
+
+Folder: empty. A broad probe of the JS / TS / HTML / CSS features: `ts` needs `BRISK_TSC` and covers the server (diagnostics while typing, completion, auto-import, Ctrl+B, Find Usages, Rename across files, Parameter Info, Quick Documentation, positions after emoji); `stage1` runs without TypeScript (point `APPDATA` at an empty folder so a downloaded server is not found) and covers Brisk's own support (paths, tags, Emmet, colour swatches, CSS completion, local Find Usages and Rename). Every scenario logs `ok` or `FAIL` and the probe goes on; it exits 1 if any failed.
+
 ### `BRISK_SMOKE_REFORMAT=1`
 
 Folder: empty. Writes minified JSON, CSS, HTML, SQL and TOML plus a broken JSON file, runs Reformat Code on each and checks the result, that a second run changes nothing, and that the broken file stays as it is. With `BRISK_TSC` set, also formats `m.ts` through TypeScript's server.

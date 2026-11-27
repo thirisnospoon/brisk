@@ -255,6 +255,8 @@ pub enum EditorEvent {
     SetNextStatement(usize),
     /// Open this file at this line (Quick Documentation's definition link).
     OpenLocation(std::path::PathBuf, usize),
+    /// An accepted completion item whose import edits the server gives on resolve.
+    ResolveCompletion(serde_json::Value),
 }
 
 impl gpui::EventEmitter<EditorEvent> for Editor {}

@@ -439,7 +439,7 @@ impl Workspace {
                     let prefix: String = e.buffer.line(line).chars().take(col).collect();
                     let start = e.word_start_before_caret();
                     let word: String = e.buffer.rope().slice(start..e.buffer.primary().head).to_string();
-                    let in_comment = if ts { prefix.contains("//") } else { prefix.contains('#') };
+                    let in_comment = in_line_comment(&prefix, if ts { "//" } else { "#" });
                     (e.completion_open() || in_comment, e.signature_open(), word, e.completion_needs_requery() && !in_comment)
                 };
                 if c == '(' || (c == ',' && sig_open) {
@@ -464,6 +464,7 @@ impl Workspace {
             E::CtrlClick(pos) if self.js_goto(&ed, Some(pos), window, cx) || self.web_goto(&ed, Some(pos), window, cx) => {}
             E::CtrlClick(pos) => self.goto_declaration(ed, Some(pos), false, window, cx),
             E::OpenLocation(ref path, line) => self.open_symbol(path.clone(), line, 0, window, cx),
+            E::ResolveCompletion(ref raw) => self.resolve_completion(ed, raw.clone(), cx),
             E::ShowProblems
             | E::ContextMenu(_)
             | E::BreakpointsChanged
@@ -578,13 +579,14 @@ impl Workspace {
     fn type_info(&mut self, ed: Entity<Editor>, cx: &mut Context<Self>) {
         let Some((ty, path, p)) = self.ty_at_caret(&ed, cx) else { return self.no_ty("Type Info") };
         let fut = ty.hover(&path, p);
+        let lang = if is_ts_path(&path) { "typescript" } else { "python" };
         cx.spawn(async move |this, cx| {
             let t = fut.await.ok().flatten().and_then(|h| super::problems_ui::type_of_hover(&h));
             let _ = this.update(cx, |this, cx| {
                 match t {
                     Some(t) => {
                         this.status = format!("Type: {t}");
-                        ed.update(cx, |e, cx| e.show_doc(&format!("```python\n{t}\n```"), crate::editor::Anchor::Caret, cx));
+                        ed.update(cx, |e, cx| e.show_doc(&format!("```{lang}\n{t}\n```"), crate::editor::Anchor::Caret, cx));
                     }
                     None => this.status = "No type information here".into(),
                 }
@@ -1439,5 +1441,56 @@ impl Workspace {
             });
         })
         .detach();
+    }
+}
+
+/// Whether `prefix` (a line up to the caret) ends inside a line comment started by
+/// `marker`, outside strings (`'http://x'` is not one).
+fn in_line_comment(prefix: &str, marker: &str) -> bool {
+    let mut quote: Option<char> = None;
+    let mut chars = prefix.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        match quote {
+            Some(_) if c == '\\' => {
+                chars.next();
+            }
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if matches!(c, '"' | '\'' | '`') => quote = Some(c),
+            None if prefix[i..].starts_with(marker) => return true,
+            None => {}
+        }
+    }
+    false
+}
+
+impl Workspace {
+    /// An accepted auto-import item: ask the server for its import line and add it.
+    fn resolve_completion(&mut self, ed: Entity<Editor>, raw: serde_json::Value, cx: &mut Context<Self>) {
+        let Some(path) = ed.read(cx).path.clone() else { return };
+        let Some(server) = self.server_for(&path) else { return };
+        let fut = server.resolve_completion(&path, raw);
+        cx.spawn(async move |_, cx| {
+            let Ok(edits) = fut.await else { return };
+            if edits.is_empty() {
+                return;
+            }
+            let _ = ed.update(cx, |e, cx| {
+                let fix = brisk_lint::Fix { message: String::new(), safe: true, edits };
+                e.apply_fix(&fix, cx);
+            });
+        })
+        .detach();
+    }
+}
+
+#[cfg(test)]
+mod comment_tests {
+    #[test]
+    fn line_comments_outside_strings() {
+        assert!(super::in_line_comment("x = 1 // a", "//"));
+        assert!(!super::in_line_comment("const url = 'http://x'; u.", "//"));
+        assert!(!super::in_line_comment("s = \"a#b\"; s.", "#"));
+        assert!(super::in_line_comment("s = 'a' # c", "#"));
     }
 }

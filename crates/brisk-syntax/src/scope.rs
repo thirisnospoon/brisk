@@ -147,7 +147,7 @@ fn collect(scope: Node, text: &str, name: &str, own: bool, out: &mut Vec<Range<u
 }
 
 impl SyntaxTree {
-    /// Occurrences of the variable at `byte` (Python only). None when there is no variable
+    /// Occurrences of the variable at `byte` (Python, JavaScript and TypeScript). None when there is no variable
     /// there (an attribute, a keyword argument name, a keyword, a string).
     pub fn name_refs(&self, text: &str, byte: usize) -> Option<NameRefs> {
         name_refs_of(self.lang, self.tree.as_ref()?, text, byte)
@@ -156,6 +156,9 @@ impl SyntaxTree {
 
 /// [`SyntaxTree::name_refs`] on a copy of the tree (for a background thread).
 pub fn name_refs_of(lang: Lang, tree: &Tree, text: &str, byte: usize) -> Option<NameRefs> {
+    if matches!(lang, Lang::JavaScript | Lang::TypeScript | Lang::Tsx) {
+        return crate::js_scope::name_refs(tree, text, byte);
+    }
     if lang != Lang::Python {
         return None;
     }

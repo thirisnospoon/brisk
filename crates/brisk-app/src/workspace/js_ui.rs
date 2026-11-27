@@ -154,6 +154,7 @@ impl Workspace {
             kind: if dir { 19 } else { 17 },
             sort: String::new(),
             range: None,
+            resolve: None,
             extra: Vec::new(),
             doc: String::new(),
         };
@@ -217,6 +218,7 @@ impl Workspace {
             kind,
             sort: String::new(),
             range: None,
+            resolve: None,
             extra: Vec::new(),
             doc: String::new(),
         };

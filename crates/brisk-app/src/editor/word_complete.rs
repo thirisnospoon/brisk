@@ -132,6 +132,7 @@ fn item(label: &str, kind: u32, detail: &str) -> CompletionItem {
         sort: String::new(),
         insert: label.to_string(),
         range: None,
+        resolve: None,
         extra: Vec::new(),
         doc: String::new(),
     }

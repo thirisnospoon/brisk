@@ -123,6 +123,7 @@ impl Editor {
                 insert,
                 range: None,
                 // The expression and its dot go, in the same undo step as the insertion.
+                resolve: None,
                 extra: vec![Edit { start: Pos { line, col: r.start }, end: Pos { line, col }, content: String::new() }],
                 doc: String::new(),
             });

@@ -268,6 +268,9 @@ impl Editor {
         let start = (c.start as isize + shift).max(0) as usize;
         let p = start + item.insert.chars().count() + usize::from(call);
         self.buffer.set_caret(p, false);
+        if let Some(raw) = item.resolve.clone() {
+            cx.emit(EditorEvent::ResolveCompletion(raw));
+        }
         if call {
             cx.emit(EditorEvent::Typed('('));
         }
@@ -293,6 +296,19 @@ impl Editor {
             }
         }
         cx.notify();
+    }
+
+    /// Smoke tests: select the completion item with this label.
+    #[cfg(feature = "smoke")]
+    pub fn select_completion_for_smoke(&mut self, label: &str) -> bool {
+        let Some(c) = self.insight.completion.as_mut() else { return false };
+        match c.shown.iter().position(|&i| c.items[i].label == label) {
+            Some(i) => {
+                c.selected = i;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Smoke tests: Esc on the completion list.

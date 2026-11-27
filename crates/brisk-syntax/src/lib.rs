@@ -6,6 +6,7 @@ pub mod css;
 mod generate;
 pub mod html;
 mod intentions;
+mod js_scope;
 mod refactor;
 mod scope;
 mod sql;

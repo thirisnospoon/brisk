@@ -80,6 +80,11 @@ pub fn close_tag_after(text: &str, at: usize, jsx: bool) -> Option<String> {
     if !before.ends_with('>') || before.ends_with("/>") || before.ends_with("->") || before.ends_with("=>") {
         return None;
     }
+    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$' || c == '.';
+    // A JSX fragment `<>` closes with `</>`.
+    if jsx && before.ends_with("<>") && !before[..at - 2].ends_with(ident) && !text[at..].trim_start().starts_with("</>") {
+        return Some("</>".into());
+    }
     let ts = tags(before);
     let t = ts.last()?;
     // The `>` typed must be this tag's end.
@@ -87,7 +92,12 @@ pub fn close_tag_after(text: &str, at: usize, jsx: bool) -> Option<String> {
         return None;
     }
     let lt = t.name.start - 1;
-    if jsx && before[..lt].ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '$' || c == '.') {
+    if jsx && before[..lt].ends_with(ident) {
+        return None;
+    }
+    // A generic arrow function in TSX: `<T,>(x: T) =>`, `<T extends U>`.
+    let rest = before[t.name.end..at - 1].trim_start();
+    if jsx && (rest.starts_with(',') || rest.starts_with("extends ")) {
         return None;
     }
     let name = &before[t.name.clone()];
@@ -194,9 +204,9 @@ pub fn emmet_abbr(line_prefix: &str) -> Option<&str> {
     let a = &line_prefix[start..];
     let first = a.chars().next()?;
     let ok = (first.is_ascii_alphabetic() || first == '.' || first == '#')
-        && a.chars().all(|c| c.is_alphanumeric() || "-_.#>+*[]=\"'{}$@:/ ()!".contains(c))
+        && a.chars().all(|c| c.is_alphanumeric() || "-_.#>+^*[]=\"'{}$@:/ ()!".contains(c))
         // A plain word is a tag only if it is a known one or has an operator.
-        && (a.contains(['>', '+', '*', '.', '#', '[', '{']) || KNOWN.contains(&a));
+        && (a.contains(['>', '+', '^', '*', '.', '#', '[', '{']) || KNOWN.contains(&a));
     // `</div` or text after a tag is not an abbreviation.
     (ok && !line_prefix[..start].trim_end().ends_with('<')).then_some(a)
 }
@@ -364,16 +374,20 @@ fn numbered(n: &Node, i: usize) -> Node {
 /// `a>b+c>d`: siblings joined by `+`, `>` nests what follows in the last one, `^` climbs.
 fn parse(s: &str) -> Option<Vec<Node>> {
     // Levels of the current chain: siblings at each depth.
-    let mut levels: Vec<Vec<Node>> = vec![Vec::new()];
+    // Levels of the current chain: siblings at each depth, and how many nodes the last
+    // element group there has (`li*3` is three).
+    let mut levels: Vec<(Vec<Node>, usize)> = vec![(Vec::new(), 0)];
     let mut rest = s;
     loop {
         let (nodes, r) = element(rest)?;
-        levels.last_mut()?.extend(nodes);
+        let level = levels.last_mut()?;
+        level.1 = nodes.len();
+        level.0.extend(nodes);
         rest = r;
         match rest.chars().next() {
             None => break,
             Some('>') => {
-                levels.push(Vec::new());
+                levels.push((Vec::new(), 0));
                 rest = &rest[1..];
             }
             Some('+') => rest = &rest[1..],
@@ -391,17 +405,20 @@ fn parse(s: &str) -> Option<Vec<Node>> {
     while levels.len() > 1 {
         fold(&mut levels);
     }
-    levels.pop()
+    levels.pop().map(|l| l.0)
 }
 
 /// Puts the deepest level's nodes into every node of the last element group above it.
-fn fold(levels: &mut Vec<Vec<Node>>) {
+fn fold(levels: &mut Vec<(Vec<Node>, usize)>) {
     if levels.len() < 2 {
         return;
     }
-    let kids = levels.pop().unwrap_or_default();
-    if let Some(parent) = levels.last_mut().and_then(|l| l.last_mut()) {
-        parent.children.extend(kids);
+    let (kids, _) = levels.pop().unwrap_or_default();
+    if let Some((parents, n)) = levels.last_mut() {
+        let from = parents.len().saturating_sub(*n);
+        for p in &mut parents[from..] {
+            p.children.extend(kids.iter().cloned());
+        }
     }
 }
 
@@ -492,6 +509,13 @@ mod tests {
         assert_eq!(close_tag_after(t, 5, false), None);
         let t = "const a: Array<string>";
         assert_eq!(close_tag_after(t, t.len(), true), None);
+        let t = "const f = <T,>";
+        assert_eq!(close_tag_after(t, t.len(), true), None);
+        let t = "const g = <T extends object>";
+        assert_eq!(close_tag_after(t, t.len(), true), None);
+        let t = "return <>";
+        assert_eq!(close_tag_after(t, t.len(), true).as_deref(), Some("</>"));
+        assert_eq!(close_tag_after(t, t.len(), false), None);
     }
 
     #[test]
@@ -529,5 +553,11 @@ mod tests {
         assert_eq!(s, "<div className=\"card\">\n  <h2>Title</h2>\n  <p></p>\n</div>");
         let (s, _) = expand("img", "", "  ", true).unwrap();
         assert_eq!(s, "<img src=\"\" alt=\"\" />");
+        // Every repeated item gets the children; `^` climbs back up.
+        let (s, _) = expand("ul>li*2>a", "", "  ", false).unwrap();
+        assert_eq!(s, "<ul>\n  <li>\n    <a href=\"\"></a>\n  </li>\n  <li>\n    <a href=\"\"></a>\n  </li>\n</ul>");
+        assert_eq!(emmet_abbr("div>p^span"), Some("div>p^span"));
+        let (s, _) = expand("div>p^span", "", "  ", false).unwrap();
+        assert_eq!(s, "<div>\n  <p></p>\n</div>\n<span></span>");
     }
 }

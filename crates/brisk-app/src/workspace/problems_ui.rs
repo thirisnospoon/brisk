@@ -78,8 +78,17 @@ fn return_type(hover: &str) -> Option<String> {
 /// Type Info: the type in ty's hover of a name: `def f(a: int) -> str` → `(a: int) -> str`,
 /// `class C` → `type[C]`, a variable → its type.
 pub(super) fn type_of_hover(hover: &str) -> Option<String> {
-    let code = hover.split("```").nth(1)?.trim_start_matches("python").trim();
+    let code = hover.split("```").nth(1)?;
+    // The fence's language (`python`, `typescript`) on its first line.
+    let code = match code.split_once('\n') {
+        Some((lang, rest)) if lang.chars().all(|c| c.is_ascii_alphanumeric()) => rest,
+        _ => code,
+    }
+    .trim();
     let one = code.split_whitespace().collect::<Vec<_>>().join(" ").replace("( ", "(").replace(", )", ")").replace(" )", ")");
+    // TypeScript: `const u: User`, `let n: number`, `(parameter) x: string`.
+    let one =
+        ["const ", "let ", "var ", "(parameter) ", "(property) ", "(local var) "].iter().find_map(|k| one.strip_prefix(k)).map_or(one.clone(), str::to_string);
     if let Some(rest) = one.strip_prefix("def ").or_else(|| one.strip_prefix("async def ")) {
         return Some(rest[rest.find('(')?..].to_string());
     }
@@ -249,7 +258,8 @@ impl Workspace {
         self.push_coverage(ed, cx);
         cx.observe(ed, |this: &mut Self, ed, cx| {
             let v = ed.read(cx).buffer.version();
-            if ed.read(cx).lint_sent != v && ed.read(cx).is_python() {
+            let checked = ed.read(cx).is_python() || ed.read(cx).path.as_deref().is_some_and(super::ts_ui::is_ts_path);
+            if ed.read(cx).lint_sent != v && checked {
                 this.schedule_lint(ed.clone(), LINT_DELAY, cx);
             }
             this.structure_follow_caret(&ed, cx);

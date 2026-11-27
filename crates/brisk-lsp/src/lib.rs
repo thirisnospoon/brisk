@@ -247,6 +247,9 @@ pub struct CompletionItem {
     pub extra: Vec<Edit>,
     /// Documentation shown beside the selected item.
     pub doc: String,
+    /// The item as the server sent it, when its import edits come only from
+    /// `completionItem/resolve` (TypeScript's auto-imports).
+    pub resolve: Option<Value>,
 }
 
 /// A quick fix (Alt+Enter) from the server.
@@ -423,7 +426,9 @@ pub fn parse_completion(v: &Value) -> Vec<CompletionItem> {
                 }
                 None => label,
             };
+            let needs_resolve = i.get("data").is_some_and(|d| !d.is_null()) && i.get("additionalTextEdits").is_none_or(Value::is_null);
             CompletionItem {
+                resolve: needs_resolve.then(|| i.clone()),
                 extra: edits(&i["additionalTextEdits"]),
                 doc: doc_text(&i["documentation"]),
                 detail,
@@ -663,7 +668,10 @@ impl Server {
 
     /// TypeScript 7's native server (`tsc --lsp --stdio`) for JS and TS.
     pub fn start_typescript(tsc: &Path, root: &Path) -> Result<Server, String> {
-        Self::launch("TypeScript", tsc, &["--lsp", "--stdio"], root, &[], Value::Null)
+        // Rename renames: no `name as old` aliases at the usages (PyCharm's behaviour).
+        let prefs = json!({ "useAliasesForRenames": false });
+        let settings = json!({ "preferences": prefs, "typescript": { "preferences": prefs }, "javascript": { "preferences": prefs } });
+        Self::launch("TypeScript", tsc, &["--lsp", "--stdio"], root, &[], settings)
     }
 
     /// Start a server and initialize it (blocks for the handshake: call it off the UI thread).
@@ -704,11 +712,22 @@ impl Server {
     fn call<T: Send + 'static>(
         &self,
         method: &str,
+        params: Value,
+        parse: impl FnOnce(&Value) -> T + Send + 'static,
+    ) -> impl Future<Output = Result<T, String>> + Send + 'static {
+        let uri = params.pointer("/textDocument/uri").and_then(Value::as_str).unwrap_or_default().to_string();
+        self.call_in(uri, method, params, parse)
+    }
+
+    /// `call` for a request whose positions belong to `uri` without naming it.
+    fn call_in<T: Send + 'static>(
+        &self,
+        uri: String,
+        method: &str,
         mut params: Value,
         parse: impl FnOnce(&Value) -> T + Send + 'static,
     ) -> impl Future<Output = Result<T, String>> + Send + 'static {
         let conv = (self.enc == Encoding::Utf16).then(|| self.docs.clone());
-        let uri = params.pointer("/textDocument/uri").and_then(Value::as_str).unwrap_or_default().to_string();
         if let Some(d) = &conv {
             encoding::convert(&mut params, &uri, true, d);
         }
@@ -818,7 +837,9 @@ impl Server {
 
     pub fn references(&self, path: &Path, p: Pos) -> impl Future<Output = Result<Vec<Location>, String>> + Send + 'static {
         let mut params = at(path, p);
-        params["context"] = json!({"includeDeclaration": true});
+        // ty's declaration lines (`def`, `class`) are dropped by the caller; TypeScript's
+        // declarations (methods, `const`, interfaces) are not that easy to tell from the text.
+        params["context"] = json!({"includeDeclaration": self.name != "TypeScript"});
         self.call("textDocument/references", params, parse_locations)
     }
 
@@ -852,6 +873,11 @@ impl Server {
     /// Files were renamed (after `will_rename_files` and the move on disk).
     pub fn did_rename_files(&self, renames: &[(PathBuf, PathBuf)]) {
         self.client.notify("workspace/didRenameFiles", rename_params(renames));
+    }
+
+    /// The import edits of a completion item in `path` (`completionItem/resolve`).
+    pub fn resolve_completion(&self, path: &Path, item: Value) -> impl Future<Output = Result<Vec<Edit>, String>> + Send + 'static {
+        self.call_in(path_to_uri(path), "completionItem/resolve", item, |v| edits(&v["additionalTextEdits"]))
     }
 
     /// Reformat Code: the server's edits for the whole file.

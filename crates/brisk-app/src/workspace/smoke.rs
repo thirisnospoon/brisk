@@ -29,6 +29,7 @@ mod open;
 mod packages;
 mod picker;
 mod pin;
+mod probe;
 mod pycon;
 mod pyproj;
 mod reformat;
@@ -237,6 +238,9 @@ pub(super) fn schedule(window: &mut Window, cx: &mut Context<Workspace>) {
     }
     if std::env::var_os("BRISK_SMOKE_NODE").is_some() {
         cx.defer_in(window, |this: &mut Workspace, window, cx| this.node_smoke(window, cx));
+    }
+    if std::env::var_os("BRISK_SMOKE_PROBE").is_some() {
+        cx.defer_in(window, |this: &mut Workspace, window, cx| this.probe_smoke(window, cx));
     }
     if std::env::var_os("BRISK_SMOKE_REFORMAT").is_some() {
         cx.defer_in(window, |this: &mut Workspace, window, cx| this.reformat_smoke(window, cx));
