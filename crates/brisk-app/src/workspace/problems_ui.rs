@@ -104,7 +104,7 @@ pub(super) fn type_of_hover(hover: &str) -> Option<String> {
 }
 
 /// The type in ty's hover of a value: a variable's type, or a called function's return type.
-fn value_type(hover: &str) -> Option<String> {
+pub(super) fn value_type(hover: &str) -> Option<String> {
     let code = hover.split("```").nth(1)?.trim_start_matches("python").trim();
     if code.contains("def ") {
         return return_type(hover);

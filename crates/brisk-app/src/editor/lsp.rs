@@ -40,6 +40,8 @@ pub struct DocPopup {
     pub anchor: Anchor,
     /// Where the symbol is defined: shown on top, a click opens it (file, line, label).
     pub source: Option<(std::path::PathBuf, usize, String)>,
+    /// A variable with no type hint: where `: type` goes and the type (editor/type_hint.rs).
+    pub add_type: Option<(usize, String)>,
 }
 
 #[derive(Default)]
@@ -370,11 +372,19 @@ impl Editor {
             }
         }
         let blocks = brisk_lsp::doc_blocks(markdown);
-        self.insight.doc = (!blocks.is_empty()).then_some(DocPopup { blocks, anchor, source: None });
+        self.insight.doc = (!blocks.is_empty()).then_some(DocPopup { blocks, anchor, source: None, add_type: None });
         cx.notify();
     }
 
     /// Quick Documentation: where the symbol shown is defined.
+    /// Offers "Add type hint" in the open Quick Documentation.
+    pub fn set_doc_add_type(&mut self, at: usize, ty: String, cx: &mut Context<Self>) {
+        if let Some(d) = self.insight.doc.as_mut() {
+            d.add_type = Some((at, ty));
+            cx.notify();
+        }
+    }
+
     pub fn set_doc_source(&mut self, path: std::path::PathBuf, line: usize, label: String, cx: &mut Context<Self>) {
         if let Some(d) = self.insight.doc.as_mut() {
             d.source = Some((path, line, label));
@@ -641,6 +651,28 @@ impl Editor {
                             cx.emit(super::EditorEvent::OpenLocation(path.clone(), line));
                         }))
                 });
+                // A variable without a type hint: one click writes the simple type ty inferred.
+                let add_type = d.add_type.clone().map(|(at, ty)| {
+                    let shown = format!(": {ty}");
+                    gpui::div()
+                        .id("quick-doc-add-type")
+                        .mx(px(8.))
+                        .mb(px(8.))
+                        .mt(px(2.))
+                        .px(px(8.))
+                        .py(px(4.))
+                        .rounded(px(5.))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .bg(Theme::hover_row())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(Theme::selection()))
+                        .child(crate::icons::icon("plus", 13., Theme::accent()))
+                        .child(gpui::div().text_size(px(12.5)).text_color(Theme::text()).child("Add type hint"))
+                        .child(gpui::div().text_size(px(12.5)).font_family(mono_font()).text_color(Theme::text_dim()).child(shown))
+                        .on_click(cx.listener(move |e, _, _, cx| e.add_type_hint(at, &ty, cx)))
+                });
                 out.push(
                     gpui::div()
                         .id("quick-doc")
@@ -661,6 +693,7 @@ impl Editor {
                         .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                         .children(source)
                         .children(blocks)
+                        .children(add_type)
                         .into_any_element(),
                 );
             }

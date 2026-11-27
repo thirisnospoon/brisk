@@ -248,6 +248,11 @@ impl Lang {
                 (call function: (identifier) @function.call)
                 (call function: (attribute attribute: (identifier) @function.call))
                 (interpolation "{" @string.fbrace "}" @string.fbrace)
+                ; Builtin types in annotations look like builtins elsewhere, as in PyCharm.
+                ((type (identifier) @function.builtin) (#match? @function.builtin "^(int|float|str|bool|bytes|bytearray|complex|list|dict|set|frozenset|tuple|type|object)$"))
+                ((generic_type (identifier) @function.builtin) (#match? @function.builtin "^(int|float|str|bool|bytes|bytearray|complex|list|dict|set|frozenset|tuple|type|object)$"))
+                ((type (binary_operator (identifier) @function.builtin)) (#match? @function.builtin "^(int|float|str|bool|bytes|bytearray|complex|list|dict|set|frozenset|tuple|type|object)$"))
+                ((type (binary_operator (binary_operator (identifier) @function.builtin))) (#match? @function.builtin "^(int|float|str|bool|bytes|bytearray|complex|list|dict|set|frozenset|tuple|type|object)$"))
                 ["def" "class" "if" "elif" "else" "for" "while" "return" "import" "from" "as"
                  "try" "except" "finally" "with" "pass" "break" "continue" "raise" "lambda"
                  "yield" "await" "async" "global" "nonlocal" "assert" "del" "in" "not" "and" "or" "is"] @keyword
@@ -939,6 +944,20 @@ mod tests {
     use super::*;
 
     const SRC: &str = "import os\n\n@dataclass\nclass User:\n    def name(self) -> str:\n        # hi\n        return \"x\" + str(42)\n";
+
+    #[test]
+    fn builtin_types_in_annotations() {
+        let src = "total: set[int] = 0\ndef f(a: str | None, b: int | float | None) -> dict[str, list[bytes]]:\n    pass\nset_x: User = 1\n";
+        let mut s = SyntaxTree::new(Lang::Python);
+        s.parse(src);
+        let spans = s.highlights(src, 0..src.len());
+        let kind_at = |at: usize| spans.iter().find(|sp| sp.range.contains(&at)).map(|sp| sp.kind);
+        for needle in ["set[", "int]", "str |", "int |", "float", "dict[", "list[", "bytes"] {
+            assert_eq!(kind_at(src.find(needle).unwrap()), Some(Highlight::FunctionBuiltin), "{needle}");
+        }
+        assert_ne!(kind_at(src.find("User").unwrap()), Some(Highlight::FunctionBuiltin));
+        assert_ne!(kind_at(src.find("total").unwrap()), Some(Highlight::FunctionBuiltin));
+    }
 
     #[test]
     fn highlights_python() {

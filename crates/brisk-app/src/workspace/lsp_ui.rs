@@ -552,10 +552,17 @@ impl Workspace {
                         Some((pos, at)) => crate::editor::Anchor::Mouse(pos, at),
                         None => crate::editor::Anchor::Caret,
                     };
+                    // On a variable with a value and no type hint, the simple type ty inferred
+                    // gets an "Add type hint" button (editor/type_hint.rs).
+                    let simple = super::problems_ui::value_type(&md).and_then(|t| crate::editor::type_hint::simple_type(&t));
                     ed.update(cx, |e, cx| {
                         e.show_doc(&md, anchor, cx);
                         if let Some((p, line, label)) = source {
                             e.set_doc_source(p, line, label, cx);
+                        }
+                        let spot = mouse.and_then(|(pos, _)| e.type_hint_spot(pos));
+                        if let (Some(at), Some(ty)) = (spot, simple) {
+                            e.set_doc_add_type(at, ty, cx);
                         }
                     });
                 }

@@ -49,6 +49,7 @@ mod squiggle;
 mod sticky;
 mod stripe;
 pub mod templates;
+pub mod type_hint;
 mod whitespace;
 mod word_complete;
 mod wrap;
@@ -173,6 +174,8 @@ pub struct Editor {
     hover_lost: u64,
     /// Where the problem tooltip was last painted, for telling when the mouse leaves it.
     tip_bounds: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<Pixels>>>>,
+    /// The grey type after a typed colon, written by Tab (editor/type_hint.rs).
+    type_ghost: Option<type_hint::TypeGhost>,
     /// Problem whose tooltip shows at the caret (after F2 / Shift+F2).
     caret_tip: Option<usize>,
     /// Completion, Quick Documentation, Parameter Info.
@@ -388,6 +391,7 @@ impl Editor {
             tip_hovered: false,
             hover_lost: 0,
             tip_bounds: Default::default(),
+            type_ghost: None,
             caret_tip: None,
             insight: lsp::Insight::default(),
             tpl: None,
@@ -488,6 +492,7 @@ impl Editor {
             tip_hovered: false,
             hover_lost: 0,
             tip_bounds: Default::default(),
+            type_ghost: None,
             caret_tip: None,
             insight: lsp::Insight::default(),
             tpl: None,
@@ -953,6 +958,15 @@ impl Editor {
             )
         {
             return true;
+        }
+        // Tab writes the grey type after a typed colon; any other key drops it.
+        if action == A::EditorTab && !self.completion_open() && self.accept_type_ghost() {
+            self.ensure_caret_visible();
+            cx.notify();
+            return true;
+        }
+        if self.type_ghost.take().is_some() {
+            cx.notify();
         }
         self.caret_tip = None;
         self.insight.doc = None;
@@ -1773,7 +1787,9 @@ impl EntityInputHandler for Editor {
         match (chars.next(), chars.next()) {
             (Some(c), None) => {
                 let tag_pair = self.tag_pair_before_edit();
+                let type_seed = if c == ':' { self.type_before_colon() } else { None };
                 self.buffer.type_char(c);
+                self.update_type_ghost(c, type_seed);
                 self.mirror_tag_pair(tag_pair);
                 self.after_tag_char(c);
                 self.refilter_completion();
@@ -1783,6 +1799,7 @@ impl EntityInputHandler for Editor {
                 cx.emit(EditorEvent::Typed(c));
             }
             _ => {
+                self.type_ghost = None;
                 self.buffer.insert(text);
                 self.insight.completion = None;
             }
@@ -2054,9 +2071,10 @@ impl Element for EditorElement {
                 }
             }
             // Hints in the UI font, so they do not read as code; their chips are painted under the text.
-            let (text, runs, hint_chips) = ed.line_with_inlays(l, text, runs, |len| TextRun {
-                font: gpui::Font { style: gpui::FontStyle::Italic, ..font(crate::theme::ui_font()) },
-                ..run(len, Theme::inlay_fg())
+            // The typed-colon ghost is code to be: the code font, dimmed, no chip.
+            let (text, runs, hint_chips) = ed.line_with_inlays(l, text, runs, |len, ghost| match ghost {
+                true => run(len, Theme::text_dim()),
+                false => TextRun { font: gpui::Font { style: gpui::FontStyle::Italic, ..font(crate::theme::ui_font()) }, ..run(len, Theme::inlay_fg()) },
             });
             chips.extend(hint_chips.into_iter().map(|r| (ri, r)));
             lines.push(window.text_system().shape_line(SharedString::from(text), font_size, &runs, None));

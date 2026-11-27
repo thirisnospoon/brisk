@@ -26,13 +26,15 @@ pub struct Hint {
     shown: String,
     /// The whole label when `shown` is shortened.
     full: Option<String>,
+    /// The grey type after a typed colon (editor/type_hint.rs): drawn as code, no chip.
+    ghost: bool,
 }
 
 impl Hint {
     fn new(byte: usize, label: &str) -> Self {
         let short = shorten(label);
         let full = (short != label).then(|| label.to_string());
-        Hint { byte, shown: format!("{PAD}{short}{PAD}"), full }
+        Hint { byte, shown: format!("{PAD}{short}{PAD}"), full, ghost: false }
     }
 
     /// The label as drawn, without the padding.
@@ -48,6 +50,19 @@ pub struct Inlays {
     lines: HashMap<usize, (String, Vec<Hint>)>,
     /// The full text of a shortened hint under the mouse, and where to show it.
     pub(super) tip: Option<(Point<Pixels>, String)>,
+    /// Per line: the text ty saw, and every type it inferred there (byte, label), the
+    /// obvious ones too: typing `:` after a name offers them (editor/type_hint.rs).
+    raw: HashMap<usize, (String, Vec<(usize, String)>)>,
+}
+
+impl Inlays {
+    /// ty's type for the name ending at `byte` of `line`, while the line is still `text`.
+    pub(super) fn raw_type(&self, line: usize, text: &str, byte: usize) -> Option<&str> {
+        match self.raw.get(&line) {
+            Some((t, types)) if t == text => types.iter().find(|(b, _)| *b == byte).map(|(_, l)| l.as_str()),
+            _ => None,
+        }
+    }
 }
 
 impl Editor {
@@ -57,9 +72,15 @@ impl Editor {
             return false;
         }
         let mut lines: HashMap<usize, (String, Vec<Hint>)> = HashMap::new();
+        let mut raw: HashMap<usize, (String, Vec<(usize, String)>)> = HashMap::new();
         for h in hints {
             if h.pos.line >= self.buffer.len_lines() {
                 continue;
+            }
+            if !h.parameter {
+                let r = raw.entry(h.pos.line).or_insert_with(|| (self.buffer.line(h.pos.line), Vec::new()));
+                let byte = super::char_to_byte(&r.0, h.pos.col);
+                r.1.push((byte, h.label.clone()));
             }
             let entry = lines.entry(h.pos.line).or_insert_with(|| (self.buffer.line(h.pos.line), Vec::new()));
             let byte = super::char_to_byte(&entry.0, h.pos.col);
@@ -73,17 +94,25 @@ impl Editor {
         }
         let changed = lines != self.inlays.lines;
         self.inlays.lines = lines;
+        self.inlays.raw = raw;
         changed
     }
 
     /// Hints on `line` when its text is still `text` and hints are turned on in Settings.
-    fn hints_on(&self, line: usize, text: &str) -> &[Hint] {
-        if !brisk_settings::inlay_hints() {
-            return &[];
-        }
-        match self.inlays.lines.get(&line) {
-            Some((t, h)) if t == text => h,
+    fn hints_on(&self, line: usize, text: &str) -> std::borrow::Cow<'_, [Hint]> {
+        let hints: &[Hint] = match self.inlays.lines.get(&line) {
+            Some((t, h)) if t == text && brisk_settings::inlay_hints() => h,
             _ => &[],
+        };
+        // The typed-colon ghost joins them, in its place.
+        match self.live_type_ghost().filter(|g| g.line == line && g.text == text) {
+            Some(g) => {
+                let mut all = hints.to_vec();
+                let at = all.iter().position(|h| h.byte > g.byte).unwrap_or(all.len());
+                all.insert(at, Hint { byte: g.byte, shown: g.insert.clone(), full: None, ghost: true });
+                std::borrow::Cow::Owned(all)
+            }
+            None => std::borrow::Cow::Borrowed(hints),
         }
     }
 
@@ -95,7 +124,7 @@ impl Editor {
         line: usize,
         text: String,
         runs: Vec<TextRun>,
-        hint_run: impl Fn(usize) -> TextRun,
+        hint_run: impl Fn(usize, bool) -> TextRun,
     ) -> (String, Vec<TextRun>, Vec<Range<usize>>) {
         let hints = self.hints_on(line, &text);
         if hints.is_empty() {
@@ -120,13 +149,15 @@ impl Editor {
             }
         };
         let mut at = 0;
-        for h in hints {
+        for h in hints.iter() {
             let byte = h.byte.min(text.len());
             take(byte - at, &mut out_runs);
             out_text.push_str(&text[at..byte]);
-            chips.push(out_text.len()..out_text.len() + h.shown.len());
+            if !h.ghost {
+                chips.push(out_text.len()..out_text.len() + h.shown.len());
+            }
             out_text.push_str(&h.shown);
-            out_runs.push(hint_run(h.shown.len()));
+            out_runs.push(hint_run(h.shown.len(), h.ghost));
             at = byte;
         }
         take(text.len() - at, &mut out_runs);
@@ -136,12 +167,12 @@ impl Editor {
 
     /// Byte offset in the drawn line for byte `byte` of the text.
     pub(super) fn display_byte(&self, line: usize, text: &str, byte: usize) -> usize {
-        display_byte(self.hints_on(line, text), byte)
+        display_byte(&self.hints_on(line, text), byte)
     }
 
     /// Text byte for a byte of the drawn line.
     pub(super) fn text_byte(&self, line: usize, text: &str, shown: usize) -> usize {
-        text_byte(self.hints_on(line, text), text.len(), shown)
+        text_byte(&self.hints_on(line, text), text.len(), shown)
     }
 
     /// Mouse move: the full text of a shortened hint under `p` becomes a tooltip. True when
@@ -157,7 +188,7 @@ impl Editor {
                 return None;
             }
             let shown = l.shaped(line)?.index_for_x(p.x - l.text_x)?;
-            Some((p, hint_at(hints, shown)?.full.clone()?))
+            Some((p, hint_at(&hints, shown)?.full.clone()?))
         })();
         let changed = tip.as_ref().map(|t| &t.1) != self.inlays.tip.as_ref().map(|t| &t.1);
         self.inlays.tip = tip;
@@ -208,7 +239,7 @@ impl Editor {
 fn useful_type(label: &str, rest: &str) -> bool {
     let ty = label.trim_start_matches(':').trim();
     // `<special-form 'Literal[...]'>` on a type alias says nothing a reader needs.
-    if ty.is_empty() || ty == "Any" || ty.starts_with("Unknown") || ty.contains("@Todo") || ty.starts_with("<special-form") {
+    if ty.is_empty() || ty == "Any" || ty.contains("Unknown") || ty.contains("@Todo") || ty.starts_with("<special-form") {
         return false;
     }
     let Some(value) = rest.trim_start().strip_prefix('=').filter(|v| !v.starts_with('=')) else { return true };
